@@ -102,6 +102,15 @@ class WorkerBindings:
                     raise ValueError("prepared candidate IDs must be unique")
                 candidates[row.id] = row
         self._candidates = MappingProxyType(candidates)
+        self.input_bytes = max(
+            (
+                binding.inputs.frame.size.staging
+                for row in candidates.values()
+                for (_, rank), binding in row.source.layout.bindings.items()
+                if rank == scope.rank
+            ),
+            default=0,
+        )
 
     def bind(
         self, command: WorkerCall, resolve: Callable[[ArtifactRef], Path]

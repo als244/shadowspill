@@ -1,9 +1,12 @@
 """Private controller/worker metadata; tensor bytes and Python code stay separate."""
 
+import hashlib
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
-from shadowspill_client._records import Record, integer, record
+from shadowspill_client._records import Record, integer, record, text
 from shadowspill_client.protocol.codec import RecordCodec
 from shadowspill_client.protocol.requests import ArtifactRef, ComputeRequest, identifier
 
@@ -72,4 +75,80 @@ class WorkerCall(Record):
         object.__setattr__(self, "frames", frames)
 
 
-CODEC = RecordCodec({"worker.call": WorkerCall})
+@dataclass(frozen=True)
+class WorkerTicket(Record):
+    scope: WorkerScope
+    invocation: int
+    request_id: str
+    call_sha256: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scope", record(WorkerScope, self.scope, "scope"))
+        integer(self.invocation, "worker invocation", minimum=1)
+        identifier(self.request_id, "request ID")
+        if (
+            not isinstance(self.call_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.call_sha256) is None
+        ):
+            raise ValueError("worker call digest must contain 64 lowercase hex digits")
+
+
+def ticket(command: WorkerCall) -> WorkerTicket:
+    return WorkerTicket(
+        command.scope,
+        command.invocation,
+        command.request.identity.request_id,
+        hashlib.sha256(CODEC.encode(command)).hexdigest(),
+    )
+
+
+@dataclass(frozen=True)
+class WorkerControl(Record):
+    ticket: WorkerTicket
+    action: Literal["execute", "abort"]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ticket", record(WorkerTicket, self.ticket, "ticket"))
+        if self.action not in ("execute", "abort"):
+            raise ValueError("unknown worker control action")
+
+
+@dataclass(frozen=True)
+class WorkerReply(Record):
+    ticket: WorkerTicket
+    status: Literal["ready", "aborted", "completed", "failed"]
+    effect: Literal["not_started", "completed", "unknown"]
+    result: ArtifactRef | None = None
+    message: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "ticket", record(WorkerTicket, self.ticket, "ticket"))
+        if self.status not in ("ready", "aborted", "completed", "failed"):
+            raise ValueError("unknown worker reply status")
+        if self.effect not in ("not_started", "completed", "unknown"):
+            raise ValueError("unknown worker execution effect")
+        if self.status in ("ready", "aborted") and self.effect != "not_started":
+            raise ValueError("staging cannot claim execution effects")
+        if self.status == "completed" and self.effect != "completed":
+            raise ValueError("completed worker replies require confirmed effects")
+        if self.message is not None:
+            text(self.message, "worker failure message")
+            if len(self.message) > 1024:
+                raise ValueError("worker failure message exceeds 1024 characters")
+        if (self.status == "failed") != (self.message is not None):
+            raise ValueError("only failed worker replies have a failure message")
+        if self.result is not None:
+            object.__setattr__(
+                self, "result", record(ArtifactRef, self.result, "result")
+            )
+            if self.status != "completed":
+                raise ValueError("only completed workers return output artifacts")
+
+
+CODEC = RecordCodec(
+    {
+        "worker.call": WorkerCall,
+        "worker.control": WorkerControl,
+        "worker.reply": WorkerReply,
+    }
+)

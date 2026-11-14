@@ -191,6 +191,8 @@ class Block(importlib.abc.MetaPathFinder):
             raise AssertionError(fullname)
 sys.meta_path.insert(0, Block())
 from shadowspill.training.worker.bindings import WorkerBindings
+from shadowspill.training.worker.loop import WorkerLoop
+from shadowspill.training.worker.execution import WorkerExecution
 from shadowspill.training.worker.protocol import CODEC
 """
     result = subprocess.run(

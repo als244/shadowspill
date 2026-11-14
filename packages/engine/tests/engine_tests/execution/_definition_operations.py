@@ -2,8 +2,8 @@
 
 import io
 import sys
-from contextlib import nullcontext
 from dataclasses import replace
+from itertools import count
 from pathlib import Path
 
 import torch
@@ -32,7 +32,10 @@ from shadowspill.training.session.inputs import RequestInputs  # noqa: E402
 from shadowspill.training.session.prepared import PreparedRequests  # noqa: E402
 from shadowspill.training.session.state import OperationState  # noqa: E402
 from shadowspill.training.worker.bindings import WorkerBindings, worker_call  # noqa: E402
-from shadowspill.training.worker.protocol import CODEC, WorkerScope  # noqa: E402
+from shadowspill.training.worker.channel import read_message, write_message  # noqa: E402
+from shadowspill.training.worker.execution import WorkerExecution  # noqa: E402
+from shadowspill.training.worker.loop import WorkerLoop  # noqa: E402
+from shadowspill.training.worker.protocol import WorkerControl, WorkerScope  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
 from shadowspill_client.protocol.requests import (  # noqa: E402
@@ -47,6 +50,10 @@ registry = load_registry(PreparationJob.load(root / JOB_NAME).packages)
 family = TrainingBundle.load(root / "training.ssp").recheck(registry)
 prepared = PreparedRequests(family, cache_root=root)
 worker = WorkerBindings(family, WorkerScope("run", "worker", "execution-1", 0))
+worker_budget = BufferBudget(max(1, worker.input_bytes))
+worker_invocations = count(1)
+worker_files = {}
+worker_outputs = []
 plans = dict(family.plans[0])
 primary_name = min(plans)
 primary = plans.pop(primary_name)
@@ -82,6 +89,25 @@ class HostOutputs:
         self.value = None
 
 
+def collect(value):
+    worker_outputs.append(
+        to_host(
+            (value.losses, value.metrics)
+            if isinstance(value, TrainingResult)
+            else value
+        )
+    )
+
+
+def exchange(message):
+    incoming, outgoing = io.BytesIO(), io.BytesIO()
+    write_message(incoming, message)
+    incoming.seek(0)
+    write_message(outgoing, worker_loop.handle(read_message(incoming)))
+    outgoing.seek(0)
+    return read_message(outgoing)
+
+
 def submit(name, operation, *, datums=None, **options):
     wire, payload = None, None
     count = 0
@@ -112,38 +138,18 @@ def invoke(name, operation, *, observe=None, publication_error=False, **options)
 
     def execute(transition):
         assert journal.get(name)[1].state == "running"
-        command = CODEC.decode(
-            CODEC.encode(worker_call(data, transition, worker.scope, 1))
-        )
-        files = (
-            {}
-            if data.spool is None
-            else {
-                frame.reference.id: frame.path for frame in data.spool.frames.values()
-            }
-        )
-        bound = worker.bind(command, lambda ref: files[ref.id])
-        worker_budget = BufferBudget(max(1, bound.input_bytes))
-        bound.verify_inputs(worker_budget)
-        identity = bound.plan
-        if identity is None:
-            return HostOutputs(None)
-        with bound.input_loader(worker_budget) or nullcontext(None) as loader:
-            value = executor.run(
-                plan=None if identity == primary_name else identity,
-                input_loader=loader,
-                hyperparams=bound.hyperparams,
-                accumulate_gradients=command.accumulate_gradients,
-            ).result()
-            owned = to_host(
-                (value.losses, value.metrics)
-                if isinstance(value, TrainingResult)
-                else value
+        command = worker_call(data, transition, worker.scope, next(worker_invocations))
+        worker_files.clear()
+        if data.spool is not None:
+            worker_files.update(
+                {frame.reference.id: frame.path for frame in data.spool.frames.values()}
             )
-            del value
-            executor.synchronize()
+        ready = exchange(command)
+        assert ready.status == "ready", ready
+        completed = exchange(WorkerControl(ready.ticket, "execute"))
+        assert completed.status == "completed", completed
         assert worker_budget.used == (0, 0)
-        return HostOutputs(owned)
+        return HostOutputs(worker_outputs.pop() if worker_outputs else None)
 
     def publish(receipt, outputs):
         assert journal.execution(name) == receipt
@@ -221,6 +227,12 @@ with (
         journal, dispatcher.order, prepared.setup.config.execution, prepared
     )
     executor.initialize(fill, chunk_bytes=32)
+    worker_loop = WorkerLoop(
+        worker.scope,
+        lambda command: worker.bind(command, lambda ref: worker_files[ref.id]),
+        WorkerExecution(executor, worker, worker_budget, collect),
+        worker_budget,
+    )
     invoke(
         "step",
         "step",
@@ -283,3 +295,4 @@ print("Qualified definition-bound operations")
 print("Qualified durable request dispatcher")
 print("Qualified prepared binary request inputs")
 print("Qualified saved worker commands")
+print("Qualified persistent worker invocation loop")

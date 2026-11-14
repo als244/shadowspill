@@ -82,8 +82,26 @@ coordinator's decision, checks the complete rank-local frame ABI and verifies al
 local input files before execution. The agent supplies an owned-file resolver;
 network metadata cannot name local files. Worker reads use a separate bounded
 arena and the existing serial input loader. This boundary does not duplicate
-update/gradient state or provide command replay. Persistent process transport and
-invocation fencing are subsequent integration work.
+update/gradient state or provide command replay.
+
+`training.worker.loop.WorkerLoop` owns one outstanding invocation on a private
+control stream. A stage message checks every local frame and returns a ticket
+bound to the complete command digest. A separate execute message consumes that
+ticket before entering the existing Executor through `WorkerExecution`. Abort
+releases a ready invocation without execution. Submission sequences can have
+rejected gaps; worker invocation numbers are contiguous, and consumed submission
+sequences cannot be reused. Duplicate, stale or mismatched messages invalidate
+the channel. A staging error reports known unstarted effects and permits explicit
+corrected work; an execute exception stops the worker with unknown effects.
+
+The private channel checks its length prefix before reading bounded canonical
+metadata and supports fragmented reads/writes. It has no idle timeout. EOF, a
+truncated command or a broken reply leaves the worker invalid; its owning agent
+must close the Executor/process. No reconnect or automatic replay can reuse that
+live state. CPU tests cover actual child processes and death after execution but
+before reply. The cold-worker GPU oracle exercises the same loop and Executor
+adapter. Agent launch/monitoring, all-worker release, authenticated remote
+transport and service output publication remain integration work.
 
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.
