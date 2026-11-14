@@ -24,14 +24,9 @@ import numpy as np  # noqa: E402
 
 from engine_tests.fixtures.definition_operations import records  # noqa: E402
 from shadowspill.orchestration.launch.admission import NodeAdmission  # noqa: E402
-from shadowspill.orchestration.launch.file_grants import FileGrants  # noqa: E402
 from shadowspill.orchestration.launch.host_arena import HostArena  # noqa: E402
-from shadowspill.orchestration.launch.log_files import LogFiles  # noqa: E402
 from shadowspill.orchestration.launch.node_capacity import discover_capacity  # noqa: E402
-from shadowspill.orchestration.launch.publication import (  # noqa: E402
-    OutputFiles,
-    require_output,
-)
+from shadowspill.orchestration.launch.publication import require_output  # noqa: E402
 from shadowspill.orchestration.launch.staging import FileDelivery  # noqa: E402
 from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
 from shadowspill.training.definitions import load_registry  # noqa: E402
@@ -41,13 +36,11 @@ from shadowspill.training.session.dispatch import RequestDispatcher  # noqa: E40
 from shadowspill.training.session.inputs import RequestInputs  # noqa: E402
 from shadowspill.training.session.prepared import PreparedRequests  # noqa: E402
 from shadowspill.training.session.state import OperationState  # noqa: E402
-from shadowspill.training.worker.launch import (  # noqa: E402
-    launch_worker,
-    start_processes,
-)
-from shadowspill.training.worker.protocol import WorkerLaunch, WorkerScope  # noqa: E402
-from shadowspill.training.worker.requests import NodeFiles, WorkerRequests  # noqa: E402
-from shadowspill.training.worker.resources import WorkerHost, worker_request  # noqa: E402
+from shadowspill.training.worker.launch import start_processes  # noqa: E402
+from shadowspill.training.worker.node import WorkerNode  # noqa: E402
+from shadowspill.training.worker.protocol import WorkerScope  # noqa: E402
+from shadowspill.training.worker.requests import WorkerRequests  # noqa: E402
+from shadowspill.training.worker.resources import WorkerHost  # noqa: E402
 from shadowspill.training.worker.runtime import PreparedWorker  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
@@ -73,7 +66,6 @@ with (root / "training.ssp").open("rb") as stream:
 prepared_worker = PreparedWorker.resolve(
     family, WorkerScope("run", "agent", "gpu-1", 0), bundle=reference
 )
-expected = prepared_worker.startup
 controller_allowance = 1 << 30
 admission = NodeAdmission(
     discover_capacity(
@@ -88,9 +80,7 @@ device = admission.capacity.devices[0]
 # These explicit deployment allowances are qualified for this installed tiny
 # fixture only. Record kernel high-water observations without calling them a
 # maximum proof for arbitrary definitions or larger bundles.
-lease = admission.reserve(
-    worker_request({device.id: (expected, WorkerHost(2 << 30, 512 << 20))})
-)
+host_allowance = WorkerHost(2 << 30, 512 << 20)
 disk = BufferBudget(128 << 20, 100)
 execution = prepared_worker.bindings.setup.config.execution
 oracle = json.loads((root / "agent-oracle.json").read_text())
@@ -124,215 +114,201 @@ def observe(phase, process):
 
 
 @contextmanager
-def worker_logs(memory):
-    logs = LogFiles(
-        lease,
-        device.id,
+def owned_node(memory):
+    node = WorkerNode(
+        admission,
+        {0: prepared_worker},
+        {0: device.id},
+        {0: host_allowance},
+        packages=packages,
         root=directory,
+        cache=directory,
         disk=disk,
         memory=memory,
-        limit_bytes=64 << 10,
+        environment={
+            **os.environ,
+            "TORCHINDUCTOR_CACHE_DIR": str(directory / "inductor"),
+            "TRITON_CACHE_DIR": str(directory / "triton"),
+        },
+        log_limit_bytes=64 << 10,
     )
     try:
-        yield logs
+        yield node
     finally:
-        lease.close()
+        node.stop()
         if sys.exc_info()[0] is not None:
-            path = logs.directory / "stderr.log"
-            if path.exists():
-                with path.open("rb") as stream:
-                    sys.stderr.write(stream.read(64 << 10).decode(errors="replace"))
-        logs.close()
+            for logs in node.logs.values():
+                path = logs.directory / "stderr.log"
+                if path.exists():
+                    with path.open("rb") as stream:
+                        sys.stderr.write(stream.read(64 << 10).decode(errors="replace"))
+        node.close()
 
 
 with (
-    lease,
     HostArena(admission, 64 << 20, 100) as transfers,
     HostArena(admission, 16 << 20, 2) as commands,
     HostArena(admission, 64 << 20, 2) as publication,
     HostArena(
         admission, execution.max_staging_bytes, execution.max_pending_requests
     ) as uploads,
-    FileDelivery(
-        [reference], root=directory, disk=disk, memory=transfers.budget
-    ) as bundle_files,
-    FileGrants(root=directory, memory=transfers.budget) as grants,
-    OutputFiles(root=directory, disk=disk, memory=transfers.budget) as outputs,
-    worker_logs(transfers.budget) as logs,
+    owned_node(transfers.budget) as node,
 ):
     memory, metadata = transfers.budget, commands.budget
     arena_bytes = (144 << 20) + execution.max_staging_bytes
+    assert admission.used.host_bytes == arena_bytes
+    processes = node.start(lambda _: (root / "training.ssp").open("rb"))
+    process, lease = processes[0], node.lease
+    outputs, logs = node.files.outputs, node.logs[0]
     assert admission.used.host_bytes == lease.request.host_bytes + arena_bytes
-    bundle_files.receive(lambda _: (root / "training.ssp").open("rb"))
-    with grants.lend(bundle_files, [reference]):
-        process = launch_worker(
-            lease,
-            device.id,
-            WorkerLaunch(expected, packages),
-            environment={
-                **os.environ,
-                "TORCHINDUCTOR_CACHE_DIR": str(directory / "inductor"),
-                "TRITON_CACHE_DIR": str(directory / "triton"),
-            },
-            files=grants.root,
-            outputs=outputs.root,
-            cache=directory,
-            logs=logs,
-            cwd=directory,
+    with (
+        start_processes(processes, stop=node.stop) as group,
+        WorkerRequests(
+            group,
+            {0: prepared_worker},
+            {0: node.files},
+            metadata=metadata,
+        ) as transfer,
+        RequestRecords(
+            directory / "requests",
+            identity=RunIdentity("owner", "session", "run"),
+            cache_root=directory,
+        ) as journal,
+    ):
+        assert process.child._ready and process.child._socket.gettimeout() is None
+        observe("ready", process)
+        state = OperationState()
+        dispatcher = RequestDispatcher(journal, state, max_pending=3)
+        prepared = PreparedRequests(family, cache_root=directory)
+        journal.claim_writer("writer", "agent")
+        inputs = RequestInputs(
+            journal,
+            dispatcher.order,
+            prepared.setup.config.execution,
+            prepared,
+            budget=uploads.budget,
         )
-        with (
-            start_processes({0: process}, stop=lease.close) as group,
-            WorkerRequests(
-                group,
-                {0: prepared_worker},
-                {0: NodeFiles(directory, disk, memory, grants, outputs)},
-                metadata=metadata,
-            ) as transfer,
-            RequestRecords(
-                directory / "requests",
-                identity=RunIdentity("owner", "session", "run"),
-                cache_root=directory,
-            ) as journal,
-        ):
-            assert process.child._ready and process.child._socket.gettimeout() is None
-            observe("ready", process)
-            state = OperationState()
-            dispatcher = RequestDispatcher(journal, state, max_pending=3)
-            prepared = PreparedRequests(family, cache_root=directory)
-            journal.claim_writer("writer", "agent")
-            inputs = RequestInputs(
-                journal,
-                dispatcher.order,
-                prepared.setup.config.execution,
-                prepared,
-                budget=uploads.budget,
-            )
 
-            def invoke(operation, *, predictions=None, corrupt=False, **options):
-                sequence = journal.last_sequence + 1
-                name = f"request-{sequence}"
-                payload, wire, count = None, None, 0
-                if operation != "optim_step":
-                    datums = records(targets=operation != "forward")
-                    with snapshot_batch(datums, publication.budget) as snapshot:
-                        payload = ArtifactRef(
-                            name, snapshot.sha256, snapshot.size_bytes, MEDIA_TYPE
+        def invoke(operation, *, predictions=None, corrupt=False, **options):
+            sequence = journal.last_sequence + 1
+            name = f"request-{sequence}"
+            payload, wire, count = None, None, 0
+            if operation != "optim_step":
+                datums = records(targets=operation != "forward")
+                with snapshot_batch(datums, publication.budget) as snapshot:
+                    payload = ArtifactRef(
+                        name, snapshot.sha256, snapshot.size_bytes, MEDIA_TYPE
+                    )
+                    wire, count = b"".join(snapshot.chunks()), len(datums)
+            request = ComputeRequest(
+                RequestIdentity(name, "run", sequence, "writer", 1, "agent"),
+                operation,
+                payload,
+                count,
+                **options,
+            )
+            prepared.register(inputs, request)
+            status = inputs.receive(name, None if wire is None else io.BytesIO(wire))
+            assert status.state == "accepted", status
+            data = inputs.take(name)
+
+            def execute(transition):
+                return transfer.execute(data, transition)
+
+            def publish(receipt, result):
+                assert journal.execution(name) == receipt
+                if corrupt:
+                    path = require_output(outputs.root, result._files[0].spec)
+                    with path.open("r+b", buffering=0) as stream:
+                        stream.write(b"corrupt!")
+                result.verify()
+                frame = result.frames[0]
+                with (
+                    result.open(0) as stream,
+                    read_payload(
+                        stream,
+                        result.replies[0].result,
+                        publication.budget,
+                        limits=frame.frame.size,
+                    ) as decoded,
+                ):
+                    rows = decoded.datums[0].inputs
+                    if operation == "step":
+                        loss = sum(row["loss"].array().item() for row in rows.values())
+                        np.testing.assert_allclose(loss, oracle["loss"], rtol=1e-4)
+                    if predictions:
+                        actual = np.empty((3, 3), dtype=np.float32)
+                        buffers = {
+                            buffer: rows[str(index)]["values"]["prediction"].array()
+                            for index, buffer in enumerate(frame.buffers)
+                        }
+                        for piece in data.candidate.source.layout.outputs.pieces(
+                            data.assignment
+                        ):
+                            actual[piece.destination.datum][piece.destination_axes] = (
+                                buffers[piece.buffer][piece.source_axes]
+                            )
+                        np.testing.assert_allclose(
+                            actual, oracle[predictions], rtol=1e-4, atol=1e-5
                         )
-                        wire, count = b"".join(snapshot.chunks()), len(datums)
-                request = ComputeRequest(
-                    RequestIdentity(name, "run", sequence, "writer", 1, "agent"),
+                return ComputeResult(
+                    request.identity,
                     operation,
-                    payload,
-                    count,
-                    **options,
+                    "history",
+                    receipt.outcome,
+                    receipt.completed_updates,
+                    receipt.accumulation,
+                    optim=data.controls.optim,
+                    loss_params=data.controls.loss_params,
+                    grad_scale=data.controls.grad_scale,
                 )
-                prepared.register(inputs, request)
-                status = inputs.receive(
-                    name, None if wire is None else io.BytesIO(wire)
+
+            try:
+                status = dispatcher.run(
+                    name, execute, publish, participates=data.participates
                 )
-                assert status.state == "accepted", status
-                data = inputs.take(name)
-
-                def execute(transition):
-                    return transfer.execute(data, transition)
-
-                def publish(receipt, result):
-                    assert journal.execution(name) == receipt
-                    if corrupt:
-                        path = require_output(outputs.root, result._files[0].spec)
-                        with path.open("r+b", buffering=0) as stream:
-                            stream.write(b"corrupt!")
-                    result.verify()
-                    frame = result.frames[0]
-                    with (
-                        result.open(0) as stream,
-                        read_payload(
-                            stream,
-                            result.replies[0].result,
-                            publication.budget,
-                            limits=frame.frame.size,
-                        ) as decoded,
-                    ):
-                        rows = decoded.datums[0].inputs
-                        if operation == "step":
-                            loss = sum(
-                                row["loss"].array().item() for row in rows.values()
-                            )
-                            np.testing.assert_allclose(loss, oracle["loss"], rtol=1e-4)
-                        if predictions:
-                            actual = np.empty((3, 3), dtype=np.float32)
-                            buffers = {
-                                buffer: rows[str(index)]["values"]["prediction"].array()
-                                for index, buffer in enumerate(frame.buffers)
-                            }
-                            for piece in data.candidate.source.layout.outputs.pieces(
-                                data.assignment
-                            ):
-                                actual[piece.destination.datum][
-                                    piece.destination_axes
-                                ] = buffers[piece.buffer][piece.source_axes]
-                            np.testing.assert_allclose(
-                                actual, oracle[predictions], rtol=1e-4, atol=1e-5
-                            )
-                    return ComputeResult(
-                        request.identity,
-                        operation,
-                        "history",
-                        receipt.outcome,
-                        receipt.completed_updates,
-                        receipt.accumulation,
-                        optim=data.controls.optim,
-                        loss_params=data.controls.loss_params,
-                        grad_scale=data.controls.grad_scale,
+                if corrupt:
+                    assert status.failure.code == "publication_failed", status
+                    assert status.failure.execution_effect == "completed"
+                    assert status.failure.state_valid
+                    assert status.failure.completed_updates == 2
+                    assert (
+                        dispatcher.run(name, lambda _: pytest_fail(), publish) == status
                     )
+                else:
+                    assert status.state == "completed", status
+            finally:
+                inputs.finish(name)
+            assert inputs.staging.used == (0, 0)
+            observe(name, process)
 
-                try:
-                    status = dispatcher.run(
-                        name, execute, publish, participates=data.participates
-                    )
-                    if corrupt:
-                        assert status.failure.code == "publication_failed", status
-                        assert status.failure.execution_effect == "completed"
-                        assert status.failure.state_valid
-                        assert status.failure.completed_updates == 2
-                        assert (
-                            dispatcher.run(name, lambda _: pytest_fail(), publish)
-                            == status
-                        )
-                    else:
-                        assert status.state == "completed", status
-                finally:
-                    inputs.finish(name)
-                assert inputs.staging.used == (0, 0)
-                observe(name, process)
+        def pytest_fail():
+            raise AssertionError("completed optimizer replayed")
 
-            def pytest_fail():
-                raise AssertionError("completed optimizer replayed")
-
-            invoke(
-                "step",
-                optim={"lr": 0.03},
-                grad_scale=0.5,
-                loss_params={"temperature": 2.0},
-            )
-            invoke("forward", outputs="predictions", predictions="after_step")
-            invoke("forward_backward", loss_params={"temperature": 0.5})
-            invoke("forward_backward", loss_params={"temperature": 1.0})
-            invoke("optim_step", optim={"lr": 0.02}, grad_scale=-0.5, corrupt=True)
-            invoke("forward", outputs="predictions", predictions="after_split")
-            assert state.boundary.completed_updates == 2 and state.boundary.valid
-            inputs.staging.close()
-        assert process.child.closed and lease.closed
-        assert admission.used.host_bytes == arena_bytes
-        log_refs = logs.references()
-        with FileDelivery(
-            list(log_refs.values()), root=directory, disk=disk, memory=memory
-        ) as saved_logs:
-            saved_logs.receive(logs.open)
-            logs.close()
-            with saved_logs.use() as resolve:
-                for reference in log_refs.values():
-                    assert resolve(reference).stat().st_size == reference.size_bytes
+        invoke(
+            "step",
+            optim={"lr": 0.03},
+            grad_scale=0.5,
+            loss_params={"temperature": 2.0},
+        )
+        invoke("forward", outputs="predictions", predictions="after_step")
+        invoke("forward_backward", loss_params={"temperature": 0.5})
+        invoke("forward_backward", loss_params={"temperature": 1.0})
+        invoke("optim_step", optim={"lr": 0.02}, grad_scale=-0.5, corrupt=True)
+        invoke("forward", outputs="predictions", predictions="after_split")
+        assert state.boundary.completed_updates == 2 and state.boundary.valid
+        inputs.staging.close()
+    assert process.child.closed and lease.closed
+    assert admission.used.host_bytes == arena_bytes
+    log_refs = logs.references()
+    with FileDelivery(
+        list(log_refs.values()), root=directory, disk=disk, memory=memory
+    ) as saved_logs:
+        saved_logs.receive(logs.open)
+        logs.close()
+        with saved_logs.use() as resolve:
+            for reference in log_refs.values():
+                assert resolve(reference).stat().st_size == reference.size_bytes
 assert admission.used.claims == 0
 assert disk.used == memory.used == metadata.used == publication.budget.used == (0, 0)
 (directory / "host-accounting.json").write_text(
@@ -353,3 +329,4 @@ print("Qualified installed agent-owned GPU bootstrap and binary publication")
 print("Qualified production worker request/file coordination")
 print("Qualified node-backed worker and input/artifact host accounting")
 print("Qualified pre-reserved worker logs and post-exit artifact transfer")
+print("Qualified production node worker lifecycle")
