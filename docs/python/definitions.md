@@ -114,6 +114,22 @@ constructive coverage witness. Identical adapter layouts share their resolved
 metadata across counts. Model construction, native device/spill admission,
 collective qualification and service readiness remain separate steps.
 
+The internal `training.preparation.bundle.TrainingBundle` saves a complete admitted
+operation family through the existing phase-archive codec. It retains the resolved
+setup, referenced source captures/profiles, per-worker Plans, input/output layouts,
+coverage witnesses and shared-state admission. It contains no live weights or
+optimizer progress. `TrainingBundle.from_prepared(family, sources).save(path)`
+accepts the result of `plan_family` and its original measured source profiles.
+
+`TrainingBundle.load(path)` decodes an inspectable CPU artifact. Before creating
+workers, call `bundle.recheck(registry)` to validate installed sources and exact
+capabilities, re-derive operation/count Programs from saved captures, replay saved
+schedules and recheck coverage and shared admission. Missing masked/optimizer or
+accumulation paths are errors. Loading does not capture, profile, search, select
+replacement candidates or initialize training state. The current qualification
+covers the external classifier fixture; service startup, provider resources,
+distributed execution and value-dependent maximum workspace remain separate work.
+
 Phase policies use `PolicyDefinition(id, kind, config, create)`. The CPU resolver
 validates and fills `Policy` configuration through the registered factory's
 configuration schema, records its source, and rejects unknown policies or a

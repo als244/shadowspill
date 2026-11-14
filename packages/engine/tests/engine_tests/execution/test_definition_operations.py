@@ -14,6 +14,7 @@ from engine_tests.fixtures import external_definition
 from engine_tests.fixtures.definition_operations import definitions, example
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill import CommunicationInfo
+from shadowspill.training.preparation.bundle import TrainingBundle
 from shadowspill.training.preparation.capture import build_template
 from shadowspill.training.preparation.family import plan_family
 from shadowspill.training.preparation.layouts import prepare_layouts
@@ -81,6 +82,23 @@ def test_definition_bound_operations_in_cold_worker(tmp_path):
     assert all(len(rows) == 3 for rows in family.families.values())
     assert family.memory[0].execution_bytes <= 2 << 30
     assert family.memory[0].spill_bytes <= 64 << 20
+    bundle = TrainingBundle.from_prepared(family, measured)
+    bundle.save(tmp_path / "training.ssp")
+    for seed in ("0", "1"):
+        inspected = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "engine_tests.training._bundle_checks",
+                str(tmp_path / "training.ssp"),
+            ],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert inspected.returncode == 0, inspected.stdout + inspected.stderr
+        assert "Qualified saved bundle CPU recheck" in inspected.stdout
 
     def full_buffer(operation):
         return next(
@@ -148,6 +166,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path):
         ],
         env={
             **os.environ,
+            "PYTHONHASHSEED": "3",
             "TORCHINDUCTOR_CACHE_DIR": str(tmp_path / "cold-inductor"),
             "TRITON_CACHE_DIR": str(tmp_path / "cold-triton"),
         },

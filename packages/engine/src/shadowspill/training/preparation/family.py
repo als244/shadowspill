@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from dataclasses import replace
 from types import MappingProxyType
 
-from shadowspill.artifacts._values import digest, plain
 from shadowspill.artifacts.budgets import MemoryBudgets
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.pool_memory import PoolMemoryProfile
@@ -20,13 +19,13 @@ from shadowspill.step.ordering import StepDataOrdering
 from shadowspill_client._records import integer
 
 from .family_checks import _collectives, _orderings
+from .family_identity import candidate_identity, plan_identity, validate_profile
 from .family_records import PlannedCandidate, PlanRejection, PreparedPlans, WorkerPlans
 from .family_selection import select_family
 from .templates import (
     TemplateInventory,
     TemplateUse,
     instantiate_template,
-    validate_template,
 )
 
 
@@ -58,23 +57,8 @@ def plan_family(
     ranks = set(range(setup.context.parallelism.world_size))
     if pool_memory is not None and pool_memory.keys() != ranks:
         raise ValueError("pool memory evidence must name every logical worker")
-    for key, template in inventory.templates.items():
-        source = profiled[key]
-        validate_template(template, source.program)
-        if (
-            source.metadata.get("preparation_template") != key
-            or plain(source.metadata.get("profiling_scenario"))
-            != template.signature()["scenario"]
-            or plain(source.metadata.get("profiling_options"))
-            != setup.config.preparation.profiling.to_dict()
-        ):
-            raise ValueError(
-                "saved profiling policy/scenario differs from the prepared template"
-            )
-        if source.estimated_memory:
-            raise ValueError(
-                "prepared operation family requires measured memory evidence"
-            )
+    for key in inventory.templates:
+        validate_profile(inventory, key, profiled[key])
     candidates = [row for rows in inventory.families.values() for row in rows]
     attempts = sum(
         len(_orderings(c))
@@ -136,14 +120,7 @@ def plan_family(
                 "prepared Plan lacks physical admission: "
                 + "; ".join(result.simulation_only_reasons)
             )
-        name = digest(
-            {
-                "template": use.template,
-                "kind": use.kind,
-                "count": use.count,
-                "ordering": key[1],
-            }
-        )
+        name = plan_identity(use, order)
         plans[rank][name] = result
         cached[key] = name
         return name
@@ -154,15 +131,7 @@ def plan_family(
         operation = candidate.layout.operation
         for ordering in _orderings(candidate):
             label = None if ordering is None else ordering.label
-            identity = digest(
-                {
-                    "operation": operation.to_dict(),
-                    "batch": shape.batch,
-                    "case": shape.case,
-                    "count": shape.count,
-                    "ordering": label,
-                }
-            )
+            identity = candidate_identity(candidate, ordering)
             try:
                 workers = {
                     rank: WorkerPlans(

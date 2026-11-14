@@ -1,6 +1,5 @@
 """Execute prepared external definitions with capture and compilation forbidden."""
 
-import json
 import sys
 from pathlib import Path
 
@@ -18,22 +17,45 @@ triton.knobs.compilation.listener = compilation_finished
 forbid_preparation()
 
 from engine_tests.fixtures.definition_operations import definitions, example, records  # noqa: E402
-from shadowspill import Executor, Plan  # noqa: E402
+from engine_tests.training.test_setup_resolution import installed  # noqa: E402
+from shadowspill import Executor  # noqa: E402
 from shadowspill.training.observations import to_host  # noqa: E402
+from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
 from shadowspill.training.session.state import OperationState  # noqa: E402
 from shadowspill_client.protocol.operations import OperationKey  # noqa: E402
 
 root = Path(sys.argv[1])
-plans = {
-    name: Plan.load(root / f"{name}.ssp")
-    for name in ("step", "backward", "masked", "evaluation", "optim")
+family = TrainingBundle.load(root / "training.ssp").recheck(installed())
+
+
+def full_buffer(operation):
+    return next(
+        row.workers[0]
+        for row in family.families[operation]
+        if row.source.layout.candidate.schedule.buffers[0].max_datums == 4
+    )
+
+
+step = full_buffer(OperationKey("step", "metrics"))
+backward = full_buffer(OperationKey("forward_backward", "metrics"))
+evaluation = full_buffer(OperationKey("forward", "predictions", "evaluation"))
+names = {
+    "step": step.main,
+    "backward": backward.main,
+    "masked": backward.masked,
+    "evaluation": evaluation.main,
+    "optim": backward.optimizer,
 }
-plans.update(
-    {
-        name: Plan.load(root / f"{name}.ssp")
-        for name in json.loads((root / "extra-plans.json").read_text())
-    }
-)
+plans = dict(family.plans[0])
+primary_name = min(plans)
+primary = plans.pop(primary_name)
+
+
+def selected(name):
+    identity = names[name]
+    return "" if identity == primary_name else identity
+
+
 oracle = torch.load(root / "oracle.pt", weights_only=True)
 resolved, objective, _ = definitions()
 
@@ -57,12 +79,11 @@ def snapshot(executor):
 
 
 state = OperationState()
-primary = plans.pop("evaluation")
 with Executor(primary, plans=plans) as executor:
     executor.initialize(fill, chunk_bytes=32)
     with example(resolved, objective, "step") as (binding, adapted):
         result = executor.run(
-            plan="step",
+            plan=selected("step"),
             args=[binding.arguments(adapted, {"temperature": 2.0})],
             hyperparams={"optimizer_group.0.lr": 0.03, "grad_scale": 0.5},
         ).result()
@@ -79,7 +100,7 @@ with Executor(primary, plans=plans) as executor:
                 "forward_backward", f"part{index}", participates=True
             )
             executor.run(
-                plan="backward",
+                plan=selected("backward"),
                 args=[binding.arguments(adapted, overrides)],
                 accumulate_gradients=transition.accumulate_gradients,
             ).result()
@@ -91,7 +112,9 @@ with Executor(primary, plans=plans) as executor:
                 observed,
             ):
                 args = forward.arguments(observed)
-                ((loss, outputs),) = to_host(executor.run(args=[args]).result())
+                ((loss, outputs),) = to_host(
+                    executor.run(plan=selected("evaluation"), args=[args]).result()
+                )
                 assert loss is None
                 expected = (
                     args[0]["pixels"].flatten(start_dim=1)
@@ -111,14 +134,17 @@ with Executor(primary, plans=plans) as executor:
         transition = state.begin("forward_backward", "masked", participates=False)
         assert transition.skipped
         ((loss, outputs),) = to_host(
-            executor.run(plan="masked", args=[binding.arguments(adapted)]).result()
+            executor.run(
+                plan=selected("masked"), args=[binding.arguments(adapted)]
+            ).result()
         )
         assert loss.item() == 0.0 and outputs["valid_examples"].item() == 0
         state.complete(transition)
         torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
     transition = state.begin("optim_step", "update")
     executor.run(
-        plan="optim", hyperparams={"optimizer_group.0.lr": 0.02, "grad_scale": -0.5}
+        plan=selected("optim"),
+        hyperparams={"optimizer_group.0.lr": 0.02, "grad_scale": -0.5},
     ).result()
     state.complete(transition)
     actual = snapshot(executor)

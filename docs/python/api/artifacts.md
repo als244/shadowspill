@@ -25,6 +25,15 @@ require neither an accelerator nor ShadowSpill pools. Executor sets up pools in 
 worker. See the [phase architecture](../phases.md)
 for the full API and current qualification limits.
 
+Artifact `load` also accepts `max_metadata_bytes` and `max_payload_bytes`. These
+limits check declared decompressed sizes before reading archive contents; they
+bound serialized bytes rather than decoded Python object overhead. Ordinary phase
+artifacts preserve their existing unbounded defaults. The developing
+[training bundle](../definitions.md) defaults to 256 MiB of metadata and 8 GiB of
+deduplicated binary payloads, with explicit per-load overrides. All archives reject
+duplicate JSON keys and nonfinite JSON values, in addition to verifying checksums
+and the exact member inventory.
+
 ## Contents
 
 - [Program](#program)
