@@ -61,6 +61,25 @@ define the forwarding boundary.
 
 ## Request and worker ownership
 
+`server.live.LiveRun` composes the existing node startup barrier, worker request
+adapter, controller and result publisher. A registered creation receives ready
+status only after all workers initialize. Its caller reserves the decoded family
+and node-backed arenas before construction and retains them through retirement.
+The live owner pins request and artifact stores across this entire lifetime.
+
+Orderly close joins the controller before releasing publishers and worker files.
+Allocation stop uses the same confirmed-effect shutdown path, and can interrupt
+its own resource wait without closing another job's admission. Finalized worker
+logs and a session/run/rank manifest enter immutable artifact storage before node
+files are removed. Cleanup failures retain the owners, storage pins and parent
+reservations for retry. The parent service must also finish HTTP borrows before
+dropping this owner. This composition does not yet implement creation-job
+admission, public server constructors or remote node agents.
+
+Result artifact identities include session, run, request and output names inside
+the authenticated owner's namespace. Reusing run/request IDs in another session
+cannot replace or accidentally reuse an earlier session's tensor output.
+
 `server.storage.ServiceStorage` composes the run catalog with bounded request and
 artifact owners. Deployment supplies persistent/cache roots and a host envelope
 for each open request journal/index, reserved before recovery. Names below those

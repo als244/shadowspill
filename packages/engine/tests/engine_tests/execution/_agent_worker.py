@@ -31,6 +31,7 @@ from shadowspill.orchestration.launch.publication import require_output  # noqa:
 from shadowspill.orchestration.launch.staging import FileDelivery  # noqa: E402
 from shadowspill.server.authentication import BearerTokens  # noqa: E402
 from shadowspill.server.http import HTTP_SCRATCH_BYTES, HTTPService, RunAccess  # noqa: E402
+from shadowspill.server.live import LiveRun  # noqa: E402
 from shadowspill.server.records.requests import RunIdentity  # noqa: E402
 from shadowspill.server.results import ResultPublisher  # noqa: E402
 from shadowspill.server.storage import ServiceStorage  # noqa: E402
@@ -54,7 +55,6 @@ from shadowspill_client.protocol.requests import (  # noqa: E402
     OperationRequest,
     RequestIdentity,
 )
-from shadowspill_client.protocol.service import ServiceError  # noqa: E402
 from shadowspill_client.transport.http import HTTPTransport  # noqa: E402
 
 root = Path(sys.argv[1])
@@ -459,34 +459,22 @@ def qualify_allocation_stop():
         storage.catalog.create(
             identity, request_sha256=config.sha256, configuration=config
         )
-        storage.catalog.progress(identity, "initializing")
-        processes = node.start(artifacts.open)
-        with (
-            start_processes(processes, stop=node.stop) as group,
-            WorkerRequests(
-                group, {0: worker}, {0: node.files}, metadata=commands.budget
-            ) as transfer,
-            storage.requests(identity) as journal,
-            ResultPublisher(
-                artifacts,
-                session_id="session",
-                history_id="stop-history",
-                root=directory,
-                memory=publication.budget,
-                disk=disk,
-            ) as publisher,
-            RunController(
-                journal,
-                PreparedRequests(family, cache_root=directory),
-                transfer,
-                publisher,
-                server_incarnation="stop-agent",
-                budget=uploads.budget,
-            ) as controller,
-        ):
-            storage.catalog.ready(
-                identity, plans=bundle_reference, initial_history_id="stop-history"
-            )
+        live = LiveRun(
+            storage,
+            identity,
+            family,
+            [node],
+            plans=bundle_reference,
+            history_id="stop-history",
+            root=directory,
+            metadata=commands.budget,
+            uploads=uploads.budget,
+            publication=publication.budget,
+            disk=disk,
+        )
+        try:
+            live.start()
+            controller = live.controller
             controller.attach("writer")
             with snapshot_batch(records(targets=True), publication.budget) as snapshot:
                 payload = ArtifactRef(
@@ -511,15 +499,18 @@ def qualify_allocation_stop():
             )
             # Allocation ownership can end with unresolved gradients. It must
             # not synthesize an optimizer update, a discard, or a valid new run.
-            controller.stop(node.stop, timeout=30)
+            live.stop()
             assert controller.closed and not controller.boundary.valid
             assert controller.boundary.accumulation == result.result.accumulation
             assert controller.boundary.completed_updates == 0
             assert controller.register(command) == result
-            assert processes[0].child.closed and node.lease.closed
-            storage.catalog.stop(
-                identity, ServiceError("allocation_stopped", "Allocation ended.")
-            )
+            assert node.closed and node.lease.closed and live.closed
+            assert storage.catalog.get(identity).state == "stopped"
+            with storage.requests(identity) as saved:
+                assert saved.get("backward")[1] == result
+            assert any(ref.id.startswith("worker-logs.") for ref in artifacts.page())
+        finally:
+            live.stop()
         node.close()
     assert admission.used.claims == 0 and disk.used == (0, 0)
     (directory / "allocation-stop.json").write_text(
