@@ -61,7 +61,8 @@ class Block(importlib.abc.MetaPathFinder):
 block = Block()
 sys.meta_path.insert(0, block)
 for module in ('launch.processes', 'launch.rank_device', 'launch.workers',
-               'launch.staging', 'monitoring.lifecycle', 'candidates', 'communication',
+               'launch.staging', 'launch.supervision', 'monitoring.lifecycle',
+               'candidates', 'communication',
                'capture.nsys', 'capture.nsys_worker'):
     importlib.import_module('shadowspill.orchestration.' + module)
 for module in ('api', 'configuration', 'phases', 'candidates', 'reuse',

@@ -132,9 +132,9 @@ class WorkerGroup:
         if self.valid:
             self.valid = False
             with ExitStack() as cleanup:
+                cleanup.callback(self._stop)
                 for connection in self.connections.values():
                     cleanup.callback(connection.close)
-                self._stop()
 
     def __enter__(self) -> Self:
         if not self.valid:

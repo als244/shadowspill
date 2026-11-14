@@ -12,6 +12,7 @@ choose a training or measurement protocol, or interpret a saved recipe directory
 | `launch/rank_device` | Shared ordinary/profiled script/module wrapper that isolates the assigned GPU while preserving both global and local rank identities |
 | `launch/workers` | Host Gloo rendezvous, launcher-to-logical rank mapping and small result gathers |
 | `launch/staging` | Quota-bound node-local artifact delivery, complete size/checksum checks and consumer ownership |
+| `launch/supervision` | Fresh owned process groups, non-reaping exit observation, bounded logs and orderly/forced shutdown |
 | `monitoring/lifecycle` | Append-only host phase journals, including context entry/cleanup and failures |
 | `candidates` | Record a local candidate's device exhaustion after releasing its traceback; other failures propagate |
 | `communication` | Union exact collective requests across compatible caller-selected Programs; measurement remains in the public phase APIs |
@@ -74,3 +75,18 @@ producer. Cancellation takes effect between reads and retains reservations while
 a read is blocked. A failed deletion retains its quotas until cleanup succeeds.
 Files are ephemeral and never establish durable completion or execution replay.
 Agent startup, supervision and allocation admission still belong to the caller.
+
+`OwnedProcess` starts a trusted installed command in a fresh POSIX session with
+an explicit environment and working directory. Private worker control has its own
+stream; stdout/stderr are drained independently into capped log files. Excess log
+bytes or log-write errors are reported while draining continues, so logging cannot
+block a child. This is neither a scheduler allocation request nor an idle timeout.
+
+Exit observation uses `waitid(..., WNOWAIT)` to preserve the leader's PID until
+owned-descendant cleanup finishes. Closing the private control streams first
+permits orderly worker/report finalization. Explicit process close waits for that
+exit, then escalates TERM/KILL only for its owned process group if needed. Any
+remaining group descendants are removed before reaping the leader, preventing
+PID reuse from targeting unrelated work. Non-reaping observation is required on
+the worker host. Startup handshakes, assigned-device admission and agent/service
+authentication are separate integration responsibilities.

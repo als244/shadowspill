@@ -188,6 +188,16 @@ def test_unavailable_connection_never_certifies_preserved_mutable_state():
         assert stopped == [True] and not group.valid and not events
 
 
+def test_group_closes_private_control_before_waiting_for_orderly_worker_exit():
+    order = []
+    connection = SimpleNamespace(
+        scope=SCOPE, valid=True, close=lambda: order.append("eof")
+    )
+    group = WorkerGroup({0: connection}, stop=lambda: order.append("wait"))
+    group.close()
+    assert order == ["eof", "wait"]
+
+
 def test_connection_rejects_wrong_tickets_or_phase_effects_before_reuse():
     command = call()
     for reply in (

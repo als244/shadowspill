@@ -126,6 +126,15 @@ sender cleanup. The launcher does not interpret models, objectives or tensor
 layouts; the worker separately rechecks each prepared input ABI. Agent startup,
 supervision and actual node-resource admission remain to be connected.
 
+`orchestration.launch.supervision.OwnedProcess` supplies fresh process-group
+ownership with bounded stdout/stderr draining and non-reaping exit observation.
+The controller group closes private control streams before waiting on its stop
+callback, permitting orderly worker/report finalization. Explicit close escalates
+only the owned process group and removes descendants before reaping its leader;
+there is no idle timeout. Worker startup handshakes, device/resource admission,
+bounded initialization and service authentication still need to be wired around
+these primitives.
+
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.
 Canonical request digests include binary payload checksums. An identical ID/content
