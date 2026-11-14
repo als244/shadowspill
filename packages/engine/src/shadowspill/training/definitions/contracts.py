@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from shadowspill.training.inputs.validation import ValidatedBatch
 
     from .build import ModelBuild, ModelBuildContext
+    from .initialization import InitializationContext, ModelInitialization
 
 type Configuration = Callable[..., Any]
 type Schema = InputSchema | Callable[[Any], InputSchema]
@@ -63,6 +64,9 @@ class ModelDefinition:
     default_parallelism: Callable[[Any, InputSchema], Parallelism] | None = None
     build: Callable[[Any, ModelBuildContext], ModelBuild] | None = None
     input_groups: Callable[[Any, ValidatedBatch], Sequence[Sequence[int]]] | None = None
+    initialization: (
+        Callable[[Any, InitializationContext], ModelInitialization] | None
+    ) = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -89,6 +93,10 @@ class ModelDefinition:
             raise TypeError("default_parallelism must be an installed CPU function")
         if self.build is not None and not callable(self.build):
             raise TypeError("build must be an installed CPU description function")
+        if self.initialization is not None and not callable(self.initialization):
+            raise TypeError(
+                "initialization must be an installed CPU description function"
+            )
         for name in ("capabilities", "mutable_buffers"):
             values = tuple(getattr(self, name))
             if any(not isinstance(v, str) or not v for v in values) or len(

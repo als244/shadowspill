@@ -4,6 +4,12 @@ from shadowspill.training.inputs.adapters import InputAdapter, InputLayout, Inpu
 
 from .build import ModelBuild, ModelBuildContext
 from .contracts import ModelDefinition, ObjectiveDefinition, simple_loss
+from .initialization import (
+    InitializationContext,
+    InitializationRuntime,
+    ModelInitialization,
+    TensorInitializer,
+)
 from .optimizer import OptimizerDefinition
 from .packages import load_registry
 from .policies import PolicyDefinition
@@ -13,12 +19,15 @@ from .registry import Registry, ResolvedModel, ResolvedObjective, ResolvedOptimi
 from .samples import RepresentativePattern, RepresentativeSample
 
 __all__ = [
+    "InitializationContext",
+    "InitializationRuntime",
     "InputAdapter",
     "InputLayout",
     "InputView",
     "ModelBuild",
     "ModelBuildContext",
     "ModelDefinition",
+    "ModelInitialization",
     "ModelReferenceDefinition",
     "ObjectiveDefinition",
     "OptimizerDefinition",
@@ -31,6 +40,7 @@ __all__ = [
     "ResolvedModel",
     "ResolvedObjective",
     "ResolvedOptimizer",
+    "TensorInitializer",
     "load_registry",
     "simple_loss",
 ]

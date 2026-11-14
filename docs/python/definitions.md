@@ -63,6 +63,35 @@ remain in the existing phase engine. Description never opens a provider or impor
 a factory named by a compute request; definitions own those source-pinned choices.
 Templates save and recheck the resolved construction and actual provider inventory.
 
+Fresh worker initialization uses an optional
+`initialization(config, InitializationContext)` hook. It describes the pinned
+`Weights`, complete model settings, parallelism and logical rank on CPU, without
+constructing a model, importing Torch, opening weight files or downloading data.
+Return `ModelInitialization(peak_bytes=..., chunk_bytes=..., open=...)`: the peak
+includes retained loader state, all CPU scratch and the maximum destination chunk,
+separate from the admitted fixed model pools. Creation checks this bound against
+host staging before launching workers. Inspection and preparation may omit initial
+weights; fresh creation requires explicit weights and a bounded installed loader,
+or a compatible checkpoint restore.
+
+The worker reserves the peak before entering `open(InitializationRuntime)`.
+That context manager yields `fill(TensorChunk, flat_cpu_destination)` and releases
+its resources before the reservation ends, including on failure. The existing
+Executor visits only owned tensor regions and handles captured defaults,
+optimizer state, master copies and tied storage. The loader fills the requested
+storage range, using the descriptor's original geometry and offset; it must not
+construct an unbounded full model or invent values for unrecognized parameters.
+Random loaders can reuse `checkpoint.initialization.fill_generated`, whose fixed
+per-name blocks preserve values across chunk sizes and rank ownership. The
+external classifier fixture demonstrates this path.
+
+Pretrained loaders require a pinned revision. Artifact initialization uses an
+opaque, owner-granted ID resolved by `InitializationRuntime.artifact`; a request
+never supplies a server filesystem path. Runtime cache paths and loader callbacks
+are worker-local and never enter saved Plans or public wire records. Loader code
+and its dependencies belong to the model definition's source closure. Worker
+startup and the public service still require their separate integration checks.
+
 Opaque kernels used by prepared operations need an all-value allocation contract.
 `ModelBuild`, `ObjectiveDefinition` and `OptimizerDefinition` accept
 `allocation_invariants`, mapping exact compiled call names to versioned contract

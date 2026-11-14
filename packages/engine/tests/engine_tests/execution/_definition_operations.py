@@ -23,7 +23,10 @@ from engine_tests.fixtures.definition_operations import records  # noqa: E402
 from shadowspill import Executor  # noqa: E402
 from shadowspill.execution.results import TrainingResult  # noqa: E402
 from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
-from shadowspill.training.definitions import load_registry  # noqa: E402
+from shadowspill.training.definitions import (  # noqa: E402
+    InitializationRuntime,
+    load_registry,
+)
 from shadowspill.training.observations import to_host  # noqa: E402
 from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
 from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
@@ -34,6 +37,10 @@ from shadowspill.training.session.state import OperationState  # noqa: E402
 from shadowspill.training.worker.bindings import WorkerBindings, worker_call  # noqa: E402
 from shadowspill.training.worker.channel import read_message, write_message  # noqa: E402
 from shadowspill.training.worker.execution import WorkerExecution  # noqa: E402
+from shadowspill.training.worker.initialization import (  # noqa: E402
+    initialize,
+    prepare_initialization,
+)
 from shadowspill.training.worker.loop import WorkerLoop  # noqa: E402
 from shadowspill.training.worker.protocol import WorkerControl, WorkerScope  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
@@ -58,11 +65,6 @@ plans = dict(family.plans[0])
 primary_name = min(plans)
 primary = plans.pop(primary_name)
 oracle = torch.load(root / "oracle.pt", weights_only=True)
-
-
-def fill(request, chunk):
-    value = oracle["initial"][request.name].reshape(-1)
-    chunk.copy_(value[request.offset : request.offset + chunk.numel()])
 
 
 def snapshot(executor):
@@ -226,7 +228,23 @@ with (
     inputs = RequestInputs(
         journal, dispatcher.order, prepared.setup.config.execution, prepared
     )
-    executor.initialize(fill, chunk_bytes=32)
+    initialization = prepare_initialization(prepared.setup)[0]
+    initialization_budget = BufferBudget(initialization.description.peak_bytes)
+
+    def no_artifact(identity):
+        raise AssertionError("random initialization opened an artifact")
+
+    initialize(
+        executor,
+        initialization,
+        InitializationRuntime(root, no_artifact),
+        initialization_budget,
+    )
+    assert initialization_budget.used == (0, 0)
+    initial = snapshot(executor)
+    for name, expected in oracle["initial"].items():
+        torch.testing.assert_close(initial[name].reshape(expected.shape), expected)
+    print("Qualified bounded installed initialization")
     worker_loop = WorkerLoop(
         worker.scope,
         lambda command: worker.bind(command, lambda ref: worker_files[ref.id]),

@@ -15,12 +15,14 @@ from engine_tests.fixtures.definition_operations import definitions, example
 from engine_tests.fixtures.installed_definition import install
 from engine_tests.training.test_setup_resolution import arguments
 from shadowspill import ProfiledProgram, Program
-from shadowspill.training.definitions import load_registry
+from shadowspill.artifacts.tensors import TensorChunk
+from shadowspill.training.definitions import InitializationRuntime, load_registry
 from shadowspill.training.preparation import job
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.operation_build import build_operation
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import capture_inventory
+from shadowspill.training.worker.initialization import prepare_initialization
 from shadowspill_client import (
     BuildCandidates,
     Memory,
@@ -183,6 +185,18 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     (tmp_path / "extra-plans.json").write_text(json.dumps(extra))
 
     reference = resolved.create()
+    initialization = prepare_initialization(setup)[0]
+    with (
+        initialization.description.open(
+            InitializationRuntime(tmp_path, lambda _: pytest.fail("artifact opened"))
+        ) as fill,
+        torch.no_grad(),
+    ):
+        for name, value in reference.named_parameters():
+            fill(
+                TensorChunk(name, tuple(value.shape), value.dtype, 0, value.numel()),
+                value.reshape(-1),
+            )
     initial = {
         name: value.detach().clone() for name, value in reference.named_parameters()
     }
@@ -238,6 +252,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     assert "Qualified prepared binary request inputs" in worker.stdout
     assert "Qualified saved worker commands" in worker.stdout
     assert "Qualified persistent worker invocation loop" in worker.stdout
+    assert "Qualified bounded installed initialization" in worker.stdout
     if provider:
         events = [json.loads(line) for line in event_path.read_text().splitlines()]
         by_process = {}

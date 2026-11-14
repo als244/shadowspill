@@ -1,8 +1,13 @@
 """A non-text integration using only public definition/capture interfaces."""
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 
-from shadowspill.training.definitions import ModelDefinition, ObjectiveDefinition
+from shadowspill.training.definitions import (
+    ModelDefinition,
+    ModelInitialization,
+    ObjectiveDefinition,
+)
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.definitions import (
     DefinitionSource,
@@ -37,6 +42,40 @@ def create(config):
     return Classifier()
 
 
+def initialization(config, context):
+    if context.weights.kind != "random":
+        raise ValueError("the classifier fixture requires explicit random weights")
+
+    @contextmanager
+    def open_loader(runtime):
+        import torch
+
+        from shadowspill.checkpoint.initialization import fill_generated
+
+        shapes = {
+            "head.weight": (config.num_classes, 4),
+            "head.bias": (config.num_classes,),
+        }
+
+        def sample(name, shape, start, stop, generator):
+            if shapes.get(name) != shape:
+                raise ValueError("unrecognized classifier parameter geometry")
+            return torch.empty(stop - start).uniform_(-0.5, 0.5, generator=generator)
+
+        def fill(request, destination):
+            fill_generated(
+                request,
+                destination,
+                sample=sample,
+                seed=context.weights.seed,
+                block_elements=8,
+            )
+
+        yield fill
+
+    return ModelInitialization(peak_bytes=1 << 20, chunk_bytes=32, open=open_loader)
+
+
 def classification_loss(model, inputs, loss_inputs, loss_params):
     import torch
 
@@ -63,6 +102,7 @@ def register(registry):
                 [Capacity("max_examples", "examples", "count", scheduled=True)],
             ),
             capabilities=("class_logits",),
+            initialization=initialization,
         ),
         source=SOURCE,
     )

@@ -22,6 +22,7 @@ from .contracts import (
     ObjectiveDefinition,
     Schema,
 )
+from .initialization import InitializationContext, ModelInitialization
 from .optimizer import OptimizerDefinition
 from .policies import PolicyDefinition, PolicyKind, ResolvedPolicy
 from .preparation import PreparationDefinition, ResolvedPreparationDefinition
@@ -61,6 +62,22 @@ class ResolvedModel:
     config: Mapping[str, Value]
     inputs: InputSchema
     settings: Model | None = None
+
+    def describe_initialization(
+        self, context: InitializationContext
+    ) -> ModelInitialization:
+        if context.model != self.settings:
+            raise ValueError("initialization context differs from the resolved model")
+        if self.definition.initialization is None:
+            raise ValueError(
+                "model definition has no bounded initialization hook; "
+                "install one or restore a compatible checkpoint"
+            )
+        configured, _ = _configuration(self.definition.config, self.config)
+        result = self.definition.initialization(configured, context)
+        if not isinstance(result, ModelInitialization):
+            raise TypeError("initialization hook must return ModelInitialization")
+        return result
 
     def group_inputs(self, batch: ValidatedBatch) -> tuple[tuple[int, ...], ...]:
         """Resolve installed atomic grouping once, before packing/preprocessing."""
