@@ -45,6 +45,28 @@ def device_uuid(device: int) -> str:
     return "GPU-" + str(uuid.UUID(bytes=bytes(identifier)))
 
 
+def visible_device_count() -> int:
+    """Query the same process-local CUDA enumeration used by device_uuid.
+
+    This initializes the driver, so allocation controllers call it only in a
+    short-lived probe child. No context or framework allocator is created.
+    """
+    driver = ct.CDLL("libcuda.so.1")
+    driver.cuInit.argtypes = [ct.c_uint]
+    driver.cuInit.restype = ct.c_int
+    status = driver.cuInit(0)
+    if status == 100:  # CUDA_ERROR_NO_DEVICE, including an empty visibility mask.
+        return 0
+    if status:
+        raise RuntimeError(f"could not initialize CUDA device discovery: {status}")
+    driver.cuDeviceGetCount.argtypes = [ct.POINTER(ct.c_int)]
+    driver.cuDeviceGetCount.restype = ct.c_int
+    count = ct.c_int()
+    if driver.cuDeviceGetCount(ct.byref(count)) or count.value < 0:
+        raise RuntimeError("could not enumerate visible CUDA devices")
+    return count.value
+
+
 def deployment_identity(spill: SpillPool, device: int) -> dict[str, Any]:
     import pynvml  # type: ignore[import-untyped]
 
