@@ -63,10 +63,10 @@ def _commands(
     """The command one gate runs, named for the run it belongs to."""
 
     if name == "suite":
-        # Pyproject supplies -q; adding it again suppresses summary counts.
+        # Pyproject owns every package's test root and supplies -q. Naming only
+        # the repository tests directory would silently omit installed packages.
         return (
             *python_command("pytest"),
-            "tests",
             "-p",
             "no:cacheprovider",
             "-p",

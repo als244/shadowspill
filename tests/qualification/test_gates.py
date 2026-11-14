@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -94,6 +95,38 @@ def test_a_gate_with_no_command_is_refused_rather_than_run_as_performance() -> N
     for name in ALL_GATES:
         command = _commands(name, "run", keep_going=False)
         assert _gate_of(command) == name
+
+
+def test_suite_gate_collects_engine_workloads_and_repository_tests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("qualification.gates.config.RESULTS", tmp_path)
+    command = _commands(
+        "suite", "collection", keep_going=False, options=("--collect-only",)
+    )
+    result = subprocess.run(
+        command,
+        cwd=Path(__file__).resolve().parents[2],
+        env={
+            **os.environ,
+            "CUDA_VISIBLE_DEVICES": "",
+            "SHADOWSPILL_TEST_DTYPE": "bfloat16",
+        },
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "gates_collection/suite.events.jsonl")
+        .read_text()
+        .splitlines()
+        if line.strip()
+    ]
+    collected = next(row["nodeids"] for row in records if row["event"] == "collected")
+    for root in ("packages/engine/tests/", "packages/workloads/tests/", "tests/"):
+        assert any(node.startswith(root) for node in collected), root
 
 
 def test_the_remote_gate_is_available_but_not_in_the_default_run() -> None:
