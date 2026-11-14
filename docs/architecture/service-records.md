@@ -19,7 +19,10 @@ validation to acceptance, and handles expired or fenced producers.
 
 `training.session.inputs.RequestInputs` connects those reservations to binary
 Datum decoding, checksums, complete-call preprocessing and durable acceptance.
-The coordinator supplies a trusted prepared pipeline bound. Metadata pressure is
+The coordinator supplies a trusted prepared pipeline bound and input envelope.
+Decoding reserves its complete prepared peak before reading the body. The frame,
+header, tree, tensor-total and largest-leaf bounds, plus the exact Datum count,
+are checked before tensor allocation. Metadata pressure is
 checked before persisting a new ID; fenced or conflicting submissions consume no
 sequence slot. A decoded batch must match the request's Datum count, and the
 installed preprocessing callback must finish all fallible content work before

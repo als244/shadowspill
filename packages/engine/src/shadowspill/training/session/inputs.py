@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from threading import Event
 from typing import Protocol
 
+from shadowspill.training.inputs.staging import InputEnvelope
 from shadowspill_client import Execution
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload import BatchSnapshot
@@ -30,6 +31,7 @@ class PreparedInput(Protocol):
 class _Slot[Data: PreparedInput]:
     request: ComputeRequest
     ticket: StagingTicket
+    envelope: InputEnvelope | None
     cancelled: Event = field(default_factory=Event)
     producing: bool = False
     taken: bool = False
@@ -93,13 +95,25 @@ class RequestInputs[Data: PreparedInput]:
         with self._order.synchronized():
             self._registration_paused = paused
 
-    def register(self, request: ComputeRequest, *, staging_bytes: int) -> RequestStatus:
+    def register(
+        self,
+        request: ComputeRequest,
+        *,
+        staging_bytes: int,
+        envelope: InputEnvelope | None = None,
+    ) -> RequestStatus:
         """Register bounded metadata, using a trusted prepared pipeline byte bound."""
         with self._order.synchronized():
             if self._get(request.identity.request_id) is not None:
                 return self._submit(request)  # Checks digest; never recopy/replay.
             if self._registration_paused:
                 raise RuntimeError("writer attachment is waiting for preceding work")
+            if request.payload is not None and envelope is None:
+                raise ValueError("tensor uploads require a prepared input envelope")
+            if envelope is not None and envelope.snapshot.staging > staging_bytes:
+                raise ValueError(
+                    "prepared decode envelope exceeds pipeline reservation"
+                )
             self.reap()
             self.staging.preflight(request.identity.sequence, staging_bytes)
             status = self._submit(request)
@@ -108,7 +122,13 @@ class RequestInputs[Data: PreparedInput]:
             except BaseException:
                 self._order.unavailable()
                 raise
-            self._slots[request.identity.request_id] = _Slot(request, ticket)
+            self._slots[request.identity.request_id] = _Slot(request, ticket, envelope)
+            if envelope is not None and request.datum_count > envelope.max_datums:
+                return self.reject(
+                    request.identity.request_id,
+                    code="input_failed",
+                    message="Datum count exceeds the prepared input envelope.",
+                )
             return status
 
     def receive(
@@ -148,7 +168,11 @@ class RequestInputs[Data: PreparedInput]:
                         "this request requires its complete tensor payload"
                     )
                 slot.snapshot = read_payload(
-                    _Reader(stream, slot.cancelled), reference, arena
+                    _Reader(stream, slot.cancelled),
+                    reference,
+                    arena,
+                    limits=None if slot.envelope is None else slot.envelope.snapshot,
+                    datum_count=slot.request.datum_count,
                 )
                 if len(slot.snapshot.datums) != slot.request.datum_count:
                     raise ValueError(

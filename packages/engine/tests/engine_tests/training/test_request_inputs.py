@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from engine_tests.server.test_request_records import request, store
+from shadowspill.training.inputs.staging import input_envelope
 from shadowspill.training.inputs.validation import validate_batch
 from shadowspill.training.session.dispatch import RequestDispatcher
 from shadowspill.training.session.inputs import RequestInputs
@@ -36,6 +37,15 @@ SCHEMA = InputSchema(
     capacities=[Capacity("examples", "records", "count")],
 )
 LIMITS = BatchConfig(limits={"examples": 2})
+ENVELOPE = input_envelope(SCHEMA, LIMITS, (("inputs", "x"),))
+
+
+def register(inputs, command, *, staging_bytes=4096):
+    return inputs.register(
+        command,
+        staging_bytes=staging_bytes,
+        envelope=ENVELOPE if command.payload is not None else None,
+    )
 
 
 def prepare(request, snapshot, budget):
@@ -74,14 +84,14 @@ def test_out_of_order_real_uploads_cannot_overtake_and_finish_releases_ownership
         state, dispatcher, inputs = queue(records)
         a, a_bytes = uploaded("a", 1)
         b, b_bytes = uploaded("b", 2)
-        inputs.register(b, staging_bytes=2048)
+        register(inputs, b, staging_bytes=4096)
         with pytest.raises(TimeoutError):
             inputs.receive("b", BytesIO(b_bytes))
-        inputs.register(a, staging_bytes=2048)
+        register(inputs, a, staging_bytes=4096)
         assert inputs.receive("b", BytesIO(b_bytes)).state == "uploading"
         assert inputs.receive("a", BytesIO(a_bytes)).state == "accepted"
         assert records.get("b")[1].state == "accepted"
-        assert inputs.staging.used == (4096, 2)
+        assert inputs.staging.used == (8192, 2)
         for command in (a, b):
             key = command.identity.request_id
             prepared = inputs.take(key)
@@ -120,8 +130,8 @@ def test_bad_complete_upload_fails_queued_suffix_and_releases_idle_owners(
         elif failure == "truncated":
             data = data[:-1]
         b, b_data = uploaded("b", 2)
-        inputs.register(a, staging_bytes=2048)
-        inputs.register(b, staging_bytes=2048)
+        register(inputs, a, staging_bytes=4096)
+        register(inputs, b, staging_bytes=4096)
         assert inputs.receive("b", BytesIO(b_data)).state == "uploading"
         failed = inputs.receive("a", BytesIO(data))
         assert failed.failure.execution_effect == "not_started"
@@ -138,12 +148,12 @@ def test_registration_failure_does_not_burn_sequence_or_persist_metadata(
         a, data = uploaded()
         stale = replace(a, identity=replace(a.identity, writer_epoch=9))
         with pytest.raises(PermissionError, match="fenced"):
-            inputs.register(stale, staging_bytes=2048)
+            register(inputs, stale, staging_bytes=4096)
         assert records.last_sequence == 0 and inputs.staging.used == (0, 0)
-        inputs.register(a, staging_bytes=2048)
+        register(inputs, a, staging_bytes=4096)
         b, _ = uploaded("b", 2)
         with pytest.raises(TimeoutError, match="window is full"):
-            inputs.register(b, staging_bytes=2048)
+            register(inputs, b, staging_bytes=4096)
         assert records.get("b") is None
         assert inputs.receive("a", BytesIO(data)).state == "accepted"
 
@@ -158,13 +168,13 @@ def test_identical_retry_never_decodes_or_preprocesses_a_second_copy(tmp_path):
     with store(tmp_path) as records:
         _, _, inputs = queue(records, callback=inspect)
         a, data = uploaded()
-        inputs.register(a, staging_bytes=2048)
+        register(inputs, a, staging_bytes=4096)
         accepted = inputs.receive("a", BytesIO(data))
-        assert inputs.register(a, staging_bytes=2048) == accepted
+        assert register(inputs, a, staging_bytes=4096) == accepted
         assert inputs.receive("a", BytesIO(b"malformed retry")) == accepted
-        assert calls == ["a"] and inputs.staging.used == (2048, 1)
+        assert calls == ["a"] and inputs.staging.used == (4096, 1)
         with pytest.raises(ValueError, match="different content"):
-            inputs.register(replace(a, datum_count=2), staging_bytes=2048)
+            register(inputs, replace(a, datum_count=2), staging_bytes=4096)
 
 
 def test_fencing_active_reader_preserves_storage_until_that_reader_returns(tmp_path):
@@ -177,9 +187,9 @@ def test_fencing_active_reader_preserves_storage_until_that_reader_returns(tmp_p
             return super().readinto(buffer)
 
     with store(tmp_path) as records:
-        _, _, inputs = queue(records, size=2048)
+        _, _, inputs = queue(records, size=4096)
         a, data = uploaded()
-        inputs.register(a, staging_bytes=2048)
+        register(inputs, a, staging_bytes=4096)
         with ThreadPoolExecutor(max_workers=1) as threads:
             pending = threads.submit(inputs.receive, "a", SlowReader(data))
             assert entered.wait(timeout=3)
@@ -188,7 +198,7 @@ def test_fencing_active_reader_preserves_storage_until_that_reader_returns(tmp_p
                 "a", code="writer_fenced", message="Writer was replaced."
             )
             assert failed.failure.code == "writer_fenced"
-            assert inputs.staging.used == (2048, 1) and not pending.done()
+            assert inputs.staging.used == (4096, 1) and not pending.done()
             release.set()
             assert pending.result(timeout=3) == failed
         assert inputs.staging.used == (0, 0)
@@ -197,11 +207,11 @@ def test_fencing_active_reader_preserves_storage_until_that_reader_returns(tmp_p
 def test_rejection_wakes_waiting_upload_without_holding_the_ordering_lock(tmp_path):
     waiting = Event()
     with store(tmp_path) as records:
-        _, _, inputs = queue(records, size=2048)
+        _, _, inputs = queue(records, size=4096)
         a, _ = uploaded()
         b, b_data = uploaded("b", 2)
-        inputs.register(a, staging_bytes=2048)
-        inputs.register(b, staging_bytes=2048)
+        register(inputs, a, staging_bytes=4096)
+        register(inputs, b, staging_bytes=4096)
 
         def upload_later():
             waiting.set()
@@ -230,9 +240,9 @@ def test_durable_failure_stops_live_state_and_releases_completed_producer(
     if boundary == "submit":
         monkeypatch.setattr(records._index, "insert", unavailable)
         with pytest.raises(OSError, match="durable commit"):
-            inputs.register(command, staging_bytes=2048)
+            register(inputs, command, staging_bytes=4096)
     else:
-        inputs.register(command, staging_bytes=2048)
+        register(inputs, command, staging_bytes=4096)
         monkeypatch.setattr(records._index, "update", unavailable)
         with pytest.raises(RuntimeError, match="reconcile"):
             inputs.receive("a", BytesIO(data))
@@ -252,7 +262,7 @@ def test_tensor_free_commands_use_the_same_order_and_complete_ownership(tmp_path
     with store(tmp_path) as records:
         _, _, inputs = queue(records, callback=no_inputs)
         command = replace(request(), operation="optim_step", mode=None)
-        inputs.register(command, staging_bytes=1)
+        register(inputs, command, staging_bytes=1)
         accepted = inputs.receive("a")
         assert accepted.state == "accepted" and inputs.staging.used == (1, 1)
         owned = inputs.take("a")
@@ -270,13 +280,28 @@ def test_fatal_abort_releases_idle_inputs_without_querying_unavailable_records(
     a, a_data = uploaded("a", 1)
     b, b_data = uploaded("b", 2)
     for command, data in ((a, a_data), (b, b_data)):
-        inputs.register(command, staging_bytes=2048)
+        register(inputs, command, staging_bytes=4096)
         inputs.receive(command.identity.request_id, BytesIO(data))
     owned = inputs.take("a")
     records.close()
     inputs.abort()
-    assert not state.boundary.valid and inputs.staging.used == (2048, 1)
+    assert not state.boundary.valid and inputs.staging.used == (4096, 1)
     assert not owned.closed
     # The execution owner releases only when its consumers have finished.
     inputs.finish("a")
     assert owned.closed and inputs.staging.used == (0, 0)
+
+
+def test_prepared_envelope_is_required_before_persisting_tensor_uploads(tmp_path):
+    with store(tmp_path) as records:
+        _, _, inputs = queue(records)
+        command, _ = uploaded()
+        with pytest.raises(ValueError, match="prepared input envelope"):
+            inputs.register(command, staging_bytes=4096)
+        with pytest.raises(ValueError, match="exceeds pipeline"):
+            inputs.register(command, staging_bytes=1, envelope=ENVELOPE)
+        assert records.get("a") is None and inputs.staging.used == (0, 0)
+        too_many = replace(command, datum_count=ENVELOPE.max_datums + 1)
+        failed = register(inputs, too_many)
+        assert failed.failure.code == "input_failed" and failed.acceptance is None
+        assert inputs.staging.used == (0, 0)

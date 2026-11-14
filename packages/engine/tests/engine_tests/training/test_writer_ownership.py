@@ -8,7 +8,12 @@ from threading import Event
 import pytest
 
 from engine_tests.server.test_request_records import store
-from engine_tests.training.test_request_inputs import Prepared, queue, uploaded
+from engine_tests.training.test_request_inputs import (
+    Prepared,
+    queue,
+    register,
+    uploaded,
+)
 from shadowspill.training.session.writers import WriterOwnership
 from shadowspill_client.protocol.results import ComputeResult
 
@@ -43,9 +48,9 @@ def test_takeover_waits_for_rejection_boundary_and_retires_unsent_old_holes(tmp_
         writers = WriterOwnership(records, dispatcher.order, inputs)
         a, a_bytes = uploaded("a", 1)
         b, _ = uploaded("b", 3)  # Old sequence 2 never reached the server.
-        inputs.register(a, staging_bytes=2048)
+        register(inputs, a, staging_bytes=4096)
         inputs.receive("a", BytesIO(a_bytes))
-        inputs.register(b, staging_bytes=2048)
+        register(inputs, b, staging_bytes=4096)
 
         def execute(transition):
             inputs.take("a")
@@ -62,9 +67,9 @@ def test_takeover_waits_for_rejection_boundary_and_retires_unsent_old_holes(tmp_
             c, c_bytes = uploaded("c", 4)
             c = with_lease(c, attachment.lease)
             with pytest.raises(RuntimeError, match="attachment is waiting"):
-                inputs.register(c, staging_bytes=2048)
+                register(inputs, c, staging_bytes=4096)
             assert records.get("c") is None
-            assert inputs.register(a, staging_bytes=2048).state == "running"
+            assert register(inputs, a, staging_bytes=4096).state == "running"
             release.set()
             assert pending.result(timeout=3).state == "completed"
         inputs.finish("a")
@@ -72,7 +77,7 @@ def test_takeover_waits_for_rejection_boundary_and_retires_unsent_old_holes(tmp_
         assert records.at_sequence(2) is None
         assert writers.status("new").ready
         assert state.boundary.valid and inputs.staging.used == (0, 0)
-        inputs.register(c, staging_bytes=2048)
+        register(inputs, c, staging_bytes=4096)
         assert inputs.receive("c", BytesIO(c_bytes)).state == "accepted"
         assert records.get("c")[1].failure is None
 
@@ -82,15 +87,15 @@ def test_accepted_work_survives_immediate_takeover_and_new_work_keeps_order(tmp_
         state, dispatcher, inputs = queue(records)
         writers = WriterOwnership(records, dispatcher.order, inputs)
         a, a_bytes = uploaded("a", 1)
-        inputs.register(a, staging_bytes=2048)
+        register(inputs, a, staging_bytes=4096)
         inputs.receive("a", BytesIO(a_bytes))
         attachment = writers.attach("new", "server")
         assert attachment.ready
         b, b_bytes = uploaded("b", 2)
         with pytest.raises(PermissionError, match="fenced"):
-            inputs.register(b, staging_bytes=2048)
+            register(inputs, b, staging_bytes=4096)
         b = with_lease(b, attachment.lease)
-        inputs.register(b, staging_bytes=2048)
+        register(inputs, b, staging_bytes=4096)
         assert inputs.receive("b", BytesIO(b_bytes)).state == "accepted"
         assert records.get("a")[1].state == "accepted"
         for key in ("a", "b"):
@@ -118,17 +123,17 @@ def test_rejected_active_upload_keeps_storage_after_new_writer_is_ready(tmp_path
             return super().readinto(buffer)
 
     with store(tmp_path) as records:
-        state, dispatcher, inputs = queue(records, size=2048)
+        state, dispatcher, inputs = queue(records, size=4096)
         writers = WriterOwnership(records, dispatcher.order, inputs)
         a, a_bytes = uploaded()
-        inputs.register(a, staging_bytes=2048)
+        register(inputs, a, staging_bytes=4096)
         with ThreadPoolExecutor(max_workers=1) as threads:
             pending = threads.submit(inputs.receive, "a", SlowReader(a_bytes))
             assert entered.wait(timeout=3)
             attached = writers.attach("new", "server")
-            assert attached.ready and inputs.staging.used == (2048, 1)
+            assert attached.ready and inputs.staging.used == (4096, 1)
             b, b_bytes = uploaded("b", 2)
-            inputs.register(with_lease(b, attached.lease), staging_bytes=2048)
+            register(inputs, with_lease(b, attached.lease), staging_bytes=4096)
             with pytest.raises(TimeoutError):
                 inputs.receive("b", BytesIO(b_bytes))
             release.set()
@@ -142,7 +147,7 @@ def test_retrying_current_attachment_does_not_reject_its_own_pending_upload(tmp_
         state, dispatcher, inputs = queue(records)
         writers = WriterOwnership(records, dispatcher.order, inputs)
         a, data = uploaded()
-        inputs.register(a, staging_bytes=2048)
+        register(inputs, a, staging_bytes=4096)
         original = writers.attach("writer", "server")
         assert original.ready and original.lease.writer_epoch == 1
         assert writers.attach("writer", "server") == original
@@ -157,7 +162,7 @@ def test_writer_commit_failure_stops_live_state_and_recovers_original_transfer(
     state, dispatcher, inputs = queue(records)
     writers = WriterOwnership(records, dispatcher.order, inputs)
     command, data = uploaded()
-    inputs.register(command, staging_bytes=2048)
+    register(inputs, command, staging_bytes=4096)
     inputs.receive("a", BytesIO(data))
 
     def failed_index(lease):
