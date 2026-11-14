@@ -133,7 +133,9 @@ class Block(importlib.abc.MetaPathFinder):
             raise AssertionError('unexpected dependency: '+name)
 sys.meta_path.insert(0, Block())
 from shadowspill_client import Model, LoRA, BatchConfig, Objective
+from shadowspill_client.protocol.codec import encode, decode
 model = Model.from_pretrained('org/model', lora=LoRA(8))
+assert decode(encode(model)) == model
 assert model.initialize.reference == 'org/model'
 assert BatchConfig(limits={'max_examples': 4})
 assert Objective('external/classification@1')

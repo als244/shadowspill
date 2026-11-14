@@ -26,3 +26,17 @@ the existing engine; use a qualified CPU-only engine wheel for offline planning.
 Portable input/control/output schemas live under `shadowspill_client.protocol`.
 The engine uses these same records for its public
 [definition hooks](../../docs/python/definitions.md).
+
+Preparation settings expose fixed `BuildOptions`, explicit `BuildCandidates`,
+`ProfilingOptions` and `PlanningOptions` under `Preparation`. `Policy` identifies
+an installed server policy and its portable configuration. Omitted choices stay
+distinct from explicit `None` (unchunked); candidate axes and complete coupled
+`BuildCase` lists are mutually exclusive. These records preserve user choices;
+server preset resolution, coverage and memory admission remain later work.
+
+The protocol modules also define compute requests, acceptance, results and
+failures. `protocol.codec` encodes a versioned, bounded canonical JSON envelope.
+Tensor bytes use separate artifact references; Datum is deliberately not a wire
+record. Failures say whether execution never started, completed, or had unknown
+effects. Results include effective controls and immutable artifact references.
+These records do not yet provide HTTP connections or request futures.
