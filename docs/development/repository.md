@@ -4,6 +4,7 @@
 
 ```text
 shadowspill/
+├── packages/client/       portable client settings and logical example records
 ├── packages/engine/       installable engine distribution
 │   ├── src/shadowspill/   Python phase APIs and runtime bindings
 │   ├── csrc/             native planner, runtime, backends and adapter
@@ -46,6 +47,10 @@ in `shadowspill.checkpoint`. The catalog installs independently from
 Saved recipe configurations record exact adapter module names. A renamed or
 changed adapter requires a fresh recipe directory; module identities are never
 silently rewritten when reusing artifacts.
+
+`shadowspill_client` supplies portable settings and Datum records with NumPy as
+its only required dependency. Install `./packages/client` independently of the
+engine or catalog; see its [current scope](../../packages/client/README.md).
 
 `shadowspill.integrations` contains optional, caller-selected library adapters.
 Operator libraries own their output-axis, reduction, mutation and layout facts;

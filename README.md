@@ -13,6 +13,10 @@ the device, spill to host or external storage, and recompute during backward.
 | Bring a custom model or control each phase | [Custom models](docs/python/custom-models.md), [build/profile/plan/execute](docs/python/phases.md), [complete example](docs/examples/generic-training.md) |
 | Tune or extend the system | [Advanced guides](docs/python/advanced/README.md): partitioning, chunking, diagnostics and operator integration |
 
+The new training service is under construction. Its lightweight
+[client records](packages/client/README.md) are available independently; the
+training runner below remains the current execution interface.
+
 ## Start training
 
 Use the shared Python runner for build, profiling, search and training:

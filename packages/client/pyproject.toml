@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shadowspill-client"
+version = "0.1.0.dev0"
+description = "Portable configuration and client records for ShadowSpill"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["numpy>=2.0"]
+
+[project.optional-dependencies]
+planning = ["shadowspill==0.1.0.dev0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shadowspill_client"]

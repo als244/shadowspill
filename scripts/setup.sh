@@ -138,6 +138,7 @@ print(Path(next(iter(spec.submodule_search_locations))) / "share" / "cmake")
   --config-setting "cmake.define.CMAKE_PREFIX_PATH=${torch_cmake_prefix}" \
   --config-setting "cmake.define.Python3_EXECUTABLE=${python_executable}" \
   --editable "${project_root}/packages/engine[pytorch,dev]" \
+  --editable "${project_root}/packages/client" \
   --editable "${project_root}/packages/workloads[training]"
 
 echo "[3/5] Installing mlops with its implementation providers"
