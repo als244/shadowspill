@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from ..buffers import BufferBudget
 from .codec import MAX_METADATA_BYTES, ProtocolError, _constant, _depth, _object
 from .payload import MAGIC, MEDIA_TYPE, BatchSnapshot, owned_datums
+from .payload_sizes import TREE_NODE_BYTES, PayloadSize
 from .requests import ArtifactRef
 from .tensors import TensorPayload, tensor_bytes
 
@@ -58,7 +59,7 @@ def _manifest(
 
         def tree(value: Any) -> None:
             nonlocal metadata_size
-            metadata_size += 64
+            metadata_size += TREE_NODE_BYTES
             if isinstance(value, dict):
                 if any(not key for key in value):
                     raise ValueError("empty tensor tree key")
@@ -138,9 +139,10 @@ def read_payload(
     total = sum(item[2] for item in layouts)
     if 16 + length + total != reference.size_bytes:
         raise ProtocolError("tensor artifact size differs from declared layouts")
-    retained = total + 8 * len(header) + metadata_size
-    scratch = max((item[2] for item in layouts), default=0)
-    lease = budget.reserve(retained + scratch, timeout=timeout)
+    footprint = PayloadSize(
+        total, len(header), metadata_size, max((item[2] for item in layouts), default=0)
+    )
+    lease = budget.reserve(footprint.staging, timeout=timeout)
     try:
         digest = hashlib.sha256(prefix)
         digest.update(header)
@@ -155,7 +157,7 @@ def read_payload(
         result = BatchSnapshot(
             header, tensors, owned_datums(trees, tensors), reference.sha256, lease
         )
-        lease.shrink(retained)
+        lease.shrink(footprint.retained)
         return result
     except BaseException:
         lease.close()

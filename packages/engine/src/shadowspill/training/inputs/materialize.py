@@ -15,6 +15,7 @@ from shadowspill_client.protocol.inputs import InputSchema
 from shadowspill_client.protocol.tensors import storage_dtype, tensor_bytes
 
 from .packing import PackedAssignment
+from .shapes import BufferShape
 from .validation import Path
 from .values import VALIDATION_SCRATCH_BYTES, ValidatedTensor
 
@@ -26,6 +27,28 @@ class DatumRegion:
     microbatch: int
     slot: int
     fields: Mapping[Path, tuple[int | slice, ...]]
+
+
+@dataclass(frozen=True)
+class BufferSize:
+    retained: int
+    staging: int
+
+
+def buffer_size(physical: BufferShape, schema: InputSchema, records: int) -> BufferSize:
+    """Use the same physical and region accounting in preparation and copying."""
+    if type(records) is not int or not 0 <= records <= physical.max_datums:
+        raise ValueError("record count is outside the physical buffer capacity")
+    definitions = {tuple(field.path): field for field in schema.fields}
+    physical.validate(definitions)
+    size = sum(
+        tensor_bytes(definitions[path].dtype, tuple(shape))
+        for path, shape in physical.fields.items()
+    )
+    retained = size + 256 * (records + 1) * (
+        1 + sum(1 + len(shape) for shape in physical.fields.values())
+    )
+    return BufferSize(retained, retained + VALIDATION_SCRATCH_BYTES)
 
 
 class PackedBuffer:
@@ -105,16 +128,12 @@ def materialize_buffer(
         raise RuntimeError("input snapshot is closed")
     definitions = {tuple(field.path): field for field in schema.fields}
     physical = assignment.schedule.buffers[index]
-    regions = field_regions(assignment, schema, index)
-    size = sum(
-        tensor_bytes(definitions[path].dtype, tuple(shape))
-        for path, shape in physical.fields.items()
-    )
     # Fixed conversion scratch and bounded region/container bookkeeping are
     # separate from persistent spill and from the original owned input payload.
-    retained = size + 256 * (len(regions) + 1) * (len(physical.fields) + 1)
-    lease = budget.reserve(retained + VALIDATION_SCRATCH_BYTES, timeout=timeout)
+    size = buffer_size(physical, schema, len(assignment.records[index]))
+    lease = budget.reserve(size.staging, timeout=timeout)
     try:
+        regions = field_regions(assignment, schema, index)
         fields = {}
         for path, shape in physical.fields.items():
             definition = definitions[path]
@@ -148,7 +167,7 @@ def materialize_buffer(
             assignment.schedule.locations[index],
             lease,
         )
-        lease.shrink(retained)
+        lease.shrink(size.retained)
         return result
     except BaseException:
         lease.close()

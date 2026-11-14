@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import struct
 from collections.abc import Iterator, Mapping, Sequence
 from types import MappingProxyType
@@ -12,6 +11,7 @@ from typing import Any, Self
 from ..buffers import BufferBudget, BufferLease
 from ..datum import Datum
 from .codec import MAX_METADATA_BYTES
+from .payload_sizes import MAX_TREE_DEPTH, TREE_NODE_BYTES, PayloadSize, manifest_json
 from .tensors import TensorPayload, TensorSource
 
 MAGIC = b"SSDT\x01\0\0\0"
@@ -108,10 +108,10 @@ def snapshot_batch(
 
     def inspect(value: Any, depth: int = 0) -> Any:
         nonlocal metadata_size
-        metadata_size += 64
+        metadata_size += TREE_NODE_BYTES
         # Leave room for the outer manifest/Datum containers under the shared
         # protocol's 64-level nesting limit.
-        if depth > 60 or metadata_size > MAX_METADATA_BYTES:
+        if depth > MAX_TREE_DEPTH or metadata_size > MAX_METADATA_BYTES:
             raise ValueError("input tree metadata exceeds its bounded size/depth")
         if isinstance(value, Mapping):
             result = {}
@@ -129,25 +129,21 @@ def snapshot_batch(
         {"inputs": inspect(d.inputs), "loss_inputs": inspect(d.loss_inputs)}
         for d in batch
     ]
-    header = json.dumps(
-        {
-            "version": 1,
-            "kind": "datum.tensors",
-            "datums": trees,
-            "tensors": [{"dtype": s.dtype, "shape": s.shape} for s in sources],
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
+    header = manifest_json(
+        trees, [{"dtype": s.dtype, "shape": s.shape} for s in sources]
+    )
     if len(header) > MAX_METADATA_BYTES:
         raise ValueError("input tensor metadata exceeds its byte limit")
     # Arrays are immutable bytes, so NumPy decoding is a zero-copy view. Reserve
     # one extra leaf for list/endian/optional Torch normalization while copying.
     # Metadata has a bounded allowance for decoded containers as well as JSON.
-    retained = sum(s.nbytes for s in sources) + 8 * len(header) + metadata_size
-    scratch = max((s.nbytes for s in sources), default=0)
-    lease = budget.reserve(retained + scratch, timeout=timeout)
+    size = PayloadSize(
+        sum(s.nbytes for s in sources),
+        len(header),
+        metadata_size,
+        max((s.nbytes for s in sources), default=0),
+    )
+    lease = budget.reserve(size.staging, timeout=timeout)
     try:
         digest = hashlib.sha256(MAGIC + struct.pack("<Q", len(header)) + header)
         tensors = []
@@ -159,7 +155,7 @@ def snapshot_batch(
         result = BatchSnapshot(
             header, tensors, owned_datums(trees, tensors), digest.hexdigest(), lease
         )
-        lease.shrink(retained)
+        lease.shrink(size.retained)
         return result
     except BaseException:
         lease.close()
