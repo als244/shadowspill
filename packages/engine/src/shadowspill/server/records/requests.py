@@ -61,7 +61,7 @@ class RequestRecords:
     def __init__(self, directory: Path, *, identity: RunIdentity, cache_root: Path):
         self.identity = identity
         self._mutex = threading.RLock()
-        self._broken = self._closed = False
+        self._broken = self._closed = self._closing = False
         self._writer: WriterLease | None = None
         # A maximum-size portable request also carries its digest and journal
         # wrapper. Reserve that envelope before writing any authoritative data.
@@ -337,7 +337,7 @@ class RequestRecords:
             raise ValueError(f"unknown request journal event: {record.kind}")
 
     def _usable(self) -> None:
-        if self._closed or self._broken:
+        if self._closed or self._closing or self._broken:
             raise RuntimeError(
                 "request records closed or unavailable; reopen and reconcile"
             )
@@ -345,11 +345,10 @@ class RequestRecords:
     def close(self) -> None:
         with self._mutex:
             if not self._closed:
-                try:
-                    self._index.close()
-                finally:
-                    self._journal.close()
-                    self._closed = True
+                self._closing = True
+                self._index.close()
+                self._journal.close()
+                self._closed = True
 
     def __enter__(self) -> Self:
         return self

@@ -45,6 +45,16 @@ multi-node deployment remain separate implementation work.
 
 ## Request and worker ownership
 
+`server.owners.OwnerCache` bounds open record/artifact owners, including pending
+opens and failed evictions. Live controllers pin a borrow for their lifetime;
+HTTP lookups borrow through I/O. Only idle owners may be evicted. Factories and
+cleanup run outside the cache lock, so a slow journal rebuild does not block
+unrelated cached owners. Full or pending entries return prompt backpressure.
+Shutdown refuses new borrows and retains active or failed owners for cleanup
+retry. An owner supplies its own byte reservation; the cache bounds its count.
+Request-record index cleanup now keeps the exclusive journal lock until it
+succeeds, and a partially closed index cannot serve another lookup.
+
 `server.records.runs.RunCatalog` records creation identity and run lifecycle under
 the same durable journal rules. It stores bounded `RunInfo` metadata and immutable
 configuration/Plan references; tensor state and update effects remain in their
