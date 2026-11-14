@@ -32,6 +32,8 @@ class TensorOutput(Record):
     shape: Sequence[int | str]
     ordering: Literal["datum", "aligned", "global"]
     alignment: str | None = None
+    source: Sequence[str] | None = None
+    reduction: Literal["sum", "min", "max", "identical"] | None = None
 
     def __post_init__(self) -> None:
         if self.dtype not in DTYPES:
@@ -45,6 +47,25 @@ class TensorOutput(Record):
                 raise ValueError("aligned output must name a declared dimension")
         elif self.alignment is not None:
             raise ValueError("only aligned outputs declare an alignment")
+        if self.source is not None:
+            if (
+                not isinstance(self.source, (list, tuple))
+                or len(self.source) < 2
+                or self.source[0] not in ("inputs", "loss_inputs")
+                or not any(isinstance(d, str) for d in self.shape)
+                or self.ordering == "global"
+            ):
+                raise ValueError("symbolic output source must name a model/loss field")
+            object.__setattr__(
+                self, "source", tuple(text(p, "output source") for p in self.source)
+            )
+        if self.ordering == "global":
+            if self.reduction not in ("sum", "min", "max", "identical"):
+                raise ValueError("declare a reduction for every global tensor output")
+            if any(type(d) is not int for d in self.shape):
+                raise ValueError("global tensor shapes must have fixed dimensions")
+        elif self.reduction is not None:
+            raise ValueError("only global tensor outputs declare a reduction")
 
 
 @dataclass(frozen=True)

@@ -28,6 +28,10 @@ from .validation import Path
 from .values import VALIDATION_SCRATCH_BYTES
 
 
+class StagingLimitError(CoverageError):
+    """A known candidate cannot fit the explicitly configured host bound."""
+
+
 @dataclass(frozen=True)
 class InputEnvelope:
     max_datums: int
@@ -220,7 +224,7 @@ def admit_input_staging(
     )
     result = InputStaging(envelope, workspace, tuple(peaks))
     if result.staging_bytes > execution.max_staging_bytes:
-        raise CoverageError(
+        raise StagingLimitError(
             f"{schedule.name}: input staging needs {result.staging_bytes} bytes; "
             f"configured max_staging_bytes is {execution.max_staging_bytes}"
         )

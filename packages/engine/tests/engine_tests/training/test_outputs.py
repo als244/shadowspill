@@ -2,6 +2,7 @@
 
 import json
 from contextlib import ExitStack
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -159,12 +160,10 @@ def test_global_worker_sum_precedes_separate_microbatch_max():
         outputs={"global": OutputPlacement("sum")},
     )
     outputs = OutputSet(
-        tensors={"global": TensorOutput("float32", (), "global")},
+        tensors={"global": TensorOutput("float32", (), "global", reduction="max")},
         metrics={"valid": "sum"},
     )
-    layout = OutputLayout(
-        schema(), outputs, schedule, placement, global_reductions={"global": "max"}
-    )
+    layout = OutputLayout(schema(), outputs, schedule, placement)
     with batch([1, 2], bound) as data:
         packed = pack_batch(data, schema(), bound, placement, schedule)
         workers = {
@@ -174,8 +173,11 @@ def test_global_worker_sum_precedes_separate_microbatch_max():
         actual = assemble(layout, packed, workers)
         assert actual["global", None] == 60  # Not max of individual worker values.
         assert layout.metric_workers(0) == (1, 0)
-    with pytest.raises(ValueError, match="reduction for every global"):
-        OutputLayout(schema(), outputs, schedule, placement)
+    saved = layout.to_dict()
+    assert OutputLayout.from_dict(saved).to_dict() == saved
+    saved["global_reductions"]["global"] = "sum"
+    with pytest.raises(ValueError, match="declared contract"):
+        OutputLayout.from_dict(saved)
 
 
 def test_empty_worker_slices_and_empty_aligned_outputs_retain_declared_shapes():
@@ -216,29 +218,44 @@ def test_alignment_ambiguity_and_missing_cooperation_rules_fail_before_execution
     )
     with pytest.raises(ValueError, match="unambiguous"):
         OutputLayout(definition, outputs, schedule, InputPlacement.independent(1))
+    selected = replace(
+        outputs,
+        tensors={
+            "result": replace(outputs.tensors["result"], source=("inputs", "packed"))
+        },
+    )
     layout = OutputLayout(
         definition,
-        outputs,
+        selected,
         schedule,
         InputPlacement.independent(1),
-        sources={"result": ("inputs", "packed")},
     )
     assert layout.physical_shape("result", 0) == (8,)
     with pytest.raises(ValueError, match="incompatible alignment"):
         OutputLayout(
             definition,
-            outputs,
+            replace(
+                outputs,
+                tensors={
+                    "result": replace(
+                        outputs.tensors["result"], source=("inputs", "missing")
+                    )
+                },
+            ),
             schedule,
             InputPlacement.independent(1),
-            sources={"result": ("inputs", "missing")},
         )
     with pytest.raises(ValueError, match="cooperating-worker placement"):
         OutputLayout(
             definition,
-            outputs,
+            selected,
             schedule,
             InputPlacement(GroupRef("two", ((0, 1),))),
-            sources={"result": ("inputs", "packed")},
         )
     with pytest.raises(ValueError, match="does not own"):
         layout.worker_shape("result", 0, 3)
+    saved = layout.to_dict()
+    assert OutputLayout.from_dict(saved).to_dict() == saved
+    saved["sources"]["result"] = ["inputs", "stacked"]
+    with pytest.raises(ValueError, match="declared contract"):
+        OutputLayout.from_dict(saved)

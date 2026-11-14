@@ -43,6 +43,8 @@ from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorFiel
             metrics={"loss_sum": "sum"},
         ),
         Participation(("valid",)),
+        TensorOutput("float32", (3,), "global", reduction="sum"),
+        TensorOutput("float32", ("n",), "aligned", "n", source=("inputs", "tokens")),
         DefinitionSource("external-models", "1.0", "0" * 64),
     ],
 )
@@ -70,8 +72,17 @@ def test_schema_json_roundtrip(record):
         ),
         lambda: Capacity("limit", "examples", "count", ("x",)),
         lambda: TensorOutput("float32", (3,), "aligned", "positions"),
+        lambda: TensorOutput("float32", (), "global"),
+        lambda: TensorOutput("float32", ("n",), "global", reduction="sum"),
+        lambda: TensorOutput("float32", (), "global", reduction="mean"),
+        lambda: TensorOutput("float32", (), "datum", reduction="sum"),
+        lambda: TensorOutput("float32", ("n",), "datum", source="inputs.x"),
+        lambda: TensorOutput("float32", ("n",), "datum", source=("x",)),
+        lambda: TensorOutput("float32", ("n",), "datum", source=("wrong", "x")),
+        lambda: TensorOutput("float32", (3,), "datum", source=("inputs", "x")),
         lambda: OutputSet(
-            tensors={"x": TensorOutput("float32", (), "global")}, metrics={"x": "sum"}
+            tensors={"x": TensorOutput("float32", (), "global", reduction="sum")},
+            metrics={"x": "sum"},
         ),
         lambda: ControlSchema(
             {"x": ScalarControl(0.0, minimum=0.0, minimum_inclusive=False)}

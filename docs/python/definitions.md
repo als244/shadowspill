@@ -102,8 +102,17 @@ default of zero; explicit zero selects all available logical CPUs. Existing core
 `SearchOptions` remain the search description. Expansion rejects schedules whose
 padding exceeds hard limits before repeating buffers, and reports case-limit
 errors without shrinking the request. Geometry coverage is checked separately
-for every requested batch option. This does not yet establish full setup,
-staging, device/spill or collective admission.
+for every requested batch option.
+
+`training.preparation.setup.resolve_training` resolves the complete portable
+setup and rechecks saved configurations on CPU. `prepare_layouts` in the adjacent
+`layouts` module binds each operation, physical buffer and logical worker to its
+input adapter and output geometry, then checks the complete host-staging bound.
+Known staging-limit failures retain candidate reasons; unexpected definition
+errors propagate. Every requested operation and batch option must retain a
+constructive coverage witness. Identical adapter layouts share their resolved
+metadata across counts. Model construction, native device/spill admission,
+collective qualification and service readiness remain separate steps.
 
 Phase policies use `PolicyDefinition(id, kind, config, create)`. The CPU resolver
 validates and fills `Policy` configuration through the registered factory's

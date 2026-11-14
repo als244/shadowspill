@@ -135,7 +135,10 @@ its piece records remove record/token padding and describe leader, summed or
 concatenated worker views. Alignment comes from declared schema symbols, with an
 explicit source required when physical interpretations differ. Global tensors
 also require a declared reduction across microbatches, separate from the worker
-reduction. The mappings retain no GPU tensors and can drive bounded artifact
+reduction. Declare these in `TensorOutput(source=("inputs", "tokens"), ...)`
+and `TensorOutput(..., ordering="global", reduction="max")`, respectively.
+They travel in the resolved output contract. Saved layouts recompute their
+derived mappings and reject discrepancies. The mappings retain no GPU tensors and can drive bounded artifact
 writes; artifact streaming/publication is still separate implementation work.
 
 Traversal is a planning choice; microbatch geometry is a build choice. For eight

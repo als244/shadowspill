@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
 
 from shadowspill.parallelism import InputPlacement, OutputPlacement
+from shadowspill_client._records import plain
 from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
 from shadowspill_client.protocol.inputs import InputSchema, TensorField
 
@@ -61,9 +62,6 @@ class OutputLayout:
         outputs: OutputSet,
         schedule: PackingSchedule,
         placement: InputPlacement,
-        *,
-        sources: Mapping[str, Sequence[str]] | None = None,
-        global_reductions: Mapping[str, Reduction] | None = None,
     ) -> None:
         self.schema, self.outputs = schema, outputs
         self.schedule, self.placement = schedule, placement
@@ -72,7 +70,11 @@ class OutputLayout:
         definitions = {tuple(field.path): field for field in schema.fields}
         for buffer in schedule.buffers:
             buffer.validate(definitions)
-        selected = {name: tuple(path) for name, path in (sources or {}).items()}
+        selected = {
+            name: tuple(output.source)
+            for name, output in outputs.tensors.items()
+            if output.source is not None
+        }
         aligned = {
             name
             for name, output in outputs.tensors.items()
@@ -81,19 +83,11 @@ class OutputLayout:
         }
         if selected.keys() - aligned:
             raise ValueError("only symbolic tensor outputs name input sources")
-        reductions = dict(global_reductions or {})
-        global_names = {
-            name
+        reductions = {
+            name: output.reduction
             for name, output in outputs.tensors.items()
-            if output.ordering == "global"
+            if output.reduction is not None
         }
-        if reductions.keys() != global_names or any(
-            value not in ("sum", "min", "max", "identical")
-            for value in reductions.values()
-        ):
-            raise ValueError(
-                "declare exactly one reduction for every global tensor output"
-            )
         for name, output in outputs.tensors.items():
             if output.ordering == "global":
                 if any(type(d) is not int for d in output.shape):
@@ -381,11 +375,12 @@ class OutputLayout:
             }
         ):
             raise ValueError("unsupported output layout version")
-        return cls(
+        result = cls(
             InputSchema.from_dict(value["schema"]),
             OutputSet.from_dict(value["outputs"]),
             PackingSchedule.from_dict(value["schedule"]),
             InputPlacement.from_dict(value["placement"]),
-            sources=value["sources"],
-            global_reductions=value["global_reductions"],
         )
+        if result.to_dict() != plain(value):
+            raise ValueError("saved output layout differs from its declared contract")
+        return result
