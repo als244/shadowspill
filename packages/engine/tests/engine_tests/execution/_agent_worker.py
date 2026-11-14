@@ -255,6 +255,7 @@ with (
         storage.requests(run_identity) as journal,
         ResultPublisher(
             artifacts,
+            session_id="session",
             history_id="history",
             root=directory,
             memory=publication.budget,
@@ -468,6 +469,7 @@ def qualify_allocation_stop():
             storage.requests(identity) as journal,
             ResultPublisher(
                 artifacts,
+                session_id="session",
                 history_id="stop-history",
                 root=directory,
                 memory=publication.budget,

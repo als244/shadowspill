@@ -79,7 +79,12 @@ def test_discard_publishes_confirmed_state_without_tensor_scratch(tmp_path):
         store(tmp_path) as journal,
         artifact_store(tmp_path, memory=memory) as artifacts,
         ResultPublisher(
-            artifacts, history_id="history", root=tmp_path, memory=memory, disk=disk
+            artifacts,
+            session_id="session",
+            history_id="history",
+            root=tmp_path,
+            memory=memory,
+            disk=disk,
         ) as publisher,
     ):
         prepared, state, dispatcher, inputs = queue(journal, tmp_path)
@@ -123,7 +128,12 @@ def test_production_publisher_restores_caller_order_and_records_loss(
         call = inputs.take("a")
         work = Work(call)
         publisher = ResultPublisher(
-            artifacts, history_id="history", root=tmp_path, memory=memory, disk=disk
+            artifacts,
+            session_id="session",
+            history_id="history",
+            root=tmp_path,
+            memory=memory,
+            disk=disk,
         )
         expected = assemble(
             call.candidate.source.layout.outputs, call.assignment, work.values
@@ -150,6 +160,25 @@ def test_production_publisher_restores_caller_order_and_records_loss(
                 )
             else:
                 assert status.result.loss is None
+                # Owner storage is shared, but equal run/request/output names
+                # in different sessions must still identify different artifacts.
+                with ResultPublisher(
+                    artifacts,
+                    session_id="other-session",
+                    history_id="other-history",
+                    root=tmp_path,
+                    memory=memory,
+                    disk=disk,
+                ) as other:
+                    duplicate = Work(call)
+                    second = other(call, journal.execution("a"), duplicate)
+                    duplicate.close()
+                assert second.outputs.keys() == status.result.outputs.keys()
+                for name, ref in second.outputs.items():
+                    original = status.result.outputs[name]
+                    assert ref.id != original.id and ref.sha256 == original.sha256
+                    assert artifacts.get(ref.id) == ref
+                    assert artifacts.get(original.id) == original
             inputs.finish("a")
             assert call.closed
             for name, reference in status.result.outputs.items():
@@ -187,7 +216,12 @@ def test_failed_result_cleanup_remains_owned_for_publisher_retry(tmp_path, monke
         call, close = inputs.take("a"), ResultFrames.close
         work = Work(call)
         publisher = ResultPublisher(
-            artifacts, history_id="history", root=tmp_path, memory=memory, disk=disk
+            artifacts,
+            session_id="session",
+            history_id="history",
+            root=tmp_path,
+            memory=memory,
+            disk=disk,
         )
 
         def fail(_):

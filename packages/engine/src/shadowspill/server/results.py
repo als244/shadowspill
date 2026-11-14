@@ -26,11 +26,13 @@ class ResultPublisher:
         self,
         artifacts: ArtifactStore,
         *,
+        session_id: str,
         history_id: str,
         root: Path,
         memory: BufferBudget,
         disk: BufferBudget,
     ) -> None:
+        self.session_id = identifier(session_id, "session ID")
         self.history_id = identifier(history_id, "history ID")
         self.artifacts, self.root, self.memory, self.disk = (
             artifacts,
@@ -109,7 +111,9 @@ class ResultPublisher:
         outputs = {}
         identity = call.request.identity
         for name, frame in owner.frames.items():
-            key = "\0".join((identity.run_id, identity.request_id, name)).encode()
+            key = "\0".join(
+                (self.session_id, identity.run_id, identity.request_id, name)
+            ).encode()
             artifact_id = "result." + hashlib.sha256(key).hexdigest()
             outputs[name] = self.artifacts.produce(
                 OutputSpec(artifact_id, frame.size.wire, MEDIA_TYPE),
