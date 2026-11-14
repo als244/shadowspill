@@ -168,6 +168,7 @@ packages/engine/src/shadowspill/
 │   │   └── layout/        certified offsets and completion dependencies
 │   └── timing.py          an instant recorded on a stream, and the time between two
 ├── training/              saved-Plan training loops, schedules and checkpoints
+│   ├── definitions/       public model/objective functions and CPU schema resolution
 │   ├── diagnostics/       no-update startup calls, state preservation and reports
 │   └── preparation/       model-independent saved recipe phases and reuse
 └── pytorch/

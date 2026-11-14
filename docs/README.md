@@ -12,6 +12,11 @@ The supported `train` runner handles the whole workflow. The phase APIs expose
 build, profile, plan and execute separately; `Trainer` runs an already selected
 Plan. Both paths use the same compiler, planner and runtime.
 
+The new training service is under construction. Its
+[portable client records](../packages/client/README.md) and
+[model/objective definition hooks](python/definitions.md) are available for CPU
+inspection and capture; the existing training interfaces above remain active.
+
 ## References and development
 
 | Directory | Contents |

@@ -1,7 +1,7 @@
 # ShadowSpill client records
 
 Portable configuration and logical examples for the training service under
-construction. This package currently supplies validated records and text helpers;
+construction. This package currently supplies validated records, schemas and text helpers;
 service connections and training execution will follow in later refactor stages.
 
 ```python
@@ -22,3 +22,7 @@ aligned next-token inputs without a tokenizer or model import.
 Install `./packages/client` for these records. The package has no dependency on
 the engine, model catalog or a GPU framework. Its optional `planning` extra adds
 the existing engine; use a qualified CPU-only engine wheel for offline planning.
+
+Portable input/control/output schemas live under `shadowspill_client.protocol`.
+The engine uses these same records for its public
+[definition hooks](../../docs/python/definitions.md).
