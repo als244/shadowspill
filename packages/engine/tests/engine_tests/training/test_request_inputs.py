@@ -19,7 +19,7 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch
 from shadowspill_client.protocol.requests import ArtifactRef
-from shadowspill_client.protocol.results import ComputeResult
+from shadowspill_client.protocol.results import OperationResult
 
 
 @dataclass
@@ -101,7 +101,7 @@ def test_out_of_order_real_uploads_cannot_overtake_and_finish_releases_ownership
                 return Prepared(None)
 
             def publish(receipt, work):
-                return ComputeResult(
+                return OperationResult(
                     receipt.identity,
                     receipt.operation,
                     "history",

@@ -13,8 +13,8 @@ from engine_tests.training.test_prepared_requests import family, upload
 from shadowspill.training.session.controller import RunController
 from shadowspill.training.session.prepared import PreparedRequests
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.requests import ComputeRequest
-from shadowspill_client.protocol.results import ComputeResult
+from shadowspill_client.protocol.requests import OperationRequest
+from shadowspill_client.protocol.results import OperationResult
 
 
 @dataclass
@@ -62,7 +62,7 @@ def configured(tmp_path, *, blocked=False, fail_publication=False):
             assert not work.closed
             if fail_publication and receipt.identity.request_id == "a":
                 raise OSError("required artifact unavailable")
-            return ComputeResult(
+            return OperationResult(
                 receipt.identity,
                 receipt.operation,
                 "history",
@@ -212,7 +212,7 @@ def test_close_refuses_open_accumulation_without_disabling_corrected_work(tmp_pa
         with pytest.raises(RuntimeError, match="discard gradients"):
             ctx.controller.close()
         assert not ctx.workers.closed and ctx.controller.boundary.accumulation.open
-        optim = ComputeRequest(request("optim", 2).identity, "optim_step")
+        optim = OperationRequest(request("optim", 2).identity, "optim_step")
         submit(ctx.controller, optim)
         result = ctx.controller.wait("optim", timeout=5)
         assert result.result.completed_updates == 1

@@ -14,7 +14,7 @@ from shadowspill.training.worker.requests import WorkerResults
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload import MEDIA_TYPE
 from shadowspill_client.protocol.requests import ArtifactRef, identifier
-from shadowspill_client.protocol.results import ComputeResult, ExecutionReceipt
+from shadowspill_client.protocol.results import ExecutionReceipt, OperationResult
 
 from .artifacts import ArtifactStore
 
@@ -44,7 +44,7 @@ class ResultPublisher:
 
     def __call__(
         self, call: PreparedCall, receipt: ExecutionReceipt, work: WorkerResults
-    ) -> ComputeResult:
+    ) -> OperationResult:
         if not self._busy.acquire(blocking=False):
             raise RuntimeError("another result publication is in flight")
         try:
@@ -84,7 +84,7 @@ class ResultPublisher:
                     finally:
                         owner.close()
                         self._owners.remove(owner)
-            return ComputeResult(
+            return OperationResult(
                 call.request.identity,
                 call.key.operation,
                 self.history_id,

@@ -13,12 +13,16 @@ from types import TracebackType
 from typing import Any, Self
 
 from shadowspill_client.protocol.codec import digest, encode
-from shadowspill_client.protocol.requests import ComputeRequest, WriterLease, identifier
+from shadowspill_client.protocol.requests import (
+    OperationRequest,
+    WriterLease,
+    identifier,
+)
 from shadowspill_client.protocol.results import (
     Acceptance,
-    ComputeResult,
     ExecutionReceipt,
     Failure,
+    OperationResult,
     RequestStatus,
 )
 
@@ -118,7 +122,7 @@ class RequestRecords:
             self._usable()
             return self._index.last_sequence
 
-    def get(self, request_id: str) -> tuple[ComputeRequest, RequestStatus] | None:
+    def get(self, request_id: str) -> tuple[OperationRequest, RequestStatus] | None:
         with self._mutex:
             self._usable()
             row = self._index.get(identifier(request_id, "request ID"))
@@ -140,7 +144,9 @@ class RequestRecords:
                 self._require(key)[1] for key in self._index.pending(after, limit)
             )
 
-    def at_sequence(self, sequence: int) -> tuple[ComputeRequest, RequestStatus] | None:
+    def at_sequence(
+        self, sequence: int
+    ) -> tuple[OperationRequest, RequestStatus] | None:
         if type(sequence) is not int or not 1 <= sequence < 1 << 63:
             raise ValueError("submission sequence must be a positive 63-bit integer")
         with self._mutex:
@@ -148,7 +154,7 @@ class RequestRecords:
             key = self._index.id_at_sequence(sequence)
             return None if key is None else self._require(key)
 
-    def submit(self, request: ComputeRequest) -> RequestStatus:
+    def submit(self, request: OperationRequest) -> RequestStatus:
         """Persist metadata/ID reservation; this is explicitly not acceptance."""
         with self._mutex:
             self._usable()
@@ -193,7 +199,7 @@ class RequestRecords:
                 RequestStatus(status.identity, "running", status.acceptance)
             )
 
-    def complete(self, result: ComputeResult) -> RequestStatus:
+    def complete(self, result: OperationResult) -> RequestStatus:
         with self._mutex:
             self._usable()
             request, status = self._require(result.identity.request_id)
@@ -254,19 +260,19 @@ class RequestRecords:
             self._broken = True
             raise
 
-    def _check_request(self, request: ComputeRequest) -> None:
+    def _check_request(self, request: OperationRequest) -> None:
         if request.identity.run_id != self.identity.run_id:
             raise ValueError("request belongs to another run")
         if request.identity.sequence > (1 << 63) - 1:
             raise ValueError("submission sequence exceeds the supported 63-bit range")
 
-    def _check_writer(self, request: ComputeRequest) -> None:
+    def _check_writer(self, request: OperationRequest) -> None:
         if self._writer is None or not self._writer.permits(request.identity):
             raise PermissionError(
                 "writer lease is absent or fenced; reattach explicitly"
             )
 
-    def _require(self, request_id: str) -> tuple[ComputeRequest, RequestStatus]:
+    def _require(self, request_id: str) -> tuple[OperationRequest, RequestStatus]:
         row = self._index.get(identifier(request_id, "request ID"))
         if row is None:
             raise KeyError(f"unknown request: {request_id}")
@@ -289,7 +295,7 @@ class RequestRecords:
         elif record.kind == "request.submit":
             if set(record.data) != {"request", "digest"}:
                 raise ValueError("invalid submitted request record")
-            request = ComputeRequest.from_dict(record.data["request"])
+            request = OperationRequest.from_dict(record.data["request"])
             self._check_request(request)
             self._check_writer(request)
             if digest(request) != record.data["digest"]:

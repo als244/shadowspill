@@ -10,7 +10,7 @@ from shadowspill_client import Execution
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload import BatchSnapshot
 from shadowspill_client.protocol.payload_io import BufferReader, read_payload
-from shadowspill_client.protocol.requests import ComputeRequest, identifier
+from shadowspill_client.protocol.requests import OperationRequest, identifier
 from shadowspill_client.protocol.results import RequestStatus
 
 from .acceptance import AcceptanceOrder, AcceptanceRecords
@@ -18,7 +18,7 @@ from .staging import OrderedStaging, StagingTicket
 
 
 class InputRecords(AcceptanceRecords, Protocol):
-    def submit(self, request: ComputeRequest) -> RequestStatus: ...
+    def submit(self, request: OperationRequest) -> RequestStatus: ...
 
 
 class PreparedInput(Protocol):
@@ -29,7 +29,7 @@ class PreparedInput(Protocol):
 
 @dataclass
 class _Slot[Data: PreparedInput]:
-    request: ComputeRequest
+    request: OperationRequest
     ticket: StagingTicket
     envelope: InputEnvelope | None
     cancelled: Event = field(default_factory=Event)
@@ -79,7 +79,7 @@ class RequestInputs[Data: PreparedInput]:
         records: InputRecords,
         order: AcceptanceOrder,
         execution: Execution,
-        prepare: Callable[[ComputeRequest, BatchSnapshot | None, BufferBudget], Data],
+        prepare: Callable[[OperationRequest, BatchSnapshot | None, BufferBudget], Data],
         *,
         first_sequence: int = 1,
         budget: BufferBudget | None = None,
@@ -100,7 +100,7 @@ class RequestInputs[Data: PreparedInput]:
 
     def register(
         self,
-        request: ComputeRequest,
+        request: OperationRequest,
         *,
         staging_bytes: int,
         envelope: InputEnvelope | None = None,
@@ -280,7 +280,7 @@ class RequestInputs[Data: PreparedInput]:
             raise KeyError(f"unknown request: {request_id}")
         return row[1]
 
-    def _get(self, request_id: str) -> tuple[ComputeRequest, RequestStatus] | None:
+    def _get(self, request_id: str) -> tuple[OperationRequest, RequestStatus] | None:
         identifier(request_id, "request ID")
         try:
             return self._records.get(request_id)
@@ -288,7 +288,7 @@ class RequestInputs[Data: PreparedInput]:
             self._order.unavailable()
             raise
 
-    def _submit(self, request: ComputeRequest) -> RequestStatus:
+    def _submit(self, request: OperationRequest) -> RequestStatus:
         try:
             return self._records.submit(request)
         except (PermissionError, ValueError):

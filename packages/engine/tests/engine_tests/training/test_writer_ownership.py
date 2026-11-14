@@ -15,7 +15,7 @@ from engine_tests.training.test_request_inputs import (
     uploaded,
 )
 from shadowspill.training.session.writers import WriterOwnership
-from shadowspill_client.protocol.results import ComputeResult
+from shadowspill_client.protocol.results import OperationResult
 
 
 def with_lease(command, lease):
@@ -31,7 +31,7 @@ def with_lease(command, lease):
 
 
 def publish(receipt, work):
-    return ComputeResult(
+    return OperationResult(
         receipt.identity,
         receipt.operation,
         "history",

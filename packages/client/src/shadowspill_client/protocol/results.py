@@ -132,7 +132,7 @@ class ExecutionReceipt(Record):
         )
 
     @classmethod
-    def from_result(cls, result: ComputeResult) -> ExecutionReceipt:
+    def from_result(cls, result: OperationResult) -> ExecutionReceipt:
         return cls(
             result.identity,
             result.operation,
@@ -143,7 +143,7 @@ class ExecutionReceipt(Record):
 
 
 @dataclass(frozen=True)
-class ComputeResult(Record):
+class OperationResult(Record):
     identity: RequestIdentity
     operation: ComputeOperation
     history_id: str
@@ -225,7 +225,7 @@ class RequestStatus(Record):
     identity: RequestIdentity
     state: Literal["uploading", "accepted", "running", "completed", "skipped", "failed"]
     acceptance: Acceptance | None = None
-    result: ComputeResult | None = None
+    result: OperationResult | None = None
     failure: Failure | None = None
 
     def __post_init__(self) -> None:
@@ -243,7 +243,7 @@ class RequestStatus(Record):
             raise ValueError("unknown request state")
         for name, kind in (
             ("acceptance", Acceptance),
-            ("result", ComputeResult),
+            ("result", OperationResult),
             ("failure", Failure),
         ):
             value = getattr(self, name)

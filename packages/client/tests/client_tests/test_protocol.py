@@ -15,15 +15,15 @@ from shadowspill_client.protocol.codec import (
 )
 from shadowspill_client.protocol.requests import (
     ArtifactRef,
-    ComputeRequest,
+    OperationRequest,
     RequestIdentity,
 )
 from shadowspill_client.protocol.results import (
     Acceptance,
     Accumulation,
     ArtifactIssue,
-    ComputeResult,
     Failure,
+    OperationResult,
     RequestStatus,
 )
 
@@ -32,7 +32,7 @@ PAYLOAD = ArtifactRef("payload_1", "a" * 64, 64)
 
 
 def result():
-    return ComputeResult(
+    return OperationResult(
         IDENTITY,
         "step",
         "history_1",
@@ -52,10 +52,10 @@ def result():
 @pytest.mark.parametrize(
     "value",
     [
-        ComputeRequest(IDENTITY, "step", PAYLOAD, 2, optim={"lr": 0.01}),
-        ComputeRequest(IDENTITY, "forward_backward", PAYLOAD, 2),
-        ComputeRequest(IDENTITY, "forward", PAYLOAD, 2, mode="training"),
-        ComputeRequest(IDENTITY, "optim_step", grad_scale=-1),
+        OperationRequest(IDENTITY, "step", PAYLOAD, 2, optim={"lr": 0.01}),
+        OperationRequest(IDENTITY, "forward_backward", PAYLOAD, 2),
+        OperationRequest(IDENTITY, "forward", PAYLOAD, 2, mode="training"),
+        OperationRequest(IDENTITY, "optim_step", grad_scale=-1),
         Acceptance(IDENTITY, 3),
         result(),
         RequestStatus(IDENTITY, "completed", Acceptance(IDENTITY, 3), result()),
@@ -99,7 +99,7 @@ def test_versioned_wire_roundtrip(value):
 
 
 def test_request_hash_covers_identity_controls_and_payload_integrity():
-    left = ComputeRequest(
+    left = OperationRequest(
         IDENTITY, "step", PAYLOAD, 2, optim={"lr": 1.0, "weight_decay": 0.01}
     )
     right = replace(left, optim={"weight_decay": 0.01, "lr": 1.0})
@@ -112,20 +112,22 @@ def test_request_hash_covers_identity_controls_and_payload_integrity():
     )
     assert digest(left) != digest(replace(left, grad_scale=0))
     assert left.grad_scale == 1
-    assert ComputeRequest(IDENTITY, "forward").mode == "evaluation"
+    assert OperationRequest(IDENTITY, "forward").mode == "evaluation"
 
 
 @pytest.mark.parametrize(
     "factory",
     [
-        lambda: ComputeRequest(IDENTITY, "step", datum_count=1),
-        lambda: ComputeRequest(IDENTITY, "forward", optim={"lr": 0.1}),
-        lambda: ComputeRequest(IDENTITY, "forward_backward", grad_scale=1),
-        lambda: ComputeRequest(IDENTITY, "optim_step", loss_params={"temperature": 1}),
-        lambda: ComputeRequest(IDENTITY, "optim_step", payload=PAYLOAD),
-        lambda: ComputeRequest(IDENTITY, "step", mode="evaluation"),
-        lambda: ComputeRequest(IDENTITY, "step", grad_scale=float("inf")),
-        lambda: ComputeRequest(IDENTITY, "step", dependencies=[IDENTITY.request_id]),
+        lambda: OperationRequest(IDENTITY, "step", datum_count=1),
+        lambda: OperationRequest(IDENTITY, "forward", optim={"lr": 0.1}),
+        lambda: OperationRequest(IDENTITY, "forward_backward", grad_scale=1),
+        lambda: OperationRequest(
+            IDENTITY, "optim_step", loss_params={"temperature": 1}
+        ),
+        lambda: OperationRequest(IDENTITY, "optim_step", payload=PAYLOAD),
+        lambda: OperationRequest(IDENTITY, "step", mode="evaluation"),
+        lambda: OperationRequest(IDENTITY, "step", grad_scale=float("inf")),
+        lambda: OperationRequest(IDENTITY, "step", dependencies=[IDENTITY.request_id]),
         lambda: replace(IDENTITY, writer_epoch=0),
         lambda: replace(PAYLOAD, id="../../server/file"),
         lambda: Accumulation(1, True, ["request_1"], 2),
@@ -175,7 +177,7 @@ def test_decoder_rejects_unknown_versions_types_fields_and_duplicate_keys():
 
 
 def test_metadata_is_bounded_and_does_not_expand_binary_payloads():
-    request = ComputeRequest(
+    request = OperationRequest(
         IDENTITY, "step", replace(PAYLOAD, size_bytes=2**40), 1000000
     )
     assert len(encode(request)) < 1000
@@ -195,10 +197,10 @@ def test_metadata_is_bounded_and_does_not_expand_binary_payloads():
 
 
 def test_private_codec_owns_its_allowlist_and_uses_the_same_strict_envelope():
-    kinds = {"private.request": ComputeRequest}
+    kinds = {"private.request": OperationRequest}
     codec = RecordCodec(kinds)
     kinds.clear()
-    request = ComputeRequest(IDENTITY, "forward")
+    request = OperationRequest(IDENTITY, "forward")
     encoded = codec.encode(request)
     assert codec.decode(encoded) == request
     assert encoded == encode(request).replace(b"compute.request", b"private.request")

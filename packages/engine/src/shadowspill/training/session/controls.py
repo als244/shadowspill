@@ -9,7 +9,7 @@ from shadowspill.training.preparation.scalars import control_values
 from shadowspill.training.preparation.setup import ResolvedSetup
 from shadowspill_client.protocol.controls import ControlSchema, Scalar, ScalarControl
 from shadowspill_client.protocol.operations import OperationKey
-from shadowspill_client.protocol.requests import ComputeRequest
+from shadowspill_client.protocol.requests import OperationRequest
 
 _SCALE = ControlSchema({"grad_scale": ScalarControl(1.0)})
 
@@ -21,7 +21,7 @@ class CallControls:
     grad_scale: float | None
 
 
-def operation_key(setup: ResolvedSetup, request: ComputeRequest) -> OperationKey:
+def operation_key(setup: ResolvedSetup, request: OperationRequest) -> OperationKey:
     key = OperationKey(
         request.operation,
         None
@@ -35,7 +35,7 @@ def operation_key(setup: ResolvedSetup, request: ComputeRequest) -> OperationKey
 
 
 def call_controls(
-    setup: ResolvedSetup, request: ComputeRequest, key: OperationKey
+    setup: ResolvedSetup, request: OperationRequest, key: OperationKey
 ) -> CallControls:
     loss: Mapping[str, Scalar] = MappingProxyType({})
     optim: Mapping[str, Scalar] = MappingProxyType({})

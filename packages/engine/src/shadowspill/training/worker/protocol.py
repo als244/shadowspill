@@ -8,7 +8,11 @@ from typing import Literal
 
 from shadowspill_client._records import Record, integer, names, record, text
 from shadowspill_client.protocol.codec import RecordCodec
-from shadowspill_client.protocol.requests import ArtifactRef, ComputeRequest, identifier
+from shadowspill_client.protocol.requests import (
+    ArtifactRef,
+    OperationRequest,
+    identifier,
+)
 
 
 class WorkerOutputError(RuntimeError):
@@ -124,7 +128,7 @@ class WorkerCall(Record):
 
     scope: WorkerScope
     invocation: int
-    request: ComputeRequest
+    request: OperationRequest
     candidate: str
     skipped: bool
     accumulate_gradients: bool
@@ -133,7 +137,7 @@ class WorkerCall(Record):
     def __post_init__(self) -> None:
         object.__setattr__(self, "scope", record(WorkerScope, self.scope, "scope"))
         object.__setattr__(
-            self, "request", record(ComputeRequest, self.request, "request")
+            self, "request", record(OperationRequest, self.request, "request")
         )
         integer(self.invocation, "worker invocation", minimum=1)
         identifier(self.candidate, "prepared candidate")

@@ -7,7 +7,7 @@ from threading import RLock
 from typing import Protocol
 
 from shadowspill_client._records import integer
-from shadowspill_client.protocol.requests import ComputeRequest
+from shadowspill_client.protocol.requests import OperationRequest
 from shadowspill_client.protocol.results import Failure, RequestStatus
 
 from .recovery import RecoverableRequests
@@ -18,11 +18,11 @@ class AcceptanceRecords(RecoverableRequests, Protocol):
     @property
     def last_sequence(self) -> int: ...
 
-    def get(self, request_id: str) -> tuple[ComputeRequest, RequestStatus] | None: ...
+    def get(self, request_id: str) -> tuple[OperationRequest, RequestStatus] | None: ...
 
     def at_sequence(
         self, sequence: int
-    ) -> tuple[ComputeRequest, RequestStatus] | None: ...
+    ) -> tuple[OperationRequest, RequestStatus] | None: ...
 
     def accept(self, request_id: str) -> RequestStatus: ...
 
@@ -164,7 +164,7 @@ class AcceptanceOrder:
         self._fail_dependents(request, cutoff)
         return True
 
-    def _fail_dependents(self, request: ComputeRequest, cutoff: int) -> None:
+    def _fail_dependents(self, request: OperationRequest, cutoff: int) -> None:
         request_id = request.identity.request_id
         after = request.identity.sequence
         while page := self._records.pending(after=after, limit=128):
@@ -215,7 +215,7 @@ class AcceptanceOrder:
             self._ready.pop(request_id)
             self._next += 1
 
-    def _invalid(self, request: ComputeRequest) -> Rejection | None:
+    def _invalid(self, request: OperationRequest) -> Rejection | None:
         if not self._state.boundary.valid or self._state.boundary.closed:
             return Rejection(
                 "state_unavailable", "Live training state is invalid or closed."
@@ -249,7 +249,7 @@ class AcceptanceOrder:
         self._records.fail(request_id, failure)
         self._ready.pop(request_id, None)
 
-    def _require(self, request_id: str) -> tuple[ComputeRequest, RequestStatus]:
+    def _require(self, request_id: str) -> tuple[OperationRequest, RequestStatus]:
         result = self._records.get(request_id)
         if result is None:
             raise KeyError(f"unknown request: {request_id}")

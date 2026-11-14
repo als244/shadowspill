@@ -25,7 +25,7 @@ from shadowspill_client._records import number
 from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.payload import BatchSnapshot, snapshot_batch
-from shadowspill_client.protocol.requests import ComputeRequest
+from shadowspill_client.protocol.requests import OperationRequest
 from shadowspill_client.protocol.results import RequestStatus
 
 from .controls import CallControls, call_controls, operation_key
@@ -35,7 +35,7 @@ from .state import Transition
 
 @dataclass
 class PreparedCall:
-    request: ComputeRequest
+    request: OperationRequest
     key: OperationKey
     candidate: PlannedCandidate
     controls: CallControls
@@ -157,7 +157,7 @@ class PreparedRequests:
         return max(costs), row.id
 
     def register(
-        self, inputs: RequestInputs[PreparedCall], request: ComputeRequest
+        self, inputs: RequestInputs[PreparedCall], request: OperationRequest
     ) -> RequestStatus:
         """Derive upload limits from preparation, never from submitted byte claims."""
         try:
@@ -194,7 +194,7 @@ class PreparedRequests:
 
     def __call__(
         self,
-        request: ComputeRequest,
+        request: OperationRequest,
         snapshot: BatchSnapshot | None,
         budget: BufferBudget,
     ) -> PreparedCall:

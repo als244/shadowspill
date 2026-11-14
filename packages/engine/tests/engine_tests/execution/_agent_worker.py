@@ -47,7 +47,7 @@ from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # no
 from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
 from shadowspill_client.protocol.requests import (  # noqa: E402
     ArtifactRef,
-    ComputeRequest,
+    OperationRequest,
     RequestIdentity,
 )
 
@@ -218,7 +218,7 @@ with (
                         name, snapshot.sha256, snapshot.size_bytes, MEDIA_TYPE
                     )
                     wire, count = b"".join(snapshot.chunks()), len(datums)
-            request = ComputeRequest(
+            request = OperationRequest(
                 RequestIdentity(name, "run", sequence, "writer", 1, "agent"),
                 operation,
                 payload,

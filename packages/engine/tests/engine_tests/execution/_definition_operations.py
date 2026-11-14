@@ -49,10 +49,10 @@ from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # no
 from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
 from shadowspill_client.protocol.requests import (  # noqa: E402
     ArtifactRef,
-    ComputeRequest,
+    OperationRequest,
     RequestIdentity,
 )
-from shadowspill_client.protocol.results import ComputeResult  # noqa: E402
+from shadowspill_client.protocol.results import OperationResult  # noqa: E402
 
 root = Path(sys.argv[1])
 registry = load_registry(PreparationJob.load(root / JOB_NAME).packages)
@@ -166,7 +166,7 @@ def submit(name, operation, *, datums=None, **options):
                 name + ".inputs", owned.sha256, owned.size_bytes, MEDIA_TYPE
             )
             count = len(owned.datums)
-    command = ComputeRequest(
+    command = OperationRequest(
         RequestIdentity(name, "run", journal.last_sequence + 1, "writer", 1, "worker"),
         operation,
         payload,
@@ -233,7 +233,7 @@ def invoke(
             observe(outputs.value, data)
         if publication_error:
             raise OSError("injected required output publication failure")
-        return ComputeResult(
+        return OperationResult(
             command.identity,
             operation,
             "history",

@@ -8,8 +8,8 @@ from shadowspill_client.protocol.codec import decode, encode
 from shadowspill_client.protocol.requests import RequestIdentity
 from shadowspill_client.protocol.results import (
     Accumulation,
-    ComputeResult,
     ExecutionReceipt,
+    OperationResult,
 )
 
 
@@ -26,7 +26,7 @@ def receipt():
 def test_completion_fact_roundtrips_independently_of_published_result():
     value = receipt()
     assert decode(encode(value)) == value
-    result = ComputeResult(
+    result = OperationResult(
         value.identity,
         value.operation,
         "history",

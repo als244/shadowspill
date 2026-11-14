@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from shadowspill_client.protocol.codec import decode, digest, encode
-from shadowspill_client.protocol.requests import ComputeRequest, WriterLease
+from shadowspill_client.protocol.requests import OperationRequest, WriterLease
 from shadowspill_client.protocol.results import ExecutionReceipt, RequestStatus
 
 
@@ -35,14 +35,16 @@ class RequestIndex:
             self._directory.cleanup()
             raise
 
-    def get(self, request_id: str) -> tuple[ComputeRequest, RequestStatus, str] | None:
+    def get(
+        self, request_id: str
+    ) -> tuple[OperationRequest, RequestStatus, str] | None:
         row = self._db.execute(
             "SELECT request, status, digest FROM requests WHERE id=?", (request_id,)
         ).fetchone()
         if row is None:
             return None
         request, status = decode(row[0]), decode(row[1])
-        if not isinstance(request, ComputeRequest) or not isinstance(
+        if not isinstance(request, OperationRequest) or not isinstance(
             status, RequestStatus
         ):
             raise ValueError("invalid derived request index")
@@ -105,7 +107,7 @@ class RequestIndex:
         )
 
     def insert(
-        self, request: ComputeRequest, status: RequestStatus, checksum: str
+        self, request: OperationRequest, status: RequestStatus, checksum: str
     ) -> None:
         self._db.execute(
             "INSERT INTO requests VALUES (?, ?, ?, ?, ?, ?, NULL)",

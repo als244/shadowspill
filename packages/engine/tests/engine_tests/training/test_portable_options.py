@@ -7,7 +7,7 @@ from shadowspill.task.profiling import ProfilingOptions
 from shadowspill_client import PlanningOptions
 from shadowspill_client import ProfilingOptions as PortableProfilingOptions
 from shadowspill_client.protocol.codec import encode
-from shadowspill_client.protocol.requests import ComputeRequest, RequestIdentity
+from shadowspill_client.protocol.requests import OperationRequest, RequestIdentity
 
 
 def test_portable_profiling_defaults_decode_to_exact_existing_policy():
@@ -31,7 +31,7 @@ def test_planning_records_carry_existing_search_serialization():
 
 
 def test_wire_metadata_uses_engine_artifact_canonical_json_convention():
-    request = ComputeRequest(
+    request = OperationRequest(
         RequestIdentity("request", "run", 1, "writer", 1, "server"), "optim_step"
     )
     assert encode(request) == encoded(

@@ -89,7 +89,7 @@ class WriterLease(Record):
 
 
 @dataclass(frozen=True)
-class ComputeRequest(Record):
+class OperationRequest(Record):
     identity: RequestIdentity
     operation: ComputeOperation
     payload: ArtifactRef | None = None

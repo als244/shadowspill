@@ -5,12 +5,12 @@ from threading import Lock
 from typing import Protocol
 
 from shadowspill_client.protocol.codec import ProtocolError, encode
-from shadowspill_client.protocol.requests import ComputeRequest
+from shadowspill_client.protocol.requests import OperationRequest
 from shadowspill_client.protocol.results import (
     Acceptance,
-    ComputeResult,
     ExecutionReceipt,
     Failure,
+    OperationResult,
     RequestStatus,
 )
 
@@ -23,7 +23,7 @@ class DispatchRecords(AcceptanceRecords, Protocol):
 
     def executed(self, receipt: ExecutionReceipt) -> ExecutionReceipt: ...
 
-    def complete(self, result: ComputeResult) -> RequestStatus: ...
+    def complete(self, result: OperationResult) -> RequestStatus: ...
 
 
 class CompletedWork(Protocol):
@@ -73,7 +73,7 @@ class RequestDispatcher:
         self,
         request_id: str,
         execute: Callable[[Transition], Work],
-        publish: Callable[[ExecutionReceipt, Work], ComputeResult],
+        publish: Callable[[ExecutionReceipt, Work], OperationResult],
         *,
         participates: bool | None = None,
     ) -> RequestStatus:
@@ -139,7 +139,7 @@ class RequestDispatcher:
 
     def _start(
         self, request_id: str, participates: bool | None
-    ) -> tuple[ComputeRequest, Transition] | RequestStatus:
+    ) -> tuple[OperationRequest, Transition] | RequestStatus:
         row = self._records.get(request_id)
         if row is None:
             raise KeyError(f"unknown request: {request_id}")
@@ -191,7 +191,7 @@ class RequestDispatcher:
 
     def _preflight(
         self,
-        request: ComputeRequest,
+        request: OperationRequest,
         transition: Transition,
         acceptance: Acceptance,
     ) -> None:
@@ -202,7 +202,7 @@ class RequestDispatcher:
         history ID, so growing accumulation cannot overflow the execution receipt.
         """
         after = self._state.completion(transition)
-        result = ComputeResult(
+        result = OperationResult(
             request.identity,
             request.operation,
             "h" * 128,
@@ -219,7 +219,7 @@ class RequestDispatcher:
         )
 
     def _confirm(
-        self, request: ComputeRequest, transition: Transition
+        self, request: OperationRequest, transition: Transition
     ) -> ExecutionReceipt:
         try:
             boundary = self._state.complete(transition)
@@ -238,10 +238,10 @@ class RequestDispatcher:
 
     def _publish[Work: CompletedWork](
         self,
-        request: ComputeRequest,
+        request: OperationRequest,
         receipt: ExecutionReceipt,
         work: Work,
-        publish: Callable[[ExecutionReceipt, Work], ComputeResult],
+        publish: Callable[[ExecutionReceipt, Work], OperationResult],
     ) -> RequestStatus:
         try:
             result = publish(receipt, work)
@@ -272,7 +272,7 @@ class RequestDispatcher:
                 self._state.invalidate()
                 raise
 
-    def _failed(self, request: ComputeRequest, failure: Failure) -> RequestStatus:
+    def _failed(self, request: OperationRequest, failure: Failure) -> RequestStatus:
         try:
             status = self._records.fail(request.identity.request_id, failure)
             self.order.fail_dependents(request.identity.request_id)

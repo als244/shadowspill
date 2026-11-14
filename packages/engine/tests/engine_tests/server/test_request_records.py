@@ -10,14 +10,14 @@ from shadowspill.server.records import Journal
 from shadowspill.server.records.requests import RequestRecords, RunIdentity
 from shadowspill_client.protocol.requests import (
     ArtifactRef,
-    ComputeRequest,
+    OperationRequest,
     RequestIdentity,
 )
 from shadowspill_client.protocol.results import (
     Acceptance,
-    ComputeResult,
     ExecutionReceipt,
     Failure,
+    OperationResult,
     RequestStatus,
 )
 
@@ -25,13 +25,13 @@ IDENTITY = RunIdentity("owner", "session", "run")
 
 
 def request(name="a", sequence=1):
-    return ComputeRequest(
+    return OperationRequest(
         RequestIdentity(name, "run", sequence, "writer", 1, "server"), "forward"
     )
 
 
 def result(command):
-    return ComputeResult(
+    return OperationResult(
         command.identity,
         command.operation,
         "history",
@@ -214,12 +214,12 @@ for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads',
              'shadowspill.runtime', 'shadowspill.training'):
     sys.modules[name] = None
 from shadowspill.server.records.requests import RequestRecords, RunIdentity
-from shadowspill_client.protocol.requests import ComputeRequest, RequestIdentity
+from shadowspill_client.protocol.requests import OperationRequest, RequestIdentity
 root = Path(sys.argv[1])
 with RequestRecords(root/'journal', identity=RunIdentity('o','s','r'),
                     cache_root=root) as records:
     records.claim_writer('w', 'server')
-    command = ComputeRequest(RequestIdentity('a','r',1,'w',1,'server'), 'forward')
+    command = OperationRequest(RequestIdentity('a','r',1,'w',1,'server'), 'forward')
     records.submit(command)
     assert records.accept('a').acceptance.journal_position == 4
 """

@@ -22,8 +22,14 @@ from .controls import ControlSchema
 from .definitions import DefinitionSource, OutputSet
 from .inputs import InputSchema
 from .preparation import ResolvedPreparation
-from .requests import ComputeRequest, WriterLease
-from .results import Acceptance, ComputeResult, ExecutionReceipt, Failure, RequestStatus
+from .requests import OperationRequest, WriterLease
+from .results import (
+    Acceptance,
+    ExecutionReceipt,
+    Failure,
+    OperationResult,
+    RequestStatus,
+)
 from .training import ResolvedTraining
 
 VERSION = 1
@@ -42,10 +48,10 @@ _KINDS: Mapping[str, type[Record]] = {
     "schema.controls": ControlSchema,
     "schema.outputs": OutputSet,
     "definition.source": DefinitionSource,
-    "compute.request": ComputeRequest,
+    "compute.request": OperationRequest,
     "writer.lease": WriterLease,
     "request.acceptance": Acceptance,
-    "compute.result": ComputeResult,
+    "compute.result": OperationResult,
     "compute.execution": ExecutionReceipt,
     "request.failure": Failure,
     "request.status": RequestStatus,

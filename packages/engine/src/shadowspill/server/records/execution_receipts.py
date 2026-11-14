@@ -1,11 +1,11 @@
 """Completion facts constrain terminal outcomes independently of artifact delivery."""
 
-from shadowspill_client.protocol.requests import ComputeRequest
+from shadowspill_client.protocol.requests import OperationRequest
 from shadowspill_client.protocol.results import ExecutionReceipt, RequestStatus
 
 
 def validate_receipt(
-    request: ComputeRequest, status: RequestStatus, receipt: ExecutionReceipt
+    request: OperationRequest, status: RequestStatus, receipt: ExecutionReceipt
 ) -> None:
     if status.state != "running":
         raise ValueError("execution receipt requires dispatched work")

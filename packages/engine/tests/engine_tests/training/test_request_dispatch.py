@@ -13,8 +13,8 @@ from shadowspill.training.session.state import OperationState
 from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.results import (
     ArtifactIssue,
-    ComputeResult,
     Failure,
+    OperationResult,
     RequestStatus,
 )
 
@@ -29,7 +29,7 @@ class HostWork:
 
 def publish(receipt, work):
     assert not work.closed
-    return ComputeResult(
+    return OperationResult(
         receipt.identity,
         receipt.operation,
         "history",

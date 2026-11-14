@@ -7,7 +7,7 @@ import pytest
 from engine_tests.server.test_request_records import request, store
 from shadowspill.training.session.acceptance import AcceptanceOrder
 from shadowspill.training.session.state import OperationState
-from shadowspill_client.protocol.results import ComputeResult, ExecutionReceipt
+from shadowspill_client.protocol.results import ExecutionReceipt, OperationResult
 
 
 def finish(records, state, key, *, participates=None):
@@ -25,7 +25,7 @@ def finish(records, state, key, *, participates=None):
         )
     )
     return records.complete(
-        ComputeResult(
+        OperationResult(
             command.identity,
             command.operation,
             "history",
@@ -128,7 +128,7 @@ def test_rejection_waits_for_earlier_execution_before_reporting_surviving_bounda
             )
         )
         records.complete(
-            ComputeResult(
+            OperationResult(
                 a.identity,
                 "step",
                 "h",

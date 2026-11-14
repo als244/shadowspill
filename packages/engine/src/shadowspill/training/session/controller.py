@@ -11,10 +11,10 @@ from typing import Protocol, Self
 from shadowspill_client._records import number
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload_io import BufferReader
-from shadowspill_client.protocol.requests import ComputeRequest, identifier
+from shadowspill_client.protocol.requests import OperationRequest, identifier
 from shadowspill_client.protocol.results import (
-    ComputeResult,
     ExecutionReceipt,
+    OperationResult,
     RequestStatus,
 )
 
@@ -54,7 +54,7 @@ class RunController[Work: CompletedWork]:
         records: ControllerRecords,
         prepared: PreparedRequests,
         workers: ControllerWorkers[Work],
-        publish: Callable[[PreparedCall, ExecutionReceipt, Work], ComputeResult],
+        publish: Callable[[PreparedCall, ExecutionReceipt, Work], OperationResult],
         *,
         server_incarnation: str,
         budget: BufferBudget,
@@ -111,7 +111,7 @@ class RunController[Work: CompletedWork]:
         finally:
             self._notify()
 
-    def register(self, request: ComputeRequest) -> RequestStatus:
+    def register(self, request: OperationRequest) -> RequestStatus:
         """Reserve metadata/identity; a new request is not yet accepted."""
         try:
             with self._dispatcher.order.synchronized():

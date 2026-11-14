@@ -63,8 +63,8 @@ from shadowspill_client.protocol.definitions import OutputSet
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch
 from shadowspill_client.protocol.payload_sizes import PayloadSize
-from shadowspill_client.protocol.requests import ArtifactRef, ComputeRequest
-from shadowspill_client.protocol.results import ComputeResult
+from shadowspill_client.protocol.requests import ArtifactRef, OperationRequest
+from shadowspill_client.protocol.results import OperationResult
 
 
 def family(inv=None):
@@ -106,7 +106,7 @@ def upload(datums=None, *, operation="step", name="a", sequence=1, **controls):
         ref = ArtifactRef(
             name + ".input", snapshot.sha256, snapshot.size_bytes, MEDIA_TYPE
         )
-    command = ComputeRequest(
+    command = OperationRequest(
         request(name, sequence).identity, operation, ref, len(datums), **controls
     )
     return command, wire
@@ -134,7 +134,7 @@ def finish(dispatcher, inputs, command):
         return Work()
 
     def publish(receipt, work):
-        return ComputeResult(
+        return OperationResult(
             receipt.identity,
             receipt.operation,
             "history",
@@ -209,7 +209,7 @@ def test_real_upload_selects_only_prepared_shapes_and_defaults_are_nonsticky(tmp
                 return Work()
 
             def publish(receipt, work, data=data):
-                return ComputeResult(
+                return OperationResult(
                     receipt.identity,
                     receipt.operation,
                     "history",
@@ -243,12 +243,12 @@ def test_empty_masked_and_optimizer_forms_follow_the_single_state_machine(tmp_pa
         data, result = finish(dispatcher, inputs, command)
         assert not data.participates and result.state == "skipped"
         assert state.boundary.accumulation.open
-        optim = ComputeRequest(request("optim", 2).identity, "optim_step")
+        optim = OperationRequest(request("optim", 2).identity, "optim_step")
         prepared.register(inputs, optim)
         assert inputs.receive("optim").state == "accepted"
         _, result = finish(dispatcher, inputs, optim)
         assert result.state == "skipped" and not state.boundary.accumulation.open
-        empty = ComputeRequest(request("empty", 3).identity, "step")
+        empty = OperationRequest(request("empty", 3).identity, "step")
         prepared.register(inputs, empty)
         assert inputs.receive("empty").state == "accepted"
         _, result = finish(dispatcher, inputs, empty)
@@ -298,7 +298,7 @@ def test_complete_preexecution_failure_preserves_prior_contribution_and_rejects_
             **options,
         )
         prepared.register(inputs, command)
-        queued = ComputeRequest(
+        queued = OperationRequest(
             request("optim", 2).identity, "optim_step", dependencies=["a"]
         )
         prepared.register(inputs, queued)
