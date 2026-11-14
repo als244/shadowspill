@@ -37,6 +37,15 @@ class CompletedWork(Protocol):
     def close(self) -> None: ...
 
 
+class ExecutionNotStarted(RuntimeError):
+    """All workers confirmed unstarted work and still own valid mutable state.
+
+    A worker adapter may raise this only after every staging rejection/abort is
+    acknowledged and no execute was sent. Missing replies, worker loss and any
+    error after release must use the ordinary unknown-effect failure path.
+    """
+
+
 class RequestDispatcher:
     """Dispatch only the accepted queue head; never retry uncertain worker work.
 
@@ -71,7 +80,8 @@ class RequestDispatcher:
         """Synchronous worker boundary; the service runs it outside HTTP handlers.
 
         ``execute`` must confirm every participating worker and terminal transfer
-        before returning. Any exception there has unknown effects. ``publish``
+        before returning. Only ``ExecutionNotStarted`` certifies intact workers
+        before release; other exceptions have unknown effects. ``publish``
         performs no model work; failure cannot roll back or rerun execution.
         """
         if not self._dispatching.acquire(blocking=False):
@@ -84,6 +94,20 @@ class RequestDispatcher:
             request, transition = started
             try:
                 work = execute(transition)
+            except ExecutionNotStarted as error:
+                with self.order.synchronized():
+                    boundary = self._state.fail(transition, execution_started=False)
+                    return self._failed(
+                        request,
+                        Failure(
+                            "worker_preflight_failed",
+                            str(error) or type(error).__name__,
+                            "not_started",
+                            boundary.valid,
+                            boundary.completed_updates,
+                            boundary.accumulation,
+                        ),
+                    )
             except BaseException as error:
                 with self.order.synchronized():
                     self._state.fail(transition, execution_started=True)

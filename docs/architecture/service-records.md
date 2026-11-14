@@ -100,8 +100,21 @@ truncated command or a broken reply leaves the worker invalid; its owning agent
 must close the Executor/process. No reconnect or automatic replay can reuse that
 live state. CPU tests cover actual child processes and death after execution but
 before reply. The cold-worker GPU oracle exercises the same loop and Executor
-adapter. Agent launch/monitoring, all-worker release, authenticated remote
+adapter. Agent launch/monitoring, authenticated remote
 transport and service output publication remain integration work.
+
+`training.worker.group.WorkerGroup` coordinates the private connections: it checks
+all command metadata before sending, waits for every staging response, then sends
+execute to every participant before waiting for completion. A staging rejection
+aborts every ready participant and waits for every abort acknowledgement. Only
+that confirmed boundary raises `ExecutionNotStarted`, allowing the dispatcher to
+retain prior gradients/counters while failing the already queued dependent suffix.
+Corrected work uses a new ID. Missing staging/abort/completion replies or failures
+after release invalidate the group and invoke its allocation agent's stop callback
+for all owned children. No incomplete response is retried. Real socket barriers
+and child-process failure tests cover the controller protocol; actual multi-node
+GPU qualification remains required. Agents still need to provide admitted file
+delivery, startup/supervision and the authenticated service connection.
 
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.

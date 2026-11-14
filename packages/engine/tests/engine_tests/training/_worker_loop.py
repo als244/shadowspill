@@ -10,6 +10,7 @@ from shadowspill.training.worker.protocol import WorkerScope
 from shadowspill_client.buffers import BufferBudget
 
 marker, mode = Path(sys.argv[1]), sys.argv[2]
+rank = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 
 
 def bind(command):
@@ -26,5 +27,5 @@ def execute(bound):
 
 
 WorkerLoop(
-    WorkerScope("run", "server", "process-1", 0), bind, execute, BufferBudget(1)
+    WorkerScope("run", "server", "process-1", rank), bind, execute, BufferBudget(1)
 ).serve(sys.stdin.buffer, sys.stdout.buffer)

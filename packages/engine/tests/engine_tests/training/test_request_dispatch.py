@@ -8,7 +8,7 @@ import pytest
 
 from engine_tests.server.test_request_records import request, store
 from shadowspill.training.session import dispatch
-from shadowspill.training.session.dispatch import RequestDispatcher
+from shadowspill.training.session.dispatch import ExecutionNotStarted, RequestDispatcher
 from shadowspill.training.session.state import OperationState
 from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.results import (
@@ -154,6 +154,39 @@ def test_worker_failure_is_unknown_invalidates_state_and_never_replays(tmp_path)
         assert following.failed_dependencies == ("a",)
         assert dispatcher.run("a", partial, publish, participates=True) == failed
         assert partial_effects == ["mutated"]
+
+
+def test_confirmed_preexecution_worker_abort_preserves_prior_gradients(tmp_path):
+    with store(tmp_path) as records:
+        state = OperationState()
+        dispatcher = RequestDispatcher(records, state, max_pending=3)
+        submit(dispatcher, records, "a", 1, "forward_backward")
+        dispatcher.run("a", lambda t: HostWork(), publish, participates=True)
+        before = state.boundary
+        submit(dispatcher, records, "b", 2, "forward_backward")
+        submit(dispatcher, records, "optimizer", 3, "optim_step")
+        attempts = []
+
+        def aborted(transition):
+            assert records.get("b")[1].state == "running"
+            attempts.append(transition.request_id)
+            raise ExecutionNotStarted(
+                "All workers acknowledged unstarted input staging"
+            )
+
+        failed = dispatcher.run("b", aborted, publish, participates=True)
+        assert failed.failure.code == "worker_preflight_failed"
+        assert failed.failure.execution_effect == "not_started"
+        assert failed.failure.state_valid and state.boundary == before
+        assert failed.failure.accumulation.contributions == ("a",)
+        assert records.get("optimizer")[1].failure.failed_dependencies == ("b",)
+        assert dispatcher.run("b", aborted, publish, participates=True) == failed
+        assert attempts == ["b"]
+        submit(dispatcher, records, "corrected", 4, "forward_backward", ("a",))
+        dispatcher.run("corrected", lambda t: HostWork(), publish, participates=True)
+        submit(dispatcher, records, "apply", 5, "optim_step")
+        completed = dispatcher.run("apply", lambda t: HostWork(), publish)
+        assert completed.result.completed_updates == 1
 
 
 def test_required_publication_failure_preserves_known_update_and_closes_host_outputs(
