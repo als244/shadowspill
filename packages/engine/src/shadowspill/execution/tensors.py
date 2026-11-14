@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 import torch
 
+from shadowspill.artifacts.examples import input_groups, single_forward
 from shadowspill.artifacts.tensors import TensorChunk as TensorChunk
 from shadowspill.artifacts.tensors import registration_name
 
@@ -53,10 +54,7 @@ def tensor_entries(
                 "value": item["fill"],
             },
         )
-    groups = bindings["root_inputs"]
-    if bindings["kind"] == "forward":
-        groups = [groups]
-    for index, slots in enumerate(groups):
+    for index, slots in enumerate(input_groups(bindings)):
         sources = (
             bindings["example_root_sources"][index]
             if "example_root_sources" in bindings
@@ -67,7 +65,7 @@ def tensor_entries(
             if source["kind"] == "CONSTANT_TENSOR":
                 # Lifted names are local to each export. Different examples can
                 # use the same name for different values or tensor geometries.
-                scope = "" if bindings["kind"] == "forward" else f"example_{index}."
+                scope = "" if single_forward(bindings) else f"example_{index}."
                 yield (
                     "constant." + scope + source["name"],
                     slot["object_id"],
@@ -82,10 +80,7 @@ def tensor_entries(
 def verify_initialization(state: Storage) -> None:
     covered = {state.aliases[object_id] for _, object_id, _ in tensor_entries(state)}
     bindings = state.plan.program.bindings
-    groups = bindings["root_inputs"]
-    if bindings["kind"] == "forward":
-        groups = [groups]
-    for index, slots in enumerate(groups):
+    for index, slots in enumerate(input_groups(bindings)):
         sources = (
             bindings["example_root_sources"][index]
             if "example_root_sources" in bindings

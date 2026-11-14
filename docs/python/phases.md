@@ -76,7 +76,8 @@ planned budget.
 
 | Change | Control | Work needed |
 | --- | --- | --- |
-| Model/objective/optimizer, precision, input shapes or microbatch count | [Build arguments](api/build.md) | Build and profile affected implementations, then plan |
+| Model/objective/optimizer, precision or input shapes | [Build arguments](api/build.md) | Build and profile affected implementations, then plan |
+| Microbatch count using already saved forms | `instantiate_examples` in [planning](api/planning.md) | Instantiate on CPU, reuse compatible profiles, then plan and admit |
 | Checkpoint boundaries, split axes/chunk sizes or retained intermediates | `partition`, `chunking`, `graph_pair_policy` in [frontend policies](api/frontend.md) | Build/profile each candidate, then compare Plans |
 | Timing windows, sample caps or external-memory headroom | [Profiling options](api/profiling.md) | Measure with the requested settings, apply profiles, then plan |
 | Transfer backend, collective layout or communication costs | [Communication measurement](api/communication.md) | Obtain compatible measurements, then plan; changed ownership can also require build |

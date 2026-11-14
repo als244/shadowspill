@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.artifacts.examples import output_groups
 from shadowspill.ir import MemoryActionKind
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     PublishedStorage,
@@ -169,9 +170,9 @@ def _run(
     dematerialized = [state.owner(a) for a in release - handoff_sources]
     # Keep only declared public results, not transient function returns, alive
     # across the task boundary. Program inputs are reconstructed from metadata.
-    public = state.plan.program.bindings["public_outputs"]
-    if state.plan.program.bindings["kind"] != "forward":
-        public = [o for example in public for o in example]
+    public = {
+        o for example in output_groups(state.plan.program.bindings) for o in example
+    }
     state.outputs = {o: value for o, value in state.outputs.items() if o in public}
     del leaves, arguments
     after_task_and_update(

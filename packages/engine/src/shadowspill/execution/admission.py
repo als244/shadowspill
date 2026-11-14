@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from shadowspill.artifacts.entrypoints import entrypoint
+from shadowspill.artifacts.examples import output_groups
 from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.communication.contracts import collective_measurement
@@ -180,9 +181,9 @@ def prepare(
                 envelope or TaskMemoryEnvelope(),
             )
         )
-    public = plan.program.bindings["public_outputs"]
-    if plan.program.bindings["kind"] != "forward":
-        public = [value for example in public for value in example]
+    public = [
+        value for example in output_groups(plan.program.bindings) for value in example
+    ]
     public_aliases = tuple(aliases[o] for o in public if o is not None)
     acquisition = admit_caller_acquisition(bridge, public_aliases)
     seal_fixed_layout(bridge)

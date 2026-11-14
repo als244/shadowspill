@@ -217,7 +217,7 @@ def test_missing_additive_forms_rejected_without_preparation():
     instantiate_examples(source, [0])
     with pytest.raises(ValueError, match="required gradient form"):
         instantiate_examples(source, [0, 0])
-    with pytest.raises(ValueError, match="saved training templates"):
+    with pytest.raises(ValueError, match="saved forward bindings"):
         instantiate_examples(replace(source, bindings={"kind": "forward"}), [0])
 
 

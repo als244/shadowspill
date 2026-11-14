@@ -7,6 +7,7 @@ import torch
 from torch.utils._pytree import tree_flatten, treespec_dumps
 
 from shadowspill.artifacts._values import freeze
+from shadowspill.artifacts.examples import input_groups
 from shadowspill.pytorch.guards import capture_input_signature
 
 from .storage import Storage
@@ -33,10 +34,7 @@ def stage_inputs(
         or (kwargs is not None and len(kwargs) != count)
     ):
         raise ValueError(f"run requires exactly {count} examples")
-    slots_by_example = bindings["root_inputs"]
-    if bindings["kind"] == "forward":
-        slots_by_example = [slots_by_example]
-    for index, slots in enumerate(slots_by_example):
+    for index, slots in enumerate(input_groups(bindings)):
         if input_loader is not None:
             values = input_loader(index)
         else:

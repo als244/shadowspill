@@ -5,6 +5,7 @@ from __future__ import annotations
 from math import prod
 from typing import TYPE_CHECKING, Any
 
+from shadowspill.artifacts.examples import input_groups
 from shadowspill.artifacts.program import Program
 
 if TYPE_CHECKING:
@@ -70,22 +71,13 @@ def validate_operation_program(
     expected_kind = "forward" if output_only else binding.contract.key.operation
     if program.bindings.get("kind") != expected_kind:
         raise ValueError("captured program kind differs from the requested operation")
-    is_forward = expected_kind == "forward"
-    signatures = (
-        (program.bindings["input_signature"],)
-        if is_forward
-        else program.bindings["input_signatures"]
+    signatures = program.bindings.get(
+        "input_signatures", (program.bindings["input_signature"],)
     )
-    sources = (
-        (program.bindings["root_sources"],)
-        if is_forward
-        else program.bindings["example_root_sources"]
+    sources = program.bindings.get(
+        "example_root_sources", (program.bindings["root_sources"],)
     )
-    roots = (
-        (program.bindings["root_inputs"],)
-        if is_forward
-        else program.bindings["root_inputs"]
-    )
+    roots = input_groups(program.bindings)
     controls = binding.contract.controls
     fields: list[tuple[tuple[int, ...], str]] = [
         (binding.inputs.shapes[path], "torch." + binding.inputs.dtypes[path])

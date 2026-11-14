@@ -5,6 +5,7 @@ from typing import Any
 
 from torch.utils._pytree import tree_unflatten, treespec_loads
 
+from shadowspill.artifacts.examples import output_groups, single_forward
 from shadowspill.pytorch.runtime_adapter.outputs import (
     acquire_for_caller,
     transfer_outputs_to_caller,
@@ -22,9 +23,7 @@ class TrainingResult:
 
 def collect_outputs(state: Storage, acquisition: int) -> Any:
     bindings = state.plan.program.bindings
-    groups = bindings["public_outputs"]
-    if bindings["kind"] == "forward":
-        groups = [groups]
+    groups = output_groups(bindings)
     public_ids = [o for group in groups for o in group if o is not None]
     tensors = tuple(state.outputs[o] for o in public_ids)
     aliases = tuple(state.aliases[o] for o in public_ids)
@@ -42,9 +41,12 @@ def collect_outputs(state: Storage, acquisition: int) -> Any:
     state.outputs.clear()
     state.host_values.values.clear()
     if bindings["kind"] == "forward":
-        for index, value in bindings["output_literals"]:
-            outputs[0][index] = value
-        return tree_unflatten(outputs[0], treespec_loads(bindings["output_tree"]))
+        tree = treespec_loads(bindings["output_tree"])
+        for values in outputs:
+            for index, value in bindings["output_literals"]:
+                values[index] = value
+        restored = tuple(tree_unflatten(values, tree) for values in outputs)
+        return restored[0] if single_forward(bindings) else restored
     schema, metrics = bindings["objective_schema"], []
     for values in outputs:
         leaves = [None] * schema["leaf_count"]

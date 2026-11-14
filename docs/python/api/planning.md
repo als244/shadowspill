@@ -83,7 +83,13 @@ count_plan = plan_program(
 )
 ```
 
-This supports complete-step and forward/backward Programs with saved templates.
+This supports complete-step, forward/backward and forward Programs. An expanded
+forward Program returns a tuple of ordinary forward results, one per selected
+example, including when the selected count is one. An ordinary `build_forward`
+Program retains its single-result return value. Repeating a forward Program
+orders examples and snapshots returned input/state views so later mutations do
+not overwrite earlier results. Already expanded Programs can be selected again.
+
 Missing fresh/additive forms or measurements require preparation; instantiation
 does not compile or profile them. Replan each count and jointly admit its state
 and pools before execution. Input-capacity and packing coverage checks are

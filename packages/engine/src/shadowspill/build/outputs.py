@@ -21,6 +21,14 @@ def own_public_outputs(capture: ExportCapture) -> None:
         for n in graph.nodes
         if n.op == "placeholder" and isinstance(n.meta.get("val"), torch.Tensor)
     }
+    # Functionalization represents an updated buffer/input with a fresh value.
+    # Lowering publishes that value back into the original state allocation.
+    # A user output viewing it therefore needs the same owned snapshot as a
+    # direct placeholder view, before that allocation is mutated again.
+    inputs.update(
+        _storage(leaves[mutation.output_index].meta["val"])
+        for mutation in capture.mutations
+    )
     groups: dict[int, list[int]] = {}
     for index in capture.user_output_indices:
         node = leaves[index]
