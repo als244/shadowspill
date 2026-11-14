@@ -190,11 +190,16 @@ def test_opaque_provider_collectives_require_matching_finalized_graphs():
                 task_definitions=[
                     SimpleNamespace(profile_key="opaque", compatibility_digest=code)
                 ],
+                tasks=[SimpleNamespace(task_id="call", profile_id="opaque")],
             ),
             _costed_program=SimpleNamespace(
                 alias_groups=[],
                 selected_tasks=lambda _: [
-                    SimpleNamespace(profile_id="opaque", phase="forward")
+                    SimpleNamespace(
+                        task_id="call",
+                        profile_id="opaque.workspace_16",
+                        phase="forward",
+                    )
                 ],
             ),
             schedule=SimpleNamespace(actions=[]),

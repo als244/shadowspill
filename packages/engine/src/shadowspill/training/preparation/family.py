@@ -92,11 +92,16 @@ def _collectives(
                         d.profile_key: d.compatibility_digest
                         for d in plan.program.task_definitions
                     }
+                    # Costing may append workspace suffixes to profile IDs.
+                    # Compare the original finalized form, not a cost-only ID.
+                    originals = {
+                        task.task_id: task.profile_id for task in plan.program.tasks
+                    }
                     sequences.append(
                         (
                             {n: r.to_dict() for n, r in plan.program.resources.items()},
                             tuple(
-                                definitions[t.profile_id]
+                                definitions[originals[t.task_id]]
                                 for t in plan._costed_program.selected_tasks(
                                     plan.selections
                                 )
