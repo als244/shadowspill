@@ -70,6 +70,11 @@ class AcceptanceOrder:
         with self._mutex:
             yield
 
+    def unavailable(self) -> None:
+        """An authoritative storage or ownership failure stops further live work."""
+        with self._mutex:
+            self._state.invalidate()
+
     def reject(
         self,
         request_id: str,

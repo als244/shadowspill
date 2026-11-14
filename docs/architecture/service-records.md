@@ -17,6 +17,21 @@ owners retain their storage until they release it. Reservation is not durable
 request acceptance. The coordinator supplies the admitted pipeline bound, connects
 validation to acceptance, and handles expired or fenced producers.
 
+`training.session.inputs.RequestInputs` connects those reservations to binary
+Datum decoding, checksums, complete-call preprocessing and durable acceptance.
+The coordinator supplies a trusted prepared pipeline bound. Metadata pressure is
+checked before persisting a new ID; fenced or conflicting submissions consume no
+sequence slot. A decoded batch must match the request's Datum count, and the
+installed preprocessing callback must finish all fallible content work before
+returning. Identical retries inspect the original status without copying again.
+Execution borrows accepted prepared inputs once and explicitly releases them after
+its consumers finish. Failed queued inputs close promptly; rejected active readers
+retain storage until they return. Waiting for an arena does not hold the ordering
+lock needed by earlier cleanup. Fatal shutdown can release idle owners even when
+record storage is unavailable, while active owners retain their leases. Transport
+read deadlines, prepared model-specific preprocessing/spooling and writer takeover
+coordination remain service integration work.
+
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.
 Canonical request digests include binary payload checksums. An identical ID/content

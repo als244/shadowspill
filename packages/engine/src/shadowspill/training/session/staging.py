@@ -52,6 +52,12 @@ class StagingTicket:
             self._closed = True
             self._queue._finish(self.sequence)
 
+    def cancel_wait(self) -> None:
+        """Wake a rejected waiting producer; never release an acquired arena."""
+        with self._queue._condition:
+            if not self._claimed:
+                self.close()
+
     def __enter__(self) -> BufferBudget:
         return self.acquire()
 
@@ -88,6 +94,19 @@ class OrderedStaging:
         The size comes from the resolved input-staging description, not an
         untrusted upload's byte count. Each granted arena enforces that bound.
         """
+        with self._condition:
+            self.preflight(sequence, staging_bytes)
+            ticket = StagingTicket(self, sequence, staging_bytes)
+            self._entries[sequence] = ticket
+            self._grant()
+            return ticket
+
+    def preflight(self, sequence: int, staging_bytes: int) -> None:
+        """Check metadata capacity before the coordinator durably registers an ID.
+
+        The coordinator serializes registrations. Concurrent owner cleanup can
+        only enlarge this window; it cannot consume the missing sequence.
+        """
         integer(sequence, "submission sequence", minimum=1)
         integer(staging_bytes, "complete pipeline bytes", minimum=1)
         if staging_bytes > self._budget.max_bytes:
@@ -103,10 +122,6 @@ class OrderedStaging:
                 raise ValueError("submission sequence already owns or consumed a slot")
             if sequence >= self._first + self._maximum:
                 raise TimeoutError("ordered submission window is full")
-            ticket = StagingTicket(self, sequence, staging_bytes)
-            self._entries[sequence] = ticket
-            self._grant()
-            return ticket
 
     def _grant(self) -> None:
         # The condition is held. Each reservation is nonblocking; a later input
