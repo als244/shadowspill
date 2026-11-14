@@ -10,7 +10,8 @@ from engine_tests.training.test_preparation_templates import inventory
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.planning.shared import SharedMemory
 from shadowspill.training.preparation import family_selection
-from shadowspill.training.preparation.family import _collectives, plan_family
+from shadowspill.training.preparation.family import plan_family
+from shadowspill.training.preparation.family_checks import _collectives
 from shadowspill.training.preparation.family_records import (
     PlannedCandidate,
     PlanRejection,
