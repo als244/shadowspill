@@ -6,6 +6,24 @@ worker dispatch and HTTP. Request ordering, deduplication, writer leases and
 restart outcomes still need the request coordinator; the journal does not make
 an interrupted GPU update replayable.
 
+`server.records.requests.RequestRecords` now persists owner/session/run identity,
+request metadata, acceptance, dispatch and terminal outcomes through that journal.
+Canonical request digests include binary payload checksums. An identical ID/content
+retry returns its original status; conflicting content or sequence reuse fails.
+Acceptance records retain their original journal position. Completed/skipped/failed
+outcomes are immutable, and a running request cannot be dispatched again. The
+training coordinator still must enforce contiguous acceptance, dependencies and
+writer fencing before invoking these methods.
+
+The record layer rebuilds a disposable SQLite query index under the configured
+node-local cache root on every open. Its journal and synchronization modes are
+disabled, its page cache is bounded, and it uses no WAL. Authoritative commits
+precede index updates; an index failure makes the open store unavailable until
+reconciliation. The recovered journal may already contain the original completion.
+Unfinished records remain inspectable without automatic replay. Restart failure
+classification belongs to the coordinator; persistent metadata cannot restore lost
+mutable worker state.
+
 One process holds an exclusive advisory writer lock for a journal directory.
 Threads share a serialized writer. A commit contains a bounded group of immutable
 records with contiguous positions, canonical JSON and a SHA-256 checksum linked
