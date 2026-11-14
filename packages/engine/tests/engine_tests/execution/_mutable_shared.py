@@ -32,6 +32,9 @@ plans = {
         "optim",
         "complete",
         "masked_outputs",
+        "count_repeat",
+        "count_mixed",
+        "count_backward",
     )
 }
 primary = plans.pop("evaluation")
@@ -236,4 +239,7 @@ with Executor(primary, plans=plans) as executor:
     from engine_tests.execution._packed_shared import qualify_packed_family
 
     qualify_packed_family(executor, oracle, snapshot, fill)
+    from engine_tests.execution._count_shared import qualify_count_family
+
+    qualify_count_family(executor, plans, oracle, snapshot, fill)
 print("Qualified mutable shared Plans", flush=True)

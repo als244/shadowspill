@@ -65,8 +65,34 @@ Admit it alongside compatible backward Plans in one Executor and invoke it with
 existing gradients. The caller controls whether a generation is ready to update;
 this low-level operation does not infer participation from gradient values.
 
+`instantiate_examples(program, template_indices)` selects or repeats saved
+physical example templates on CPU. For example, `[0, 0, 0]` repeats the first
+captured shape three times; `[1, 0, 1]` uses the second, first and second shapes.
+Each occurrence has independent input, activation and output storage, while
+model, gradient and optimizer identities stay shared. Compiled task forms and
+their profile keys remain unchanged:
+
+```python
+from shadowspill import instantiate_examples
+
+three_examples = instantiate_examples(step_program, [0, 0, 0])
+count_plan = plan_program(
+    apply_profiles(three_examples, step_profiles),
+    memory_budgets=budgets,
+    communication_info=communication,
+)
+```
+
+This supports complete-step and forward/backward Programs with saved templates.
+Missing fresh/additive forms or measurements require preparation; instantiation
+does not compile or profile them. Replan each count and jointly admit its state
+and pools before execution. Input-capacity and packing coverage checks are
+separate: a count fitting device memory does not authorize padding beyond a
+declared batch limit. Registered model mutation and RNG ordering constraints
+remain in force.
+
 Traversal is a planning choice; microbatch geometry is a build choice. For eight
-captured calls, `StepDataOrdering(depth=2, breadth=4)` makes two passes of four
+instantiated calls, `StepDataOrdering(depth=2, breadth=4)` makes two passes of four
 microbatches each. Within a pass, stage-major execution can reuse fetched weights
 across those microbatches. `depth * breadth` must equal the captured call count.
 `reverse_breadth=True` and `pair_loss=True` are its defaults. Model mutations or

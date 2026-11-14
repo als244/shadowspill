@@ -17,6 +17,7 @@ from shadowspill import (
     build_forward,
     build_forward_backward,
     build_step,
+    instantiate_examples,
     measure_program,
     plan_program,
 )
@@ -114,6 +115,20 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
             communication_info=CommunicationInfo(1e10, 1e10),
         )
         plan.save(tmp_path / f"{name}.ssp")
+        variants = {
+            "step0": ("count_repeat", [0, 0, 0]),
+            "complete": ("count_mixed", [1, 0, 1]),
+            "backward0": ("count_backward", [0, 0]),
+        }
+        if name in variants:
+            variant, indices = variants[name]
+            derived = instantiate_examples(program, indices)
+            assert derived.executables == program.executables
+            plan_program(
+                apply_profiles(derived, profile),
+                memory_budgets=plan.memory_budgets,
+                communication_info=plan.communication_info,
+            ).save(tmp_path / f"{variant}.ssp")
         if name == "step0":
             derived = optimizer_program(program)
             assert {task.phase for task in derived.tasks} == {"control", "optimizer"}
@@ -166,6 +181,36 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
             }
         )
         updated.append(state)
+    reference.load_state_dict(initial)
+    optimizer = CountedAdamW(reference.parameters(), lr=0.01, foreach=False)
+    count_updates = []
+    for indices, factor in (([0, 0, 0], 0.25), ([1, 0, 1], -0.5), ([0, 0, 1], 1.0)):
+        optimizer.zero_grad(set_to_none=True)
+        losses, predictions = [], []
+        for index in indices:
+            loss, metrics = objective(reference, *examples[index])
+            losses.append(loss.detach().clone())
+            predictions.append(metrics["prediction"].detach().clone())
+            loss.backward()
+        for parameter in reference.parameters():
+            parameter.grad.mul_(factor)
+        optimizer.step()
+        count_updates.append(
+            {
+                "indices": indices,
+                "scale": factor,
+                "losses": losses,
+                "predictions": predictions,
+                "state": {
+                    name: p.detach().clone() for name, p in reference.named_parameters()
+                }
+                | {
+                    f"optimizer.{name}.{key}": value.clone()
+                    for name, p in reference.named_parameters()
+                    for key, value in optimizer.state[p].items()
+                },
+            }
+        )
     torch.save(
         dict(
             initial=initial,
@@ -175,6 +220,7 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
             split=split,
             split_scale=split_scale,
             update_scales=update_scales,
+            count_updates=count_updates,
         ),
         tmp_path / "oracle.pt",
     )
