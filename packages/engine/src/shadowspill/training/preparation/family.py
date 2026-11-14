@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from types import MappingProxyType
 
@@ -37,6 +37,7 @@ def plan_family(
     pool_memory: Mapping[int, PoolMemoryProfile] | None = None,
     max_plan_attempts: int = 16384,
     max_family_attempts: int = 4096,
+    prior_rejections: Sequence[PlanRejection] = (),
 ) -> PreparedPlans:
     """Admit all requested capabilities, preserving coverage after known failures.
 
@@ -125,7 +126,7 @@ def plan_family(
         cached[key] = name
         return name
 
-    admitted, rejected = [], []
+    admitted, rejected = [], list(prior_rejections)
     for candidate in candidates:
         shape = candidate.layout.candidate
         operation = candidate.layout.operation
