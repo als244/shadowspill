@@ -7,12 +7,14 @@ from dataclasses import asdict, dataclass, is_dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
 from shadowspill.parallelism import Parallelism
+from shadowspill.resources.description import validate_resources
 from shadowspill_client import Model, Optimizer
 from shadowspill_client._records import Value, mapping, plain
 from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.definitions import DefinitionSource
 from shadowspill_client.protocol.inputs import InputSchema
 
+from .build import ModelBuild, ModelBuildContext
 from .contracts import (
     Computation,
     Configuration,
@@ -59,15 +61,31 @@ class ResolvedModel:
     inputs: InputSchema
     settings: Model | None = None
 
-    def create(self) -> Any:
+    def create(self, *, build: ModelBuild | None = None) -> Any:
         """Construct only when requested by preparation, never during inspection."""
-        configured, _ = _configuration(self.definition.config, self.config)
+        configured, _ = _configuration(
+            self.definition.config, self.config if build is None else build.config
+        )
         model = self.definition.create(configured)
         if self.settings is not None and self.settings.trainable is not None:
             from shadowspill.pytorch.trainable import select_trainable
 
             select_trainable(model, self.settings.trainable)
         return model
+
+    def describe_build(self, context: ModelBuildContext) -> ModelBuild:
+        """Resolve geometry/provider descriptions without constructing a model."""
+        configured, _ = _configuration(self.definition.config, self.config)
+        description = (
+            ModelBuild(self.config)
+            if self.definition.build is None
+            else self.definition.build(configured, context)
+        )
+        if not isinstance(description, ModelBuild):
+            raise TypeError("model build hook must return ModelBuild")
+        _, normalized = _configuration(self.definition.config, description.config)
+        validate_resources(description.resources, context.parallelism)
+        return replace(description, config=normalized)
 
     def default_parallelism(self, schema: InputSchema) -> Parallelism:
         if self.definition.default_parallelism is None:

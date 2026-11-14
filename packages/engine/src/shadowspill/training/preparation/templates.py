@@ -10,7 +10,9 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 from shadowspill.artifacts.program import Program
+from shadowspill.training.definitions.build import ModelBuild, ModelBuildContext
 from shadowspill.training.definitions.samples import RepresentativePattern
+from shadowspill.training.inputs.adapters import InputLayout
 from shadowspill.training.inputs.shapes import PackingSchedule
 from shadowspill.training.outputs import OutputLayout
 from shadowspill_client import BuildOptions
@@ -31,6 +33,7 @@ class CaptureTemplate:
     build: BuildOptions
     output_only: bool
     representative: RepresentativePattern
+    model_build: ModelBuild
     # Canonical JSON keeps nested provenance immutable without retaining another
     # mutable tree beside the descriptions used by the build worker.
     identity: str
@@ -90,6 +93,22 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
     templates: dict[str, CaptureTemplate] = {}
     families: dict[OperationKey, tuple[TemplateCandidate, ...]] = {}
     patterns: dict[tuple[Any, ...], RepresentativePattern] = {}
+    constructions: dict[tuple[Any, ...], ModelBuild] = {}
+
+    def layout_key(layout: InputLayout) -> tuple[Any, ...]:
+        return (
+            layout.logical_rank,
+            layout.buffer.max_datums,
+            tuple(sorted(layout.buffer.fields.items())),
+        )
+
+    unique_layouts = {
+        layout_key(binding.inputs.layout): binding.inputs.layout
+        for candidates in layouts.families.values()
+        for row in candidates
+        for binding in row.bindings.values()
+    }
+    model_family = tuple(unique_layouts[key] for key in sorted(unique_layouts))
 
     def remember(
         binding: OperationBinding, row: LayoutCandidate, *, output_only: bool
@@ -113,10 +132,17 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
             pattern.describe(setup.context.schema, physical)
             patterns[pattern_key] = pattern
         pattern = patterns[pattern_key]
+        construction_key = layout_key(binding.inputs.layout)
+        if construction_key not in constructions:
+            constructions[construction_key] = setup.model.describe_build(
+                ModelBuildContext(binding.inputs.layout, model_family, parallelism)
+            )
+        model_build = constructions[construction_key]
         provenance = {
             "version": 1,
             "binding": binding.signature(),
             "build": build.to_dict(),
+            "model_build": model_build.to_dict(),
             "policy_sources": {
                 key: value.to_dict()
                 for key, value in setup.config.policy_sources.items()
@@ -147,7 +173,10 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
             raise ValueError("capture template description exceeds 1 MiB")
         key = sha256(identity.encode()).hexdigest()
         templates.setdefault(
-            key, CaptureTemplate(key, binding, build, output_only, pattern, identity)
+            key,
+            CaptureTemplate(
+                key, binding, build, output_only, pattern, model_build, identity
+            ),
         )
         return key
 
@@ -257,10 +286,17 @@ def instantiate_template(
 
 
 def validate_template(template: CaptureTemplate, program: Program) -> None:
+    preparations = program.bindings.get("operator_preparation", {}).get("providers", ())
     if (
         program.bindings.get("kind") != template.kind
         or plain(program.bindings.get("preparation_template")) != template.signature()
         or plain(program.bindings.get("profiling_scenario"))
         != template.signature()["scenario"]
+        or program.resources != template.model_build.resources
+        or [
+            {name: plain(value[name]) for name in ("factory", "options")}
+            for value in preparations
+        ]
+        != [value.to_dict() for value in template.model_build.operator_preparation]
     ):
         raise ValueError("saved capture differs from the requested template")

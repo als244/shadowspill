@@ -13,8 +13,9 @@ import torch
 from engine_tests.fixtures import external_definition
 from engine_tests.fixtures.definition_operations import definitions, example
 from engine_tests.fixtures.installed_definition import install
-from engine_tests.training.test_setup_resolution import arguments, installed
+from engine_tests.training.test_setup_resolution import arguments
 from shadowspill import ProfiledProgram, Program
+from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation import job
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.operation_build import build_operation
@@ -31,12 +32,26 @@ from shadowspill_client.protocol.operations import OperationKey
 
 
 @pytest.mark.cuda
-def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch):
+@pytest.mark.parametrize("provider", [False, True], ids=["ordinary", "provider"])
+def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provider):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    resolved, objective, _ = definitions()
-    registry = installed()
+    installed_root = install(tmp_path / "site-packages", provider=provider)
+    for name in list(sys.modules):
+        if name.split(".")[0] == "external_classifier_fixture":
+            monkeypatch.delitem(sys.modules, name)
+    monkeypatch.syspath_prepend(str(installed_root))
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        str(installed_root) + os.pathsep + os.environ.get("PYTHONPATH", ""),
+    )
+    registry = load_registry(["external-classifier-fixture"])
     requested = {**arguments(), "memory": Memory(device_gib=2, spill_gib=0.0625)}
+    event_path = tmp_path / "provider-events.jsonl"
+    if provider:
+        requested["model"] = replace(
+            requested["model"], config={"events": str(event_path)}
+        )
     setup = resolve_training(
         registry,
         **requested,
@@ -55,12 +70,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch):
     )
     inventory = capture_inventory(prepare_layouts(setup))
     assert len(inventory.templates) == 6
-    installed_root = install(tmp_path / "site-packages")
-    monkeypatch.syspath_prepend(str(installed_root))
-    monkeypatch.setenv(
-        "PYTHONPATH",
-        str(installed_root) + os.pathsep + os.environ.get("PYTHONPATH", ""),
-    )
+    resolved, objective = setup.model, setup.objective
     tmp_path = tmp_path / "job"
     bundle = job.prepare_job(
         tmp_path, packages=["external-classifier-fixture"], config=setup.config
@@ -78,6 +88,10 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch):
             profiled.profiles.metadata["profiling_scenario"]
             == template.signature()["scenario"]
         )
+        if provider:
+            assert program.resources == template.model_build.resources
+            assert profiled.metadata["provider_resource_bytes"] >= 1 << 20
+            assert template.model_build.config["capacity"] == 4
     assert len(family.coverage) == 3 and len(family.plans[0]) == 14
     assert all(len(rows) == 3 for rows in family.families.values())
     assert family.memory[0].execution_bytes <= 2 << 30
@@ -167,6 +181,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch):
         oracle["after_step"] = {
             n: p.detach().clone() for n, p in reference.named_parameters()
         }
+        oracle["predictions"] = reference(**args[0]).detach().clone()
         eager.zero_grad(set_to_none=True)
         for temperature in (0.5, 1.0):
             binding.objective(
@@ -201,6 +216,17 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch):
     )
     assert worker.returncode == 0, worker.stdout + worker.stderr
     assert "Qualified definition-bound operations" in worker.stdout
+    if provider:
+        events = [json.loads(line) for line in event_path.read_text().splitlines()]
+        by_process = {}
+        for event in events:
+            by_process.setdefault(event["pid"], []).append(event["event"])
+        # Build/profile use temporary owners; all 14 worker Plans share one owner.
+        assert len(by_process) >= 3
+        assert all(
+            rows == ["open", "close"] * (len(rows) // 2) for rows in by_process.values()
+        )
+        assert list(by_process.values())[-1] == ["open", "close"]
 
 
 def ignore_temperature(model, inputs, loss_inputs, loss_params):

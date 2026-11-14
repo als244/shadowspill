@@ -15,11 +15,14 @@ for name in (
 ):
     sys.modules[name] = None
 
-from engine_tests.training.test_setup_resolution import installed  # noqa: E402
+from shadowspill.training.definitions import load_registry  # noqa: E402
 from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
+from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
 
-bundle = TrainingBundle.load(Path(sys.argv[1]))
-prepared = bundle.recheck(installed())
+path = Path(sys.argv[1])
+registry = load_registry(PreparationJob.load(path.parent / JOB_NAME).packages)
+bundle = TrainingBundle.load(path)
+prepared = bundle.recheck(registry)
 assert len(prepared.plans[0]) == 14 and len(prepared.coverage) == 3
 plans = prepared.plans[0]
 backward_id = next(
@@ -41,7 +44,7 @@ for replacement, expected in (
 ):
     changed = replace(bundle, plans={0: {**plans, backward_id: replacement}})
     try:
-        changed.recheck(installed())
+        changed.recheck(registry)
     except ValueError as error:
         assert expected in str(error), str(error)
     else:

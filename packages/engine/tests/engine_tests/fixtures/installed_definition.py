@@ -3,10 +3,14 @@
 import inspect
 from pathlib import Path
 
-from engine_tests.fixtures import definition_operations, external_definition
+from engine_tests.fixtures import (
+    definition_operations,
+    definition_provider,
+    external_definition,
+)
 
 
-def install(root: Path) -> Path:
+def install(root: Path, *, provider: bool = False) -> Path:
     package = root / "external_classifier_fixture"
     package.mkdir(parents=True)
     (package / "base.py").write_text(inspect.getsource(external_definition))
@@ -32,6 +36,22 @@ def register(registry):
     registry.add_objective(objective.definition, source=objective.source)
     registry.add_optimizer(optimizer.definition, source=optimizer.source)
 """
+    if provider:
+        source = inspect.getsource(definition_provider).replace(
+            "engine_tests.resources._provider", "external_classifier_fixture.provider"
+        )
+        (package / "model_provider.py").write_text(source)
+        source = (Path(__file__).parents[1] / "resources" / "_provider.py").read_text()
+        (package / "provider.py").write_text(
+            source.replace("ss_resource_test", "ss_definition_resource_test")
+        )
+        hook = hook.replace(
+            "registry.add_model(model.definition, source=model.source)",
+            "from . import model_provider\n"
+            "    registry.add_model(replace(model.definition, "
+            "config=model_provider.Config, create=model_provider.create, "
+            "build=model_provider.describe), source=model.source)",
+        )
     (package / "__init__.py").write_text(imports + "\n\n" + definitions + "\n" + hook)
     metadata = root / "external_classifier_fixture-1.dist-info"
     metadata.mkdir()

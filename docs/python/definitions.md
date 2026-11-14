@@ -52,6 +52,17 @@ action. Objectives declare required model capabilities; resolution rejects
 incompatible bindings. An objective with several named output sets supplies a
 `bind(config, outputs)` function selecting the computation for that set.
 
+Models that need geometry-dependent construction or provider resources can supply
+`build(config, ModelBuildContext)`. This CPU hook returns `ModelBuild` with complete
+constructor settings, existing `Resource` descriptions and optional
+`OperatorPreparation` descriptions. Its context includes the current logical input
+layout, parallelism and the complete requested layout family, so a shared provider
+buffer can cover all shapes. The same model factory receives the normalized
+settings during capture. Resource creation, binary capture, restoration and cleanup
+remain in the existing phase engine. Description never opens a provider or imports
+a factory named by a compute request; definitions own those source-pinned choices.
+Templates save and recheck the resolved construction and actual provider inventory.
+
 Each `TensorField` describes one path in a Datum's input or loss-input tree:
 dtype, per-example shape, padding and optional default, and stacking, packing or
 shared-value semantics. Repeated symbolic dimensions explicitly declare aligned
@@ -143,8 +154,9 @@ capabilities, re-derive operation/count Programs from saved captures, replay sav
 schedules and recheck coverage and shared admission. Missing masked/optimizer or
 accumulation paths are errors. Loading does not capture, profile, search, select
 replacement candidates or initialize training state. The current qualification
-covers the external classifier fixture; service startup, provider resources,
-distributed execution and value-dependent maximum workspace remain separate work.
+covers the external classifier fixture, including a provider buffer shared across
+all admitted Plans; service startup, distributed providers and value-dependent
+maximum workspace remain separate work.
 
 `training.preparation.job.prepare_job(directory, packages=..., config=...)` runs
 resolved preparation through the existing fresh-process build, profile,

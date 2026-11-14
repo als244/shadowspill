@@ -16,16 +16,18 @@ def compilation_finished(**event):
 triton.knobs.compilation.listener = compilation_finished
 forbid_preparation()
 
-from engine_tests.fixtures.definition_operations import definitions, example, records  # noqa: E402
-from engine_tests.training.test_setup_resolution import installed  # noqa: E402
+from engine_tests.fixtures.definition_operations import example, records  # noqa: E402
 from shadowspill import Executor  # noqa: E402
+from shadowspill.training.definitions import load_registry  # noqa: E402
 from shadowspill.training.observations import to_host  # noqa: E402
 from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
+from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
 from shadowspill.training.session.state import OperationState  # noqa: E402
 from shadowspill_client.protocol.operations import OperationKey  # noqa: E402
 
 root = Path(sys.argv[1])
-family = TrainingBundle.load(root / "training.ssp").recheck(installed())
+registry = load_registry(PreparationJob.load(root / JOB_NAME).packages)
+family = TrainingBundle.load(root / "training.ssp").recheck(registry)
 
 
 def full_buffer(operation):
@@ -53,11 +55,12 @@ primary = plans.pop(primary_name)
 
 def selected(name):
     identity = names[name]
-    return "" if identity == primary_name else identity
+    return None if identity == primary_name else identity
 
 
 oracle = torch.load(root / "oracle.pt", weights_only=True)
-resolved, objective, _ = definitions()
+resolved = family.inventory.layouts.setup.model
+objective = family.inventory.layouts.setup.objective
 
 
 def fill(request, chunk):
@@ -116,12 +119,7 @@ with Executor(primary, plans=plans) as executor:
                     executor.run(plan=selected("evaluation"), args=[args]).result()
                 )
                 assert loss is None
-                expected = (
-                    args[0]["pixels"].flatten(start_dim=1)
-                    @ oracle["after_step"]["head.weight"].T
-                    + oracle["after_step"]["head.bias"]
-                )
-                torch.testing.assert_close(outputs["prediction"], expected)
+                torch.testing.assert_close(outputs["prediction"], oracle["predictions"])
             torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
     for name, target in oracle["gradients"].items():
         torch.testing.assert_close(

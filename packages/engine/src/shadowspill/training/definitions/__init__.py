@@ -2,6 +2,7 @@
 
 from shadowspill.training.inputs.adapters import InputAdapter, InputLayout, InputView
 
+from .build import ModelBuild, ModelBuildContext
 from .contracts import ModelDefinition, ObjectiveDefinition, simple_loss
 from .optimizer import OptimizerDefinition
 from .packages import load_registry
@@ -15,6 +16,8 @@ __all__ = [
     "InputAdapter",
     "InputLayout",
     "InputView",
+    "ModelBuild",
+    "ModelBuildContext",
     "ModelDefinition",
     "ModelReferenceDefinition",
     "ObjectiveDefinition",

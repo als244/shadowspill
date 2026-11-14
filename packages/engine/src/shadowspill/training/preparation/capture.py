@@ -41,7 +41,7 @@ def build_template(
         max_bytes=setup.config.execution.max_staging_bytes,
     ) as example:
         with torch.device("meta"):
-            model = setup.model.create()
+            model = setup.model.create(build=template.model_build)
         program = build_operation(
             model,
             template.binding,
@@ -50,6 +50,8 @@ def build_template(
             output_only=template.output_only,
             options={
                 **options,
+                "resources": template.model_build.resources,
+                "operator_preparation": template.model_build.operator_preparation,
                 "parallelism": setup.context.parallelism,
                 "rank_map": rank_map,
                 "target": target,

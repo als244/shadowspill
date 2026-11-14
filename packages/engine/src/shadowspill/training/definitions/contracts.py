@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from shadowspill.parallelism import Parallelism
     from shadowspill.training.inputs.adapters import InputAdapter, InputLayout
 
+    from .build import ModelBuild, ModelBuildContext
+
 type Configuration = Callable[..., Any]
 type Schema = InputSchema | Callable[[Any], InputSchema]
 type Computation = Callable[
@@ -56,6 +58,7 @@ class ModelDefinition:
     preparation: str | None = None
     configure: Callable[[Model], Mapping[str, Value]] | None = None
     default_parallelism: Callable[[Any, InputSchema], Parallelism] | None = None
+    build: Callable[[Any, ModelBuildContext], ModelBuild] | None = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -75,6 +78,8 @@ class ModelDefinition:
             self.default_parallelism
         ):
             raise TypeError("default_parallelism must be an installed CPU function")
+        if self.build is not None and not callable(self.build):
+            raise TypeError("build must be an installed CPU description function")
         for name in ("capabilities", "mutable_buffers"):
             values = tuple(getattr(self, name))
             if any(not isinstance(v, str) or not v for v in values) or len(
