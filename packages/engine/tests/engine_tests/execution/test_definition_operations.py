@@ -364,7 +364,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         env={**os.environ, "PYTHONHASHSEED": "4"},
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=360,
     )
     assert agent.returncode == 0, (
         agent.stdout
@@ -372,6 +372,10 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         + (tmp_path / "agent" / "worker" / "stderr.log").read_text()
         if (tmp_path / "agent" / "worker" / "stderr.log").exists()
         else agent.stdout + agent.stderr
+    )
+    assert (
+        "Qualified configured fresh and saved creation through actual GPU retirement"
+        in agent.stdout
     )
     assert "Qualified installed agent-owned GPU bootstrap" in agent.stdout
     assert "Qualified production worker request/file coordination" in agent.stdout

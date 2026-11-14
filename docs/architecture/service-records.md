@@ -84,8 +84,8 @@ HTTP lookup context pins the controller through the exchange. Allocation stop
 can quiesce children while a borrow remains, but cannot delete files, clear the
 live owner or release its host envelope until the borrow returns. Shutdown also
 retains an unfinished factory/creation thread. Record lookup remains available
-after physical retirement. Configured preparation factories, public creation
-routes and server/allocation constructors remain separate integration work.
+after physical retirement. Public creation routes and server/allocation
+constructors remain separate integration work.
 
 The node-backed `HostArena` can claim a job's combined controller capacity once,
 then partition it into independently closed staging, transfer and publication
@@ -94,6 +94,28 @@ host-memory claims while jobs wait, and closing input staging cannot disable the
 result publisher. The entire node claim survives until every partition and its
 borrowed buffers retire. A private cancellation event can interrupt the initial
 whole-arena wait without affecting another run's resources.
+
+Temporary phase processes and persistent workers can use a same-node partition
+for their host demand. The parent has already charged that capacity; the child
+retains a slice through confirmed process exit and reports its full demand without
+charging it twice. GPU admission remains exclusive. These are internal accounting
+reservations, not an OS memory limit or an additional user-facing training API.
+
+`server.local_creation.LocalCreationFactory` connects persisted creation choices
+to the existing preparation driver and `LiveRun`. It validates installed setup and
+initialization before GPU use, selects compatible assigned devices, reserves the
+combined phase memory, and archives completed preparation artifacts and capped
+logs. Fresh execution admission includes the workers and their controller buffers
+in one host claim. Saved Plans skip preparation and require the exact configuration
+and current installed identities. Failed cleanup retains the job and its resources
+until retirement succeeds; stopped creation is never replayed.
+
+Deployment supplies explicit process, decoded-family and temporary-disk bounds.
+File-count and size checks run before publication and persistent startup; those
+checks are not hard filesystem quotas or proofs of arbitrary definition peaks.
+The local adapter does not discover remote capacity. Checkpoint initialization,
+startup Nsight and optional idle expiry remain later implementation stages and
+currently fail before phase launch when explicitly requested.
 
 `server.live.LiveRun` composes the existing node startup barrier, worker request
 adapter, controller and result publisher. A registered creation receives ready
