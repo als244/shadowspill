@@ -12,6 +12,7 @@ from shadowspill.training.outputs import OutputLayout
 from shadowspill_client.protocol.controls import ControlSchema, Scalar
 
 from .operations import OperationContract
+from .scalars import control_values
 
 
 def control_tensors(
@@ -20,27 +21,16 @@ def control_tensors(
     """Only the build/staging worker materializes these bounded scalar tensors."""
     import torch
 
-    if values.keys() != schema.fields.keys():
-        raise ValueError("provide exactly the declared scalar controls")
-    result = {}
-    for name, field in sorted(schema.fields.items()):
-        try:
-            tensor = torch.tensor(
-                field.validate(values[name]),
-                dtype={"float": torch.float32, "int": torch.int64, "bool": torch.bool}[
-                    field.dtype
-                ],
-                device="cpu",
-            )
-            # Validate the actual captured representation, including overflow
-            # and bounds crossed by rounding, before it can reach a worker.
-            field.validate(tensor.item())
-        except (ValueError, RuntimeError, OverflowError) as error:
-            raise ValueError(
-                f"control {name} cannot use its captured scalar dtype"
-            ) from error
-        result[name] = tensor
-    return result
+    return {
+        name: torch.tensor(
+            value,
+            dtype={"float": torch.float32, "int": torch.int64, "bool": torch.bool}[
+                schema.fields[name].dtype
+            ],
+            device="cpu",
+        )
+        for name, value in control_values(schema, values).items()
+    }
 
 
 class OperationBinding:

@@ -18,6 +18,7 @@ from .allocations import allocation_invariants
 if TYPE_CHECKING:
     from shadowspill.parallelism import Parallelism
     from shadowspill.training.inputs.adapters import InputAdapter, InputLayout
+    from shadowspill.training.inputs.validation import ValidatedBatch
 
     from .build import ModelBuild, ModelBuildContext
 
@@ -61,6 +62,7 @@ class ModelDefinition:
     configure: Callable[[Model], Mapping[str, Value]] | None = None
     default_parallelism: Callable[[Any, InputSchema], Parallelism] | None = None
     build: Callable[[Any, ModelBuildContext], ModelBuild] | None = None
+    input_groups: Callable[[Any, ValidatedBatch], Sequence[Sequence[int]]] | None = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -72,6 +74,11 @@ class ModelDefinition:
             raise ValueError("declare independent, grouped or whole_batch behavior")
         if self.input_adapter is not None and not callable(self.input_adapter):
             raise TypeError("input_adapter must be an installed binding function")
+        if self.batching == "grouped":
+            if not callable(self.input_groups):
+                raise TypeError("grouped inputs require an installed input_groups hook")
+        elif self.input_groups is not None:
+            raise ValueError("input_groups requires grouped batching")
         if self.preparation is not None:
             versioned_id(self.preparation)
         if self.configure is not None and not callable(self.configure):

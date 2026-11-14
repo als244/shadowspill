@@ -168,6 +168,41 @@ class InputStaging:
         return StagingReservation(budget, self.staging_bytes, timeout=timeout)
 
 
+def combine_input_staging(
+    candidates: Sequence[InputStaging], execution: Execution
+) -> InputStaging:
+    """Reserve one operation before its actual batch option/schedule is known.
+
+    Componentwise decode limits cover every advertised batch option without
+    trusting the upload's claimed size. Combining independent maxima can exceed
+    every individual candidate's peak; check this complete bound during CPU
+    preparation, never after selecting a worker or silently dropping capacity.
+    """
+    if not candidates:
+        raise ValueError("input staging requires a nonempty prepared family")
+    envelope = InputEnvelope(
+        max(item.envelope.max_datums for item in candidates),
+        PayloadSize(
+            **{
+                name: max(getattr(item.envelope.snapshot, name) for item in candidates)
+                for name in ("tensors", "header", "tree", "largest_tensor")
+            }
+        ),
+    )
+    result = InputStaging(
+        envelope,
+        max(item.workspace_bytes for item in candidates),
+        (max(peak for item in candidates for peak in item.buffer_peaks),),
+        max(item.spool_bytes for item in candidates),
+    )
+    if result.staging_bytes > execution.max_staging_bytes:
+        raise StagingLimitError(
+            f"complete input family needs {result.staging_bytes} staging bytes; "
+            f"configured max_staging_bytes is {execution.max_staging_bytes}"
+        )
+    return result
+
+
 def admit_input_staging(
     schema: InputSchema,
     batch: BatchConfig,

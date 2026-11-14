@@ -32,7 +32,21 @@ its consumers finish. Failed queued inputs close promptly; rejected active reade
 retain storage until they return. Waiting for an arena does not hold the ordering
 lock needed by earlier cleanup. Fatal shutdown can release idle owners even when
 record storage is unavailable, while active owners retain their leases. Transport
-read deadlines and the prepared-family callback remain service integration work.
+read deadlines remain service integration work.
+
+`training.session.prepared.PreparedRequests` supplies that callback and derives
+registration bounds from the rechecked prepared family. Whole-call validation
+runs once; actual capacity must fit one original requested batch option. It
+selects saved schedules by predicted cost, retaining the admitted coverage
+witness when bounded packing search stops. No shape, count or Plan is added at
+execution time. Grouped definitions provide an installed `input_groups(config,
+validated_batch)` hook; its bounded index lists must cover every Datum once.
+Per-call controls resolve nonsticky defaults and validate their actual captured
+float32/int64/bool representation before preprocessing or acceptance. Validity
+determines participation, independently of numeric weights or final scale.
+Prepared calls retain the assignment, controls and completed spool until their
+consumers finish. Main, masked and optimizer-only Plan selection follows the
+existing `OperationState` transition, including empty optimizer skips.
 
 `training.inputs.spool.InputSpool` finishes every prepared buffer/rank adapter
 once and stores its fixed input arrays under an explicit temporary cache root.
@@ -44,7 +58,8 @@ rank slices use bounded C-order chunks, including bit-exact BF16 storage. File
 writes and reads check layouts, sizes and checksums. Any preprocessing/write
 failure deletes all earlier files. The owner removes files after input consumers
 finish; they are ephemeral storage and never authorize replay after server loss.
-Selection of the complete prepared request and persistent worker consumption
+Persistent worker consumption must preserve the saved tensor stride/storage
+guards when reconstructing ready input arrays; transport and that worker bridge
 remain integration work.
 
 `server.records.requests.RequestRecords` now persists owner/session/run identity,

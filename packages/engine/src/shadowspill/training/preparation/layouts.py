@@ -14,6 +14,7 @@ from shadowspill.training.inputs.staging import (
     InputStaging,
     StagingLimitError,
     admit_input_staging,
+    combine_input_staging,
 )
 from shadowspill.training.outputs import OutputLayout
 from shadowspill_client.protocol.operations import OperationKey
@@ -73,6 +74,7 @@ class PreparedLayouts:
     families: Mapping[OperationKey, tuple[LayoutCandidate, ...]]
     coverage: Mapping[tuple[OperationKey, int], CoverageCertificate]
     rejected: tuple[LayoutRejection, ...]
+    staging: Mapping[OperationKey, InputStaging]
 
 
 def _candidate(
@@ -195,6 +197,16 @@ def prepare_layouts(
                 ) from error
             coverage[key, batch_index] = certificate
         families[key] = tuple(admitted)
+    staging = {
+        key: combine_input_staging(
+            [row.staging for row in rows], setup.config.execution
+        )
+        for key, rows in families.items()
+    }
     return PreparedLayouts(
-        setup, MappingProxyType(families), MappingProxyType(coverage), tuple(rejected)
+        setup,
+        MappingProxyType(families),
+        MappingProxyType(coverage),
+        tuple(rejected),
+        MappingProxyType(staging),
     )

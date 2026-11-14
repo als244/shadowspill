@@ -30,6 +30,7 @@ from .settings import constructor_config
 
 if TYPE_CHECKING:
     from shadowspill.training.inputs.adapters import InputBinding, InputLayout
+    from shadowspill.training.inputs.validation import ValidatedBatch
 
 
 def _configuration(
@@ -60,6 +61,29 @@ class ResolvedModel:
     config: Mapping[str, Value]
     inputs: InputSchema
     settings: Model | None = None
+
+    def group_inputs(self, batch: ValidatedBatch) -> tuple[tuple[int, ...], ...]:
+        """Resolve installed atomic grouping once, before packing/preprocessing."""
+        from shadowspill.training.inputs.packing import atomic_groups
+
+        if self.definition.batching == "independent":
+            return atomic_groups(len(batch.fields), None)
+        if self.definition.batching != "grouped":
+            raise ValueError("automatic packing requires independent or grouped inputs")
+        assert self.definition.input_groups is not None
+        configured, _ = _configuration(self.definition.config, self.config)
+        groups = self.definition.input_groups(configured, batch)
+        if (
+            not isinstance(groups, (tuple, list))
+            or len(groups) > len(batch.fields)
+            or any(
+                not isinstance(group, (tuple, list)) or len(group) > len(batch.fields)
+                for group in groups
+            )
+            or sum(len(group) for group in groups) != len(batch.fields)
+        ):
+            raise ValueError("input_groups must return bounded Datum index lists")
+        return atomic_groups(len(batch.fields), groups)
 
     def create(self, *, build: ModelBuild | None = None) -> Any:
         """Construct only when requested by preparation, never during inspection."""
