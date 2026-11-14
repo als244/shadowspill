@@ -12,6 +12,7 @@ from shadowspill.pytorch.numerics import compose_numerical_contracts
 from shadowspill.task.manifest import ExecutableRootAllocation, build_manifest
 from shadowspill.task.storage import StorageRootKind
 
+from ..allocation_behavior import composed_allocation_behavior
 from .api import BuiltTask
 from .inductor.manifest import toolchain
 
@@ -95,6 +96,10 @@ def compile_chunk_task(
             "allocations": [],
             "unresolved": ["complete row composition requires allocator measurement"],
             "off_device_output_leaves": host_outputs,
+            "allocation_behavior": composed_allocation_behavior(
+                compiled[child.compatibility_digest].memory
+                for _, child in (*task.children, *task.accumulating_children)
+            ),
         },
         tuple(unique.values()),
         numerical_contracts=numerical_contracts,

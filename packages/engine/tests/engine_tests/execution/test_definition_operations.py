@@ -82,6 +82,14 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         saved = program.bindings["training_operation"]
         assert saved["objective"]["source"] == objective.source.to_dict()
         assert saved["contributes_loss"]
+        behaviors = [
+            value["allocation_behavior"]
+            for value in program.bindings["compiler_memory"].values()
+        ]
+        assert behaviors and all(not value["unresolved"] for value in behaviors)
+        opaque = {call for value in behaviors for call in value["opaque_calls"]}
+        if provider:
+            assert "torch.ops.ss_definition_resource_test.scale.default" in opaque
         profiled = ProfiledProgram.load(tmp_path / "profiled" / f"{key}.ssp")
         assert profiled.profiles.metadata["preparation_template"] == key
         assert (

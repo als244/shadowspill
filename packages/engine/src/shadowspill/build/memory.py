@@ -10,6 +10,8 @@ from torch._inductor.codegen import wrapper
 from torch._inductor.graph import GraphLowering
 from torch._inductor.virtualized import V
 
+from .allocation_behavior import wrapper_allocation_behavior
+
 
 @dataclass
 class _Buffers:
@@ -144,4 +146,12 @@ def _compiler_memory(graph: GraphLowering) -> dict[str, Any]:
         "allocations": buffers.allocations,
         "known_workspace_bytes": peak,
         "unresolved": sorted(buffers.unresolved),
+        "allocation_behavior": wrapper_allocation_behavior(
+            lines,
+            geometry_gaps=(
+                gap
+                for gap in buffers.unresolved
+                if gap.startswith(("allocation extent:", "repeated allocation:"))
+            ),
+        ),
     }

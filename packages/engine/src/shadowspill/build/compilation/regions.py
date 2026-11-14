@@ -13,6 +13,7 @@ from shadowspill.pytorch.numerics import compose_numerical_contracts
 from shadowspill.task.manifest import ExecutableRootAllocation, build_manifest
 from shadowspill.task.storage import StorageRootKind
 
+from ..allocation_behavior import composed_allocation_behavior
 from .api import BuiltTask
 from .inductor.manifest import toolchain
 
@@ -102,6 +103,9 @@ def compile_region_task(
                 "complete execution region composition requires allocator measurement"
             ],
             "off_device_output_leaves": tuple(sorted(host_leaves)),
+            "allocation_behavior": composed_allocation_behavior(
+                compiled[child.compatibility_digest].memory for child in task.children
+            ),
         },
         tuple(dependencies.values()),
         numerical_contracts=contracts,

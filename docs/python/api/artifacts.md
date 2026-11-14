@@ -204,6 +204,13 @@ cold observation, warmed observations, validation, conditioning, timing and
 layout reconciliation. Each allocation observation reports execution/collection,
 decoding and initial synchronization time.
 
+Saved compiler memory descriptions separately record `allocation_behavior`:
+static wrapper geometry, exact opaque call names and unresolved behavior. Fixed
+row/region compositions inherit every child's requirements. An opaque provider
+call is not an allocation guarantee, and observed traces alone do not prove a
+bound over all admitted tensor values. These records describe evidence; they do
+not replace measured profiles or physical Plan admission.
+
 ```python
 from shadowspill import Profiles, TaskProfile
 
