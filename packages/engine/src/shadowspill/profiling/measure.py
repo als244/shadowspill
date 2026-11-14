@@ -156,6 +156,7 @@ def measure_program(
             "provider_resource_bytes": resources.retained_bytes,
             "prepared_operator_retained_bytes": prepared_bytes,
             "input_policy": "automatic values; geometry preserved; caller overrides",
+            "profiling_scenario": plain(program.bindings.get("profiling_scenario")),
             "execution_qualification": "pending physical admission",
         }
         if resources.groups is not None:

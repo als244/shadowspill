@@ -15,7 +15,11 @@ from shadowspill.parallelism import (
     OutputPlacement,
     Parallelism,
 )
-from shadowspill.training.definitions import PreparationDefinition
+from shadowspill.training.definitions import (
+    PreparationDefinition,
+    RepresentativePattern,
+    RepresentativeSample,
+)
 from shadowspill.training.inputs.shapes import BufferShape
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
@@ -139,6 +143,14 @@ def test_same_geometry_with_distinct_timing_scenarios_keeps_distinct_templates()
                 },
             )
         ],
+        lambda context, batch, physical: RepresentativePattern(
+            "custom",
+            [
+                RepresentativeSample(
+                    dict.fromkeys(physical.fields, 1), count=physical.max_datums
+                )
+            ],
+        ),
     )
     registry.add_preparation(preset, source=source)
     result = capture_inventory(
@@ -170,7 +182,11 @@ def test_saved_template_identity_is_checked_before_cpu_derivation(tmp_path):
     original = captured()
     program = replace(
         original,
-        bindings={**original.bindings, "preparation_template": template.signature()},
+        bindings={
+            **original.bindings,
+            "preparation_template": template.signature(),
+            "profiling_scenario": template.signature()["scenario"],
+        },
     )
     backward = instantiate_template(template, use.main, program)
     optimizer = instantiate_template(template, use.optimizer, program)

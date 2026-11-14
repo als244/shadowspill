@@ -102,6 +102,7 @@ def task_identities(
             "inputs": plain(inputs[key]),
             "input_context": context,
             "representative_value_policy": REPRESENTATIVE_VALUE_POLICY,
+            "profiling_scenario": plain(program.bindings.get("profiling_scenario")),
             "numerical_contracts": plain(
                 program.bindings.get("task_metadata", {})
                 .get(key, {})

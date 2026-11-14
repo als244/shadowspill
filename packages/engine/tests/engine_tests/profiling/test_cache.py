@@ -162,6 +162,19 @@ def test_identity_uses_finalized_code_inputs_and_policy_but_not_capture_timer(ev
     assert key() != baseline
 
 
+def test_representative_scenario_separates_otherwise_compatible_measurements(evidence):
+    program, jobs = fixture_program(evidence[0])
+
+    def key():
+        return digest(task_identities(program, jobs, options=None, environment={}))
+
+    ordinary = key()
+    program.bindings["profiling_scenario"] = {"typical": {"length": 1024}}
+    short = key()
+    program.bindings["profiling_scenario"] = {"typical": {"length": 8192}}
+    assert len({ordinary, short, key()}) == 3
+
+
 @pytest.mark.parametrize("peer_has_hit", [False, True])
 def test_collective_reuse_intersects_hits_before_restoring_tasks(
     tmp_path, evidence, peer_has_hit

@@ -8,7 +8,10 @@ from types import MappingProxyType
 from typing import Any, cast
 
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
-from shadowspill.training.definitions.preparation import PreparationContext
+from shadowspill.training.definitions.preparation import (
+    PreparationContext,
+    ResolvedPreparationDefinition,
+)
 from shadowspill.training.definitions.registry import (
     Registry,
     ResolvedModel,
@@ -49,6 +52,7 @@ class ResolvedSetup:
     objective: ResolvedObjective
     optimizer: ResolvedOptimizer | None
     expansions: Mapping[OperationKey, ExpandedPreparation]
+    preset: ResolvedPreparationDefinition
 
     @property
     def model(self) -> ResolvedModel:
@@ -130,7 +134,7 @@ def _assemble(
     # A successful description must itself fit the bounded portable envelope.
     encode(config)
     return ResolvedSetup(
-        config, context, objective, optimizer, MappingProxyType(expansions)
+        config, context, objective, optimizer, MappingProxyType(expansions), preset
     )
 
 

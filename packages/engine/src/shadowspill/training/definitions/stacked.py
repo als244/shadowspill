@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from functools import lru_cache
 from hashlib import sha256
 from importlib.metadata import version
+from math import ceil, floor
 from pathlib import Path
 
 from shadowspill.training.inputs.coverage_bounds import input_bounds
@@ -17,6 +18,7 @@ from .preparation import (
     PreparationDefinition,
     ResolvedPreparationDefinition,
 )
+from .samples import RepresentativePattern, RepresentativeSample
 
 STACKED_PRESET = "shadowspill/stacked@1"
 
@@ -64,18 +66,51 @@ def buffers(
     return (shape,) * partitions
 
 
+def representative(
+    context: PreparationContext, batch: int, physical: BufferShape
+) -> RepresentativePattern:
+    _check(context)
+    values = {}
+    for field in context.schema.fields:
+        path = tuple(field.path)
+        if path not in physical.fields:
+            continue
+        if field.default is not None:
+            value = field.default
+        else:
+            lower = field.minimum
+            upper = field.maximum
+            if "int" in field.dtype or field.dtype == "bool":
+                lower = None if lower is None else ceil(lower)
+                upper = None if upper is None else floor(upper)
+            value = 1
+            if lower is not None:
+                value = max(value, lower)
+            if upper is not None:
+                value = min(value, upper)
+            if field.dtype == "bool":
+                value = bool(value)
+        assert isinstance(value, (bool, int, float))
+        values[path] = value
+    return RepresentativePattern(
+        "fixed_stacked_schema_fills",
+        [RepresentativeSample(values, count=physical.max_datums)],
+    )
+
+
 @lru_cache(maxsize=1)
 def builtin_preparation() -> ResolvedPreparationDefinition:
     root = Path(__file__).resolve().parents[1]
     digest = sha256()
     for name in (
         "definitions/stacked.py",
+        "definitions/samples.py",
         "inputs/coverage_bounds.py",
         "inputs/shapes.py",
     ):
         digest.update(name.encode())
         digest.update((root / name).read_bytes())
     return ResolvedPreparationDefinition(
-        PreparationDefinition(STACKED_PRESET, defaults, buffers),
+        PreparationDefinition(STACKED_PRESET, defaults, buffers, representative),
         DefinitionSource("shadowspill", version("shadowspill"), digest.hexdigest()),
     )

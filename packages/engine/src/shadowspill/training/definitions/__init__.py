@@ -8,6 +8,7 @@ from .policies import PolicyDefinition
 from .preparation import PreparationContext, PreparationDefinition
 from .references import ModelReferenceDefinition
 from .registry import Registry, ResolvedModel, ResolvedObjective, ResolvedOptimizer
+from .samples import RepresentativePattern, RepresentativeSample
 
 __all__ = [
     "InputAdapter",
@@ -21,6 +22,8 @@ __all__ = [
     "PreparationContext",
     "PreparationDefinition",
     "Registry",
+    "RepresentativePattern",
+    "RepresentativeSample",
     "ResolvedModel",
     "ResolvedObjective",
     "ResolvedOptimizer",

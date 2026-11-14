@@ -12,6 +12,7 @@ from shadowspill_client.protocol.definitions import DefinitionSource
 from shadowspill_client.protocol.inputs import InputSchema
 
 from .contracts import versioned_id
+from .samples import RepresentativePattern
 
 if TYPE_CHECKING:
     from shadowspill.training.inputs.shapes import BufferShape
@@ -54,11 +55,16 @@ class PreparationDefinition:
     buffers: Callable[
         [PreparationContext, int, Sequence[Path], int], Sequence[BufferShape]
     ]
+    representative: (
+        Callable[[PreparationContext, int, BufferShape], RepresentativePattern] | None
+    ) = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
         if not callable(self.defaults) or not callable(self.buffers):
             raise TypeError("preparation definition requires CPU functions")
+        if self.representative is not None and not callable(self.representative):
+            raise TypeError("representative description must be callable")
 
 
 @dataclass(frozen=True)

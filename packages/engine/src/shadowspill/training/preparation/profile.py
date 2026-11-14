@@ -16,10 +16,37 @@ from shadowspill import (
 )
 from shadowspill.orchestration.launch.workers import Workers, workers
 from shadowspill.orchestration.profiling import profiling_options
+from shadowspill.task.profiling import ProfilingOptions
 from shadowspill.training.preparation.phases import settings
 
 from .candidates import attempt_candidate, available, program_paths
 from .profile_reuse import completed
+from .templates import TemplateInventory, validate_template
+
+
+def profile_template(
+    inventory: TemplateInventory,
+    template_id: str,
+    program: Program,
+    *,
+    device: str = "cuda",
+    rank_map: Mapping[int, int] | None = None,
+    cache: TaskProfileCache | None = None,
+) -> ProfiledProgram:
+    """Measure one saved form with exact resolved policy and scenario provenance."""
+    template = inventory.templates[template_id]
+    validate_template(template, program)
+    profiles = measure_program(
+        program,
+        device=device,
+        rank_map=rank_map,
+        options=ProfilingOptions.from_dict(
+            inventory.layouts.setup.config.preparation.profiling.to_dict()
+        ),
+        cache=cache,
+    )
+    profiles.metadata["preparation_template"] = template.id
+    return apply_profiles(program, profiles)
 
 
 def profile_candidate(

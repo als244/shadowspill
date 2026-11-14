@@ -10,10 +10,11 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 from shadowspill.artifacts.program import Program
+from shadowspill.training.definitions.samples import RepresentativePattern
 from shadowspill.training.inputs.shapes import PackingSchedule
 from shadowspill.training.outputs import OutputLayout
 from shadowspill_client import BuildOptions
-from shadowspill_client._records import plain
+from shadowspill_client._records import number, plain
 from shadowspill_client.protocol.operations import OperationKey
 
 from .binding import OperationBinding
@@ -29,6 +30,7 @@ class CaptureTemplate:
     binding: OperationBinding
     build: BuildOptions
     output_only: bool
+    representative: RepresentativePattern
     # Canonical JSON keeps nested provenance immutable without retaining another
     # mutable tree beside the descriptions used by the build worker.
     identity: str
@@ -87,11 +89,30 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
     assert placement is not None
     templates: dict[str, CaptureTemplate] = {}
     families: dict[OperationKey, tuple[TemplateCandidate, ...]] = {}
+    patterns: dict[tuple[Any, ...], RepresentativePattern] = {}
 
     def remember(
         binding: OperationBinding, row: LayoutCandidate, *, output_only: bool
     ) -> str:
         build = setup.config.preparation.cases[row.candidate.case].build
+        physical = binding.inputs.layout.buffer
+        pattern_key = (
+            row.candidate.batch,
+            physical.max_datums,
+            tuple(sorted(physical.fields.items())),
+        )
+        if pattern_key not in patterns:
+            describe = setup.preset.definition.representative
+            if describe is None:
+                raise ValueError(
+                    "preparation preset must declare a representative pattern"
+                )
+            pattern = describe(setup.context, row.candidate.batch, physical)
+            if not isinstance(pattern, RepresentativePattern):
+                raise TypeError("preset must return a RepresentativePattern")
+            pattern.describe(setup.context.schema, physical)
+            patterns[pattern_key] = pattern
+        pattern = patterns[pattern_key]
         provenance = {
             "version": 1,
             "binding": binding.signature(),
@@ -114,12 +135,19 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
                 "preset": setup.config.preparation.preset,
                 "source": setup.config.preparation.source.to_dict(),
                 "typical": dict(setup.config.batches[row.candidate.batch].typical),
+                "pattern": pattern.to_dict(),
+                "measurement_values": (
+                    "captured controls; other inputs use "
+                    "core representative value policy"
+                ),
             },
         }
         identity = json.dumps(plain(provenance), sort_keys=True, separators=(",", ":"))
+        if len(identity.encode()) > 1 << 20:
+            raise ValueError("capture template description exceeds 1 MiB")
         key = sha256(identity.encode()).hexdigest()
         templates.setdefault(
-            key, CaptureTemplate(key, binding, build, output_only, identity)
+            key, CaptureTemplate(key, binding, build, output_only, pattern, identity)
         )
         return key
 
@@ -149,6 +177,7 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
                 setup.context.schema, contract.outputs, canonical, placement
             )
             workers = {}
+            representative_capacities = []
             offset = 0
             for partition, part in enumerate(schedule.partitions):
                 for rank in placement.partitions.groups[partition]:
@@ -173,7 +202,23 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
                         and setup.optimizer is not None
                         else None,
                     )
+                # One logical copy per partition, independent of cooperating
+                # workers. Timing samples must obey all actual input limits as
+                # well as physical geometry (including unscheduled limits).
+                representative_capacities.append(
+                    templates[main].representative.capacities(
+                        setup.context.schema, part[0]
+                    )
+                )
                 offset += len(part)
+            for capacity in setup.context.schema.capacities:
+                sizes = [values[capacity.name] for values in representative_capacities]
+                total = max(sizes) if capacity.reduction == "max" else sum(sizes)
+                if total > number(
+                    setup.config.batches[row.candidate.batch].limits[capacity.name],
+                    capacity.name,
+                ):
+                    raise ValueError(f"representative pattern exceeds {capacity.name}")
             family.append(TemplateCandidate(row, MappingProxyType(workers)))
         families[key] = tuple(family)
     return TemplateInventory(
@@ -195,13 +240,8 @@ def instantiate_template(
     from shadowspill.planning.training.examples import instantiate_examples
     from shadowspill.planning.training.operations import optimizer_program
 
-    if (
-        use.template != template.id
-        or type(use.count) is not int
-        or use.count < 1
-        or program.bindings.get("kind") != template.kind
-        or plain(program.bindings.get("preparation_template")) != template.signature()
-    ):
+    validate_template(template, program)
+    if use.template != template.id or type(use.count) is not int or use.count < 1:
         raise ValueError("saved capture differs from the requested template")
     if use.kind == "optim_step":
         if template.kind != "step" or use.count != 1:
@@ -214,3 +254,13 @@ def instantiate_template(
     # Even forward count one uses the grouped ABI expected by service staging and
     # output publication. Ordinary core forward Programs keep their original ABI.
     return instantiate_examples(program, [0] * use.count)
+
+
+def validate_template(template: CaptureTemplate, program: Program) -> None:
+    if (
+        program.bindings.get("kind") != template.kind
+        or plain(program.bindings.get("preparation_template")) != template.signature()
+        or plain(program.bindings.get("profiling_scenario"))
+        != template.signature()["scenario"]
+    ):
+        raise ValueError("saved capture differs from the requested template")

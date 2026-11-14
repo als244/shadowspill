@@ -16,18 +16,23 @@ from shadowspill import (
     CommunicationInfo,
     MemoryBudgets,
     apply_profiles,
-    measure_program,
     plan_program,
 )
 from shadowspill.training.preparation.capture import build_template
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.operation_build import build_operation
+from shadowspill.training.preparation.profile import profile_template
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import (
     capture_inventory,
     instantiate_template,
 )
-from shadowspill_client import BuildCandidates, PlanningOptions, Preparation
+from shadowspill_client import (
+    BuildCandidates,
+    PlanningOptions,
+    Preparation,
+    ProfilingOptions,
+)
 from shadowspill_client.protocol.operations import OperationKey
 
 
@@ -48,26 +53,30 @@ def test_definition_bound_operations_in_cold_worker(tmp_path):
         prepare=Preparation(
             candidates=BuildCandidates(microbatch_sizes=[4]),
             planning=PlanningOptions(microbatch_counts=[1]),
+            profiling=ProfilingOptions(
+                conditioning_seconds=0.001, measurement_seconds=0.002
+            ),
         ),
     )
     inventory = capture_inventory(prepare_layouts(setup))
     assert len(inventory.templates) == 3
     captures, measurements = {}, {}
     for key, template in inventory.templates.items():
-        with example(resolved, objective, template.binding.contract.key) as (
-            _,
-            adapted,
-        ):
-            program = build_template(registry, inventory, key, adapted)
+        program = build_template(registry, inventory, key)
         assert program.bindings["operation_mode"] == template.binding.contract.key.mode
         saved = program.bindings["training_operation"]
         assert saved["objective"]["source"] == objective.source.to_dict()
         assert saved["contributes_loss"]
         program.save(tmp_path / f"capture-{key}.ssp")
         captures[key] = program
-        measurements[key] = measure_program(
-            program, warmup_seconds=0.001, measure_seconds=0.002
+        profiled = profile_template(inventory, key, program)
+        measurements[key] = profiled.profiles
+        assert profiled.profiles.metadata["preparation_template"] == key
+        assert (
+            profiled.profiles.metadata["profiling_scenario"]
+            == template.signature()["scenario"]
         )
+        profiled.save(tmp_path / f"profiled-{key}.ssp")
     step = inventory.families[OperationKey("step", "metrics")][0].workers[0]
     backward = inventory.families[OperationKey("forward_backward", "metrics")][
         0

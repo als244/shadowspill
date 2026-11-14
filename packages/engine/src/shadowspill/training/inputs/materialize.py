@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Self
@@ -33,6 +33,13 @@ class DatumRegion:
 class BufferSize:
     retained: int
     staging: int
+
+
+@dataclass(frozen=True)
+class BufferContents:
+    regions: tuple[DatumRegion, ...]
+    groups: tuple[tuple[int, ...], ...]
+    values: Sequence[Mapping[Path, ValidatedTensor]]
 
 
 def buffer_size(physical: BufferShape, schema: InputSchema, records: int) -> BufferSize:
@@ -126,14 +133,47 @@ def materialize_buffer(
     """
     if assignment.batch.owner.closed:
         raise RuntimeError("input snapshot is closed")
-    definitions = {tuple(field.path): field for field in schema.fields}
     physical = assignment.schedule.buffers[index]
+    return materialize_contents(
+        physical,
+        schema,
+        len(assignment.records[index]),
+        assignment.schedule.locations[index],
+        lambda: BufferContents(
+            field_regions(assignment, schema, index),
+            assignment.groups[index],
+            assignment.batch.fields,
+        ),
+        budget,
+        timeout=timeout,
+    )
+
+
+def materialize_contents(
+    physical: BufferShape,
+    schema: InputSchema,
+    records: int,
+    location: tuple[int, int],
+    contents: Callable[[], BufferContents],
+    budget: BufferBudget,
+    *,
+    timeout: float | None = None,
+) -> PackedBuffer:
+    """Fill validated runtime or representative values through one bounded path.
+
+    The internal producer constructs region bookkeeping only after reservation.
+    Representative scalar descriptions need no original full-sized input batch.
+    """
+    definitions = {tuple(field.path): field for field in schema.fields}
     # Fixed conversion scratch and bounded region/container bookkeeping are
     # separate from persistent spill and from the original owned input payload.
-    size = buffer_size(physical, schema, len(assignment.records[index]))
+    size = buffer_size(physical, schema, records)
     lease = budget.reserve(size.staging, timeout=timeout)
     try:
-        regions = field_regions(assignment, schema, index)
+        logical = contents()
+        regions = logical.regions
+        if len(regions) != records:
+            raise ValueError("physical record count differs from its admitted regions")
         fields = {}
         for path, shape in physical.fields.items():
             definition = definitions[path]
@@ -159,12 +199,12 @@ def materialize_buffer(
                     ].squeeze(axis=0)
                 elif axes:
                     destination = destination[axes]
-                assignment.batch.fields[region.datum][path].copy_into(destination)
+                logical.values[region.datum][path].copy_into(destination)
         result = PackedBuffer(
             fields,
             regions,
-            assignment.groups[index],
-            assignment.schedule.locations[index],
+            logical.groups,
+            location,
             lease,
         )
         lease.shrink(size.retained)
