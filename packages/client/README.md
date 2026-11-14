@@ -1,8 +1,9 @@
 # ShadowSpill client records
 
 Portable configuration and logical examples for the training service under
-construction. This package currently supplies validated records, schemas and text helpers;
-service connections and training execution will follow in later refactor stages.
+construction. This package supplies validated records, schemas, text helpers and
+internal HTTP/OpenSSH transports. Public ServiceClient/TrainingClient creation
+and training handles remain under development.
 
 ```python
 from shadowspill_client import BatchConfig, Datum, Model, Objective, Weights
@@ -41,7 +42,20 @@ failures. `protocol.codec` encodes a versioned, bounded canonical JSON envelope.
 Tensor bytes use separate artifact references; Datum is deliberately not a wire
 record. Failures say whether execution never started, completed, or had unknown
 effects. Results include effective controls and immutable artifact references.
-These records do not yet provide HTTP connections or request futures.
+The internal HTTP transport uses these same records; request futures remain under
+development.
+
+`SSH` holds local connection settings, including an OpenSSH alias, service host
+and service port. `transport.ssh.SSHTunnel` creates a loopback forward for the same
+authenticated HTTP protocol. It reuses a configured existing master or owns a
+private foreground connection. Closing a borrowed forward sends only a forwarding
+cancellation; it never terminates that master, an allocation or a training run.
+Host-key verification, keys/agent and jump routing remain OpenSSH responsibilities.
+SSH startup and HTTP service readiness are separate checks. Local diagnostics and
+command ownership use a fixed client memory reservation; failed cleanup retains it
+for explicit retry. The transport has real local OpenSSH and Chicago-to-Della
+checks, including accepted execution continuing after tunnel closure. Public SDK
+connection composition and actual Apple Silicon qualification remain unfinished.
 
 `protocol.payload.snapshot_batch` and `protocol.payload_io.read_payload` share
 versioned binary framing, explicit dtype/shape metadata and SHA-256 integrity.

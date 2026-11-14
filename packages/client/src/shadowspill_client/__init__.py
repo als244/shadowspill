@@ -19,9 +19,11 @@ from .config import (
     Weights,
 )
 from .datum import Datum
+from .transport.ssh import SSH
 
 __version__ = "0.1.0.dev0"
 __all__ = [
+    "SSH",
     "BatchConfig",
     "BuildCandidates",
     "BuildCase",

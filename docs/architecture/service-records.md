@@ -40,8 +40,24 @@ Reachable listeners require TLS; loopback HTTP also supports SSH forwarding.
 TLS verification, owner isolation, disconnects, incomplete uploads and capacity
 limits have real loopback tests. Ordinary/provider GPU tests use these routes for
 updates, discard, close and downloads after worker exit. Public service creation,
-SDK training handles, owned SSH forwarding, range-resumable transfers and actual
+SDK training handles, range-resumable transfers and actual
 multi-node deployment remain separate implementation work.
+
+The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
+forward into these same routes. It delegates alias/key/agent/jump configuration
+and host-key verification to OpenSSH. Existing masters receive only forward and
+cancel commands through their pinned control socket; a private new master stays
+in the foreground under an owned process group. Cleanup cannot terminate a
+borrowed master or cancel accepted training. Configuration output, diagnostics,
+transient commands and proxy-child cleanup are bounded by one client reservation.
+Failed cleanup retains its owner for retry. SSH startup is distinct from the
+authenticated HTTP readiness exchange. Real local daemon tests cover both
+ownership modes, host-key rejection and disconnect/reconnect through the existing
+controller; a CPU-only Della fixture verifies actual cross-host authenticated
+control and binary transfer without touching an allocation. OpenSSH's
+[control commands](https://man.openbsd.org/ssh#O) and
+[connection-sharing configuration](https://man.openbsd.org/ssh_config#ControlMaster)
+define the forwarding boundary.
 
 ## Request and worker ownership
 
