@@ -11,8 +11,10 @@ from shadowspill.training.inputs.routing import route_buffer
 from shadowspill.training.inputs.shapes import BufferShape, PackingSchedule
 from shadowspill.training.inputs.validation import validate_batch
 from shadowspill.training.observations import to_host
+from shadowspill.training.outputs import OutputLayout
 from shadowspill_client import BatchConfig, Datum
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import snapshot_batch
 
@@ -74,10 +76,27 @@ def qualify_packed_family(executor, oracle, snapshot, fill):
         predictions = to_host(tuple(item["prediction"] for item in result.metrics))
         executor.synchronize()
         del result
-        restored = [None] * len(records)
-        for buffer, output in zip(buffers, predictions, strict=True):
-            for region in buffer.regions:
-                restored[region.datum] = output[region.fields[paths[0]]].clone()
+        output_layout = OutputLayout(
+            schema,
+            OutputSet(
+                tensors={
+                    "prediction": TensorOutput(
+                        "float32", ("positions", 4), "aligned", "positions"
+                    )
+                }
+            ),
+            schedule,
+            placement,
+        )
+        restored = [
+            torch.empty(dest.shape) for dest in output_layout.destinations(packed)
+        ]
+        for piece in output_layout.pieces(packed):
+            assert piece.logical_rank == 0
+            assert tuple(predictions[piece.buffer].shape) == piece.source_shape
+            restored[piece.destination.datum][piece.destination_axes].copy_(
+                predictions[piece.buffer][piece.source_axes]
+            )
         for index, output in enumerate(restored):
             original = torch.from_numpy(owned.datums[index].inputs["x"].array().copy())
             expected = (

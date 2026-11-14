@@ -123,6 +123,15 @@ construction. `padding_safe` describes the model-side assertion; objective
 masking and loss ownership must still be qualified when binding the operation.
 Adapters use ordinary functions, never a trainer loop or model-name branch.
 
+`training.outputs.OutputLayout` binds each declared tensor output to physical
+buffer and worker geometry. Its destination records retain caller Datum order;
+its piece records remove record/token padding and describe leader, summed or
+concatenated worker views. Alignment comes from declared schema symbols, with an
+explicit source required when physical interpretations differ. Global tensors
+also require a declared reduction across microbatches, separate from the worker
+reduction. The mappings retain no GPU tensors and can drive bounded artifact
+writes; artifact streaming/publication is still separate implementation work.
+
 Traversal is a planning choice; microbatch geometry is a build choice. For eight
 instantiated calls, `StepDataOrdering(depth=2, breadth=4)` makes two passes of four
 microbatches each. Within a pass, stage-major execution can reuse fetched weights
