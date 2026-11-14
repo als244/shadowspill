@@ -29,9 +29,15 @@ node-local cache root on every open. Its journal and synchronization modes are
 disabled, its page cache is bounded, and it uses no WAL. Authoritative commits
 precede index updates; an index failure makes the open store unavailable until
 reconciliation. The recovered journal may already contain the original completion.
-Unfinished records remain inspectable without automatic replay. Restart failure
-classification belongs to the coordinator; persistent metadata cannot restore lost
-mutable worker state.
+Unfinished records remain inspectable without automatic replay. The engine's
+`training.session.recovery.fail_interrupted_requests` invalidates the existing
+operation state and commits restart failures in bounded pages. A durable running
+record without a terminal receipt has unknown execution effects; accepted work and
+incomplete uploads are recorded as not started. This requires dispatch to be
+journaled before sending any worker command. Completed outcomes stay unchanged.
+Even a fully completed journal cannot establish that its former mutable workers
+still exist. Service startup must invoke this classification; it is not a worker
+restart or checkpoint restoration mechanism.
 
 One process holds an exclusive advisory writer lock for a journal directory.
 Threads share a serialized writer. A commit contains a bounded group of immutable
