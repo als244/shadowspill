@@ -233,4 +233,7 @@ with Executor(primary, plans=plans) as executor:
     assert not fresh.accumulate_gradients
     torch.testing.assert_close(snapshot(executor), discarded, rtol=0, atol=0)
     execute("discard", "final_discard")
+    from engine_tests.execution._packed_shared import qualify_packed_family
+
+    qualify_packed_family(executor, oracle, snapshot, fill)
 print("Qualified mutable shared Plans", flush=True)

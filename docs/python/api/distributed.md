@@ -186,7 +186,11 @@ partition. Three 64K buffers exceed a 128K step cap even if only 120K positions
 are valid. Replicated copies on cooperating workers count once; masked model
 buffers still count in full. This arithmetic does not by itself admit a schedule
 or enforce an application's cap. Global packing, collective-safe routing and
-output reordering are separate from these declarations.
+output reordering are separate from these declarations. The internal
+`training.inputs` pipeline now materializes owned fixed buffers and routes their
+declared views, with CPU checks for cooperating/replicated and sliced inputs.
+Service transport and real distributed routing remain under development; these
+checks do not expand the multi-GPU qualification scope below.
 
 Gradient contributions are **summed**, without implicit world-size division.
 For an additive objective, every rank/example can contribute

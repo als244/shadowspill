@@ -88,6 +88,32 @@ class ValidatedTensor:
             int(np.count_nonzero(block)) for block in numeric_values(self.source)
         )
 
+    def encoded_blocks(self) -> Iterator[NDArray[Any]]:
+        if self.source is None:
+            size = min(self.elements, CHUNK_ELEMENTS)
+            converted = _convert(np.full(size, self.default), self.dtype)
+            for offset in range(0, self.elements, CHUNK_ELEMENTS):
+                yield converted[: min(CHUNK_ELEMENTS, self.elements - offset)]
+        elif self.source.dtype == self.dtype:
+            values = self.source.array().reshape(-1)
+            for offset in range(0, self.elements, CHUNK_ELEMENTS):
+                yield values[offset : offset + CHUNK_ELEMENTS]
+        else:
+            for block in numeric_values(self.source):
+                yield _convert(block, self.dtype)
+
+    def equivalent(self, other: ValidatedTensor) -> bool:
+        return (
+            self.dtype == other.dtype
+            and self.shape == other.shape
+            and all(
+                np.array_equal(a, b, equal_nan=True)
+                for a, b in zip(
+                    self.encoded_blocks(), other.encoded_blocks(), strict=True
+                )
+            )
+        )
+
     def copy_into(self, destination: NDArray[Any]) -> None:
         """Fill already admitted storage, including noncontiguous packing views.
 
@@ -108,16 +134,17 @@ class ValidatedTensor:
             blocks = numeric_values(self.source)
         offset = 0
         for block in blocks:
-            if self.dtype == "bfloat16":
-                bits = block.astype(np.float32).view(np.uint32)
-                converted = ((bits + 0x7FFF + ((bits >> 16) & 1)) >> 16).astype(
-                    np.uint16
-                )
-                converted = np.where(np.isnan(block), np.uint16(0x7FC0), converted)
-            else:
-                converted = block.astype(storage_dtype(self.dtype), copy=False)
+            converted = _convert(block, self.dtype)
             if self.source is None:
                 destination.fill(converted[0])
             else:
                 destination.flat[offset : offset + len(block)] = converted
                 offset += len(block)
+
+
+def _convert(block: NDArray[Any], dtype: str) -> NDArray[Any]:
+    if dtype != "bfloat16":
+        return block.astype(storage_dtype(dtype), copy=False)
+    bits = block.astype(np.float32).view(np.uint32)
+    converted = ((bits + 0x7FFF + ((bits >> 16) & 1)) >> 16).astype(np.uint16)
+    return np.where(np.isnan(block), np.uint16(0x7FC0), converted)

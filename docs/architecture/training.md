@@ -1,8 +1,9 @@
 # Training composition
 
-Preparation produces saved phase artifacts; training consumes a Plan. Models,
-objectives, data packing and qualification thresholds stay outside the installed
-trainer. See the [phase API](../python/phases.md) for the full artifact contracts.
+Preparation produces saved phase artifacts; training consumes a Plan. Model and
+objective semantics and qualification thresholds stay with their definitions and
+applications. Generic input validation/packing lives in the installed engine.
+See the [phase API](../python/phases.md) for the full artifact contracts.
 
 ```mermaid
 flowchart LR
@@ -84,6 +85,23 @@ Each `fit` source item is a mapping of arguments for `Trainer.step`, normally
 `{"args": [...], "kwargs": [...]}`. Each sequence entry describes one example
 in the saved Program. The plan chooses execution order. Nested model inputs and
 static metadata use the builder's ordinary PyTorch argument structure.
+
+The developing global-input path under `training.inputs` validates owned Datum
+snapshots and packs them into a finite set of declared physical schedules.
+Packing uses deterministic best fit with bounded repair, preserves indivisible
+groups and retains caller-order field regions. Scheduled capacity includes every
+padded model buffer, once per logical input partition. It never creates another
+buffer to work around fragmentation. Preparation must still certify advertised
+coverage, collective compatibility and memory before admitting those schedules.
+
+Materialization fills bounded CPU buffers with declared padding/defaults and
+checked casts. Logical worker routing selects explicitly declared slices or
+replicated views. Model adapters use the retained group/field regions to construct
+their own sequence/media metadata and honor loss ownership. The packer does not
+infer attention boundaries or implement distributed model operators. A cold
+worker test now passes owned, reordered variable-length records through a saved
+complete-step Plan and restores prediction order while matching optimizer state.
+The public global-batch service is still under development.
 
 The objective supplies its normalization. Contributions accumulate; the trainer
 does not infer token counts or replica denominators. Rank-local loss and other
