@@ -24,8 +24,26 @@ class PackedAssignment:
     schedule: PackingSchedule
     records: tuple[tuple[int, ...], ...]
     groups: tuple[tuple[tuple[int, ...], ...], ...]
-    strategy: Literal["best_fit", "repair"]
+    strategy: Literal["best_fit", "repair", "coverage"]
     repair_nodes: int = 0
+
+
+def atomic_groups(
+    count: int, groups: Sequence[Sequence[int]] | None
+) -> tuple[tuple[int, ...], ...]:
+    atomic = (
+        tuple((i,) for i in range(count))
+        if groups is None
+        else tuple(tuple(group) for group in groups)
+    )
+    indices = [i for group in atomic for i in group]
+    if (
+        any(not group for group in atomic)
+        or any(type(i) is not int for i in indices)
+        or sorted(indices) != list(range(count))
+    ):
+        raise ValueError("atomic groups must cover every Datum exactly once")
+    return atomic
 
 
 def pack_batch(
@@ -44,23 +62,11 @@ def pack_batch(
     Preparation separately proves collective order, memory and advertised input
     coverage. A bounded heuristic failure is explicit, never an extra buffer.
     """
-    if batch.owner.closed:
-        raise RuntimeError("input snapshot is closed")
+    batch.require_context(schema, limits)
     if type(max_repair_nodes) is not int or max_repair_nodes < 0:
         raise ValueError("max_repair_nodes must be a nonnegative integer")
     schedule.validate(schema, limits, placement)
-    atomic = (
-        tuple((i,) for i in range(len(batch.fields)))
-        if groups is None
-        else tuple(tuple(group) for group in groups)
-    )
-    indices = [i for group in atomic for i in group]
-    if (
-        any(not group for group in atomic)
-        or any(type(i) is not int for i in indices)
-        or sorted(indices) != list(range(len(batch.fields)))
-    ):
-        raise ValueError("atomic groups must cover every Datum exactly once")
+    atomic = atomic_groups(len(batch.fields), groups)
     definitions = {tuple(field.path): field for field in schema.fields}
     buffers = schedule.buffers
     paths = buffers[0].fields

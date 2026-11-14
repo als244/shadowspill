@@ -60,6 +60,14 @@ class ValidatedBatch:
     fields: tuple[Mapping[Path, ValidatedTensor], ...]
     dimensions: tuple[Mapping[str, int], ...]
     capacities: Mapping[str, int]
+    schema: InputSchema
+    config: BatchConfig
+
+    def require_context(self, schema: InputSchema, config: BatchConfig) -> None:
+        if self.owner.closed:
+            raise RuntimeError("input snapshot is closed")
+        if self.schema != schema or self.config.limits != config.limits:
+            raise ValueError("batch was validated against a different input contract")
 
     def participating_positions(self, rule: Participation) -> int:
         if not rule.path:
@@ -179,5 +187,10 @@ def validate_batch(
             )
         totals[capacity.name] = total
     return ValidatedBatch(
-        snapshot, tuple(all_values), tuple(all_dimensions), MappingProxyType(totals)
+        snapshot,
+        tuple(all_values),
+        tuple(all_dimensions),
+        MappingProxyType(totals),
+        schema,
+        batch,
     )

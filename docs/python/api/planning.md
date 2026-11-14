@@ -91,6 +91,23 @@ separate: a count fitting device memory does not authorize padding beyond a
 declared batch limit. Registered model mutation and RNG ordering constraints
 remain in force.
 
+The input-preparation primitives also expose `certify_coverage` in
+`shadowspill.training.inputs.coverage`. It derives a conservative geometry proof
+from an `InputSchema`, `BatchConfig`, `InputPlacement` and explicitly requested
+`PackingSchedule` records. Its two constructions are a buffer large enough for
+the entire allowed call, or reserved worst-case slots for independent Datums.
+The first also preserves arbitrary atomic groups. Missing count/dimension bounds
+or unsupported coverage fail with a diagnostic; successful sample packings are
+insufficient. Scheduled padding must fit every declared scheduled capacity.
+
+A certificate's `pack` method uses that construction without heuristic search.
+Its `select` method tries the supplied admitted family in cost order and retains
+the certified construction if bounded search fails. The witness must remain in
+the family, and saved certificates rederive their proof when loaded. These are
+input geometry guarantees; model padding/independence, compiled metadata bounds,
+memory admission and collective compatibility still require separate preparation
+checks. The public trainer preparation path is not yet wired to these primitives.
+
 Traversal is a planning choice; microbatch geometry is a build choice. For eight
 instantiated calls, `StepDataOrdering(depth=2, breadth=4)` makes two passes of four
 microbatches each. Within a pass, stage-major execution can reuse fetched weights
