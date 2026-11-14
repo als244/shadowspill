@@ -6,6 +6,45 @@ worker dispatch and HTTP. Contiguous acceptance, dependency handling and restart
 classification belong to the request coordinator; the journal does not make an
 interrupted GPU update replayable.
 
+## Authenticated transport
+
+`server.http.HTTPService` adapts the existing `RunController`, `RequestRecords`
+and `ArtifactStore` to authenticated HTTP. It does not own another execution queue.
+Deployment-configured bearer credentials resolve to an owner; run URLs carry only
+session/run/request IDs. Lookup contexts retain their owners during I/O, and the
+handler verifies the returned owner/session/run identity before accessing records.
+The credential table retains SHA-256 digests rather than plaintext tokens.
+
+The service reserves scratch and a concurrent-handler slot before starting a
+thread, including TLS handshakes. Request headers have a total 64 KiB bound.
+Portable control metadata is at most 1 MiB with 16,384 JSON nodes and 64 levels
+of nesting; a constant-space scan checks structural bounds before JSON allocation.
+Binary bodies have one explicit uncompressed length and reuse admitted input
+decoding. Each underlying socket read checks the whole exchange deadline, so
+partial headers cannot retain an owner indefinitely. Network timeouts apply to
+individual exchanges; live training runs still have no default idle timeout.
+
+Routes register immutable request metadata, finish binary uploads, query or wait
+up to ten seconds for recorded acceptance/completion, and attach a writer. A
+pending writer attachment returns its same lease with HTTP 202 until ready.
+Connections close after each exchange. Accepted execution continues independently;
+a lost HTTP response has no inferred optimizer effect and never causes replay.
+Known request IDs and outcomes remain queryable after worker close or record-store
+reopening. Read-only stores refuse new submissions and cannot restore live state.
+
+Artifact downloads resolve authenticated owner-scoped immutable references, stream
+64 KiB blocks and advertise the SHA-256 digest as the ETag. The lightweight SDK
+transport verifies length, type, digest and partial destination writes without
+loading a whole artifact. It does not redirect credentials or retry a mutation.
+Reachable listeners require TLS; loopback HTTP also supports SSH forwarding.
+TLS verification, owner isolation, disconnects, incomplete uploads and capacity
+limits have real loopback tests. Ordinary/provider GPU tests use these routes for
+updates, discard, close and downloads after worker exit. Public service creation,
+SDK training handles, owned SSH forwarding, range-resumable transfers and actual
+multi-node deployment remain separate implementation work.
+
+## Request and worker ownership
+
 The engine's `training.session.staging.OrderedStaging` grants complete input
 pipeline reservations in submission order. A bounded metadata window leaves room
 for an earlier request whose metadata has not arrived. A later upload cannot
@@ -31,8 +70,9 @@ Execution borrows accepted prepared inputs once and explicitly releases them aft
 its consumers finish. Failed queued inputs close promptly; rejected active readers
 retain storage until they return. Waiting for an arena does not hold the ordering
 lock needed by earlier cleanup. Fatal shutdown can release idle owners even when
-record storage is unavailable, while active owners retain their leases. Transport
-read deadlines remain service integration work.
+record storage is unavailable, while active owners retain their leases. HTTP body
+reads enforce the exchange deadline described above without changing the request's
+durable execution classification.
 
 `training.session.prepared.PreparedRequests` supplies that callback and derives
 registration bounds from the rechecked prepared family. Whole-call validation

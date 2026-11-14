@@ -215,9 +215,12 @@ class HTTPTransport:
         if response.headers.get("Content-Type") != CONTROL_MEDIA_TYPE:
             raise ProtocolError("response has no portable control metadata")
         data = response.read(length)
-        if len(data) != length:
-            raise ProtocolError("truncated control response")
-        value = decode(data)
+        try:
+            if len(data) != length:
+                raise ProtocolError("truncated control response")
+            value = decode(data)
+        finally:
+            del data
         if not 200 <= response.status < 300:
             if not isinstance(value, ServiceError):
                 raise ProtocolError("unsuccessful response has no service error record")

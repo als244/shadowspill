@@ -8,6 +8,7 @@ import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Thread
 
 
 class Block(importlib.abc.MetaPathFinder):
@@ -29,6 +30,8 @@ from shadowspill.orchestration.launch.node_capacity import discover_capacity  # 
 from shadowspill.orchestration.launch.publication import require_output  # noqa: E402
 from shadowspill.orchestration.launch.staging import FileDelivery  # noqa: E402
 from shadowspill.server.artifacts import ArtifactStore  # noqa: E402
+from shadowspill.server.authentication import BearerTokens  # noqa: E402
+from shadowspill.server.http import HTTP_SCRATCH_BYTES, HTTPService, RunAccess  # noqa: E402
 from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
 from shadowspill.server.results import ResultPublisher  # noqa: E402
 from shadowspill.training.definitions import load_registry  # noqa: E402
@@ -50,6 +53,7 @@ from shadowspill_client.protocol.requests import (  # noqa: E402
     OperationRequest,
     RequestIdentity,
 )
+from shadowspill_client.transport.http import HTTPTransport  # noqa: E402
 
 root = Path(sys.argv[1])
 directory = root / "agent"
@@ -85,6 +89,8 @@ execution = prepared_worker.bindings.setup.config.execution
 oracle = json.loads((root / "agent-oracle.json").read_text())
 observations = []
 published = []
+token = "integration-" + os.urandom(32).hex()
+route = "/v1/runs/session/run"
 
 
 def host_peak(pid):
@@ -145,11 +151,50 @@ def owned_node(memory):
         node.close()
 
 
+@contextmanager
+def serving(controller, journal, artifacts, memory, client_memory):
+    @contextmanager
+    def runs(identity):
+        assert identity == journal.identity
+        yield RunAccess(journal, controller)
+
+    @contextmanager
+    def stores(owner):
+        assert owner == artifacts.owner_id
+        yield artifacts
+
+    service = HTTPService(
+        ("127.0.0.1", 0),
+        incarnation="agent",
+        authentication=BearerTokens({token: "owner"}),
+        runs=runs,
+        artifacts=stores,
+        memory=memory,
+    )
+    thread = Thread(target=service.serve_forever, kwargs={"poll_interval": 0.01})
+    thread.start()
+    client = HTTPTransport(
+        f"http://127.0.0.1:{service.server_port}",
+        token=token,
+        memory=client_memory,
+    )
+    try:
+        yield client
+    finally:
+        service.shutdown()
+        service.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert memory.used == client_memory.used == (0, 0)
+
+
 with (
     HostArena(admission, 64 << 20, 100) as transfers,
     HostArena(admission, 16 << 20, 2) as commands,
     # One assembly owner, one frame reader and one reduction scratch owner.
     HostArena(admission, 64 << 20, 3) as publication,
+    HostArena(admission, HTTP_SCRATCH_BYTES * 2, 2) as http_server,
+    HostArena(admission, HTTP_SCRATCH_BYTES, 1) as http_client,
     HostArena(
         admission, execution.max_staging_bytes, execution.max_pending_requests
     ) as uploads,
@@ -164,7 +209,7 @@ with (
     owned_node(transfers.budget) as node,
 ):
     memory, metadata = transfers.budget, commands.budget
-    arena_bytes = (144 << 20) + execution.max_staging_bytes
+    arena_bytes = (144 << 20) + execution.max_staging_bytes + 3 * HTTP_SCRATCH_BYTES
     assert admission.used.host_bytes == arena_bytes
     processes = node.start(lambda _: (root / "training.ssp").open("rb"))
     process, lease = processes[0], node.lease
@@ -202,10 +247,14 @@ with (
             server_incarnation="agent",
             budget=uploads.budget,
         ) as controller,
+        serving(
+            controller, journal, artifacts, http_server.budget, http_client.budget
+        ) as client,
     ):
         assert process.child._ready and process.child._socket.gettimeout() is None
         observe("ready", process)
-        assert controller.attach("writer").ready
+        assert client.request("GET", "/v1/info").value.owner_id == "owner"
+        assert client.request("POST", route + "/writers/writer").status == 200
 
         def invoke(operation, *, predictions=None, corrupt=False, **options):
             sequence = journal.last_sequence + 1
@@ -252,13 +301,24 @@ with (
                 return outcome
 
             publishers[name] = publish
-            controller.register(request)
-            with io.BytesIO(wire or b"") as body:
-                status = controller.receive(name, None if wire is None else body)
-            assert status.state == "accepted", status
-            # The submitting body is already closed; only the server queue owns
-            # execution. Waiting reads records and cannot issue another command.
-            status = controller.wait(name, timeout=120)
+            client.request("POST", route + "/requests", request)
+            input_path = route + "/requests/" + name + "/input"
+            status = (
+                client.request("PUT", input_path)
+                if wire is None
+                else client.upload(input_path, payload, [wire])
+            ).value
+            assert status.acceptance is not None, status
+            # Each HTTP connection is already closed; only the server queue owns
+            # execution. Polling reads records and cannot issue another command.
+            for _ in range(12):
+                status = client.request(
+                    "GET", route + "/requests/" + name + "?wait=completed&timeout=10"
+                ).value
+                if status.state in ("completed", "skipped", "failed"):
+                    break
+            else:
+                raise AssertionError("worker request exceeded the integration deadline")
             controller.drain(timeout=120)
             del publishers[name]
             if corrupt:
@@ -267,7 +327,7 @@ with (
                 assert status.failure.state_valid
                 assert status.failure.completed_updates == 2
                 assert (
-                    controller.register(request) == controller.receive(name) == status
+                    client.request("POST", route + "/requests", request).value == status
                 )
             else:
                 assert status.state == "completed", status
@@ -277,7 +337,7 @@ with (
             else:
                 assert process.child.closed and lease.closed and controller.closed
                 assert (
-                    controller.register(request) == controller.receive(name) == status
+                    client.request("POST", route + "/requests", request).value == status
                 )
 
         invoke(
@@ -299,6 +359,14 @@ with (
         assert controller.boundary.completed_updates == 2 and controller.boundary.valid
         invoke("close")
         assert controller.boundary.closed and controller.closed
+        # Completed handles remain downloadable after execution workers exit.
+        for reference, _ in published:
+            downloaded = io.BytesIO()
+            client.download("/v1/artifacts/" + reference.id, reference, downloaded)
+            with read_payload(
+                io.BytesIO(downloaded.getvalue()), reference, publication.budget
+            ) as decoded:
+                assert decoded.datums
     assert process.child.closed and lease.closed
     assert admission.used.host_bytes == arena_bytes
     log_refs = logs.references()
@@ -346,3 +414,4 @@ print("Qualified durable GPU artifacts after node and output-file cleanup")
 print("Qualified production caller-order result and scalar publication")
 print("Qualified ordered production discard followed by fresh backward/update")
 print("Qualified ordered close with confirmed child exit and queryable result")
+print("Qualified authenticated HTTP queue and post-exit artifact downloads")

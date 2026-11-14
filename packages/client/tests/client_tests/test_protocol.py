@@ -1,12 +1,15 @@
 """Request identity and truthful failure effects survive canonical wire records."""
 
+import gc
 import json
+import weakref
 from dataclasses import replace
 
 import pytest
 
 from shadowspill_client import Datum, Model
 from shadowspill_client.protocol.codec import (
+    MAX_METADATA_NODES,
     ProtocolError,
     RecordCodec,
     decode,
@@ -246,6 +249,52 @@ def test_metadata_is_bounded_and_does_not_expand_binary_payloads():
     )
     with pytest.raises(ProtocolError, match="nesting"):
         decode(nested)
+
+
+@pytest.mark.parametrize("item", [b"{}", b"[]", b"0", b'"x"'])
+def test_metadata_node_bound_precedes_json_object_allocation(item, monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("oversized graph reached JSON allocation")
+
+    monkeypatch.setattr(json, "loads", forbidden)
+    wire = b"[" + b",".join([item] * MAX_METADATA_NODES) + b"]"
+    assert len(wire) < 1 << 20
+    with pytest.raises(ProtocolError, match="nodes"):
+        decode(wire)
+
+
+def test_structure_limits_preserve_escaped_strings_and_canonical_roundtrip():
+    value = Model("custom", {"text": '\\"[{,:}]\\\\' * 1000})
+    assert decode(encode(value)) == value
+    with pytest.raises(ProtocolError, match="nodes"):
+        encode(Model("custom", {"items": [[] for _ in range(MAX_METADATA_NODES)]}))
+
+
+def test_bad_record_does_not_retain_decoder_objects_in_exception_context(monkeypatch):
+    class Payload:
+        pass
+
+    retained = []
+
+    def invalid(cls, data):
+        temporary = Payload()
+        retained.append(weakref.ref(temporary))
+        raise ValueError("unusable metadata")
+
+    wire = encode(Model("custom"))
+    monkeypatch.setattr(Model, "from_dict", classmethod(invalid))
+    with pytest.raises(ProtocolError) as error:
+        decode(wire)
+    gc.collect()
+    assert error.value.__context__ is None and error.value.__cause__ is None
+    assert retained[0]() is None
+    trace = error.value.__traceback__
+    while trace:
+        if trace.tb_frame.f_code.co_name == "decode":
+            assert trace.tb_frame.f_locals["data"] == b""
+            if "envelope" in trace.tb_frame.f_locals:
+                assert trace.tb_frame.f_locals["envelope"] is None
+        trace = trace.tb_next
 
 
 def test_private_codec_owns_its_allowlist_and_uses_the_same_strict_envelope():

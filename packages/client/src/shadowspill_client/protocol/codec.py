@@ -35,6 +35,7 @@ from .training import ResolvedTraining
 
 VERSION = 1
 MAX_METADATA_BYTES = 1024 * 1024
+MAX_METADATA_NODES = 16384
 _KINDS: Mapping[str, type[Record]] = {
     "config.model": Model,
     "config.objective": Objective,
@@ -80,14 +81,60 @@ def _constant(value: str) -> None:
 
 def _depth(value: Any) -> None:
     pending = [(value, 0)]
+    nodes = 0
     while pending:
         current, depth = pending.pop()
+        nodes += 1
         if depth > 64:
             raise ProtocolError("metadata nesting exceeds 64 levels")
+        if isinstance(current, dict):
+            nodes += len(current)  # Field names are decoded string objects too.
+        children = len(current) if isinstance(current, dict | list) else 0
+        if nodes + len(pending) + children > MAX_METADATA_NODES:
+            raise ProtocolError(f"metadata exceeds {MAX_METADATA_NODES} nodes")
         if isinstance(current, dict):
             pending.extend((v, depth + 1) for v in current.values())
         elif isinstance(current, list):
             pending.extend((v, depth + 1) for v in current)
+
+
+def _structure(data: bytes) -> None:
+    """Bound JSON object growth before allocation; json.loads still validates it.
+
+    A small byte string can otherwise create hundreds of thousands of tiny
+    containers. Count containers, scalar values and field names without storing
+    tokens. Escaped quotes and structural characters inside strings are inert.
+    """
+    nodes = depth = 0
+    quoted = escaped = primitive = False
+    for char in data:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == 92:
+                escaped = True
+            elif char == 34:
+                quoted = False
+            continue
+        if char == 34:
+            nodes += 1
+            quoted, primitive = True, False
+        elif char in (91, 123):
+            nodes += 1
+            depth += 1
+            primitive = False
+            if depth > 65:
+                raise ProtocolError("metadata nesting exceeds 64 levels")
+        elif char in (93, 125):
+            depth -= 1
+            primitive = False
+        elif char in (9, 10, 13, 32, 44, 58):
+            primitive = False
+        elif not primitive:
+            nodes += 1
+            primitive = True
+        if nodes > MAX_METADATA_NODES:
+            raise ProtocolError(f"metadata exceeds {MAX_METADATA_NODES} nodes")
 
 
 class RecordCodec:
@@ -116,9 +163,10 @@ class RecordCodec:
             raise ProtocolError(f"unregistered protocol record: {type(value).__name__}")
         try:
             payload = value.to_dict()
-            _depth(payload)
+            envelope = {"version": VERSION, "kind": kind, "value": payload}
+            _depth(envelope)
             encoded = json.dumps(
-                {"version": VERSION, "kind": kind, "value": payload},
+                envelope,
                 sort_keys=True,
                 separators=(",", ":"),
                 allow_nan=False,
@@ -138,7 +186,9 @@ class RecordCodec:
             raise TypeError("protocol metadata must be bytes")
         if len(data) > max_bytes:
             raise ProtocolError(f"metadata exceeds {max_bytes} bytes")
+        envelope = None
         try:
+            _structure(data)
             envelope = json.loads(
                 data, object_pairs_hook=_object, parse_constant=_constant
             )
@@ -163,9 +213,16 @@ class RecordCodec:
                 )
             return self._kinds[envelope["kind"]].from_dict(envelope["value"])
         except (TypeError, ValueError, UnicodeError, RecursionError) as error:
-            if isinstance(error, ProtocolError):
-                raise
-            raise ProtocolError(f"invalid protocol metadata: {error}") from error
+            message = str(error)[:1024]
+            if not isinstance(error, ProtocolError):
+                message = "invalid protocol metadata: " + message
+        finally:
+            # Retained exceptions must not retain the input or partial decoded
+            # graph after the caller releases its metadata reservation.
+            data, envelope = b"", None
+        # Raise outside the handler so neither JSONDecodeError.doc nor a failed
+        # record constructor's traceback becomes this exception's context.
+        raise ProtocolError(message)
 
 
 _DEFAULT = RecordCodec(_KINDS)
@@ -176,7 +233,10 @@ def encode(value: Record, *, max_bytes: int = MAX_METADATA_BYTES) -> bytes:
 
 
 def decode(data: bytes, *, max_bytes: int = MAX_METADATA_BYTES) -> Record:
-    return _DEFAULT.decode(data, max_bytes=max_bytes)
+    try:
+        return _DEFAULT.decode(data, max_bytes=max_bytes)
+    finally:
+        data = b""
 
 
 def digest(value: Record) -> str:

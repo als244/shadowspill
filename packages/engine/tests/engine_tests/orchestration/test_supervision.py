@@ -133,7 +133,8 @@ Path(sys.argv[1]).write_text(str(child.pid))
     while True:
         try:
             state = state_path.read_text()
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
+            # procfs can open the inode before its task disappears during read.
             break
         if state.rsplit(")", 1)[1].strip().split()[0] == "Z":
             break
