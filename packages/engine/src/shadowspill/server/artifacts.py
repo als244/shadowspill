@@ -13,11 +13,13 @@ from pathlib import Path
 from threading import RLock
 from typing import BinaryIO, Self
 
+from shadowspill.orchestration.launch.publication import OutputSpec, OutputWriter
 from shadowspill.orchestration.launch.staging import FileDelivery
 from shadowspill_client._records import integer
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef, identifier
 
+from .artifact_writer import ProducedArtifact
 from .records.artifact_index import ArtifactIndex, reference_bytes, storage_key
 from .records.journal import Journal, _sync_directory
 from .records.journal_format import JournalLimits
@@ -27,8 +29,9 @@ INDEX_BYTES = 4 << 20
 
 @dataclass
 class _Publication:
-    reference: ArtifactRef
-    delivery: FileDelivery
+    id: str
+    size_bytes: int
+    owner: FileDelivery | ProducedArtifact
     committed: bool = False
     uncertain: bool = False
 
@@ -141,9 +144,9 @@ class ArtifactStore:
         _sync_directory(self._data)
         with os.scandir(self._scratch) as entries:
             for entry in entries:
-                if not entry.name.startswith("delivery-") or not entry.is_dir(
-                    follow_symlinks=False
-                ):
+                if not entry.name.startswith(
+                    ("delivery-", "production-")
+                ) or not entry.is_dir(follow_symlinks=False):
                     raise ValueError("unexpected file in private artifact staging")
                 shutil.rmtree(entry.path)
         _sync_directory(self._scratch)
@@ -188,58 +191,97 @@ class ArtifactStore:
                 if existing != reference:
                     raise ValueError("artifact ID already names different content")
                 return existing
-            if reference.id in self._pending:
-                raise RuntimeError("artifact publication is already in progress")
-            if (
-                self._bytes + reference.size_bytes > self.max_bytes
-                or self._count == self.max_artifacts
-            ):
-                raise ValueError("artifact storage capacity is exhausted")
+            self._capacity(reference.id, reference.size_bytes)
             delivery = FileDelivery(
                 [reference], root=self._scratch, disk=self._disk, memory=self._memory
             )
-            pending = _Publication(reference, delivery)
-            self._pending[reference.id] = pending
-            self._receiving.add(reference.id)
-            self._bytes += reference.size_bytes
-            self._count += 1
+            pending = self._track(reference.id, reference.size_bytes, delivery)
         try:
             delivery.receive(open_source)
-            with delivery.use() as resolve, self._mutex:
-                self._usable()
-                try:
-                    # Link only after hashing the complete stream. The same
-                    # filesystem keeps this bounded and avoids a second copy.
-                    with resolve(reference).open("rb") as stream:
-                        os.fsync(stream.fileno())
-                    os.link(resolve(reference), self._path(reference))
-                    _sync_directory(self._data)
-                    self._journal.append([("artifact.put", reference.to_dict())])
-                    self._index.insert(reference)
-                    pending.committed = True
-                except BaseException:
-                    # A visible record may be durable even when acknowledgement
-                    # failed. Keep its bytes for recovery, never roll it back.
-                    pending.uncertain = True
-                    self._broken = True
-                    raise
-            return reference
+            with delivery.use() as resolve:
+                return self._commit(pending, reference, resolve(reference))
         finally:
-            with self._mutex:
-                self._receiving.discard(reference.id)
-                try:
-                    self._release(pending)
-                except BaseException:
-                    # Retain the failed owner and its quotas for explicit retry.
-                    self._broken = True
-                    raise
+            self._finish(pending)
+
+    def produce(
+        self, spec: OutputSpec, write: Callable[[OutputWriter], ArtifactRef]
+    ) -> ArtifactRef:
+        """Publish one new ID directly from an installed bounded binary encoder.
+
+        Request deduplication happens before invoking the publisher. Without a
+        known expected digest, an already committed ID is a conflict, not an
+        instruction to invoke the encoder again or replace the immutable file.
+        """
+        with self._mutex:
+            self._usable()
+            if self._index.get(spec.id) is not None:
+                raise ValueError("artifact ID is already committed")
+            self._capacity(spec.id, spec.size_bytes)
+            producer = ProducedArtifact(
+                spec, root=self._scratch, disk=self._disk, memory=self._memory
+            )
+            pending = self._track(spec.id, spec.size_bytes, producer)
+        try:
+            reference = producer.build(write)
+            return self._commit(pending, reference, producer.path)
+        finally:
+            self._finish(pending)
+
+    def _capacity(self, artifact_id: str, size: int) -> None:
+        if artifact_id in self._pending:
+            raise RuntimeError("artifact publication is already in progress")
+        if self._bytes + size > self.max_bytes or self._count == self.max_artifacts:
+            raise ValueError("artifact storage capacity is exhausted")
+
+    def _track(
+        self, artifact_id: str, size: int, owner: FileDelivery | ProducedArtifact
+    ) -> _Publication:
+        pending = _Publication(artifact_id, size, owner)
+        self._pending[artifact_id] = pending
+        self._receiving.add(artifact_id)
+        self._bytes += size
+        self._count += 1
+        return pending
+
+    def _commit(
+        self, pending: _Publication, reference: ArtifactRef, path: Path
+    ) -> ArtifactRef:
+        with self._mutex:
+            self._usable()
+            try:
+                # Link only after hashing the complete stream. The same
+                # filesystem keeps this bounded and avoids a second copy.
+                with path.open("rb") as stream:
+                    os.fsync(stream.fileno())
+                os.link(path, self._path(reference))
+                _sync_directory(self._data)
+                self._journal.append([("artifact.put", reference.to_dict())])
+                self._index.insert(reference)
+                pending.committed = True
+            except BaseException:
+                # A visible record may be durable even when acknowledgement
+                # failed. Keep its bytes for recovery, never roll it back.
+                pending.uncertain = True
+                self._broken = True
+                raise
+        return reference
+
+    def _finish(self, pending: _Publication) -> None:
+        with self._mutex:
+            self._receiving.discard(pending.id)
+            try:
+                self._release(pending)
+            except BaseException:
+                # Retain the failed owner and its quotas for explicit retry.
+                self._broken = True
+                raise
 
     def _release(self, pending: _Publication) -> None:
-        pending.delivery.close()
+        pending.owner.close()
         if not pending.committed and not pending.uncertain:
-            self._bytes -= pending.reference.size_bytes
+            self._bytes -= pending.size_bytes
             self._count -= 1
-        del self._pending[pending.reference.id]
+        del self._pending[pending.id]
 
     @contextmanager
     def open(self, reference: ArtifactRef) -> Iterator[BinaryIO]:
