@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 from shadowspill.parallelism import InputPlacement
 from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.inputs import InputSchema, TensorField
+from shadowspill_client.protocol.payload import BatchSnapshot
 from shadowspill_client.protocol.tensors import (
     TensorPayload,
     storage_dtype,
@@ -204,7 +205,33 @@ class InputBinding:
             raise ValueError("adapter output paths overlap")
         self.shapes = MappingProxyType(shapes)
         self.dtypes = MappingProxyType(dtypes)
-        self.frame = InputFrame(self.shapes, self.dtypes)
+        # Store each referenced physical backing array and generated field once.
+        # Reconstructing the declared views then preserves the original strides,
+        # empty-slice geometry and storage extents used by capture guards.
+        self.frame_sources = {
+            ("inputs", "buffers", str(i)): path
+            for i, path in enumerate(sorted({view.source for view in self.views}))
+        }
+        self.frame_metadata = {
+            ("inputs", "metadata", str(i)): tuple(field.path)
+            for i, field in enumerate(adapter.metadata)
+        }
+        self.frame = InputFrame(
+            {
+                **{
+                    key: tuple(layout.buffer.fields[path])
+                    for key, path in self.frame_sources.items()
+                },
+                **{key: shapes[path] for key, path in self.frame_metadata.items()},
+            },
+            {
+                **{
+                    key: definitions[path].dtype
+                    for key, path in self.frame_sources.items()
+                },
+                **{key: dtypes[path] for key, path in self.frame_metadata.items()},
+            },
+        )
         self.metadata_bytes = sum(
             tensor_bytes(f.dtype, self.shapes[tuple(f.path)]) for f in adapter.metadata
         )
@@ -223,6 +250,54 @@ class InputBinding:
             + scratch
             + (VALIDATION_SCRATCH_BYTES if adapter.metadata else 0)
         )
+
+    def frame_fields(self, adapted: AdaptedInputs) -> Mapping[Path, NDArray[Any]]:
+        if adapted.closed or adapted.owner.owner.closed:
+            raise RuntimeError("adapted input storage is closed")
+        return {
+            **{
+                key: adapted.owner.owner.fields[path]
+                for key, path in self.frame_sources.items()
+            },
+            **{key: adapted.fields[path] for key, path in self.frame_metadata.items()},
+        }
+
+    def frame_arrays(self, snapshot: BatchSnapshot) -> Mapping[Path, NDArray[Any]]:
+        """Restore prepared views from ready storage without invoking any hook."""
+        if snapshot.closed or snapshot.header != self.frame.header:
+            raise ValueError("ready input frame differs from the prepared binding")
+
+        def array(key: Path) -> NDArray[Any]:
+            payload = snapshot.datums[0].inputs[key[1]][key[2]]
+            assert isinstance(payload, TensorPayload)
+            if not prod(payload.shape):
+                # np.empty (used by materialization/metadata) gives empty
+                # backing arrays zero strides; frombuffer.reshape need not.
+                return np.ndarray(
+                    payload.shape,
+                    dtype=storage_dtype(payload.dtype),
+                    buffer=payload.data,
+                    strides=(0,) * len(payload.shape),
+                )
+            return payload.array()
+
+        physical = {path: array(key) for key, path in self.frame_sources.items()}
+        result = {}
+        for view in self.views:
+            source = physical[view.source]
+            regions = self.layout.placement.region(
+                view.source, source.shape, self.layout.logical_rank
+            )
+            source = source[regions] if source.ndim else source.view()
+            target = self.shapes[view.path]
+            if source.shape == target:
+                result[view.path] = source.view()
+            elif source.flags.c_contiguous:
+                result[view.path] = source.reshape(target)
+            else:
+                raise ValueError("adapter reshape requires a contiguous source view")
+        result.update({path: array(key) for key, path in self.frame_metadata.items()})
+        return MappingProxyType(result)
 
     def signature(self) -> dict[str, Any]:
         return {

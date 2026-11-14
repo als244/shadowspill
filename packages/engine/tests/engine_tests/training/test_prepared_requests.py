@@ -189,7 +189,9 @@ def test_real_upload_selects_only_prepared_shapes_and_defaults_are_nonsticky(tmp
             paths = [frame.path for frame in data.spool.frames.values()]
             for frame in data.spool.frames.values():
                 with frame.read(BufferBudget(frame.layout.size.staging)) as values:
-                    assert values.datums[0].inputs["pixels"].shape == (2, 1, 2, 2)
+                    assert frame.binding.frame_arrays(values)[
+                        "inputs", "pixels"
+                    ].shape == (2, 1, 2, 2)
 
             # Execution borrows the same prepared owner once; finish helper must
             # not take it a second time.

@@ -34,7 +34,8 @@ def stage_inputs(
         or (kwargs is not None and len(kwargs) != count)
     ):
         raise ValueError(f"run requires exactly {count} examples")
-    for index, slots in enumerate(input_groups(bindings)):
+
+    def stage(index: int, slots: Sequence[Mapping[str, Any]]) -> None:
         if input_loader is not None:
             values = input_loader(index)
         else:
@@ -78,3 +79,9 @@ def stage_inputs(
                 value.untyped_storage(), 0, (value.untyped_storage().nbytes(),), (1,)
             )
             state.spill.copy_from(alias, raw)
+
+    # Loader-owned buffers may be closed before the next read. Release every
+    # borrowed tensor/tree/raw view when this synchronous copy returns, before
+    # asking the loader for another frame. CPU host bindings retain only clones.
+    for index, slots in enumerate(input_groups(bindings)):
+        stage(index, slots)

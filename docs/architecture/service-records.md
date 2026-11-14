@@ -53,14 +53,21 @@ once and stores its fixed input arrays under an explicit temporary cache root.
 Workers consume ready binary Datum frames without rerunning content-dependent
 preprocessing between GPU microbatches. The existing layout admission includes
 frame metadata, a 64 KiB streaming scratch block, serial decode peaks and the
-exact temporary file volume. Contiguous arrays are borrowed; strided logical
-rank slices use bounded C-order chunks, including bit-exact BF16 storage. File
+exact temporary file volume. Frames retain physical backing arrays plus generated
+metadata so worker reconstruction preserves strided and empty rank slices and
+bit-exact BF16 storage. The shared frame writer borrows contiguous arrays and can
+stream strided arrays with bounded C-order scratch. File
 writes and reads check layouts, sizes and checksums. Any preprocessing/write
 failure deletes all earlier files. The owner removes files after input consumers
 finish; they are ephemeral storage and never authorize replay after server loss.
-Persistent worker consumption must preserve the saved tensor stride/storage
-guards when reconstructing ready input arrays; transport and that worker bridge
-remain integration work.
+`training.session.worker_inputs.ReadyInputLoader` reconstructs the saved input
+views without rerunning model hooks and feeds the existing Executor input loader.
+It keeps one decoded frame until its synchronous spill copy finishes. Executor
+releases every prior example view before requesting the next frame; host bindings
+retain only owned clones. Ordinary/provider cold-worker checks now cover actual
+binary uploads, selection, spooling, shared updates, interposed evaluation,
+invalid-input recovery and publication failure. Persistent worker/agent transport
+and public service clients remain integration work.
 
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.

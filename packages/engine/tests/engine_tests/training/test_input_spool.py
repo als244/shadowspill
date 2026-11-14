@@ -167,7 +167,9 @@ def test_spool_finishes_each_rank_once_and_reuses_ready_frames_with_owned_cleanu
                     for index, frame in enumerate(spool.frames.values(), 1):
                         with frame.read(arena) as decoded:
                             np.testing.assert_array_equal(
-                                decoded.datums[0].inputs["sequence_metadata"].array(),
+                                frame.binding.frame_arrays(decoded)[
+                                    "inputs", "sequence_metadata"
+                                ],
                                 np.full(8, index),
                             )
                             assert arena.used[0] <= plan.staging_bytes

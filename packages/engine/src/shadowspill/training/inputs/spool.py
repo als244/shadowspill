@@ -26,8 +26,12 @@ from .routing import route_buffer
 @dataclass(frozen=True)
 class SpooledFrame:
     path: Path
-    layout: InputFrame
+    binding: InputBinding
     reference: ArtifactRef
+
+    @property
+    def layout(self) -> InputFrame:
+        return self.binding.frame
 
     def read(self, budget: BufferBudget) -> BatchSnapshot:
         if self.path.stat().st_size != self.reference.size_bytes:
@@ -101,10 +105,10 @@ class InputSpool:
                             path = Path(self._directory.name) / name
                             with path.open("xb", buffering=0) as stream:
                                 reference = binding.frame.write(
-                                    stream, adapted.fields, budget, name
+                                    stream, binding.frame_fields(adapted), budget, name
                                 )
                             frames[buffer, rank] = SpooledFrame(
-                                path, binding.frame, reference
+                                path, binding, reference
                             )
             self.frames = MappingProxyType(frames)
         except BaseException:

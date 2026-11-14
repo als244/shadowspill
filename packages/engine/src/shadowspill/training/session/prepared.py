@@ -50,6 +50,7 @@ class PreparedCall:
     candidate: PlannedCandidate
     controls: CallControls
     participates: bool | None
+    budget: BufferBudget
     assignment: PackedAssignment | None = None
     spool: InputSpool | None = None
     _workspace: BufferLease | None = None
@@ -250,7 +251,7 @@ class PreparedRequests:
             if snapshot is not None:
                 raise ValueError("optimizer-only requests have no tensor input")
             assert self._optimizer is not None
-            return PreparedCall(request, key, self._optimizer, controls, None)
+            return PreparedCall(request, key, self._optimizer, controls, None, budget)
         bound = self.prepared.inventory.layouts.staging[key]
         empty = None
         workspace = None
@@ -295,6 +296,7 @@ class PreparedRequests:
                 candidate,
                 controls,
                 participates,
+                budget,
                 assignment,
                 spool,
                 workspace,
