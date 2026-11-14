@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import torch
 
 from engine_tests.execution._spill import MemorySpill
+from shadowspill.artifacts.state_inventory import program_state
 from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.execution.tensor_regions import TensorRegion, tensor_regions
 from shadowspill.execution.tensors import tensor_entries, visit_tensors
@@ -16,6 +17,9 @@ def check_shard_loading(program):
             plan=SimpleNamespace(program=program),
             geometry=tensor_geometry(program),
             regions=tensor_regions(program, rank),
+            persistent_objects={
+                b.object_id for b in program_state(program, rank).bindings
+            },
             aliases={item.object_id: item.alias_group_id for item in program.objects},
             sizes={
                 item.alias_group_id: item.size_bytes for item in program.alias_groups

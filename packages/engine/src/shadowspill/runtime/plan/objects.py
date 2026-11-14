@@ -174,13 +174,19 @@ class PlanObjects:
             transfer_address=transfer_address,
         )
 
-    def register_placeholder(self, alias_id: str, *, transfer_address: int = 0) -> None:
+    def register_placeholder(
+        self,
+        alias_id: str,
+        *,
+        transfer_address: int = 0,
+        retain_spill_copy: bool = False,
+    ) -> None:
         """Register an object before its first production, without an initial value."""
         if alias_id not in self._registered:
             self._register(
                 alias_id,
                 initially_resident=False,
-                retain_spill_copy=False,
+                retain_spill_copy=retain_spill_copy,
                 transfer_address=transfer_address,
             )
 

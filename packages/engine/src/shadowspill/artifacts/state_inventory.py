@@ -115,7 +115,11 @@ def program_state(program: Program, logical_rank: int = 0) -> StateInventory:
             host_binding=item["name"] if item["object_id"] is None else None,
             layout=item if item["object_id"] is None else None,
         )
-    for item in saved.get("persistent_gradients", ()):
+    gradients = saved.get(
+        "persistent_gradients",
+        saved.get("gradients", ()) if saved.get("kind") == "forward_backward" else (),
+    )
+    for item in gradients:
         identity = StateId(
             "gradient", item["parameter_name"], tuple(item.get("component_path", ()))
         )

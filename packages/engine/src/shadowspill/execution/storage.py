@@ -8,6 +8,7 @@ from typing import Any, cast
 import torch
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.artifacts.state_inventory import program_state
 from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.ir import MemoryLocation
 from shadowspill.parallelism.views import owned_view_offsets
@@ -30,9 +31,9 @@ class Storage:
         bridge: RuntimeBridge,
         device: torch.device,
         *,
-        shared: Storage | None = None,
-        shared_aliases: Mapping[str, str] | None = None,
+        shared_sources: Mapping[str, tuple[Storage, str]] | None = None,
         extra_initial: Iterable[str] = (),
+        shareable_aliases: Iterable[str] = (),
         logical_rank: int | None = None,
         transfer_descriptors: Mapping[str, int] | None = None,
     ):
@@ -57,23 +58,25 @@ class Storage:
             logical_rank = 0
         self.owned_offsets = owned_view_offsets(plan.program, logical_rank)
         self.regions = tensor_regions(plan.program, logical_rank)
+        self.persistent_objects = frozenset(
+            binding.object_id
+            for binding in program_state(plan.program, logical_rank).bindings
+            if binding.object_id is not None
+        )
         self.aliases = {o.object_id: o.alias_group_id for o in plan.program.objects}
         self.sizes = {a.alias_group_id: a.size_bytes for a in plan.program.alias_groups}
-        self.shared_aliases = dict(shared_aliases or {})
-        if shared is not None and shared_aliases is None:
-            self.shared_aliases = {alias: alias for alias in self.sizes}
+        sources = dict(shared_sources or {})
+        self.shared_aliases = frozenset(sources)
         self.owners: StorageViews = StorageViews(
-            None if shared is None else shared.owners, self.shared_aliases
+            {alias: (source.owners, key) for alias, (source, key) in sources.items()}
         )
-        if shared is not None:
-            registered = shared.bridge.objects.registered_runtime_objects()
-            bridge.objects.borrow(
-                {
-                    alias: registered[source]
-                    for alias, source in self.shared_aliases.items()
-                    if source in registered
-                },
-            )
+        borrowed = {}
+        for alias, (source, key) in sources.items():
+            registered = source.bridge.objects.registered_runtime_objects()
+            if key in registered:
+                borrowed[alias] = registered[key]
+        if borrowed:
+            bridge.objects.borrow(borrowed)
         self.outputs: dict[str, torch.Tensor] = {}
         self.host_values = HostValues(plan)
         self.geometry = tensor_geometry(plan.program)
@@ -97,7 +100,15 @@ class Storage:
         for alias, descriptor in (transfer_descriptors or {}).items():
             # Gradients can be first produced by backward. Register their
             # transfer behavior without inventing an initial spill value.
-            bridge.objects.register_placeholder(alias, transfer_address=descriptor)
+            bridge.objects.register_placeholder(
+                alias, transfer_address=descriptor, retain_spill_copy=retain[alias]
+            )
+        for alias in shareable_aliases:
+            bridge.objects.register_placeholder(
+                alias,
+                retain_spill_copy=retain[alias],
+                transfer_address=(transfer_descriptors or {}).get(alias, 0),
+            )
 
     def owner(self, alias: str) -> torch.Tensor:
         if alias not in self.owners:

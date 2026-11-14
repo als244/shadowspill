@@ -135,6 +135,13 @@ class Executor:
                     skip_shared=True,
                     prefix=f"plans.{name}.",
                 )
+                extra.controls.initialize(
+                    fill_tensor,
+                    chunk_bytes=chunk_bytes,
+                    restore=restore,
+                    skip_shared=True,
+                    prefix=f"plans.{name}.",
+                )
 
         coordinated(self._distributed, fill)
         if replicated_copies is not None:
@@ -177,6 +184,12 @@ class Executor:
                 skip_shared=True,
                 prefix=f"plans.{name}.",
             )
+            path.controls.export(
+                write_chunk,
+                chunk_bytes=chunk_bytes,
+                skip_shared=True,
+                prefix=f"plans.{name}.",
+            )
 
     def tensor_chunks(self) -> Iterator[TensorChunk]:
         """One chunk spanning each persistent tensor this executor owns, named
@@ -187,6 +200,9 @@ class Executor:
         for name, path in self._named_paths.items():
             yield from tensor_descriptors(
                 path.storage, skip_shared=True, prefix=f"plans.{name}."
+            )
+            yield from path.controls.descriptors(
+                skip_shared=True, prefix=f"plans.{name}."
             )
 
     def run(
@@ -229,15 +245,13 @@ class Executor:
                 raise RuntimeError("initialize persistent tensors before run")
             if plan is not None and plan not in self._named_paths:
                 raise ValueError(f"unknown admitted Plan: {plan}")
-            if accumulate_gradients and (plan is not None or len(self._paths) != 2):
-                raise ValueError(
-                    "this Plan has no gradient-accumulation invocation path"
-                )
-            path = (
-                self._paths[int(accumulate_gradients)]
-                if plan is None
-                else self._named_paths[plan]
-            )
+            path = self._paths[0] if plan is None else self._named_paths[plan]
+            if accumulate_gradients:
+                if path.accumulation is None:
+                    raise ValueError(
+                        "this Plan has no gradient-accumulation invocation path"
+                    )
+                path = path.accumulation
             validate_numerical_settings(path.numerical_contracts)
             path.bridge.require_initial_residency(path.plan.schedule.initial_residency)
             path.controls.apply(hyperparams or {})
@@ -349,7 +363,13 @@ class Executor:
                     if self._distributed is not None:
                         cleanup.callback(self._distributed.close)
                     cleanup.callback(self._providers.close)
-                    for path in (*self._paths, *self._named_paths.values()):
+                    additional = [
+                        part
+                        for path in self._named_paths.values()
+                        for part in (path, path.accumulation)
+                        if part is not None
+                    ]
+                    for path in (*self._paths, *additional):
                         cleanup.callback(path.close, self.runtime)
                     if self._observations is not None:
                         cleanup.callback(self._observations.close)

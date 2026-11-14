@@ -119,6 +119,7 @@ def host_storage(program, rank):
         plan=SimpleNamespace(program=program),
         geometry=tensor_geometry(program),
         regions=tensor_regions(program, rank),
+        persistent_objects={item.object_id for item in program.objects},
         aliases={item.object_id: item.alias_group_id for item in program.objects},
         sizes={item.alias_group_id: item.size_bytes for item in program.alias_groups},
         shared_aliases={},

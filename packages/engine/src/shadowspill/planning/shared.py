@@ -1,19 +1,20 @@
-"""CPU admission for sequential saved Plans that share model tensors."""
+"""CPU admission for sequential saved Plans sharing persistent operation state."""
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from shadowspill.artifacts.plan import Plan
-from shadowspill.artifacts.tensors import shared_model_aliases
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import MemoryLocation
 
+from .shared_state import StateLocation, shared_state
 from .worker_memory import shared_fixed_overhead
 
 
 @dataclass(frozen=True)
 class SharedMemory:
-    aliases: Mapping[str, Mapping[str, str]]
+    aliases: Mapping[str, Mapping[str, StateLocation]]
+    host: Mapping[str, Mapping[str, StateLocation]]
     fixed_slice_bytes: int
     execution_bytes: int
     spill_bytes: int
@@ -22,7 +23,8 @@ class SharedMemory:
 def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
     """Validate layouts and conservative joint capacity before opening pools.
 
-    Model storage is shared by registration name. Other tensors remain private.
+    Persistent model/optimizer/gradient state has one canonical owner. Other
+    tensors remain private. Host counters share the same logical inventory.
     Plans execute sequentially, so fixed GPU workspace takes the largest slice.
     Fixed overhead follows the worker's external/headroom/retained components;
     their maxima can come from different Plans. Measured communicator startup
@@ -32,7 +34,6 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
     named = {"": primary, **plans}
     if "" in plans or any(not isinstance(name, str) for name in plans):
         raise ValueError("additional Plan names must be nonempty strings")
-    mappings: dict[str, dict[str, str]] = {"": {}}
     for name, plan in named.items():
         if not isinstance(plan, Plan):
             raise TypeError("every admitted plan must be a Plan")
@@ -47,12 +48,23 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
             raise ValueError("shared Plans require the same build and target")
         if plan.program.devices != primary.program.devices:
             raise ValueError("shared Plans require the same logical devices")
-        if name:
-            if plan.program.bindings["kind"] != "forward":
-                raise ValueError("additional Plans support forward only")
-            mapping = shared_model_aliases(primary.program, plan.program)
-            _read_only(plan, mapping)
-            mappings[name] = mapping
+        if plan.program.parallelism != primary.program.parallelism:
+            raise ValueError("shared Plans require the same logical parallelism")
+        if name and plan.program.bindings["kind"] not in {
+            "forward",
+            "forward_backward",
+            "step",
+            "optim_step",
+        }:
+            raise ValueError("additional Plan has an unsupported operation kind")
+    state = shared_state({name: plan.program for name, plan in named.items()})
+    mappings = state.aliases
+    for name, plan in plans.items():
+        if (
+            plan.program.bindings["kind"] == "forward"
+            and plan.program.bindings.get("operation_mode") != "training"
+        ):
+            _read_only(plan, mappings[name])
     paths = [
         (name, p)
         for name, plan in named.items()
@@ -89,10 +101,10 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
             required_bytes=spill,
             capacity_bytes=primary.memory_budgets.spill_bytes,
         )
-    return SharedMemory(mappings, fixed, execution, spill)
+    return SharedMemory(mappings, state.host, fixed, execution, spill)
 
 
-def _read_only(plan: Plan, mapping: Mapping[str, str]) -> None:
+def _read_only(plan: Plan, mapping: Mapping[str, StateLocation]) -> None:
     aliases = {o.object_id: o.alias_group_id for o in plan.program.objects}
     for task in plan._costed_program.selected_tasks(plan.selections):
         writes = (*task.outputs, *(m.object_id for m in task.mutations))
@@ -101,7 +113,8 @@ def _read_only(plan: Plan, mapping: Mapping[str, str]) -> None:
 
 
 def _spill_bytes(
-    paths: Sequence[tuple[str, Plan]], mappings: Mapping[str, Mapping[str, str]]
+    paths: Sequence[tuple[str, Plan]],
+    mappings: Mapping[str, Mapping[str, StateLocation]],
 ) -> int:
     # At a call boundary, all other plans keep their persistent spill storage.
     # Subtract only initial retained leases guaranteed to be in the active
@@ -112,10 +125,7 @@ def _spill_bytes(
     for name, plan in paths:
         groups = {a.alias_group_id: a for a in plan.program.alias_groups}
         mapping = mappings[name]
-        keys = {
-            alias: ("", mapping[alias]) if alias in mapping else (name, alias)
-            for alias in groups
-        }
+        keys = {alias: mapping.get(alias, (name, alias)) for alias in groups}
         entries = (*plan.schedule.initial_residency, *plan.program.final_residency)
         for entry in entries:
             if entry.location is MemoryLocation.SPILL:

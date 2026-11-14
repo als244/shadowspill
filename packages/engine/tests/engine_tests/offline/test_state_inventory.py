@@ -197,3 +197,20 @@ def test_optimizer_family_is_part_of_state_compatibility():
     )
     with pytest.raises(ValueError, match="layout or ownership differs"):
         first.shared_aliases(second)
+
+
+def test_unsharded_backward_uses_original_gradient_binding_as_persistent_state():
+    source = training()
+    bindings = dict(source.bindings)
+    bindings["kind"] = "forward_backward"
+    bindings["gradients"] = bindings.pop("persistent_gradients")
+    bindings["gradient_geometry"] = {
+        "gradient": {"dtype": "torch.float32", "shape": [16], "stride": [1]}
+    }
+    inventory = program_state(replace(source, bindings=bindings))
+    assert any(t.identity.role == "gradient" for t in inventory.tensors)
+    bindings["kind"] = "step"
+    assert not any(
+        t.identity.role == "gradient"
+        for t in program_state(replace(source, bindings=bindings)).tensors
+    )

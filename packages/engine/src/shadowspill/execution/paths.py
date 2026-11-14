@@ -1,5 +1,7 @@
 """Bind and release one admitted invocation path in a worker."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -40,6 +42,7 @@ class ExecutionPath:
     tasks: tuple[BoundTask, ...]
     acquisition: int
     numerical_contracts: tuple[str, ...] = ()
+    accumulation: ExecutionPath | None = None
 
     def close(self, runtime: Runtime) -> None:
         # Each step runs whatever the ones before it raised, last registered
@@ -69,9 +72,10 @@ def bind_path(
     memory: PlanMemory,
     bridge: RuntimeBridge,
     *,
-    shared: Storage | None = None,
-    shared_aliases: Mapping[str, str] | None = None,
+    shared_sources: Mapping[str, tuple[Storage, str]] | None = None,
+    shared_host: Mapping[str, torch.Tensor] | None = None,
     extra_initial: tuple[str, ...] = (),
+    shareable_aliases: tuple[str, ...] = (),
     shared_slice_bytes: int | None = None,
     distributed: DistributedWorker | None = None,
     preparations: LoadedPreparations | None = None,
@@ -84,9 +88,9 @@ def bind_path(
             plan,
             bridge,
             torch.device("cuda", memory.execution_device),
-            shared=shared,
-            shared_aliases=shared_aliases,
+            shared_sources=shared_sources,
             extra_initial=extra_initial,
+            shareable_aliases=shareable_aliases,
             logical_rank=None
             if distributed is None
             else distributed.groups.logical_rank,
@@ -95,7 +99,7 @@ def bind_path(
             else distributed.descriptors(plan),
         )
         verify_initialization(storage)
-        controls = Controls(storage)
+        controls = Controls(storage, shared_host=shared_host)
         tasks, acquisition = prepare(
             plan,
             bridge,

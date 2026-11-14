@@ -110,7 +110,7 @@ def test_joint_spill_keeps_private_inputs_and_deduplicates_shared_model():
     training = plan("weights", "inputs", 32, 128, retained=True)
     evaluation = plan("eval-weights", "inputs", 128, 224, retained=True)
     paths = [("", training), ("evaluation", evaluation)]
-    maps = {"": {}, "evaluation": {"eval-weights": "weights"}}
+    maps = {"": {}, "evaluation": {"eval-weights": ("", "weights")}}
     # 64 shared weights + both private input sets + 32 bytes active scratch.
     assert _spill_bytes(paths, maps) == 256
     # Unretained initial leases may disappear during the peak: don't subtract

@@ -40,6 +40,9 @@ def plan_inventory(plan: Plan, additional: Mapping[str, Plan]) -> dict[str, Plan
     plans = {"default": plan, **{f"named.{name}": p for name, p in additional.items()}}
     if plan._accumulation_plan is not None:
         plans["accumulate"] = plan._accumulation_plan
+    for name, other in additional.items():
+        if other._accumulation_plan is not None:
+            plans[f"named.{name}.accumulate"] = other._accumulation_plan
     return plans
 
 

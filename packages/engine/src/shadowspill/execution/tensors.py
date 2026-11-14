@@ -116,11 +116,12 @@ class OwnedTensor(NamedTuple):
     region: Any | None
     offset: int
     length: int
+    canonical: bool = False
 
     def chunk(self, start: int, prefix: str = "") -> TensorChunk:
         """The request for the owned region from ``start``, named with ``prefix``."""
         return TensorChunk(
-            prefix + self.name,
+            self.name if self.canonical else prefix + self.name,
             tuple(self.geometry["shape"]),
             self.dtype,
             self.offset + start,
@@ -164,6 +165,7 @@ def owned_tensors(
             region,
             0 if region is None else region.offset,
             capacity if region is None else region.length,
+            object_id in state.persistent_objects,
         )
 
 

@@ -32,7 +32,7 @@ def _prepare(
     chunk_bytes: int,
 ) -> dict[str, _Copy]:
     tensors = {
-        prefix + tensor.name: (state, tensor)
+        tensor.chunk(0, prefix).name: (state, tensor)
         for prefix, state in storages.items()
         for tensor in owned_tensors(state, skip_shared=bool(prefix))
     }

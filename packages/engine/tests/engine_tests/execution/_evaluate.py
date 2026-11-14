@@ -87,8 +87,9 @@ primary, additional = (
     executor._named_paths["evaluation"].storage,
 )
 for local, shared in joint.aliases["evaluation"].items():
+    assert shared[0] == ""
     assert primary.bridge.objects.runtime_object_id(
-        shared
+        shared[1]
     ) == additional.bridge.objects.runtime_object_id(local)
 with pytest.raises(ValueError, match="unknown admitted Plan"):
     executor.run(plan="missing")

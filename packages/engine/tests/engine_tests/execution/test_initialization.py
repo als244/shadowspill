@@ -15,6 +15,14 @@ def storage(bindings, geometry, values):
         plan=SimpleNamespace(program=SimpleNamespace(bindings=bindings)),
         geometry=geometry,
         regions={},
+        persistent_objects={
+            item["object_id"] for item in bindings.get("registrations", ())
+        }
+        | {
+            item["object_id"]
+            for item in bindings.get("optimizer_bindings", ())
+            if item["role"] != "hyperparameter" and item["object_id"] is not None
+        },
         aliases={name: name for name in geometry},
         initial=set(values),
         sizes={

@@ -148,6 +148,22 @@ def create_paths(
 
         def bind() -> None:
             nonlocal observations
+            owners: dict[str, ExecutionPath] = {}
+            shareable: dict[str, set[str]] = {}
+            initial: dict[str, set[str]] = {}
+            if joint is not None:
+                for mapping in joint.aliases.values():
+                    for owner_name, alias in mapping.values():
+                        shareable.setdefault(owner_name, set()).add(alias)
+                for name, candidate in {"": plan, **plans}.items():
+                    for variant in (candidate, candidate._accumulation_plan):
+                        if variant is None:
+                            continue
+                        for entry in variant.schedule.initial_residency:
+                            owner_name, alias = joint.aliases[name].get(
+                                entry.alias_group_id, (name, entry.alias_group_id)
+                            )
+                            initial.setdefault(owner_name, set()).add(alias)
             memory, bridge = open_path(runtime, plan, device)
             other = plan._accumulation_plan
             extra = (
@@ -155,12 +171,7 @@ def create_paths(
                 if other is None
                 else {r.alias_group_id for r in other.schedule.initial_residency}
             )
-            if joint is not None:
-                extra.update(
-                    alias
-                    for mapping in joint.aliases.values()
-                    for alias in mapping.values()
-                )
+            extra.update(initial.get("", ()))
             paths.append(
                 bind_path(
                     runtime,
@@ -168,6 +179,7 @@ def create_paths(
                     memory,
                     bridge,
                     extra_initial=tuple(extra),
+                    shareable_aliases=tuple(shareable.get("", ())),
                     shared_slice_bytes=None
                     if joint is None
                     else joint.fixed_slice_bytes,
@@ -175,6 +187,7 @@ def create_paths(
                     preparations=providers.preparations,
                 )
             )
+            owners[""] = paths[0]
             owner = memory.plan_handle
             if other is not None:
                 memory, bridge = open_path(runtime, other, device, slab_owner=owner)
@@ -184,13 +197,29 @@ def create_paths(
                         other,
                         memory,
                         bridge,
-                        shared=paths[0].storage,
+                        shared_sources={
+                            alias: (paths[0].storage, alias)
+                            for alias in paths[0].storage.sizes
+                        },
+                        shared_host={
+                            name: value
+                            for name, value in paths[0].controls.host.items()
+                            if paths[0].controls.bindings[name]["role"]
+                            != "hyperparameter"
+                        },
                         distributed=distributed,
                         preparations=providers.preparations,
                     )
                 )
+                paths[0].accumulation = paths[1]
             for name, additional in plans.items():
                 assert joint is not None
+                accumulated = additional._accumulation_plan
+                extra = set(initial.get(name, ()))
+                if accumulated is not None:
+                    extra.update(
+                        r.alias_group_id for r in accumulated.schedule.initial_residency
+                    )
                 memory, bridge = open_path(
                     runtime, additional, device, slab_owner=owner
                 )
@@ -199,11 +228,41 @@ def create_paths(
                     additional,
                     memory,
                     bridge,
-                    shared=paths[0].storage,
-                    shared_aliases=joint.aliases[name],
+                    shared_sources={
+                        alias: (owners[source].storage, key)
+                        for alias, (source, key) in joint.aliases[name].items()
+                    },
+                    shared_host={
+                        binding: owners[source].controls.host[key]
+                        for binding, (source, key) in joint.host[name].items()
+                    },
+                    extra_initial=tuple(extra),
+                    shareable_aliases=tuple(shareable.get(name, ())),
                     distributed=distributed,
                     preparations=providers.preparations,
                 )
+                owners[name] = named[name]
+                if accumulated is not None:
+                    base = named[name]
+                    memory, bridge = open_path(
+                        runtime, accumulated, device, slab_owner=owner
+                    )
+                    base.accumulation = bind_path(
+                        runtime,
+                        accumulated,
+                        memory,
+                        bridge,
+                        shared_sources={
+                            alias: (base.storage, alias) for alias in base.storage.sizes
+                        },
+                        shared_host={
+                            key: value
+                            for key, value in base.controls.host.items()
+                            if base.controls.bindings[key]["role"] != "hyperparameter"
+                        },
+                        distributed=distributed,
+                        preparations=providers.preparations,
+                    )
             if parameter_norms:
                 from .observations.collector import ParameterNorms
 
@@ -228,7 +287,13 @@ def create_paths(
                 if distributed is not None:
                     cleanup.callback(distributed.close)
                 cleanup.callback(providers.close)
-                for path in [*paths, *named.values()]:
+                additional_paths = [
+                    part
+                    for path in named.values()
+                    for part in (path, path.accumulation)
+                    if part is not None
+                ]
+                for path in [*paths, *additional_paths]:
                     assert runtime is not None
                     cleanup.callback(path.close, runtime)
                 if observations is not None:

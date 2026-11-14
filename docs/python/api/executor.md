@@ -26,7 +26,8 @@ once those outputs have been released.
 
 ## Sharing state across Plans
 
-An Executor can admit named forward Plans alongside its default Plan:
+An Executor can admit named forward, backward and complete-step Plans alongside
+its default Plan:
 
 ```python
 executor = Executor(training_plan, plans={"evaluation": validation_plan})
@@ -35,23 +36,26 @@ update = executor.run(args=training_examples).result()
 predictions = executor.run(plan="evaluation", args=validation_examples).result()
 ```
 
-All Plans must use the same target/build and memory budgets. Model tensors are
-matched by qualified registration name, exact dtype/shape/stride/storage offset,
-and aliasing. Internal object IDs may differ. Evaluation reads the current compute
-weights and buffers; master weights and optimizer data remain training-owned.
-Additional forward Plans must not mutate shared model tensors. Different input
-shapes are supported by separately built Plans; execution never rebuilds one.
+All Plans must use the same target/build, logical parallelism and memory budgets.
+Model tensors, masters, optimizer state and persistent gradients are matched by
+logical identity, exact dtype/shape/stride/storage offset, ownership and aliasing.
+Internal object IDs may differ. State has one canonical owner even when it first
+appears in a later Plan; CPU optimizer counters share that ownership too.
+Evaluation reads current compute weights and buffers while preserving pending
+gradients in spill. Additional forward Plans are read-only unless explicitly
+declared training-mode in their saved metadata. Different input shapes are
+supported by separately built Plans; execution never rebuilds one.
 
 Admission checks capacity for all Plans before opening pools. Sequential calls
 reuse one fixed GPU arena sized for the largest saved layout. Persistent spill
-storage is the union of shared model tensors and each Plan's private inputs and
+storage is the union of shared persistent state and each Plan's private inputs and
 constants, plus active invocation requirements. Fixed device overhead is the
 worker's, which opens its context, provider handles and resources, stream
 workspaces and reserved headroom once for every Plan it holds, so the largest
 Plan's overhead counts once. Plans that fit separately can still fail joint
 admission: the largest fixed slice and the largest dynamic requirement need not
 belong to one Plan, and every Plan's persistent spill storage is held at once.
-Initialization/export visit shared model tensors once; private constants use
+Initialization/export visit shared state once; private constants and controls use
 `plans.<name>.<tensor-name>`. A checkpoint binds to that tensor inventory, the
 private tensors included, rather than to the Programs.
 
@@ -62,6 +66,21 @@ The default starts fresh gradients. `accumulate_gradients=True` uses stored
 gradients. Both paths share a physical arena and persistent tensor identities;
 the archive includes both schedules and memory admission records. There is no
 runtime planning or hidden eager gradient addition.
+
+Named backward Plans support the same flag, including accumulation across
+separately built input shapes:
+
+```python
+executor.run(plan="backward_small", args=first_examples).result()
+executor.run(plan="evaluation", args=validation_examples).result()
+executor.run(
+    plan="backward_large", args=next_examples, accumulate_gradients=True
+).result()
+```
+
+This low-level interface leaves accumulation sequencing to its caller. It does
+not infer whether an earlier contribution participated or apply an optimizer
+update when a backward call completes.
 
 `hyperparams={"optimizer_group.0.lr": value}` overrides a captured tensor
 hyperparameter for that call. Omitted entries use the captured defaults;

@@ -27,7 +27,9 @@ def program(shard_ranks=2, world_size=4):
             "task_inputs": {},
             "root_inputs": [],
             "root_sources": [],
-            "registrations": [{"name": "weight", "object_id": "object_000001"}],
+            "registrations": [
+                {"name": "weight", "object_id": "object_000001", "parameter": True}
+            ],
             "model_tensor_geometry": {
                 "object_000001": {
                     "dtype": "torch.bfloat16",

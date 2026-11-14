@@ -13,7 +13,9 @@ from .tensors import TensorChunk
 
 
 class Controls:
-    def __init__(self, storage: Storage):
+    def __init__(
+        self, storage: Storage, *, shared_host: Mapping[str, torch.Tensor] | None = None
+    ):
         self.storage = storage
         self.bindings = {
             b["name"]: b
@@ -26,6 +28,10 @@ class Controls:
                 "model buffer names must not collide with optimizer controls"
             )
         self.host = {}
+        self.shared_host = dict(shared_host or {})
+        unknown = self.shared_host.keys() - self.bindings.keys()
+        if unknown:
+            raise ValueError(f"unknown shared host state: {sorted(unknown)}")
         for name, binding in self.bindings.items():
             if binding["object_id"] is not None:
                 continue
@@ -37,6 +43,20 @@ class Controls:
                 raise ValueError(
                     f"unplanned control {name} must be a bounded CPU tensor"
                 )
+            if name in self.shared_host:
+                value = self.shared_host[name]
+                if (
+                    binding["role"] == "hyperparameter"
+                    or tuple(value.shape) != tuple(binding["shape"])
+                    or tuple(value.stride()) != tuple(binding["stride"])
+                    or value.dtype != dtype_of(binding)
+                    or value.device.type != "cpu"
+                ):
+                    raise ValueError(
+                        f"shared host state layout or role differs: {name}"
+                    )
+                self.host[name] = value
+                continue
             self.host[name] = torch.empty_strided(
                 binding["shape"],
                 binding["stride"],
@@ -50,8 +70,12 @@ class Controls:
         *,
         chunk_bytes: int = 64 << 20,
         restore: bool = False,
+        skip_shared: bool = False,
+        prefix: str = "",
     ) -> None:
         for name, value in self.host.items():
+            if skip_shared and name in self.shared_host:
+                continue
             initializer = self.bindings[name]["initialization"]
             if (
                 not restore
@@ -60,7 +84,9 @@ class Controls:
             ):
                 value.copy_(torch.as_tensor(initializer["value"], dtype=value.dtype))
             else:
-                for request, chunk in self._chunks(name, value, chunk_bytes):
+                for request, chunk in self._chunks(
+                    self._name(name, prefix), value, chunk_bytes
+                ):
                     fill_tensor(request, chunk)
 
     def export(
@@ -68,19 +94,36 @@ class Controls:
         callback: Callable[[TensorChunk, torch.Tensor], None],
         *,
         chunk_bytes: int = 64 << 20,
+        skip_shared: bool = False,
+        prefix: str = "",
     ) -> None:
         for name, value in self.host.items():
-            for request, chunk in self._chunks(name, value, chunk_bytes):
+            if skip_shared and name in self.shared_host:
+                continue
+            for request, chunk in self._chunks(
+                self._name(name, prefix), value, chunk_bytes
+            ):
                 callback(request, chunk)
 
-    def descriptors(self) -> Iterator[TensorChunk]:
+    def descriptors(
+        self, *, skip_shared: bool = False, prefix: str = ""
+    ) -> Iterator[TensorChunk]:
         """One chunk spanning each control, as ``export`` describes it."""
         for name, value in self.host.items():
+            if skip_shared and name in self.shared_host:
+                continue
             for request, _ in self._chunks(
-                name, value, max(1, value.untyped_storage().nbytes())
+                self._name(name, prefix),
+                value,
+                max(1, value.untyped_storage().nbytes()),
             ):
                 yield request
                 break
+
+    def _name(self, name: str, prefix: str) -> str:
+        return (
+            prefix + name if self.bindings[name]["role"] == "hyperparameter" else name
+        )
 
     @staticmethod
     def _chunks(
