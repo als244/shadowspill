@@ -45,6 +45,25 @@ multi-node deployment remain separate implementation work.
 
 ## Request and worker ownership
 
+Preparation uses the existing `training.preparation.phases.run_phases` driver,
+which accepts an explicit environment snapshot and an installed launch callback.
+`orchestration.launch.phases.NodePhases` implements the allocation-owned callback.
+It reserves the selected node slots and an explicit whole-phase host bound, then
+uses the existing `OwnedProcess` supervisor through `NodeLease.launch_command`.
+An ordered assigned-device list becomes the child visibility mask before imports;
+CPU planning reserves host capacity only and has no visible GPUs. Every owned
+leader and descendant must finish before its reservation is released or the next
+phase starts. Disjoint jobs never change the controller's process-wide environment.
+
+Phase stdout/stderr use the same `LogFiles` ownership as persistent workers, capped
+before launch and retained after process exit for publication. Truncation and write
+failures appear in launcher events. Failure summaries read only bounded log tails.
+A job can stop its own waiting reservation or running child without closing the
+shared allocation or touching another run; failed termination retains its lease,
+and failed log deletion retains disk and scratch claims for retry. The caller must
+join a stopped launch before closing its log owners. This adapter currently runs
+one node's installed phases; distributed agent bootstrap remains separate work.
+
 The engine's `training.session.staging.OrderedStaging` grants complete input
 pipeline reservations in submission order. A bounded metadata window leaves room
 for an earlier request whose metadata has not arrived. A later upload cannot

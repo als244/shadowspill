@@ -16,6 +16,10 @@ from engine_tests.fixtures.installed_definition import install
 from engine_tests.training.test_setup_resolution import arguments
 from shadowspill import ProfiledProgram, Program
 from shadowspill.artifacts.tensors import TensorChunk
+from shadowspill.orchestration.launch.admission import NodeAdmission
+from shadowspill.orchestration.launch.host_arena import HostArena
+from shadowspill.orchestration.launch.node_capacity import discover_capacity
+from shadowspill.orchestration.launch.phases import NodePhases
 from shadowspill.training.definitions import InitializationRuntime, load_registry
 from shadowspill.training.preparation import job
 from shadowspill.training.preparation.layouts import prepare_layouts
@@ -30,7 +34,68 @@ from shadowspill_client import (
     Preparation,
     ProfilingOptions,
 )
+from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.operations import OperationKey
+
+
+def prepare_owned(root, setup):
+    """The provider case qualifies allocation-owned real phase processes too."""
+    node = NodeAdmission(
+        discover_capacity(
+            environment=os.environ,
+            root=root.parent,
+            node_id="preparation",
+            reserved_host_bytes=1 << 30,
+        )
+    )
+    assert len(node.capacity.devices) == 1
+    disk = BufferBudget(16 << 20, 10)
+    facts = {}
+    with (
+        HostArena(node, 1 << 20, 10) as arena,
+        NodePhases(
+            node,
+            devices=(node.capacity.devices[0].id,),
+            host_bytes=8 << 30,
+            root=root.parent,
+            disk=disk,
+            memory=arena.budget,
+            log_limit_bytes=64 << 10,
+        ) as launch,
+    ):
+        bundle = job.prepare_job(
+            root,
+            packages=["external-classifier-fixture"],
+            config=setup.config,
+            environment=dict(os.environ),
+            launch=launch,
+        )
+        assert not node.used.devices and node.used.host_bytes == 1 << 20
+        assert set(launch.logs) == {"build", "profile", "communicate", "plan"}
+        for phase, logs in launch.logs.items():
+            references = logs.references()
+            facts[phase] = {name: ref.to_dict() for name, ref in references.items()}
+            for name, reference in references.items():
+                # Preserve these small capped test logs in the qualification
+                # archive before releasing their temporary phase owner.
+                with logs.open(reference) as stream:
+                    (root / "logs" / f"{phase}.{name}.log").write_bytes(
+                        stream.read(64 << 10)
+                    )
+    assert disk.used == (0, 0) and node.used.claims == 0
+    (root / "phase-accounting.json").write_text(
+        json.dumps(
+            {
+                "whole_phase_host_bytes": 8 << 30,
+                "controller_fixed_bytes": 1 << 30,
+                "phases": facts,
+                "all_claims_released": True,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return bundle
 
 
 @pytest.mark.cuda
@@ -74,8 +139,12 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     assert len(inventory.templates) == 6
     resolved, objective = setup.model, setup.objective
     tmp_path = tmp_path / "job"
-    bundle = job.prepare_job(
-        tmp_path, packages=["external-classifier-fixture"], config=setup.config
+    bundle = (
+        prepare_owned(tmp_path, setup)
+        if provider
+        else job.prepare_job(
+            tmp_path, packages=["external-classifier-fixture"], config=setup.config
+        )
     )
     family = bundle.recheck(registry)
     for key, template in inventory.templates.items():
@@ -116,12 +185,20 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     assert all(len(rows) == 3 for rows in family.families.values())
     assert family.memory[0].execution_bytes <= 2 << 30
     assert family.memory[0].spill_bytes <= 64 << 20
-    assert {p.name for p in (tmp_path / "logs").glob("*.log")} == {
-        "build.log",
-        "profile.log",
-        "communicate.log",
-        "plan.log",
-    }
+    assert {p.name for p in (tmp_path / "logs").glob("*.log")} == (
+        {
+            f"{phase}.{stream}.log"
+            for phase in ("build", "profile", "communicate", "plan")
+            for stream in ("stdout", "stderr")
+        }
+        if provider
+        else {
+            "build.log",
+            "profile.log",
+            "communicate.log",
+            "plan.log",
+        }
+    )
     for phase in ("build", "profile", "communicate", "plan"):
         events = [
             json.loads(line)

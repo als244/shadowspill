@@ -33,7 +33,7 @@ class LogFiles:
     def __init__(
         self,
         lease: NodeLease,
-        device_id: str,
+        device_id: str | None,
         *,
         root: Path,
         disk: BufferBudget,
@@ -42,7 +42,7 @@ class LogFiles:
     ) -> None:
         if not isinstance(lease, NodeLease) or lease.closed:
             raise ValueError("worker logs require a live node resource lease")
-        if device_id not in lease.request.devices:
+        if device_id is not None and device_id not in lease.request.devices:
             raise ValueError("worker log device is not reserved")
         self.limit_bytes = integer(limit_bytes, "per-stream log bytes")
         self._memory = memory.reserve(4096 + COPY_BYTES, timeout=0)
@@ -65,7 +65,7 @@ class LogFiles:
         self._references: dict[str, ArtifactRef] | None = None
         self.closed = False
 
-    def check(self, lease: NodeLease, device_id: str) -> None:
+    def check(self, lease: NodeLease, device_id: str | None) -> None:
         if self.closed or lease is not self._lease or device_id != self._device:
             raise ValueError(
                 "worker logs belong to a different or closed resource owner"

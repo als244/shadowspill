@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Condition, RLock
+from threading import Condition, Event, RLock
 from time import monotonic
 from types import MappingProxyType
 from typing import Self
@@ -12,6 +12,7 @@ from shadowspill_client._records import integer, number
 from shadowspill_client.protocol.requests import identifier
 
 from .connected import ConnectedProcess
+from .supervision import OwnedProcess
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,10 @@ class ResourcesUnavailable(RuntimeError):
     """An admissible request is temporarily blocked by existing live owners."""
 
 
+class ReservationCancelled(RuntimeError):
+    """The owner stopped waiting before it acquired any node resources."""
+
+
 @dataclass(frozen=True)
 class ResourceUsage:
     host_bytes: int
@@ -118,6 +123,7 @@ class NodeAdmission:
         *,
         wait: bool = False,
         timeout: float | None = None,
+        cancelled: Event | None = None,
     ) -> "NodeLease":
         if not isinstance(request, ResourceRequest):
             raise TypeError("node reservation requires a complete resource request")
@@ -135,6 +141,8 @@ class NodeAdmission:
             while True:
                 if self.closed:
                     raise RuntimeError("node admission is closed")
+                if cancelled is not None and cancelled.is_set():
+                    raise ReservationCancelled("node resource wait was cancelled")
                 if (
                     self._host + request.host_bytes <= self.capacity.host_bytes
                     and not self._devices.intersection(request.devices)
@@ -150,6 +158,10 @@ class NodeAdmission:
                 remaining = None if deadline is None else deadline - monotonic()
                 if remaining is not None and remaining <= 0:
                     raise TimeoutError("timed out waiting for assigned resources")
+                # A job owner can stop its own resource wait without closing the
+                # shared allocation ledger or touching other live runs.
+                if cancelled is not None:
+                    remaining = 0.1 if remaining is None else min(remaining, 0.1)
                 self._condition.wait(remaining)
 
     def _release(self, owner: "NodeLease") -> None:
@@ -170,6 +182,7 @@ class NodeLease:
     def __init__(self, owner: NodeAdmission, request: ResourceRequest) -> None:
         self._owner, self.request = owner, request
         self._children: dict[str, ConnectedProcess] = {}
+        self._command: OwnedProcess | None = None
         self._lock = RLock()
         self._closing = self.closed = False
 
@@ -188,7 +201,11 @@ class NodeLease:
         with self._lock:
             if self._closing or self.closed:
                 raise RuntimeError("resource lease is closing or closed")
-            if device_id not in self.request.devices or device_id in self._children:
+            if (
+                device_id not in self.request.devices
+                or device_id in self._children
+                or self._command is not None
+            ):
                 raise ValueError("worker device is unreserved or already launched")
             child = ConnectedProcess(
                 command,
@@ -204,6 +221,50 @@ class NodeLease:
             self._children[device_id] = child
             return child
 
+    def launch_command(
+        self,
+        command: Sequence[str],
+        *,
+        devices: Sequence[str],
+        environment: Mapping[str, str],
+        directory: Path,
+        cwd: Path,
+        log_limit_bytes: int = 64 << 20,
+    ) -> OwnedProcess:
+        """Own one installed phase/torchrun leader over this entire reservation.
+
+        Device order supplies process-local ordinals before framework import.
+        Host-only phases use an empty reservation and an empty visibility mask.
+        The same lease cannot also launch persistent per-device workers.
+        """
+        with self._lock:
+            if self._closing or self.closed:
+                raise RuntimeError("resource lease is closing or closed")
+            if (
+                isinstance(devices, (str, bytes))
+                or len(set(devices)) != len(devices)
+                or set(devices) != set(self.request.devices)
+                or self._children
+                or self._command is not None
+            ):
+                raise ValueError(
+                    "phase command must own every reserved slot exactly once"
+                )
+            child = OwnedProcess(
+                command,
+                environment={
+                    **environment,
+                    "CUDA_VISIBLE_DEVICES": ",".join(
+                        self._owner.devices[device].visibility for device in devices
+                    ),
+                },
+                directory=directory,
+                cwd=cwd,
+                log_limit_bytes=log_limit_bytes,
+            )
+            self._command = child
+            return child
+
     def close(self) -> None:
         with self._lock:
             if self.closed:
@@ -214,6 +275,13 @@ class NodeLease:
             for child in self._children.values():
                 try:
                     child.disconnect()
+                except BaseException as error:
+                    errors.append(error)
+            if self._command is not None:
+                try:
+                    self._command.close()
+                    if not self._command.closed:
+                        raise RuntimeError("owned phase did not confirm closure")
                 except BaseException as error:
                     errors.append(error)
             for child in self._children.values():

@@ -47,6 +47,8 @@ def test_job_roundtrip_runs_only_preparation_and_rechecks_completed_bundle(
                 "ranks": 1,
                 "preparation_ranks": 1,
                 "phases": ("build", "profile", "communicate", "plan"),
+                "environment": None,
+                "launch": None,
             },
         )
     ]

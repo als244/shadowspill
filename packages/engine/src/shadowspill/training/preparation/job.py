@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import fcntl
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
 from shadowspill.artifacts.archive import Artifact
+from shadowspill.orchestration.launch.phases import PhaseInvocation, PhaseResult
 from shadowspill.training.definitions import Registry, load_registry
 from shadowspill_client._records import names
 from shadowspill_client.protocol.training import ResolvedTraining
@@ -88,12 +89,17 @@ class PreparationJob(Artifact):
 
 
 def prepare_job(
-    directory: str | Path, *, packages: Sequence[str], config: ResolvedTraining
+    directory: str | Path,
+    *,
+    packages: Sequence[str],
+    config: ResolvedTraining,
+    environment: Mapping[str, str] | None = None,
+    launch: Callable[[PhaseInvocation], PhaseResult] | None = None,
 ) -> TrainingBundle:
     """Prepare on assigned workers, or strictly reuse this job's completed bundle.
 
-    The caller owns allocation admission and the directory. This launches no
-    training loop or persistent Executor and does not initialize model weights.
+    The caller owns allocation admission, launch environment and the directory.
+    This launches no training loop or persistent Executor and initializes no weights.
     """
     root = Path(directory).resolve()
     requested = PreparationJob(tuple(packages), config)
@@ -121,6 +127,8 @@ def prepare_job(
                 ranks=ranks,
                 preparation_ranks=ranks,
                 phases=("build", "profile", "communicate", "plan"),
+                environment=environment,
+                launch=launch,
             )
         bundle = TrainingBundle.load(root / BUNDLE_NAME)
         if bundle.config != config:

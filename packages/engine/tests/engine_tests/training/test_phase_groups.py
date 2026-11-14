@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from engine_tests.training.test_preparation_templates import inventory
+from shadowspill.orchestration.launch.phases import PhaseResult
 from shadowspill.parallelism import (
     GroupRef,
     InputFieldPlacement,
@@ -90,3 +91,32 @@ def test_phase_driver_can_prepare_and_calibrate_without_starting_execution(
 def test_invalid_phase_sequences_fail_before_any_process(tmp_path, sequence):
     with pytest.raises(ValueError, match="ordered, distinct"):
         phases.run_phases("unused", tmp_path, "all", phases=sequence)
+
+
+def test_explicit_launch_environment_is_snapshotted_once_without_global_mutation(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "outside")
+    environment = {"CUDA_VISIBLE_DEVICES": "assigned", "PHASE_VALUE": "original"}
+    calls = []
+
+    def launch(invocation):
+        calls.append(invocation)
+        environment["PHASE_VALUE"] = "changed by caller"
+        with pytest.raises(TypeError):
+            invocation.environment["PHASE_VALUE"] = "mutation"
+        return PhaseResult(0, ())
+
+    phases.run_phases(
+        "installed",
+        tmp_path,
+        "all",
+        phases=("build", "plan"),
+        environment=environment,
+        launch=launch,
+    )
+    assert [dict(call.environment) for call in calls] == [
+        {"CUDA_VISIBLE_DEVICES": "assigned", "PHASE_VALUE": "original"},
+        {"CUDA_VISIBLE_DEVICES": "", "PHASE_VALUE": "original"},
+    ]
+    assert phases.os.environ["CUDA_VISIBLE_DEVICES"] == "outside"
