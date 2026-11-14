@@ -155,7 +155,7 @@ def main(argv=None):
         description=__doc__.split("\n\n")[0],
         epilog="Every other flag is the engine's settings.",
     )
-    parser.add_argument("--engine", required=True, help="baselines.<engine>")
+    parser.add_argument("--engine", required=True, help="baseline engine name")
     parser.add_argument("--gpus", type=int, required=True, help="torchrun world size")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--preparation-request", type=Path)

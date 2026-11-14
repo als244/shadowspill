@@ -49,7 +49,7 @@ independent single-worker attempts only.
 
 The clients keep their own policies:
 
-- `workloads/recipes` owns workload selection, data, initialization and saved
+- `packages/workloads/src/shadowspill_workloads/recipes` owns workload selection, data, initialization and saved
   recipe configuration, and composes the public training phases.
 - `benchmarks/quickstart` owns its candidate factory and budget sweep protocol.
 - `benchmarks/plan_runner` owns saved-Plan benchmarking, warmup exclusion,

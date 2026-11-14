@@ -38,7 +38,7 @@ python -m benchmarks.baselines.experiment \
 
 | Flags | Meaning |
 |---|---|
-| `--model`, `--implementation`, `--mode`, `--lora JSON`, `--model-config JSON` | The catalog model (`workloads/models/catalog/`), its `pytorch` or `mlops` implementation, `full` or `lora` training with `configure_lora`'s options, and field overrides on the entry's configuration (`benchmarks.baselines.common.models`) |
+| `--model`, `--implementation`, `--mode`, `--lora JSON`, `--model-config JSON` | The catalog model (`packages/workloads/src/shadowspill_workloads/models/catalog/`), its `pytorch` or `mlops` implementation, `full` or `lora` training with `configure_lora`'s options, and field overrides on the entry's configuration (`benchmarks.baselines.common.models`) |
 | `--sequence-length`, `--tokens-per-step`, `--tokens-per-microbatch` | One update's geometry: `tokens_per_step = world_size * tokens_per_microbatch * accumulation`, in whole sequences; a geometry that does not divide is refused (`benchmarks.baselines.common.geometry`) |
 | `--model-dtype`, `--master-dtype`, `--grad-dtype`, `--opt-state-dtype`, `--parameter-rounding`, `--opt-state-rounding`, `--fuse-narrow-gradient-accumulation` | The precision contract the quickstart names (`benchmarks.baselines.common.precision`); what FSDP2 cannot honor is refused, never substituted: see below |
 | `--data DIR` | A corpus `benchmarks/baselines/scripts/prepare_corpus.py` wrote; each rank reads one contiguous window per step, disjoint across ranks and steps until the corpus wraps. Without it, synthetic tokens distinct per rank from `--seed` |

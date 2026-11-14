@@ -221,7 +221,7 @@ exact data continuation requires caller-managed progress or the optional
 
 - `packages/engine/src/shadowspill/training/`: Trainer over saved Plans, schedules and logging.
 - `packages/engine/src/shadowspill/execution/`, `checkpoint/`: execution and bounded state I/O.
-- `workloads/recipes/text/`: optional model construction, token ingestion,
+- `packages/workloads/src/shadowspill_workloads/recipes/text/`: optional model construction, token ingestion,
   packing, objectives and text experiment composition.
 - `examples/training/configs/`: example recipe requests.
 - `examples/training/train.py`: recipe CLI.

@@ -30,7 +30,7 @@ from .results import failure_row, latest, to_attempt
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--engine", required=True, help="baselines.<engine>")
+    parser.add_argument("--engine", required=True, help="baseline engine name")
     parser.add_argument("--config", required=True, type=Path, help="the matrix")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument(

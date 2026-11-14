@@ -432,7 +432,7 @@ and where the optimizer steps; an empty cell is the default's.
 
 LoRA is AutoModel's `PeftConfig` over the modules the shared LoRA
 definition's rule for a model without a family preset selects
-(`workloads/lora`), applied to AutoModel's own module layout: every linear
+(`packages/workloads/src/shadowspill_workloads/lora`), applied to AutoModel's own module layout: every linear
 layer but the head, and the routed experts of each mixture block; inside a
 mixture block nothing else, unless the case's `shared_experts` adds its
 linear layers other than its router. The trainer builds the class AutoModel

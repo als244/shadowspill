@@ -162,7 +162,7 @@ launcher, with the convention every engine uses, so recomputation, the
 optimizer and communication are not credited.
 
 LoRA (`--mode lora`) is Bridge's own layout over the shared definition's
-targets (`workloads/lora`): one adapter of the case's rank on each
+targets (`packages/workloads/src/shadowspill_workloads/lora`): one adapter of the case's rank on each
 projection module Megatron builds, fused or not (attention's `linear_qkv`
 and `linear_proj`, Gated DeltaNet's `in_proj` and `out_proj` in Qwen 3.5,
 a dense MLP's `linear_fc1` and `linear_fc2`), and one on each projection of

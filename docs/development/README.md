@@ -12,8 +12,8 @@ what it must pass, and the words every surface uses.
 The [Python](../python/README.md) and [C](../c/README.md) references document
 the surfaces a change must keep working.
 
-Product code belongs in `packages/engine/src/shadowspill/` or `csrc/`. Reusable source-tree
-tooling belongs in `src/tools/`. Workload definitions, planning benchmarks,
+Product code belongs in `packages/engine/src/shadowspill/` or `packages/engine/csrc/`. Reusable source-tree
+tooling belongs in `tools/`. Workload definitions, planning benchmarks,
 and release qualification consume product APIs and do not contain alternate
 implementations.
 
@@ -26,7 +26,7 @@ internal documentation tree, `docs/internal/`.
 Keep one authoritative reference per subject and link it from examples and
 guides. Entry pages should help readers choose a task, not enumerate every
 implementation detail. Keep the supported training guide in
-`workloads/recipes/README.md`, the custom-model and phase guides under
+`packages/workloads/src/shadowspill_workloads/recipes/README.md`, the custom-model and phase guides under
 `docs/python/`, and specialized guides under `docs/python/advanced/`.
 Put signatures and constraints under `docs/python/api/`, design invariants under
 `docs/architecture/`, and library-specific adapters under `docs/integrations/`.

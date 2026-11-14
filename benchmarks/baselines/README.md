@@ -5,7 +5,7 @@ and ShadowSpill itself through its public training API, under one geometry
 and precision contract and one result row schema, so a report can draw
 every system's throughput against its memory on one figure. ShadowSpill,
 FSDP2 and DeepSpeed train the catalog's model definitions
-(`workloads/models`) with the shared objective; Megatron-Core and AutoModel
+(`packages/workloads/src/shadowspill_workloads/models`) with the shared objective; Megatron-Core and AutoModel
 train NVIDIA's model of the same architecture, built from its Hugging Face
 configuration, with their frameworks' own losses. Every engine's useful
 work is counted from the catalog model. The MoE layer benchmark
@@ -130,7 +130,7 @@ which combinations each one honors or refuses.
 
 A LoRA case trains adapters in its framework's own default layout: the
 catalog's in ShadowSpill, FSDP2 and DeepSpeed, on the shared definition's
-family-specific targets (`workloads/lora` and each model family's
+family-specific targets (`packages/workloads/src/shadowspill_workloads/lora` and each model family's
 `lora.py`); Megatron Bridge's in Megatron-Core, one adapter on each
 projection module, fused ones such as `linear_qkv`, `linear_fc1` and Gated
 DeltaNet's `in_proj` included; and AutoModel's, one on each Hugging Face

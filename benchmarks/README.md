@@ -9,30 +9,30 @@ Process launching, host worker groups and phase journals are shared through
 stay here; normal workload recipes do not import this package.
 
 ```text
-benchmarking/
+benchmarks/
 ├── data_geometry.py                    the shared geometry vocabulary
 ├── _serialization.py                   shared encode/decode helpers
-├── datasets/
-│   └── input_programs/                 immutable profiled-program corpora
 ├── quickstart/                         plan and run one model, story told
 ├── quickstart.md                       its guide: flags, phases, terms
 ├── bandwidth_frontier/                 CPU sweeps from ProfiledProgram archives
 ├── stage_traces/                       Nsight traces of isolated compiled stages
 ├── plan_runner/                        saved-Plan execution and lifecycle/device evidence
 ├── host_memory/                        host-memory preflight before spill pools
-├── quickstart_reports/                 one directory per quickstart run
 ├── program_collection/
 │   ├── collect.py                      the launcher
 │   ├── configs/                        versioned collection matrices
 │   ├── artifacts.py                    phase archives and JSON corpus readers
 │   └── worker.py                       isolated build/profile worker
+├── baselines/                         external comparison harnesses
 └── planning_eval/
     ├── evaluate.py                     the launcher
     ├── configs/                        versioned budget/bandwidth matrices
-    ├── plan_artifacts.py               annotated-plan serialization
-    ├── planning_caches/                its planning artifact stores
-    └── results/                        complete measured baselines
+    └── plan_artifacts.py               annotated-plan serialization
 ```
+
+Corpora, run reports and planning caches use configured output directories. Existing
+ignored outputs under the former `benchmarking/` root remain where they were;
+source relocation does not move or reinterpret them.
 
 ## Entry points
 

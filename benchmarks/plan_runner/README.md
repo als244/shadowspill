@@ -250,9 +250,9 @@ path. Interrupted runs keep their partial journals for this report too.
 | --- | --- |
 | `api.py` | Model-independent, rank-local saved-Plan execution and aggregation |
 | `recipe.py` | Fresh-worker launcher and bridge to existing saved recipe hooks |
-| [`orchestration/nsys.py`](../../packages/engine/src/shadowspill/orchestration/capture/nsys.py) | Shared external-profiler launch settings and capture adapter |
-| [`orchestration/nsys_worker.py`](../../packages/engine/src/shadowspill/orchestration/capture/nsys_worker.py) | One isolated collector and report per global rank |
-| [`orchestration/lifecycle.py`](../../packages/engine/src/shadowspill/orchestration/monitoring/lifecycle.py) | Shared host phase journal used by recipes and benchmarks |
+| [`shadowspill.orchestration.capture.nsys`](../../packages/engine/src/shadowspill/orchestration/capture/nsys.py) | Shared external-profiler launch settings and capture adapter |
+| [`shadowspill.orchestration.capture.nsys_worker`](../../packages/engine/src/shadowspill/orchestration/capture/nsys_worker.py) | One isolated collector and report per global rank |
+| [`shadowspill.orchestration.monitoring.lifecycle`](../../packages/engine/src/shadowspill/orchestration/monitoring/lifecycle.py) | Shared host phase journal used by recipes and benchmarks |
 | `monitor.py` | External GPU sampling with explicit process cleanup |
 | `report.py` | Offline CPU phase/device analysis |
 | `examples/saved_run.py` | Short Python entry point to edit for a campaign |
