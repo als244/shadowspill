@@ -32,8 +32,20 @@ its consumers finish. Failed queued inputs close promptly; rejected active reade
 retain storage until they return. Waiting for an arena does not hold the ordering
 lock needed by earlier cleanup. Fatal shutdown can release idle owners even when
 record storage is unavailable, while active owners retain their leases. Transport
-read deadlines, prepared model-specific preprocessing/spooling and writer takeover
-coordination remain service integration work.
+read deadlines and the prepared-family callback remain service integration work.
+
+`training.inputs.spool.InputSpool` finishes every prepared buffer/rank adapter
+once and stores its fixed input arrays under an explicit temporary cache root.
+Workers consume ready binary Datum frames without rerunning content-dependent
+preprocessing between GPU microbatches. The existing layout admission includes
+frame metadata, a 64 KiB streaming scratch block, serial decode peaks and the
+exact temporary file volume. Contiguous arrays are borrowed; strided logical
+rank slices use bounded C-order chunks, including bit-exact BF16 storage. File
+writes and reads check layouts, sizes and checksums. Any preprocessing/write
+failure deletes all earlier files. The owner removes files after input consumers
+finish; they are ephemeral storage and never authorize replay after server loss.
+Selection of the complete prepared request and persistent worker consumption
+remain integration work.
 
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.

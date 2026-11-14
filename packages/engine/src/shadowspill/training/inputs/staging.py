@@ -131,7 +131,7 @@ class StagingReservation:
         self, budget: BufferBudget, size: int, *, timeout: float | None = None
     ) -> None:
         self._lease = budget.reserve(size, timeout=timeout)
-        self.budget = _ArenaBudget(size, max_requests=4)
+        self.budget = _ArenaBudget(size, max_requests=5)
 
     def close(self) -> None:
         self.budget.close()
@@ -151,6 +151,7 @@ class InputStaging:
     envelope: InputEnvelope
     workspace_bytes: int
     buffer_peaks: tuple[int, ...]
+    spool_bytes: int
 
     @property
     def staging_bytes(self) -> int:
@@ -208,7 +209,12 @@ def admit_input_staging(
                 or binding.layout.logical_rank != rank
             ):
                 raise ValueError("input staging adapter differs from its prepared ABI")
-            peak = max(peak, size.retained + binding.staging_bytes)
+            peak = max(
+                peak,
+                size.retained + binding.staging_bytes,
+                size.retained + binding.retained_bytes + binding.frame.write_bytes,
+                binding.frame.size.staging,
+            )
         peaks.append(peak)
     # Conservative container/shape allowances for complete validation plus the
     # finite packer's Datum x buffer compatibility matrix and group bookkeeping.
@@ -222,7 +228,13 @@ def admit_input_staging(
             + sum(len(f.path) + len(f.shape) + 2 for f in schema.fields)
         )
     )
-    result = InputStaging(envelope, workspace, tuple(peaks))
+    workspace += 512 * len(bindings)
+    result = InputStaging(
+        envelope,
+        workspace,
+        tuple(peaks),
+        sum(binding.frame.size.wire for binding in bindings.values()),
+    )
     if result.staging_bytes > execution.max_staging_bytes:
         raise StagingLimitError(
             f"{schedule.name}: input staging needs {result.staging_bytes} bytes; "

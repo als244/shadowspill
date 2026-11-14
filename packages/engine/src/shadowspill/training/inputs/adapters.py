@@ -20,6 +20,7 @@ from shadowspill_client.protocol.tensors import (
     tensor_bytes,
 )
 
+from .frames import InputFrame
 from .routing import RoutedBuffer
 from .shapes import BufferShape
 from .validation import Path
@@ -203,6 +204,7 @@ class InputBinding:
             raise ValueError("adapter output paths overlap")
         self.shapes = MappingProxyType(shapes)
         self.dtypes = MappingProxyType(dtypes)
+        self.frame = InputFrame(self.shapes, self.dtypes)
         self.metadata_bytes = sum(
             tensor_bytes(f.dtype, self.shapes[tuple(f.path)]) for f in adapter.metadata
         )

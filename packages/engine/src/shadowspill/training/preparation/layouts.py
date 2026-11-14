@@ -63,6 +63,7 @@ class LayoutCandidate:
                 for (buffer, rank), binding in sorted(self.bindings.items())
             ],
             "staging_bytes": self.staging.staging_bytes,
+            "input_spool_bytes": self.staging.spool_bytes,
         }
 
 
