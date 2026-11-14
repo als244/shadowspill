@@ -92,7 +92,10 @@ def backward_program(step: Program) -> Program:
         for item in step.final_residency
         if item.alias_group_id in aliases
     }
-    for object_id in gradient_ids:
+    # Keep the saved declaration order: set iteration changes Program identity
+    # across fresh workers, even though residency membership is unchanged.
+    for gradient in gradients:
+        object_id = gradient["gradient_object_id"]
         alias = objects[object_id].alias_group_id
         final[alias] = ResidencySpec(alias, MemoryLocation.SPILL)
     control = next(

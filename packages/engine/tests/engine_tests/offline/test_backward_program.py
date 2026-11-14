@@ -1,5 +1,6 @@
 """Backward-only and optimizer-only paths share one saved producer contract."""
 
+import os
 import subprocess
 import sys
 from dataclasses import replace
@@ -13,7 +14,9 @@ from shadowspill import (
     instantiate_examples,
     optimizer_program,
 )
+from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.state_inventory import program_state
+from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.ir import MemoryLocation, Persistence
 from shadowspill.planning.training.bind import bind_training
 
@@ -119,3 +122,76 @@ assert repeated == Program.load('backward.ssp')
         timeout=30,
     )
     assert run.returncode == 0, run.stdout + run.stderr
+
+
+def test_saved_backward_identity_is_independent_of_python_hash_seed(tmp_path):
+    source = captured()
+    gradient = next(o for o in source.objects if o.object_id == "gradient")
+    alias = next(
+        a for a in source.alias_groups if a.alias_group_id == gradient.alias_group_id
+    )
+    bindings = plain(source.bindings)
+    bindings["gradients"].append(
+        {
+            **bindings["gradients"][0],
+            "parameter_name": "linear.second",
+            "gradient_object_id": "gradient.second",
+        }
+    )
+    bindings["gradient_geometry"] = {
+        "gradient.second": tensor_geometry(source)["gradient"]
+    }
+    for example in bindings["training_templates"]:
+        for stage in example:
+            for form in stage:
+                form["backward"]["contributions"].append(
+                    {"leaf_index": 1, "object_id": "gradient.second"}
+                )
+                if form["accumulates"]:
+                    inputs = form["backward"]["inputs"]
+                    inputs.append(
+                        {"leaf_index": len(inputs), "object_id": "gradient.second"}
+                    )
+                    profile = bindings["task_inputs"][form["backward"]["profile_key"]]
+                    profile["tensor_positions"].append(len(inputs) - 1)
+                    profile["tensor_geometry"].append(
+                        tensor_geometry(source)["gradient"]
+                    )
+    source = replace(
+        source,
+        bindings=bindings,
+        objects=(
+            *source.objects,
+            replace(
+                gradient, object_id="gradient.second", alias_group_id="gradient.second"
+            ),
+        ),
+        alias_groups=(
+            *source.alias_groups,
+            replace(alias, alias_group_id="gradient.second"),
+        ),
+    )
+    path = tmp_path / "source.ssp"
+    source.save(path)
+    identities = []
+    for seed in (0, 1, 2, 3):
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import sys
+from shadowspill import Program, backward_program, instantiate_examples
+backward = backward_program(Program.load(sys.argv[1]))
+print(backward.digest, instantiate_examples(backward, [0, 0]).digest)
+""",
+                str(path),
+            ],
+            env={**os.environ, "PYTHONHASHSEED": str(seed)},
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert run.returncode == 0, run.stdout + run.stderr
+        identities.append(run.stdout)
+    assert len(set(identities)) == 1
