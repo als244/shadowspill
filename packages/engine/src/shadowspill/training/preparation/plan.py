@@ -153,6 +153,11 @@ def _search(
 
 
 def run(directory: str | Path) -> None:
+    if (Path(directory) / "preparation.ssp").is_file():
+        from .job_phases import plan
+
+        plan(directory)
+        return
     from shadowspill import Plan, write_report
     from shadowspill.errors import PlanInfeasibleError
 

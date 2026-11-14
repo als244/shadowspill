@@ -22,6 +22,11 @@ from .candidates import program_paths
 
 
 def run(directory: str | Path) -> None:
+    if (Path(directory) / "preparation.ssp").is_file():
+        from .job_phases import communicate
+
+        communicate(directory)
+        return
     root, options = settings(directory)
     dist.init_process_group("gloo", timeout=timedelta(seconds=7200))
     try:

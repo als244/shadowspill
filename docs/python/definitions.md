@@ -36,8 +36,7 @@ the source closures described above. Missing packages, duplicate package/entry
 names and registration failures are errors. These package names belong to trusted
 server configuration; model and compute requests continue to use definition IDs.
 The supplied workloads wheel publishes the same entry-point group. This is the
-common loader for controller and fresh-phase startup, whose integration remains
-under development.
+common loader for controller and fresh-phase startup.
 
 The small [external classifier fixture](../../packages/engine/tests/engine_tests/fixtures/external_definition.py)
 shows the full interface. The supplied
@@ -146,6 +145,16 @@ accumulation paths are errors. Loading does not capture, profile, search, select
 replacement candidates or initialize training state. The current qualification
 covers the external classifier fixture; service startup, provider resources,
 distributed execution and value-dependent maximum workspace remain separate work.
+
+`training.preparation.job.prepare_job(directory, packages=..., config=...)` runs
+resolved preparation through the existing fresh-process build, profile,
+communication and CPU planning phases. The caller supplies an assigned worker set
+and an owned job directory. The job saves its exact configuration, rejects
+concurrent callers, reuses compatible completed captures/profiles, and retains
+recoverable candidate failures only while all requested capabilities remain covered.
+A completed job reloads and strictly checks its bundle without starting phases.
+It never initializes weights or starts a training loop. Service allocation,
+artifact-reference resolution and readiness remain separate integration work.
 
 Phase policies use `PolicyDefinition(id, kind, config, create)`. The CPU resolver
 validates and fills `Policy` configuration through the registered factory's

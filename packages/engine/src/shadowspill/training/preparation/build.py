@@ -77,6 +77,11 @@ def build_candidate(
 
 
 def run(directory: str | Path) -> None:
+    if (Path(directory) / "preparation.ssp").is_file():
+        from .job_phases import build
+
+        build(directory)
+        return
     root, options = settings(directory)
     definition = adapter(options["recipe"])
     with workers(options["preparation_ranks"]) as group:

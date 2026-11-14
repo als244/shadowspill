@@ -12,14 +12,12 @@ import torch
 
 from engine_tests.fixtures import external_definition
 from engine_tests.fixtures.definition_operations import definitions, example
+from engine_tests.fixtures.installed_definition import install
 from engine_tests.training.test_setup_resolution import arguments, installed
-from shadowspill import CommunicationInfo
-from shadowspill.training.preparation.bundle import TrainingBundle
-from shadowspill.training.preparation.capture import build_template
-from shadowspill.training.preparation.family import plan_family
+from shadowspill import ProfiledProgram, Program
+from shadowspill.training.preparation import job
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.operation_build import build_operation
-from shadowspill.training.preparation.profile import profile_template
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client import (
@@ -33,7 +31,7 @@ from shadowspill_client.protocol.operations import OperationKey
 
 
 @pytest.mark.cuda
-def test_definition_bound_operations_in_cold_worker(tmp_path):
+def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     resolved, objective, _ = definitions()
@@ -57,33 +55,60 @@ def test_definition_bound_operations_in_cold_worker(tmp_path):
     )
     inventory = capture_inventory(prepare_layouts(setup))
     assert len(inventory.templates) == 6
-    measured = {}
+    installed_root = install(tmp_path / "site-packages")
+    monkeypatch.syspath_prepend(str(installed_root))
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        str(installed_root) + os.pathsep + os.environ.get("PYTHONPATH", ""),
+    )
+    tmp_path = tmp_path / "job"
+    bundle = job.prepare_job(
+        tmp_path, packages=["external-classifier-fixture"], config=setup.config
+    )
+    family = bundle.recheck(registry)
     for key, template in inventory.templates.items():
-        program = build_template(registry, inventory, key)
+        program = Program.load(tmp_path / "programs" / f"{key}.ssp")
         assert program.bindings["operation_mode"] == template.binding.contract.key.mode
         saved = program.bindings["training_operation"]
         assert saved["objective"]["source"] == objective.source.to_dict()
         assert saved["contributes_loss"]
-        program.save(tmp_path / f"capture-{key}.ssp")
-        profiled = profile_template(inventory, key, program)
-        measured[key] = profiled
+        profiled = ProfiledProgram.load(tmp_path / "profiled" / f"{key}.ssp")
         assert profiled.profiles.metadata["preparation_template"] == key
         assert (
             profiled.profiles.metadata["profiling_scenario"]
             == template.signature()["scenario"]
         )
-        profiled.save(tmp_path / f"profiled-{key}.ssp")
-    family = plan_family(
-        inventory,
-        measured,
-        {key: CommunicationInfo(1e10, 1e10) for key in measured},
-    )
     assert len(family.coverage) == 3 and len(family.plans[0]) == 14
     assert all(len(rows) == 3 for rows in family.families.values())
     assert family.memory[0].execution_bytes <= 2 << 30
     assert family.memory[0].spill_bytes <= 64 << 20
-    bundle = TrainingBundle.from_prepared(family, measured)
-    bundle.save(tmp_path / "training.ssp")
+    assert {p.name for p in (tmp_path / "logs").glob("*.log")} == {
+        "build.log",
+        "profile.log",
+        "communicate.log",
+        "plan.log",
+    }
+    for phase in ("build", "profile", "communicate", "plan"):
+        events = [
+            json.loads(line)
+            for line in (tmp_path / "logs" / f"{phase}-launcher.jsonl")
+            .read_text()
+            .splitlines()
+        ]
+        assert any(
+            event["name"] == "workers.returned" and event["returncode"] == 0
+            for event in events
+        )
+    with monkeypatch.context() as warm:
+
+        def unexpected_launch(*args, **kwargs):
+            pytest.fail("completed job launched a GPU phase")
+
+        warm.setattr(job, "run_phases", unexpected_launch)
+        reused = job.prepare_job(
+            tmp_path, packages=["external-classifier-fixture"], config=setup.config
+        )
+        assert reused.to_dict() == bundle.to_dict()
     for seed in ("0", "1"):
         inspected = subprocess.run(
             [
