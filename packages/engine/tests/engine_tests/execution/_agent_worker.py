@@ -28,6 +28,7 @@ from shadowspill.orchestration.launch.host_arena import HostArena  # noqa: E402
 from shadowspill.orchestration.launch.node_capacity import discover_capacity  # noqa: E402
 from shadowspill.orchestration.launch.publication import require_output  # noqa: E402
 from shadowspill.orchestration.launch.staging import FileDelivery  # noqa: E402
+from shadowspill.server.artifacts import ArtifactStore  # noqa: E402
 from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
 from shadowspill.training.definitions import load_registry  # noqa: E402
 from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
@@ -83,6 +84,7 @@ disk = BufferBudget(128 << 20, 100)
 execution = prepared_worker.bindings.setup.config.execution
 oracle = json.loads((root / "agent-oracle.json").read_text())
 observations = []
+published = []
 
 
 def host_peak(pid):
@@ -150,6 +152,14 @@ with (
     HostArena(
         admission, execution.max_staging_bytes, execution.max_pending_requests
     ) as uploads,
+    ArtifactStore(
+        directory / "artifacts",
+        owner_id="owner",
+        cache_root=directory,
+        memory=transfers.budget,
+        max_bytes=128 << 20,
+        max_artifacts=100,
+    ) as artifacts,
     owned_node(transfers.budget) as node,
 ):
     memory, metadata = transfers.budget, commands.budget
@@ -243,6 +253,12 @@ with (
                         np.testing.assert_allclose(
                             actual, oracle[predictions], rtol=1e-4, atol=1e-5
                         )
+                saved = {}
+                if predictions:
+                    ref = result.replies[0].result
+                    artifacts.put(ref, lambda _: result.open(0))
+                    published.append((ref, frame.frame.size))
+                    saved["worker-0"] = ref
                 return ComputeResult(
                     request.identity,
                     operation,
@@ -250,6 +266,7 @@ with (
                     receipt.outcome,
                     receipt.completed_updates,
                     receipt.accumulation,
+                    outputs=saved,
                     optim=data.controls.optim,
                     loss_params=data.controls.loss_params,
                     grad_scale=data.controls.grad_scale,
@@ -301,6 +318,16 @@ with (
         with saved_logs.use() as resolve:
             for reference in log_refs.values():
                 assert resolve(reference).stat().st_size == reference.size_bytes
+    node.close()
+    assert published and not outputs.root.exists()
+    for reference, limits in published:
+        with (
+            artifacts.open(reference) as stream,
+            read_payload(
+                stream, reference, publication.budget, limits=limits
+            ) as decoded,
+        ):
+            assert decoded.datums  # Valid binary payload after worker-file deletion.
 assert admission.used.claims == 0
 assert disk.used == memory.used == metadata.used == publication.budget.used == (0, 0)
 (directory / "host-accounting.json").write_text(
@@ -323,3 +350,4 @@ print("Qualified node-backed worker and input/artifact host accounting")
 print("Qualified pre-reserved worker logs and post-exit artifact transfer")
 print("Qualified production node worker lifecycle")
 print("Qualified connection-independent production controller queue")
+print("Qualified durable GPU artifacts after node and output-file cleanup")
