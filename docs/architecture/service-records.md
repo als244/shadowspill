@@ -116,6 +116,16 @@ and child-process failure tests cover the controller protocol; actual multi-node
 GPU qualification remains required. Agents still need to provide admitted file
 delivery, startup/supervision and the authenticated service connection.
 
+`orchestration.launch.staging.FileDelivery` supplies the generic node-local copy
+owner. It reserves complete disk volume and bounded metadata/copy memory before
+opening any source or creating files. All artifact sizes and checksums must pass
+before a worker can borrow the completed delivery. Consumers keep files alive
+through execution; active producers retain reservations through cancellation, and
+failed deletion retains quotas until cleanup succeeds. These owned files survive
+sender cleanup. The launcher does not interpret models, objectives or tensor
+layouts; the worker separately rechecks each prepared input ABI. Agent startup,
+supervision and actual node-resource admission remain to be connected.
+
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.
 Canonical request digests include binary payload checksums. An identical ID/content

@@ -11,6 +11,7 @@ choose a training or measurement protocol, or interpret a saved recipe directory
 | `launch/processes` | Fresh Python / single-node torchrun command construction |
 | `launch/rank_device` | Shared ordinary/profiled script/module wrapper that isolates the assigned GPU while preserving both global and local rank identities |
 | `launch/workers` | Host Gloo rendezvous, launcher-to-logical rank mapping and small result gathers |
+| `launch/staging` | Quota-bound node-local artifact delivery, complete size/checksum checks and consumer ownership |
 | `monitoring/lifecycle` | Append-only host phase journals, including context entry/cleanup and failures |
 | `candidates` | Record a local candidate's device exhaustion after releasing its traceback; other failures propagate |
 | `communication` | Union exact collective requests across compatible caller-selected Programs; measurement remains in the public phase APIs |
@@ -59,3 +60,17 @@ The clients keep their own policies:
 
 This package imports no repository client or model catalog. Repository tests
 enforce those dependency boundaries, including CPU-only import checks.
+
+Node-local `FileDelivery` takes opaque portable artifact references, an explicit
+cache root and shared disk/memory quotas. It reserves complete file volume and
+metadata/copy scratch before creating files or opening authenticated source
+streams. Sources supply bounded reads and transport deadlines. Every file must
+match its declared length and checksum before the delivery becomes ready. It
+copies in 64 KiB chunks and releases scratch before exposing ready files.
+
+Consumers retain a `use()` context until workers finish or their agents confirm
+termination. Cleanup refuses to delete files still borrowed or owned by an active
+producer. Cancellation takes effect between reads and retains reservations while
+a read is blocked. A failed deletion retains its quotas until cleanup succeeds.
+Files are ephemeral and never establish durable completion or execution replay.
+Agent startup, supervision and allocation admission still belong to the caller.
