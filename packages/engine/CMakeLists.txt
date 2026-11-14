@@ -31,6 +31,11 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}")
 
 include(CTest)
 find_package(Threads REQUIRED)
+option(
+  SHADOWSPILL_CPU_ONLY
+  "Build the CPU planner and mock runtime without accelerator or PyTorch libraries"
+  OFF
+)
 
 add_library(shadowspill_build_options INTERFACE)
 # The tree compiles as strict ISO C11, which hides POSIX threads unless asked

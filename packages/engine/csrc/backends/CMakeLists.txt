@@ -47,7 +47,12 @@ install(
 set(SHADOWSPILL_BACKENDS "auto" CACHE STRING "Provider backends to build: auto, or a list such as cuda")
 
 set(shadowspill_known_backends cuda)
-if(SHADOWSPILL_BACKENDS STREQUAL "auto")
+if(SHADOWSPILL_CPU_ONLY)
+  if(NOT SHADOWSPILL_BACKENDS STREQUAL "auto" AND NOT SHADOWSPILL_BACKENDS STREQUAL "")
+    message(FATAL_ERROR "SHADOWSPILL_CPU_ONLY conflicts with requested provider backends")
+  endif()
+  set(shadowspill_requested_backends "")
+elseif(SHADOWSPILL_BACKENDS STREQUAL "auto")
   set(shadowspill_requested_backends "")
   find_package(CUDAToolkit QUIET)
   if(CUDAToolkit_FOUND)

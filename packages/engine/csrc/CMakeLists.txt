@@ -159,4 +159,6 @@ install(
 add_subdirectory(backends)
 add_subdirectory(network)
 add_subdirectory(ssd)
-add_subdirectory(adapter/pytorch)
+if(NOT SHADOWSPILL_CPU_ONLY)
+  add_subdirectory(adapter/pytorch)
+endif()

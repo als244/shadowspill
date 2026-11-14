@@ -324,6 +324,13 @@ reads as the code being slow or subtly broken.
 Device integration tests require a matching provider/PyTorch toolchain.
 Accelerator-free runtime tests use the mock backend.
 
+For a CPU planner build, `-DSHADOWSPILL_CPU_ONLY=ON` disables both provider
+discovery and the PyTorch adapter, even on a machine with a device toolchain.
+The corresponding package setting is
+`--config-setting cmake.define.SHADOWSPILL_CPU_ONLY=ON`. Do not request provider
+backends alongside it. This is a build configuration for offline planning and
+inspection; it does not introduce a CPU model-preparation phase.
+
 ## Documentation changes
 
 When a public export, C header, cache category, or ownership contract changes,
