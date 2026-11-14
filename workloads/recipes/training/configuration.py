@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from os import PathLike, fspath
 from pathlib import Path, PurePosixPath
 
-from orchestration.profiling import profiling_options
+from shadowspill.orchestration.profiling import profiling_options
 
 PHASES = {"all", "build", "profile", "communicate", "plan", "execute"}
 DEFAULTS = dict(

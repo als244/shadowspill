@@ -69,7 +69,7 @@ def test_commands_advertise_each_nodes_address(tmp_path):
     ):
         assert flag in grouped
     assert grouped[-4:] == [
-        "orchestration.rank_device",
+        "shadowspill.orchestration.launch.rank_device",
         "-m",
         "pkg.execute",
         str(tmp_path),

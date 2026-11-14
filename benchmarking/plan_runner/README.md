@@ -8,7 +8,7 @@ checks still apply. A Plan does not become portable to an incompatible GPU
 architecture by going through this runner.
 
 This package owns benchmark execution and reporting. Shared host journals and
-worker coordination live in [`orchestration`](../../orchestration/README.md).
+worker coordination live in [`orchestration`](../../packages/engine/src/shadowspill/orchestration/README.md).
 The generic `run` entry point takes workload hooks; only the separate `recipe`
 bridge knows how to read an existing recipe run. Training recipes never import
 this benchmark package.
@@ -123,7 +123,7 @@ can construct this command in Python:
 ```python
 import subprocess
 import sys
-from orchestration.nsys import NsysCapture
+from shadowspill.orchestration.capture.nsys import NsysCapture
 
 capture = NsysCapture(start_step=5, steps=2, output_dir="/shared/captures/experiment")
 worker = capture.rank_command([sys.executable, "worker.py"])
@@ -186,7 +186,7 @@ Executor, rank mapping and device; an optional `trainer_type` supports existing
 Trainer subclasses. This API accepts **training Plans from `build_step`**.
 
 Run the custom script directly on one GPU. For multiple GPUs use the normal
-launcher, e.g. `torchrun --standalone --nproc-per-node=8 -m orchestration.rank_device script.py`.
+launcher, e.g. `torchrun --standalone --nproc-per-node=8 -m shadowspill.orchestration.launch.rank_device script.py`.
 For multiple nodes, use the equivalent torchrun rendezvous options on each
 node. Each worker must expose its assigned GPU as `cuda:0`, run in a fresh
 process and participate at the saved Plan's world size. `rank_map` supports a
@@ -250,9 +250,9 @@ path. Interrupted runs keep their partial journals for this report too.
 | --- | --- |
 | `api.py` | Model-independent, rank-local saved-Plan execution and aggregation |
 | `recipe.py` | Fresh-worker launcher and bridge to existing saved recipe hooks |
-| [`orchestration/nsys.py`](../../orchestration/nsys.py) | Shared external-profiler launch settings and capture adapter |
-| [`orchestration/nsys_worker.py`](../../orchestration/nsys_worker.py) | One isolated collector and report per global rank |
-| [`orchestration/lifecycle.py`](../../orchestration/lifecycle.py) | Shared host phase journal used by recipes and benchmarks |
+| [`orchestration/nsys.py`](../../packages/engine/src/shadowspill/orchestration/capture/nsys.py) | Shared external-profiler launch settings and capture adapter |
+| [`orchestration/nsys_worker.py`](../../packages/engine/src/shadowspill/orchestration/capture/nsys_worker.py) | One isolated collector and report per global rank |
+| [`orchestration/lifecycle.py`](../../packages/engine/src/shadowspill/orchestration/monitoring/lifecycle.py) | Shared host phase journal used by recipes and benchmarks |
 | `monitor.py` | External GPU sampling with explicit process cleanup |
 | `report.py` | Offline CPU phase/device analysis |
 | `examples/saved_run.py` | Short Python entry point to edit for a campaign |

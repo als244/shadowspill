@@ -18,11 +18,11 @@ import torch.distributed as dist
 from torch import nn
 
 from benchmarking.quickstart.phases.common import experiment, read
-from orchestration.workers import workers
 from qualification.numerical.tolerances import STEP_QUANTUM_DISAGREEMENTS
 from shadowspill import Plan
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.execution.storage import dtype_of
+from shadowspill.orchestration.launch.workers import workers
 from shadowspill.resources.preparation import prepare_resources
 
 

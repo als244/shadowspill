@@ -99,7 +99,7 @@ class NsysCapture:
             *(["-S"] if sys.flags.no_site else []),
             "-u",
             "-m",
-            "orchestration.nsys_worker",
+            "shadowspill.orchestration.capture.nsys_worker",
             "--config",
             json.dumps(asdict(self)),
             "--output-dir",

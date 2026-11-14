@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from orchestration.processes import worker_command
+from shadowspill.orchestration.launch.processes import worker_command
 
 
 @pytest.mark.cuda

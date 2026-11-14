@@ -125,7 +125,7 @@ def test_capture_command_uses_shared_rank_device(saved_winner):
     root = saved_winner
     argv = command(settings(root), root / "winner", 4, 2, plan_digest="saved")
     assert "--nproc-per-node=2" in argv
-    assert "orchestration.rank_device" in argv
+    assert "shadowspill.orchestration.launch.rank_device" in argv
     assert "tools.pressurefit_trace.profile_winners" in argv
     assert "--flush-on-cudaprofilerstop=false" in argv
     assert "--capture-range=cudaProfilerApi" in argv

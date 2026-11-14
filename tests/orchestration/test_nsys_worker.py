@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestration import nsys_worker
-from orchestration.nsys import NsysCapture
-from orchestration.processes import distributed_command
+from shadowspill.orchestration.capture import nsys_worker
+from shadowspill.orchestration.capture.nsys import NsysCapture
+from shadowspill.orchestration.launch.processes import distributed_command
 
 
 def test_rank_wrapper_goes_inside_torchrun_and_keeps_common_output(tmp_path):
@@ -17,7 +17,7 @@ def test_rank_wrapper_goes_inside_torchrun_and_keeps_common_output(tmp_path):
         capture.rank_command(["python", "worker.py"]), ranks=8
     )
     assert command.index("torch.distributed.run") < command.index(
-        "orchestration.nsys_worker"
+        "shadowspill.orchestration.capture.nsys_worker"
     )
     assert command[-3:] == ["--", "python", "worker.py"]
     assert command[command.index("--output-dir") + 1] == str(tmp_path)

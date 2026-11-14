@@ -1,7 +1,7 @@
 """Resume measurements after checking the current target and saved artifact."""
 
-from orchestration.profiling import profiling_options
 from shadowspill import Profiles, apply_profiles
+from shadowspill.orchestration.profiling import profiling_options
 
 from .target import check_target
 

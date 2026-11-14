@@ -10,7 +10,6 @@ def test_repository_clients_have_one_way_dependencies():
     root = Path(__file__).resolve().parents[2]
     rules = {
         "workloads": ("benchmarking", "qualification"),
-        "orchestration": ("workloads", "benchmarking", "qualification", "training"),
         "packages/engine/src/shadowspill": (
             "orchestration",
             "workloads",
@@ -22,6 +21,7 @@ def test_repository_clients_have_one_way_dependencies():
     violations = []
     for name, forbidden in rules.items():
         path = root / name
+        assert path.exists(), f"missing dependency boundary: {path}"
         paths = [path] if path.is_file() else path.rglob("*.py")
         for source in paths:
             for node in ast.walk(ast.parse(source.read_text(), filename=str(source))):
@@ -48,9 +48,10 @@ class Block(importlib.abc.MetaPathFinder):
             raise AssertionError('unexpected dependency: ' + fullname)
 block = Block()
 sys.meta_path.insert(0, block)
-for module in ('processes', 'rank_device', 'workers', 'lifecycle',
-               'candidates', 'communication', 'nsys', 'nsys_worker'):
-    importlib.import_module('orchestration.' + module)
+for module in ('launch.processes', 'launch.rank_device', 'launch.workers',
+               'monitoring.lifecycle', 'candidates', 'communication',
+               'capture.nsys', 'capture.nsys_worker'):
+    importlib.import_module('shadowspill.orchestration.' + module)
 block.blocked = {'benchmarking', 'qualification'}
 for module in ('workloads.recipes', 'workloads.recipes.phases',
                'workloads.recipes.training.build', 'workloads.recipes.training.profile',

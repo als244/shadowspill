@@ -8,8 +8,8 @@ import traceback
 from pathlib import Path
 
 from benchmarking.quickstart.phases.common import read, write
-from orchestration.processes import worker_command
 from shadowspill.errors import PlanInfeasibleError
+from shadowspill.orchestration.launch.processes import worker_command
 
 from .preparation import prepare
 from .settings import Settings

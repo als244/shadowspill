@@ -2,8 +2,8 @@
 
 import sys
 
-from orchestration.workers import workers
 from shadowspill import build_forward, build_step
+from shadowspill.orchestration.launch.workers import workers
 from workloads.recipes.phases import settings
 
 from .build_reuse import check_metadata, completed, save_metadata

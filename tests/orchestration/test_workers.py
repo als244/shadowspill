@@ -2,8 +2,8 @@
 
 import pytest
 
-from orchestration.processes import worker_command
-from orchestration.workers import workers
+from shadowspill.orchestration.launch.processes import worker_command
+from shadowspill.orchestration.launch.workers import workers
 
 
 def test_worker_commands_use_one_process_until_distributed_execution():
@@ -13,7 +13,7 @@ def test_worker_commands_use_one_process_until_distributed_execution():
     assert "--nproc-per-node=2" in distributed
     assert distributed[-6:] == [
         "-m",
-        "orchestration.rank_device",
+        "shadowspill.orchestration.launch.rank_device",
         "-m",
         "a.b",
         "phase",

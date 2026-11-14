@@ -12,7 +12,6 @@ shadowspill/
 ├── src/tools/             trace analysis/videos, naming checks and sanitizer support
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
-├── orchestration/         shared worker launch, host coordination and phase journals
 ├── training/              text-recipe configs and the prepare, train,
 │                          reference and compare commands
 ├── reference/             executable reference implementations
@@ -51,11 +50,11 @@ planning and execution do not discover libraries or select policies by their
 names. Architecture documentation describes these generic mechanisms; setup and
 examples for a particular library belong in its integration guide.
 
-`orchestration/` owns repository-only process infrastructure used by recipes,
-benchmarks and developer tools. It takes explicit worker counts and rank maps,
-without reading any client's saved configuration. Recipes never import
-benchmark implementation utilities. The installed engine never imports this
-package or other repository clients. See its [ownership map](../../orchestration/README.md).
+`shadowspill.orchestration` owns installed process infrastructure used by recipes,
+benchmarks and developer tools. Its launch, capture and monitoring modules take
+explicit worker counts and rank maps, without reading saved recipe configuration.
+The engine imports no repository clients or model catalog. See the
+[ownership map](../../packages/engine/src/shadowspill/orchestration/README.md).
 
 `benchmarking/plan_runner/` owns the saved-Plan measurement protocol, GPU sampling
 and reports. Its generic `run` API accepts initialization and input hooks. The
@@ -88,6 +87,10 @@ packages/engine/src/shadowspill/
 │   ├── recording/         opt-in task/transfer recording for Executor
 │   ├── distributed/       collective and shard-storage execution bindings
 │   └── observations/      optional bounded runtime norm collection
+├── orchestration/         installed process launch, capture and phase diagnostics
+│   ├── launch/            process commands, rank/device isolation and host groups
+│   ├── capture/           external profiler launch and Trainer capture boundaries
+│   └── monitoring/        worker phase journals
 ├── checkpoint/            streamed checkpoint format over Executor tensor access
 ├── parallelism/           logical groups, parameter placement and storage declarations
 ├── resources/             portable provider descriptions, setup and cleanup

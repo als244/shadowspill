@@ -12,8 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from orchestration.lifecycle import Lifecycle
-from orchestration.nsys import NsysCapture
+from shadowspill.orchestration.capture.nsys import NsysCapture
+from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
 
 from .monitor import GpuMonitor
 
@@ -85,8 +85,9 @@ def run(
     iterable of Trainer.step keyword mappings. Both run after Executor installs
     its allocator. Trainer options may be a mapping or a context-taking factory.
 
-    Launch distributed workers with torchrun and orchestration.rank_device; each
-    process must see its assigned GPU as cuda:0. WORLD_SIZE must match the Plan.
+    Launch distributed workers with torchrun and
+    shadowspill.orchestration.launch.rank_device; each process must see its
+    assigned GPU as cuda:0. WORLD_SIZE must match the Plan.
     No model construction, build, profiling, planning, evaluation, checkpoints,
     or startup diagnostic runs are added here. By default the final real update
     collects a runtime trace on every rank. Warmup and traced updates still
@@ -149,8 +150,8 @@ def _execute(
     nsys,
 ):
     with timing.phase("imports"):
-        from orchestration.workers import workers
         from shadowspill import Plan, Trainer
+        from shadowspill.orchestration.launch.workers import workers
 
     with timing.phase("plans.load"):
         plan = Plan.load(path)
@@ -209,7 +210,7 @@ def _execute(
             with timing.phase("runtime.create"):
                 factory = trainer_type or Trainer
                 if nsys is not None:
-                    from orchestration.nsys import nsight_trainer
+                    from shadowspill.orchestration.capture.nsys import nsight_trainer
 
                     factory = nsight_trainer(factory)
                     options.update(

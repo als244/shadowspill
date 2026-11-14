@@ -11,7 +11,7 @@ import pytest
 from benchmarking.plan_runner import NsysCapture, run
 from benchmarking.plan_runner.api import _traced_inputs, summarize, validate
 from benchmarking.plan_runner.report import report
-from orchestration.lifecycle import Lifecycle
+from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
 
 
 def test_runner_import_and_cli_help_need_no_torch_or_workload():
@@ -20,7 +20,9 @@ import importlib.abc
 import sys
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'torch', 'workloads', 'shadowspill'}:
+        if (fullname.split('.')[0] in {'torch', 'workloads', 'mlops'}
+            or fullname.startswith(('shadowspill.runtime', 'shadowspill.pytorch',
+                                    'shadowspill.execution'))):
             raise AssertionError('CPU launcher imported ' + fullname)
 sys.meta_path.insert(0, Block())
 from benchmarking.plan_runner import Context, NsysCapture, run, benchmark
@@ -133,7 +135,7 @@ def test_recipe_launcher_requires_nsight_report_and_records_capture(
 
     def launch(command, **options):
         assert command.index("torch.distributed.run") < command.index(
-            "orchestration.nsys_worker"
+            "shadowspill.orchestration.capture.nsys_worker"
         )
         assert command[command.index("--output-dir") + 1] == str(capture_dir)
         request = json.loads((output / "request.json").read_text())
@@ -362,7 +364,7 @@ def test_recipe_bridge_reuses_hooks_without_changing_saved_inputs(
 
 @pytest.mark.slow
 def test_real_two_rank_gloo_coordination_and_logical_rank_permutation(tmp_path):
-    from orchestration.processes import worker_command
+    from shadowspill.orchestration.launch.processes import worker_command
 
     result = subprocess.run(
         worker_command("tests.benchmarking._plan_runner", [tmp_path], ranks=2),

@@ -139,7 +139,9 @@ def _readers(path: Path) -> list[Path]:
             )
         }
         for module, relative_path in {
-            "orchestration.profiling": "orchestration/profiling.py",
+            "shadowspill.orchestration.profiling": (
+                "packages/engine/src/shadowspill/orchestration/profiling.py"
+            ),
             "workloads.recipes.text.catalog": "workloads/recipes/text/catalog.py",
         }.items():
             if module in imported:

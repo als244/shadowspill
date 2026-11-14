@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from benchmarking._serialization import atomic_json
-from orchestration.processes import worker_command
+from shadowspill.orchestration.launch.processes import worker_command
 
 from .process import launch
 

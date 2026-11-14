@@ -4,8 +4,8 @@ import statistics
 from contextlib import nullcontext
 
 from benchmarking.spill import resolve as spill_pool
-from orchestration.workers import workers
 from shadowspill import Plan, Trainer
+from shadowspill.orchestration.launch.workers import workers
 
 from .candidates import example_inputs
 from .common import experiment, paths, plan_identity, read, write

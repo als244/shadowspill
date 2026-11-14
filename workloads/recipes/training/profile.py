@@ -2,8 +2,6 @@
 
 import sys
 
-from orchestration.profiling import profiling_options
-from orchestration.workers import workers
 from shadowspill import (
     Program,
     TaskProfileCache,
@@ -11,6 +9,8 @@ from shadowspill import (
     measure_communication,
     measure_program,
 )
+from shadowspill.orchestration.launch.workers import workers
+from shadowspill.orchestration.profiling import profiling_options
 from workloads.recipes.phases import settings
 
 from .candidates import attempt_candidate, available, program_paths

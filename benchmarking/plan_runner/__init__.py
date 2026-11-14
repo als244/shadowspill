@@ -10,7 +10,7 @@ __all__ = ["Context", "NsysCapture", "benchmark", "run"]
 
 def __getattr__(name):
     if name == "NsysCapture":
-        from orchestration.nsys import NsysCapture
+        from shadowspill.orchestration.capture.nsys import NsysCapture
 
         return NsysCapture
     if name == "benchmark":

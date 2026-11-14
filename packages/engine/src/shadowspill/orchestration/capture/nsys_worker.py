@@ -15,8 +15,8 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from ..launch.rank_device import isolate_device
 from .nsys import NsysCapture
-from .rank_device import isolate_device
 
 
 def collect(command, *, capture, output_dir):

@@ -7,7 +7,7 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 
-from orchestration.lifecycle import Lifecycle
+from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
 
 
 def run(directory):
@@ -19,8 +19,8 @@ def run(directory):
 
 def _execute(directory, timing):
     with timing.phase("imports"):
-        from orchestration.workers import workers
         from shadowspill import Plan, Trainer
+        from shadowspill.orchestration.launch.workers import workers
         from shadowspill.training.logging import DistributedLogger, Wandb
         from workloads.recipes.phases import settings
 
@@ -47,7 +47,7 @@ def _execute(directory, timing):
             trainer_type = Trainer
             trainer_options = dict(definition.trainer_options(options, metadata))
             if options.get("nsys_steps", 0):
-                from orchestration.nsys import nsight_trainer
+                from shadowspill.orchestration.capture.nsys import nsight_trainer
 
                 trainer_type = nsight_trainer(trainer_type)
                 trainer_options.update(

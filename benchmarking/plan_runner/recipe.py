@@ -7,10 +7,13 @@ from contextlib import nullcontext
 from dataclasses import asdict
 from pathlib import Path
 
-from orchestration.lifecycle import Lifecycle
-from orchestration.nsys import NsysCapture
-from orchestration.nsys_worker import reports
-from orchestration.processes import distributed_command, worker_command
+from shadowspill.orchestration.capture.nsys import NsysCapture
+from shadowspill.orchestration.capture.nsys_worker import reports
+from shadowspill.orchestration.launch.processes import (
+    distributed_command,
+    worker_command,
+)
+from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
 
 from .api import run, validate
 from .monitor import GpuMonitor

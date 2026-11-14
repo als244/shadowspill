@@ -5,7 +5,7 @@ on the public ShadowSpill and model APIs, but never imports scripts or files
 from `qualification/`.
 
 Process launching, host worker groups and phase journals are shared through
-[`orchestration/`](../orchestration/README.md). Benchmark protocols and reporting
+[`shadowspill.orchestration`](../packages/engine/src/shadowspill/orchestration/README.md). Benchmark protocols and reporting
 stay here; normal workload recipes do not import this package.
 
 ```text

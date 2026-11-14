@@ -1,9 +1,6 @@
 """Calibrate communication and paired interference for saved candidates."""
 
 from benchmarking.spill import resolve as spill_pool
-from orchestration.communication import communication_probes
-from orchestration.profiling import profiling_options
-from orchestration.workers import workers
 from shadowspill import (
     CommunicationInfo,
     OverlapProfileCache,
@@ -11,6 +8,9 @@ from shadowspill import (
     Program,
     apply_profiles,
 )
+from shadowspill.orchestration.communication import communication_probes
+from shadowspill.orchestration.launch.workers import workers
+from shadowspill.orchestration.profiling import profiling_options
 
 from .common import paths
 

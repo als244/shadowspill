@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from benchmarking.spill import record as spill_record
-from orchestration.profiling import profiling_options
+from shadowspill.orchestration.profiling import profiling_options
 
 from .launch import launch as _launch
 from .phases.common import read, reference, write

@@ -3,7 +3,7 @@
 import json
 from contextlib import contextmanager
 
-from orchestration.lifecycle import Lifecycle
+from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
 
 
 def _events(path):

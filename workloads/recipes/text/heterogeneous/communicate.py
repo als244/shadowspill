@@ -13,8 +13,8 @@ from datetime import timedelta
 
 import torch.distributed as dist
 
-from orchestration.profiling import profiling_options
 from shadowspill import Program, measure_communication
+from shadowspill.orchestration.profiling import profiling_options
 from workloads.recipes.phases import settings
 from workloads.recipes.text.launch import first_rank
 

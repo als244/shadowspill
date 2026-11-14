@@ -802,7 +802,7 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
             ROOT / "benchmarking/stage_traces/README.md",
             ROOT / "benchmarking/program_collection/README.md",
             ROOT / "benchmarking/plan_runner/README.md",
-            ROOT / "orchestration/README.md",
+            ROOT / "packages/engine/src/shadowspill/orchestration/README.md",
             DOCS / "python/api/build.md",
             DOCS / "python/api/communication.md",
             DOCS / "python/api/executor.md",

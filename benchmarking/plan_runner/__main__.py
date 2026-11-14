@@ -3,7 +3,7 @@
 import argparse
 import json
 
-from orchestration.nsys import NsysCapture
+from shadowspill.orchestration.capture.nsys import NsysCapture
 
 from .recipe import benchmark
 

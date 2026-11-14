@@ -78,7 +78,7 @@ def worker_command(
         python,
         "-u",
         "-m",
-        "orchestration.rank_device",
+        "shadowspill.orchestration.launch.rank_device",
         "-m",
         module,
         str(root),

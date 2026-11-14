@@ -5,7 +5,6 @@ from dataclasses import replace
 
 import pytest
 
-from orchestration.communication import communication_probes
 from shadowspill import (
     CommunicationInfo,
     Parallelism,
@@ -13,6 +12,7 @@ from shadowspill import (
     Profiles,
     apply_profiles,
 )
+from shadowspill.orchestration.communication import communication_probes
 from tests.shadowspill.offline._example import profiles
 from tests.shadowspill.offline.test_sharded_forward import forward
 

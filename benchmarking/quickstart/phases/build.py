@@ -4,9 +4,9 @@ from contextlib import nullcontext
 from functools import partial
 from pathlib import Path
 
-from orchestration.candidates import attempt
-from orchestration.workers import workers
 from shadowspill import build_step
+from shadowspill.orchestration.candidates import attempt
+from shadowspill.orchestration.launch.workers import workers
 
 from .candidates import build_options, example_inputs
 from .common import experiment, write

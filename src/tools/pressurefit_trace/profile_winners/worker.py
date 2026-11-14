@@ -7,8 +7,8 @@ import torch
 import torch.distributed as dist
 
 from benchmarking.quickstart.phases.common import experiment, plan_identity, write
-from orchestration.workers import workers
 from shadowspill import Executor, Plan
+from shadowspill.orchestration.launch.workers import workers
 
 from .selection import completed
 

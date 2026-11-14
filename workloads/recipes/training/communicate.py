@@ -4,9 +4,6 @@ from datetime import timedelta
 
 import torch.distributed as dist
 
-from orchestration.communication import communication_probes
-from orchestration.lifecycle import Lifecycle
-from orchestration.profiling import profiling_options
 from shadowspill import (
     OverlapProfileCache,
     ProfiledProgram,
@@ -15,6 +12,9 @@ from shadowspill import (
     measure_communication,
     measure_overlap,
 )
+from shadowspill.orchestration.communication import communication_probes
+from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
+from shadowspill.orchestration.profiling import profiling_options
 from workloads.recipes.phases import settings
 
 from .candidates import program_paths

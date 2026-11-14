@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from orchestration.workers import Workers
 from shadowspill import ProfiledProgram, ProfilingOptions
+from shadowspill.orchestration.launch.workers import Workers
 from tests.shadowspill.offline._example import profiles, program
 from workloads.recipes.training import profile, profile_reuse
 

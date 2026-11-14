@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import orchestration._nsys_trainer as module
-from orchestration.nsys import NsysCapture, nsight_trainer
+import shadowspill.orchestration.capture._nsys_trainer as module
+from shadowspill.orchestration.capture.nsys import NsysCapture, nsight_trainer
 
 
 @pytest.mark.parametrize("rank", [0, 3])
@@ -77,9 +77,7 @@ def test_capture_boundaries_and_per_rank_step_ranges(monkeypatch, rank, count):
 
 def test_capture_launch_scopes_metrics_to_the_rank_device(tmp_path):
     capture = NsysCapture(executable="/bin/true", start_step=5)
-    command = capture.command(
-        ["python", "worker.py"], output=tmp_path / "trace"
-    )
+    command = capture.command(["python", "worker.py"], output=tmp_path / "trace")
     assert command[-2:] == ["python", "worker.py"]
     assert "--capture-range=cudaProfilerApi" in command
     # `stop` and `repeat:1` finalize before the worker releases its host pool.

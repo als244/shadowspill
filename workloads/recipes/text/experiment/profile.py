@@ -4,8 +4,8 @@ import json
 import sys
 from pathlib import Path
 
-from orchestration.profiling import profiling_options
 from shadowspill import Program, apply_profiles, measure_communication, measure_program
+from shadowspill.orchestration.profiling import profiling_options
 from workloads.recipes.phases import settings
 
 from .group import ranks

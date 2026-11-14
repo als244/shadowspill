@@ -12,7 +12,7 @@ def worker_command(module, arguments, *, ranks=1):
             *python,
             "-u",
             "-m",
-            "orchestration.rank_device",
+            "shadowspill.orchestration.launch.rank_device",
             "-m",
             module,
             *map(str, arguments),

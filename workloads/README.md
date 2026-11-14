@@ -5,7 +5,7 @@ These modules live in the repository and are not installed as part of the
 `shadowspill` package. Core planning, runtime, lowering, and the generic trainer
 must never import `workloads`.
 
-Shared process infrastructure lives in [`orchestration/`](../orchestration/README.md).
+Shared process infrastructure lives in [`shadowspill.orchestration`](../packages/engine/src/shadowspill/orchestration/README.md).
 Recipes may use its worker launching, host coordination and phase journals;
 they do not depend on benchmark implementations. Benchmark tools consume these
 workloads through their model, data and initialization contracts.

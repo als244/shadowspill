@@ -21,7 +21,7 @@ def attempt_candidate(root, candidate, phase, operation, group):
     """Skip only local device exhaustion; a collective failure ends the group."""
     if group.count > 1:
         return operation()
-    from orchestration.candidates import attempt
+    from shadowspill.orchestration.candidates import attempt
 
     entry = {"name": candidate["path"]}
     result = attempt(entry, phase, operation, device=0)

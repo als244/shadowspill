@@ -5,8 +5,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from orchestration.lifecycle import Lifecycle
-from orchestration.processes import worker_command
+from shadowspill.orchestration.launch.processes import worker_command
+from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
 
 
 def settings(directory):

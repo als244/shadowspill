@@ -4,7 +4,7 @@ import re
 import subprocess
 
 from benchmarking.quickstart.phases.common import write
-from orchestration.processes import worker_command
+from shadowspill.orchestration.launch.processes import worker_command
 
 from .evidence import validate_sqlite
 from .selection import completed, digest, fingerprint, verified_capture

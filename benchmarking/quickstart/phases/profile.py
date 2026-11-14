@@ -2,10 +2,10 @@
 
 from functools import partial
 
-from orchestration.candidates import attempt
-from orchestration.profiling import profiling_options
-from orchestration.workers import workers
 from shadowspill import Program, TaskProfileCache, apply_profiles, measure_program
+from shadowspill.orchestration.candidates import attempt
+from shadowspill.orchestration.launch.workers import workers
+from shadowspill.orchestration.profiling import profiling_options
 
 from .common import paths, write
 

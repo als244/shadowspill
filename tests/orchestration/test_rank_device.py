@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from orchestration.rank_device import isolate_device
+from shadowspill.orchestration.launch.rank_device import isolate_device
 
 
 @pytest.mark.parametrize(
@@ -46,7 +46,14 @@ def test_entrypoint_sees_isolation_before_importing_torch(tmp_path):
         "os.environ['RANK'], 'torch' in sys.modules, sys.argv[1:]]))\n"
     )
     output = subprocess.check_output(
-        [sys.executable, "-m", "orchestration.rank_device", str(script), "--test", "x"],
+        [
+            sys.executable,
+            "-m",
+            "shadowspill.orchestration.launch.rank_device",
+            str(script),
+            "--test",
+            "x",
+        ],
         env={
             **os.environ,
             "CUDA_VISIBLE_DEVICES": "2,4,6,7",

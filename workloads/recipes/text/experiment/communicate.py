@@ -6,13 +6,13 @@ from datetime import timedelta
 
 import torch.distributed as dist
 
-from orchestration.profiling import profiling_options
 from shadowspill import (
     ProfiledProgram,
     apply_profiles,
     measure_communication,
     measure_overlap,
 )
+from shadowspill.orchestration.profiling import profiling_options
 from workloads.recipes.phases import settings
 
 from .group import ranks

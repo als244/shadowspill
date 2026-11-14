@@ -5,8 +5,8 @@ import time
 from pathlib import Path
 
 from benchmarking._serialization import atomic_json
-from orchestration.nsys import NsysCapture
-from orchestration.processes import worker_command
+from shadowspill.orchestration.capture.nsys import NsysCapture
+from shadowspill.orchestration.launch.processes import worker_command
 
 from .process import launch, stamp, worker_environment
 from .report import verify
