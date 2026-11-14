@@ -87,6 +87,14 @@ retains an unfinished factory/creation thread. Record lookup remains available
 after physical retirement. Configured preparation factories, public creation
 routes and server/allocation constructors remain separate integration work.
 
+The node-backed `HostArena` can claim a job's combined controller capacity once,
+then partition it into independently closed staging, transfer and publication
+budgets. Empty partitions still count at their full capacity. This avoids partial
+host-memory claims while jobs wait, and closing input staging cannot disable the
+result publisher. The entire node claim survives until every partition and its
+borrowed buffers retire. A private cancellation event can interrupt the initial
+whole-arena wait without affecting another run's resources.
+
 `server.live.LiveRun` composes the existing node startup barrier, worker request
 adapter, controller and result publisher. A registered creation receives ready
 status only after all workers initialize. Its caller reserves the decoded family

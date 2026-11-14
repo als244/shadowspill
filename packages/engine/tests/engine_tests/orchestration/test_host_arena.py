@@ -3,6 +3,7 @@
 import hashlib
 import io
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
@@ -10,6 +11,7 @@ from shadowspill.orchestration.launch.admission import (
     AssignedDevice,
     NodeAdmission,
     NodeCapacity,
+    ReservationCancelled,
     ResourceRequest,
     ResourcesUnavailable,
 )
@@ -92,3 +94,73 @@ def test_zero_byte_owner_still_retains_its_arena_and_impossible_arena_does_not_w
     assert admission.used.host_bytes == 100
     owner.close()
     arena.close()
+
+
+def test_partitions_share_one_atomic_claim_and_close_independently():
+    admission = node()
+    with HostArena(admission, 900, 3) as arena:
+        inputs = arena.partition(600, 2)
+        results = arena.partition(300, 10)
+        assert admission.used.claims == 1 and arena.budget.used == (900, 2)
+        with pytest.raises(TimeoutError):
+            arena.partition(1, 1)
+        active = inputs.budget.reserve(600)
+        with pytest.raises(RuntimeError, match="live buffer owners"):
+            inputs.close()
+        assert not inputs.closed and arena.budget.used == (900, 2)
+        with pytest.raises(RuntimeError, match="closing"):
+            inputs.__enter__()
+        with results.budget.reserve(300):
+            assert inputs.budget.used == (600, 1)
+        active.close()
+        inputs.close()
+        assert arena.budget.used == (300, 1)
+        with results.budget.reserve(100):
+            pass
+        results.close()
+        assert arena.budget.used == (0, 0)
+        assert admission.used.host_bytes == 900
+    assert admission.used.claims == 0
+
+
+def test_parent_retains_its_full_claim_until_the_last_partition_is_closed():
+    admission = node()
+    arena = HostArena(admission, 900, 2)
+    part = arena.partition(300, 1)
+    owner = part.budget.reserve(0)
+    with pytest.raises(RuntimeError, match="live buffer owners"):
+        arena.close()
+    with pytest.raises(RuntimeError, match="closing"):
+        arena.partition(1, 1)
+    with pytest.raises(RuntimeError, match="live buffer owners"):
+        part.close()
+    assert admission.used.host_bytes == 900
+    owner.close()
+    part.close()
+    arena.close()
+    assert admission.used.claims == 0
+
+
+def test_cancelled_whole_arena_wait_never_acquires_a_partial_reservation(monkeypatch):
+    admission = node()
+    occupied = admission.reserve(ResourceRequest({}, 900))
+    entered, cancelled = Event(), Event()
+    reserve = admission.reserve
+
+    def waiting(*args, **kwargs):
+        entered.set()
+        return reserve(*args, **kwargs)
+
+    monkeypatch.setattr(admission, "reserve", waiting)
+    with ThreadPoolExecutor(1) as pool:
+        pending = pool.submit(
+            HostArena, admission, 500, 4, wait=True, cancelled=cancelled
+        )
+        assert entered.wait(5)
+        assert admission.used.host_bytes == 900 and admission.used.claims == 1
+        cancelled.set()
+        with pytest.raises(ReservationCancelled):
+            pending.result(timeout=5)
+    assert not occupied.closed
+    occupied.close()
+    assert admission.used.claims == 0
