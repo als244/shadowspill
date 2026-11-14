@@ -6,13 +6,12 @@ from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.plan import Plan
 from shadowspill.memory import DevicePool, SpillPool, TransferRoute
+from shadowspill.planning.spill import spill_configuration
 from shadowspill.pytorch.frontend import PyTorchFrontend
 from shadowspill.pytorch.toolchain import build_setup
 from shadowspill.runtime import Runtime
 from shadowspill.runtime.plan.bridge import RuntimeBridge
 from shadowspill.runtime.plan.lifecycle import PlanMemory, begin_plan
-
-from .pools import spill_configuration
 
 
 def open_worker(

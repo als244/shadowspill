@@ -2,8 +2,8 @@
 
 import pytest
 
-from shadowspill.execution.pools import spill_configuration
 from shadowspill.memory import PinnedHostPool, SpillPool
+from shadowspill.planning.spill import spill_configuration
 
 
 @pytest.mark.parametrize(
