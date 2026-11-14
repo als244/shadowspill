@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
 from socket import SHUT_RDWR, socketpair
+from threading import RLock
 from typing import BinaryIO, Self, cast
 
 from shadowspill_client._records import number
@@ -33,6 +34,7 @@ class ConnectedProcess:
             raise ValueError("worker startup timeout must be positive")
         self._socket, child = socketpair()
         self.closed = False
+        self._lock = RLock()
         self._ready = False
         try:
             self._socket.settimeout(startup_timeout)
@@ -59,29 +61,33 @@ class ConnectedProcess:
 
     def ready(self) -> None:
         """Remove only the startup deadline after the caller verifies readiness."""
-        if self.closed or self._ready or self.stream.closed:
-            raise RuntimeError("worker channel is closed or already ready")
-        self._socket.settimeout(None)
-        self._ready = True
+        with self._lock:
+            if self.closed or self._ready or self.stream.closed:
+                raise RuntimeError("worker channel is closed or already ready")
+            self._socket.settimeout(None)
+            self._ready = True
 
-    def _close_channel(self) -> None:
-        # Shutdown wakes blocked peer/local reads before waiting for the child.
-        with suppress(OSError):
-            self._socket.shutdown(SHUT_RDWR)
-        try:
-            self.stream.close()
-        finally:
-            self._socket.close()
+    def disconnect(self) -> None:
+        """Close private I/O while retaining ownership of the running process."""
+        with self._lock:
+            # Shutdown wakes blocked peer/local reads before waiting for the child.
+            with suppress(OSError):
+                self._socket.shutdown(SHUT_RDWR)
+            try:
+                self.stream.close()
+            finally:
+                self._socket.close()
 
     def close(self, *, grace_seconds: float = 5, terminate_seconds: float = 2) -> None:
-        if not self.closed:
-            try:
-                self._close_channel()
-            finally:
-                self.process.close(
-                    grace_seconds=grace_seconds, terminate_seconds=terminate_seconds
-                )
-            self.closed = True
+        with self._lock:
+            if not self.closed:
+                try:
+                    self.disconnect()
+                finally:
+                    self.process.close(
+                        grace_seconds=grace_seconds, terminate_seconds=terminate_seconds
+                    )
+                self.closed = True
 
     def __enter__(self) -> Self:
         if self.closed:

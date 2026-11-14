@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Event, Lock, Thread
+from threading import Event, Lock, RLock, Thread
 from typing import IO, BinaryIO, Self
 
 from shadowspill_client._records import integer, number
@@ -145,6 +145,7 @@ class OwnedProcess:
         self._reaped = False
         self._returncode: int | None = None
         self._watch_error: str | None = None
+        self._close_lock = RLock()
         self._exited = Event()
         self._watcher = Thread(target=self._observe_exit, daemon=True)
         assert self._process.stdout is not None and self._process.stderr is not None
@@ -220,6 +221,10 @@ class OwnedProcess:
     def close(self, *, grace_seconds: float = 5, terminate_seconds: float = 2) -> None:
         number(grace_seconds, "orderly worker exit timeout", minimum=0)
         number(terminate_seconds, "worker termination timeout", minimum=0)
+        with self._close_lock:
+            self._close_owned(grace_seconds, terminate_seconds)
+
+    def _close_owned(self, grace_seconds: float, terminate_seconds: float) -> None:
         if self.closed:
             return
         try:

@@ -169,6 +169,18 @@ precedes process-group cleanup and wakes blocked I/O; the parent retains no copy
 of the child's socket end. Real CPU children cover the startup barrier and command
 protocol under log pressure, lost readiness, lost completion and startup timeout.
 
+`orchestration.launch.admission.NodeAdmission` reserves an explicit assigned node's
+device slots and aggregate host demand atomically before launch. Separate file
+owners retain disk reservations through cleanup or storage handoff; worker exit
+alone does not release stored artifacts' quota.
+Impossible configurations fail immediately; admissible but occupied resources
+fail by default or wait only when requested. Its lease sets one assigned visibility
+per child, prevents duplicate slot launch and retains the whole claim until all
+owned children have disconnected and completed cleanup. Failed termination keeps
+resources unavailable for reuse. Actual allocation discovery, node/cgroup limits
+and complete decoded-artifact/process/training demand still require integration;
+the ledger cannot establish those facts from worker pool budgets alone.
+
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.
 Canonical request digests include binary payload checksums. An identical ID/content

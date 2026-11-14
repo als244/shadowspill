@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import time
+from threading import Event, Thread
 
 import pytest
 
@@ -45,6 +46,45 @@ def test_large_logs_are_drained_with_a_fixed_file_limit_and_no_child_deadlock(tm
     with pytest.raises(ChildProcessError):
         os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG)
     child.close()  # Cannot signal a PID again after it has been reaped.
+
+
+def test_simultaneous_shutdown_owners_cannot_reap_or_signal_the_group_twice(
+    tmp_path, monkeypatch
+):
+    child = start(tmp_path, "import time; time.sleep(60)")
+    entered, release, second_wait = Event(), Event(), Event()
+    original = child._process.wait
+    calls, errors = [], []
+
+    def wait(*args, **kwargs):
+        calls.append(True)
+        if len(calls) > 1:
+            second_wait.set()
+        entered.set()
+        assert release.wait(3)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(child._process, "wait", wait)
+
+    def close():
+        try:
+            child.close(grace_seconds=0, terminate_seconds=0)
+        except BaseException as error:
+            errors.append(error)
+
+    first, second = Thread(target=close), Thread(target=close)
+    first.start()
+    assert entered.wait(3)
+    second.start()
+    try:
+        assert not second_wait.wait(0.05)
+    finally:
+        release.set()
+        first.join(timeout=3)
+        second.join(timeout=3)
+        child.close(grace_seconds=0, terminate_seconds=0)
+    assert not first.is_alive() and not second.is_alive()
+    assert not errors and calls == [True] and child.closed
 
 
 def test_explicit_close_escalates_only_the_owned_group_and_has_no_idle_timeout(

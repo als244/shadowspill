@@ -14,6 +14,7 @@ choose a training or measurement protocol, or interpret a saved recipe directory
 | `launch/staging` | Quota-bound node-local artifact delivery, complete size/checksum checks and consumer ownership |
 | `launch/supervision` | Fresh owned process groups, non-reaping exit observation, bounded logs and orderly/forced shutdown |
 | `launch/connected` | One inherited private control socket per owned child, startup I/O timeout and channel-before-process shutdown |
+| `launch/admission` | Atomic assigned-device and host-memory claims retained through owned child cleanup |
 | `monitoring/lifecycle` | Append-only host phase journals, including context entry/cleanup and failures |
 | `candidates` | Record a local candidate's device exhaustion after releasing its traceback; other failures propagate |
 | `communication` | Union exact collective requests across compatible caller-selected Programs; measurement remains in the public phase APIs |
@@ -101,3 +102,22 @@ the startup barrier, `ready()` removes that timeout; live workers have no defaul
 idle timeout. Close shuts down the socket before waiting on the owned process,
 waking blocked readers and permitting orderly worker/report finalization. Actual
 child tests cover startup, commands, log pressure, lost replies and timeout cleanup.
+
+`NodeAdmission` accepts trusted `NodeCapacity` facts and complete `ResourceRequest`
+demands. Device slots are exclusive; host bytes and claim count are
+reserved atomically before launch. Host demand includes decoded artifacts,
+framework/process overhead, spill, initialization, input/output staging and agent
+delivery. Disk is admitted by file/artifact owners and remains reserved until
+file cleanup or storage handoff; stopping workers alone cannot release it. These
+amounts must be computed by the caller, not copied from an untrusted capacity
+claim. Hardware/cgroup discovery and complete training-demand calculation remain
+agent integration work.
+
+Impossible requests fail immediately even when waiting is requested. Temporary
+shortages fail by default or wait explicitly, with an optional resource timeout.
+A `NodeLease` launches once per reserved device and sets its assigned visibility
+before the child imports code. Close disconnects all peers before waiting on any,
+then returns resources only after every owned process finishes cleanup. Failed
+cleanup retains the entire claim for a later retry. Closing admission wakes
+waiting callers but leaves existing leases responsible for their live workers;
+it does not release a scheduler allocation.
