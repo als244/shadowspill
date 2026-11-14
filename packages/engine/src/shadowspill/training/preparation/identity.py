@@ -11,7 +11,7 @@ from shadowspill_client.protocol.definitions import DefinitionSource
 
 @lru_cache(maxsize=1)
 def setup_sources() -> tuple[DefinitionSource, DefinitionSource]:
-    """Pin installed Python definitions/defaults; native compatibility is separate.
+    """Pin Python definitions/defaults; runtime compatibility is separate.
 
     Hash relative paths and bytes, not Git heads or installation locations. CPU
     and CUDA wheels with the same Python sources describe the same settings.

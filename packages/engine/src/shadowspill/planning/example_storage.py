@@ -58,7 +58,7 @@ def remap(
 
 
 def identities(existing: set[str], prefix: str) -> Iterator[str]:
-    # Native execution binds the numeric suffix of canonical plan-local IDs.
+    # Execution binds the numeric suffix of canonical plan-local IDs.
     start = 1 + max(
         (
             int(name.removeprefix(prefix))

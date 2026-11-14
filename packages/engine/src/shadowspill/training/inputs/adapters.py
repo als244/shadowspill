@@ -138,7 +138,7 @@ class AdaptedInputs:
             raise RuntimeError("adapted input storage is closed")
         trees: dict[str, dict[str, Any]] = {"inputs": {}, "loss_inputs": {}}
         for path, array in self.fields.items():
-            # Engine-owned backing arrays remain writable; exposed NumPy views
+            # Engine-owned storage arrays remain writable; exposed NumPy views
             # are read-only. Staging consumes this private Torch view without
             # mutation and copies into admitted worker input storage.
             writable = array.view()
@@ -205,7 +205,7 @@ class InputBinding:
             raise ValueError("adapter output paths overlap")
         self.shapes = MappingProxyType(shapes)
         self.dtypes = MappingProxyType(dtypes)
-        # Store each referenced physical backing array and generated field once.
+        # Store each referenced physical storage array and generated field once.
         # Reconstructing the declared views then preserves the original strides,
         # empty-slice geometry and storage extents used by capture guards.
         self.frame_sources = {
@@ -272,7 +272,7 @@ class InputBinding:
             assert isinstance(payload, TensorPayload)
             if not prod(payload.shape):
                 # np.empty (used by materialization/metadata) gives empty
-                # backing arrays zero strides; frombuffer.reshape need not.
+                # storage arrays zero strides; frombuffer.reshape need not.
                 return np.ndarray(
                     payload.shape,
                     dtype=storage_dtype(payload.dtype),

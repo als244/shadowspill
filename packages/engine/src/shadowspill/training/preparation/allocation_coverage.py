@@ -1,7 +1,7 @@
 """CPU verification of all-value allocation guarantees for prepared captures.
 
 Compiler geometry plus source-owned opaque-call guarantees establish invariance.
-Measured profiles still supply actual bytes/alias traces, and the existing native
+Measured profiles still supply actual bytes/alias traces, and the existing runtime
 admission engine still binds those traces to the complete operation family.
 """
 
@@ -112,7 +112,7 @@ def allocation_coverage(template: CaptureTemplate, program: Program) -> dict[str
         "tasks": tasks,
         "preparations": preparations,
         # Collective byte/protocol evidence is separately checked by existing
-        # native admission and cooperating-worker issue-order validation.
+        # runtime admission and cooperating-worker issue-order validation.
         "collectives": digest(program.bindings.get("collective_tasks", {})),
     }
 

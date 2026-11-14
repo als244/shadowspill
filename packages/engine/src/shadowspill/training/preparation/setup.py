@@ -365,7 +365,7 @@ def resolve_training(registry: Registry, **setup: Any) -> ResolvedSetup:
     """Describe keyword settings or recheck exactly one resolved snapshot.
 
     The same entry point is used by creation. No workers, model factories,
-    native allocation, capture, compilation, profiling or search run here.
+    runtime allocation, capture, compilation, profiling or search run here.
     A preview is neither a resource reservation nor a readiness certificate.
     """
     if "config" in setup:

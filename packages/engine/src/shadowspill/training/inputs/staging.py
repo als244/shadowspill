@@ -211,7 +211,7 @@ def admit_input_staging(
     bindings: Mapping[tuple[int, int], InputBinding],
     execution: Execution,
 ) -> InputStaging:
-    """Admit serial host staging separately from geometry and native pools.
+    """Admit serial host staging separately from geometry and runtime pools.
 
     Every (buffer index, logical rank) adapter must have the exact prepared ABI.
     Count replicated input data once, but include the largest worker's declared

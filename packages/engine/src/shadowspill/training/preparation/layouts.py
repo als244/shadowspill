@@ -126,7 +126,7 @@ def prepare_layouts(
     Known staging infeasibility removes only that alternative, with a reason.
     Definition/schema failures propagate. Every operation and explicit batch
     option must still have a constructive coverage witness. This CPU step
-    constructs no tensors/models and does not certify native pools or collectives.
+    constructs no tensors/models and does not certify runtime pools or collectives.
     """
     if type(max_bindings) is not int or max_bindings < 1:
         raise ValueError("max_bindings must be a positive integer")
