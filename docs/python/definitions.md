@@ -22,6 +22,23 @@ dependencies. IDs contain an explicit version, for example
 import Python modules named by requests. Supplying an expected source rejects
 changed definitions, including changes in editable installations.
 
+An installed package can publish CPU registration hooks in its `pyproject.toml`:
+
+```toml
+[project.entry-points."shadowspill.definitions"]
+models = "my_project.definitions:register"
+```
+
+`load_registry(["my-project-workloads"])` loads only the configured distributions,
+calls each `register(registry)` hook in entry-point name order, and returns the
+ordinary `Registry`. Hooks register in place and return `None`; they still supply
+the source closures described above. Missing packages, duplicate package/entry
+names and registration failures are errors. These package names belong to trusted
+server configuration; model and compute requests continue to use definition IDs.
+The supplied workloads wheel publishes the same entry-point group. This is the
+common loader for controller and fresh-phase startup, whose integration remains
+under development.
+
 The small [external classifier fixture](../../packages/engine/tests/engine_tests/fixtures/external_definition.py)
 shows the full interface. The supplied
 [regression definition](../../packages/workloads/src/shadowspill_workloads/definitions/regression.py)

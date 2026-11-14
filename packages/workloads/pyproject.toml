@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["shadowspill==0.1.0.dev0"]
 
+[project.entry-points."shadowspill.definitions"]
+workloads = "shadowspill_workloads.definitions:register"
+
 [project.optional-dependencies]
 training = [
   "shadowspill[pytorch,training]==0.1.0.dev0",
