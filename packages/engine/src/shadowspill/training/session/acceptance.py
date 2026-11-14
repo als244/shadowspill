@@ -1,5 +1,7 @@
 """Commit a contiguous prefix of fully validated calls, preserving dependencies."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import RLock
 from typing import Protocol
@@ -62,14 +64,55 @@ class AcceptanceOrder:
         """The complete upload, controls, preprocessing and coverage have passed."""
         return self._decide(request_id, None)
 
-    def reject(self, request_id: str, *, code: str, message: str) -> RequestStatus:
+    @contextmanager
+    def synchronized(self) -> Iterator[None]:
+        """Serialize brief state/record boundaries, never the device execution wait."""
+        with self._mutex:
+            yield
+
+    def reject(
+        self,
+        request_id: str,
+        *,
+        code: str,
+        message: str,
+        dependencies: tuple[str, ...] = (),
+    ) -> RequestStatus:
         """Queue rejection of an upload and its already queued execution suffix.
 
         The caller cancels producers/releases owned inputs after reading failures.
         Later explicit corrected work uses a new ID and surviving contributions;
         it must not name failed requests as dependencies.
         """
-        return self._decide(request_id, Rejection(code, message))
+        with self._mutex:
+            _, status = self._require(request_id)
+            if status.state == "accepted":
+                try:
+                    if not self._reject_suffix(
+                        request_id, Rejection(code, message, dependencies)
+                    ):
+                        raise RuntimeError(
+                            "only the execution queue head can be rejected"
+                        )
+                    self.advance()
+                    return self._require(request_id)[1]
+                except BaseException:
+                    self._state.invalidate()
+                    raise
+            return self._decide(request_id, Rejection(code, message, dependencies))
+
+    def fail_dependents(self, request_id: str) -> None:
+        """A failed execution/publication rejects its already queued suffix."""
+        with self._mutex:
+            request, status = self._require(request_id)
+            if status.state != "failed":
+                raise ValueError("dependent rejection requires an original failure")
+            try:
+                self._fail_dependents(request, self._records.last_sequence)
+                self._advance()
+            except BaseException:
+                self._state.invalidate()
+                raise
 
     def _decide(self, request_id: str, rejection: Rejection | None) -> RequestStatus:
         with self._mutex:
@@ -94,7 +137,7 @@ class AcceptanceOrder:
 
     def _reject_suffix(self, request_id: str, rejection: Rejection) -> bool:
         request, status = self._require(request_id)
-        if status.state != "uploading":
+        if status.state not in ("uploading", "accepted"):
             raise ValueError("validation rejection cannot undo dispatched work")
         first = self._records.pending(limit=1)
         if first and first[0].identity.sequence < request.identity.sequence:
@@ -103,11 +146,16 @@ class AcceptanceOrder:
         # visible. Only the already queued suffix belongs to this rejection.
         cutoff = self._records.last_sequence
         self._fail(request_id, rejection)
+        self._fail_dependents(request, cutoff)
+        return True
+
+    def _fail_dependents(self, request: ComputeRequest, cutoff: int) -> None:
+        request_id = request.identity.request_id
         after = request.identity.sequence
         while page := self._records.pending(after=after, limit=128):
             for pending in page:
                 if pending.identity.sequence > cutoff:
-                    return True
+                    return
                 if pending.state == "running":
                     raise RuntimeError("dependent suffix was dispatched out of order")
                 self._fail(
@@ -119,7 +167,6 @@ class AcceptanceOrder:
                     ),
                 )
                 after = pending.identity.sequence
-        return True
 
     def _advance(self) -> None:
         while (row := self._records.at_sequence(self._next)) is not None:
@@ -174,8 +221,8 @@ class AcceptanceOrder:
             rejection.message,
             "not_started",
             boundary.valid,
-            completed_updates=boundary.completed_updates,
-            accumulation=boundary.accumulation,
+            completed_updates=boundary.completed_updates if boundary.valid else None,
+            accumulation=boundary.accumulation if boundary.valid else None,
             failed_dependencies=rejection.dependencies,
         )
         self._records.fail(request_id, failure)

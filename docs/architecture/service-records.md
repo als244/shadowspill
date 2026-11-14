@@ -44,6 +44,20 @@ fail during execution. Durable record failure invalidates live state and require
 reconciliation. None of these primitives dispatches workers or releases input
 owners; service integration supplies those lifecycle boundaries.
 
+`training.session.dispatch.RequestDispatcher` connects this ordering to the
+existing `OperationState`. It rechecks dependencies and operation invariants at
+the accepted queue head, commits dispatch before calling workers, and commits an
+execution receipt only after the worker adapter confirms every participant and
+required terminal transfer. Validation may overlap the execution wait; short
+record/state transitions share the ordering lock. Publication consumes owned host
+outputs and closes them on every path. Required publication failure records a
+known completed effect; optional artifact issues remain on successful results.
+Worker failure records unknown effects and invalidates live state. Authoritative
+storage failure stops further work. This is the internal dispatch boundary;
+persistent worker transport and the complete upload lifecycle remain integration
+work. The adapter must honor prepared participation and accumulation decisions,
+including output-only masked execution and empty optimizer skips.
+
 Writable attachment calls `claim_writer` with a fresh handle identity and the
 current server incarnation. The durable `WriterLease` carries its epoch and next
 submission sequence. New metadata and acceptance of pending uploads require the
