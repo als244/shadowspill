@@ -22,7 +22,7 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
-#include "../../../csrc/network/internal.h"
+#include "../../../packages/engine/csrc/network/internal.h"
 
 /* 256 KiB against the 64 KiB limit `main` forces below, so the payload crosses
    in four pieces rather than one. */

@@ -121,5 +121,5 @@ python -m qualification.gap_report qualification/results/performance_my_check
 | `tests/qualification/` | Runner and acceptance-rule tests |
 
 Model definitions live in `workloads/`; runtime and planning behavior remain in
-`src/shadowspill/`. There is one implementation per runner, without forwarding
+`packages/engine/src/shadowspill/`. There is one implementation per runner, without forwarding
 packages or a second preparation path inside execution.

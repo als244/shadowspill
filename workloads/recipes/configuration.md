@@ -276,7 +276,7 @@ These controls do not require a workload-specific Trainer subclass or adapter ho
 
 ## Adapter boundary
 
-The runner in [training/](training/) has no architecture, operator, checkpoint
+The runner in [training/](training) has no architecture, operator, checkpoint
 format or provider-cache knowledge. Internal adapters supply:
 
 | Hook | Supplies |

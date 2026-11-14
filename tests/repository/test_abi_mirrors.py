@@ -25,7 +25,8 @@ from shadowspill.simulator.capi import CDevice, CProgram
 from shadowspill.status import ABI_VERSION, Status
 
 ROOT = Path(__file__).resolve().parents[2]
-_HEADERS = ROOT / "csrc" / "include" / "shadowspill"
+ENGINE = ROOT / "packages/engine"
+_HEADERS = ENGINE / "csrc" / "include" / "shadowspill"
 
 #: Each ctypes structure and the C struct it mirrors.
 _MIRRORS = {
@@ -120,7 +121,7 @@ def test_every_mirrored_constant_matches_its_c_macro() -> None:
 
 def test_the_adapter_abi_version_is_one_number() -> None:
     header = (
-        ROOT
+        ENGINE
         / "csrc"
         / "adapter"
         / "pytorch"
@@ -146,7 +147,7 @@ def test_status_vocabulary_matches_the_header() -> None:
 
 
 def test_every_status_decodes_to_a_sentence() -> None:
-    decoder = (ROOT / "csrc" / "src" / "common" / "status.c").read_text()
+    decoder = (ENGINE / "csrc" / "src" / "common" / "status.c").read_text()
     undecoded = [
         item.name for item in Status if f"SHADOWSPILL_STATUS_{item.name}" not in decoder
     ]
@@ -157,7 +158,7 @@ def test_every_failure_reason_decodes_to_a_sentence() -> None:
     header = (_HEADERS / "runtime" / "vocabulary.h").read_text()
     reasons = re.findall(r"SHADOWSPILL_FAILURE_REASON_([A-Z_]+) = (\d+)", header)
     assert reasons, "the failure reason vocabulary is empty"
-    source = (ROOT / "csrc" / "src" / "runtime" / "failure_reason.c").read_text()
+    source = (ENGINE / "csrc" / "src" / "runtime" / "failure_reason.c").read_text()
     undecoded = [
         name
         for name, _ in reasons

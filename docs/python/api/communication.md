@@ -9,7 +9,7 @@ only reads their saved results. The [phase guide](../phases.md) shows the order.
 `measure_communication` returns `CommunicationInfo`, saved independently and
 passed to `plan_program`. With no arguments it measures local pinned-host copies.
 
-<!-- api-options: src/shadowspill/communication/measure.py:measure_communication -->
+<!-- api-options: packages/engine/src/shadowspill/communication/measure.py:measure_communication -->
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -34,7 +34,7 @@ overlap = measure_overlap(profiled, communication)
 profiled = apply_profiles(profiled.program, profiled.profiles.merge(overlap))
 ```
 
-<!-- api-options: src/shadowspill/profiling/overlap.py:measure_overlap -->
+<!-- api-options: packages/engine/src/shadowspill/profiling/overlap.py:measure_overlap -->
 
 | Argument | Default | Meaning |
 | --- | --- | --- |

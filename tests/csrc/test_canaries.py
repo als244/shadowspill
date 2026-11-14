@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 #: `build/{wheel_tag}`, as `pyproject.toml` configures scikit-build-core.
-_BUILD_ROOT = Path(__file__).resolve().parents[2] / "build"
+_BUILD_ROOT = Path(__file__).resolve().parents[2] / "packages/engine/build"
 
 #: A ceiling on the whole ctest invocation, not on any one canary --
 #: each of those carries its own TIMEOUT property in CMakeLists.txt.

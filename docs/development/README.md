@@ -12,7 +12,7 @@ what it must pass, and the words every surface uses.
 The [Python](../python/README.md) and [C](../c/README.md) references document
 the surfaces a change must keep working.
 
-Product code belongs in `src/shadowspill/` or `csrc/`. Reusable source-tree
+Product code belongs in `packages/engine/src/shadowspill/` or `csrc/`. Reusable source-tree
 tooling belongs in `src/tools/`. Workload definitions, planning benchmarks,
 and release qualification consume product APIs and do not contain alternate
 implementations.

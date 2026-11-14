@@ -35,7 +35,7 @@ The [complete example](../../examples/generic-training.md) defines these objects
 
 All arguments after `model` are keyword-only. `build_step` accepts:
 
-<!-- api-options: src/shadowspill/build/step.py:build_step -->
+<!-- api-options: packages/engine/src/shadowspill/build/step.py:build_step -->
 
 | Argument | Default | Meaning |
 | --- | --- | --- |

@@ -23,7 +23,7 @@ The [example model catalog](MODELS.md) is the central reference for:
 - Frozen/trainable parameters, LoRA availability, and expert parallelism.
 - Inputs, losses, packing, and runnable Python/JSON/CLI examples.
 
-The [catalog](models/catalog/) names every supplied model `<family>-<size>`:
+The [catalog](models/catalog) names every supplied model `<family>-<size>`:
 `llama3-8b`, `qwen3-8b`, `qwen3-32b`, `qwen35-9b`, `qwen35-27b`,
 `olmoe-7b-a1b`, `qwen3moe-30b-a3b`, `qwen35moe-35b-a3b`, the small
 `llama3-1b`, `qwen3-1.7b` and `qwen35-2b`, the `numerical` shapes of Llama 3,
@@ -40,12 +40,12 @@ No separate EP model import is needed; see
 
 | Directory / file | Purpose |
 |---|---|
-| [models/](models/) | One package per model family: its configuration, checkpoint reader, README and implementations (`pytorch`, `mlops`); `models/shared/` holds the code families share |
-| [lora/](lora/) | LoRA targeting for the supplied models over MLOps's reusable projections |
-| [recipes/](recipes/) | Caller-side model/data/objective composition |
-| [recipes/text/data/](recipes/text/data/) | Corpus preparation, fixed token sequences, document packing and resumable sources |
-| [recipes/text/experiment/](recipes/text/experiment/) | Configured text experiments with separate build, profile, CPU plan and fresh-worker execution |
-| [recipes/text/reference/](recipes/text/reference/) | Ordinary PyTorch reference updates, evaluation and checkpoint/resume |
+| [models/](models) | One package per model family: its configuration, checkpoint reader, README and implementations (`pytorch`, `mlops`); `models/shared/` holds the code families share |
+| [lora/](lora) | LoRA targeting for the supplied models over MLOps's reusable projections |
+| [recipes/](recipes) | Caller-side model/data/objective composition |
+| [recipes/text/data/](recipes/text/data) | Corpus preparation, fixed token sequences, document packing and resumable sources |
+| [recipes/text/experiment/](recipes/text/experiment) | Configured text experiments with separate build, profile, CPU plan and fresh-worker execution |
+| [recipes/text/reference/](recipes/text/reference) | Ordinary PyTorch reference updates, evaluation and checkpoint/resume |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
 | [numerical.py](numerical.py) | Exact-scale cases shared by the numerical qualification's two arms |
 | [precision.py](precision.py) | Explicit precision settings used by supplied workloads |
@@ -67,22 +67,22 @@ names for Llama, OLMoE, dense Qwen and Qwen MoE full training, plus checkpoint
 sources for Qwen3.5 MoE and GLM Flash LoRA. It owns build/profile/plan/execute;
 model adapters supply construction, bounded initialization and resumable text
 inputs. See the [commented script](recipes/text/example.py). The standalone
-[Llama phase modules](recipes/text/llama3/) also illustrate direct phase control.
-The [configured text runner](recipes/text/experiment/) follows the same phases,
+[Llama phase modules](recipes/text/llama3) also illustrate direct phase control.
+The [configured text runner](recipes/text/experiment) follows the same phases,
 preserving document packing, runtime norm logging, held-out evaluation and resume.
-The [distributed regression example](recipes/regression/) uses the same driver
+The [distributed regression example](recipes/regression) uses the same driver
 and adds a separate communication-calibration phase. Build and task measurement
 use one GPU; only calibration and execution launch all ranks.
 
 The catalog separates its entry type, preset rows, and lookup functions.
-The [shared GLM recipes](recipes/text/glm/) own quickstart configuration,
+The [shared GLM recipes](recipes/text/glm) own quickstart configuration,
 synthetic/real text inputs, bounded initialization and optional partitioning.
-The shared [GLM checkpoint reader](models/shared/glm/checkpoint/) separates meta
+The shared [GLM checkpoint reader](models/shared/glm/checkpoint) separates meta
 model declaration, precision/coverage validation, expert conversion, and loading;
 family readers supply only names and configurations. Keep kernel implementations
 in MLOps and pipeline orchestration in ShadowSpill.
 
-The other Hugging Face readers share [checkpoint/](models/shared/checkpoint/):
+The other Hugging Face readers share [checkpoint/](models/shared/checkpoint):
 family name mappings, tensor-layout sources and bounded range copying stay
 separate. `copy_chunk(name, shape, offset, destination)` fills an Executor buffer
 without assembling full concatenated projections or expert banks. Direct tensors,
@@ -90,7 +90,7 @@ row concatenation, expert banks and gated-query reordering support this path;
 an unknown transformation fails explicitly instead of allocating a full tensor.
 
 Larger implementations use a package rather than a single long file. For example,
-the [Qwen3.5 PyTorch reference](models/qwen35/implementations/pytorch/) keeps its
+the [Qwen3.5 PyTorch reference](models/qwen35/implementations/pytorch) keeps its
 recurrence, operator registration, attention modules and model assembly separate;
 the caller still imports `Model` from `implementations.pytorch`.
 

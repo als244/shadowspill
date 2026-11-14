@@ -37,7 +37,7 @@ function(shadowspill_add_pytorch_canary name timeout)
       # otherwise takes precedence over PYTHONPATH in fresh Python workers.
       # The wrapper isolates compiler caches outside saved artifacts.
       ENVIRONMENT
-        "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_CANARY_TIMEOUT=${timeout};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
+        "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${SHADOWSPILL_REPOSITORY_ROOT}/src:${SHADOWSPILL_REPOSITORY_ROOT};SHADOWSPILL_CANARY_TIMEOUT=${timeout};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
       TIMEOUT ${timeout}
   )
 endfunction()
@@ -66,7 +66,7 @@ function(shadowspill_add_public_api_test file name timeout)
       ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/isolated_cache.py
       ${Python3_EXECUTABLE} -m pytest
-      ${PROJECT_SOURCE_DIR}/tests/${file}
+      ${SHADOWSPILL_REPOSITORY_ROOT}/tests/${file}
       -k ${name}
       -o addopts=
       --no-header
@@ -78,7 +78,7 @@ function(shadowspill_add_public_api_test file name timeout)
       LABELS "cuda;pytorch"
       # Public tests use temporary artifact stores; the wrapper also isolates
       # direct compiler calls and PyTorch reference work outside planning.
-      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
+      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${SHADOWSPILL_REPOSITORY_ROOT}/src:${SHADOWSPILL_REPOSITORY_ROOT};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
       TIMEOUT ${timeout}
   )
 endfunction()

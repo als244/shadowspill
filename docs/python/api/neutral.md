@@ -281,7 +281,7 @@ requested budgets and `TransferBandwidths`, without capture, compilation or
 profiling. It is model- and runtime-independent, so it may be repeated across a
 budget/bandwidth frontier from one built program.
 
-<!-- source-signature: src/shadowspill/planner/plan.py:plan_program -->
+<!-- source-signature: packages/engine/src/shadowspill/planner/plan.py:plan_program -->
 ```text
 plan_program(
     problem,
@@ -340,7 +340,7 @@ Nothing but that summary is read, so a caller that compares many plans and
 runs one reads kilobytes per question and fetches a whole plan, through
 `plan_program()`, only for the one it will run.
 
-<!-- source-signature: src/shadowspill/planner/plan.py:summarize_plan -->
+<!-- source-signature: packages/engine/src/shadowspill/planner/plan.py:summarize_plan -->
 ```text
 summarize_plan(
     problem,
@@ -644,7 +644,7 @@ is settled inside it: a candidate measures its own plan against the pool
 is nothing to retry at this level. It takes no store: nothing it does is
 written down.
 
-<!-- source-signature: src/shadowspill/planner/search/algorithms/pressurefit/__init__.py:PressureFit.__call__ -->
+<!-- source-signature: packages/engine/src/shadowspill/planner/search/algorithms/pressurefit/__init__.py:PressureFit.__call__ -->
 ```text
 pressurefit(
     program,
@@ -822,7 +822,7 @@ placed on. Importing this package does not import a framework.
 object through which it selects and synchronizes a device, installs the process
 allocator, and finds or detaches the framework objects holding a lease:
 
-<!-- source-signature: src/shadowspill/runtime/core.py:Runtime.__init__ -->
+<!-- source-signature: packages/engine/src/shadowspill/runtime/core.py:Runtime.__init__ -->
 ```text
 Runtime(
     *,

@@ -15,6 +15,7 @@ from shadowspill.schema import artifact_schema
 from tests.repository.files import repository_files
 
 ROOT = Path(__file__).resolve().parents[2]
+ENGINE = ROOT / "packages/engine"
 DOCS = ROOT / "docs"
 PYTHON_API = DOCS / "python" / "api"
 
@@ -33,16 +34,16 @@ _OPTIONS_TABLE = re.compile(
 )
 _C_FUNCTION = re.compile(r"\b(shadowspill_[A-Za-z0-9_]+)\s*\(")
 
-_MEMORY_MODULE = ROOT / "src" / "shadowspill" / "memory.py"
-_PYTORCH_MODULE = ROOT / "src" / "shadowspill" / "pytorch" / "__init__.py"
-_TRAINING_MODULE = ROOT / "src" / "shadowspill" / "training" / "__init__.py"
-_REPORTING_MODULE = ROOT / "src" / "shadowspill" / "reporting" / "__init__.py"
+_MEMORY_MODULE = ENGINE / "src" / "shadowspill" / "memory.py"
+_PYTORCH_MODULE = ENGINE / "src" / "shadowspill" / "pytorch" / "__init__.py"
+_TRAINING_MODULE = ENGINE / "src" / "shadowspill" / "training" / "__init__.py"
+_REPORTING_MODULE = ENGINE / "src" / "shadowspill" / "reporting" / "__init__.py"
 _CORE_PYTHON_MODULES = (
-    ROOT / "src" / "shadowspill" / "errors.py",
-    ROOT / "src" / "shadowspill" / "ir" / "__init__.py",
-    ROOT / "src" / "shadowspill" / "planner" / "__init__.py",
-    ROOT / "src" / "shadowspill" / "simulator" / "__init__.py",
-    ROOT / "src" / "shadowspill" / "runtime" / "__init__.py",
+    ENGINE / "src" / "shadowspill" / "errors.py",
+    ENGINE / "src" / "shadowspill" / "ir" / "__init__.py",
+    ENGINE / "src" / "shadowspill" / "planner" / "__init__.py",
+    ENGINE / "src" / "shadowspill" / "simulator" / "__init__.py",
+    ENGINE / "src" / "shadowspill" / "runtime" / "__init__.py",
 )
 _PUBLIC_PYTHON_MODULES = (
     _MEMORY_MODULE,
@@ -52,7 +53,7 @@ _PUBLIC_PYTHON_MODULES = (
     _TRAINING_MODULE,
 )
 
-_PUBLIC_HEADERS = ROOT / "csrc" / "include" / "shadowspill"
+_PUBLIC_HEADERS = ENGINE / "csrc" / "include" / "shadowspill"
 
 _PUBLIC_C_REFERENCES = {
     _PUBLIC_HEADERS / "runtime" / "vocabulary.h": DOCS / "c" / "runtime.md",
@@ -68,7 +69,7 @@ _PUBLIC_C_REFERENCES = {
     _PUBLIC_HEADERS / "backend.h": DOCS / "c" / "backends.md",
     _PUBLIC_HEADERS / "planner.h": DOCS / "c" / "planner.md",
     _PUBLIC_HEADERS / "simulator.h": DOCS / "c" / "simulator.md",
-    ROOT
+    ENGINE
     / "csrc"
     / "adapter"
     / "pytorch"
@@ -78,25 +79,25 @@ _PUBLIC_C_REFERENCES = {
 }
 
 _REQUIRED_SIGNATURES = {
-    "src/shadowspill/pytorch/chunking/policy.py:ChunkPolicy.configure_stage",
-    "src/shadowspill/ssd.py:ssd",
-    "src/shadowspill/planner/plan.py:plan_program",
-    "src/shadowspill/planner/plan.py:summarize_plan",
-    "src/shadowspill/planner/search/algorithms/pressurefit/__init__.py:PressureFit.__call__",
-    "src/shadowspill/pytorch/runtime.py:Runtime.__init__",
-    "src/shadowspill/runtime/core.py:Runtime.__init__",
+    "packages/engine/src/shadowspill/pytorch/chunking/policy.py:ChunkPolicy.configure_stage",
+    "packages/engine/src/shadowspill/ssd.py:ssd",
+    "packages/engine/src/shadowspill/planner/plan.py:plan_program",
+    "packages/engine/src/shadowspill/planner/plan.py:summarize_plan",
+    "packages/engine/src/shadowspill/planner/search/algorithms/pressurefit/__init__.py:PressureFit.__call__",
+    "packages/engine/src/shadowspill/pytorch/runtime.py:Runtime.__init__",
+    "packages/engine/src/shadowspill/runtime/core.py:Runtime.__init__",
 }
 
 _REQUIRED_OPTIONS_TABLES = {
-    "src/shadowspill/build/step.py:build_step",
-    "src/shadowspill/profiling/measure.py:measure_program",
-    "src/shadowspill/communication/measure.py:measure_communication",
-    "src/shadowspill/profiling/overlap.py:measure_overlap",
-    "src/shadowspill/planning/plan.py:plan_program",
-    "src/shadowspill/planning/sweep.py:sweep_programs",
-    "src/shadowspill/training/trainer.py:Trainer.__init__",
-    "src/shadowspill/training/trainer.py:Trainer.step",
-    "src/shadowspill/training/trainer.py:Trainer.fit",
+    "packages/engine/src/shadowspill/build/step.py:build_step",
+    "packages/engine/src/shadowspill/profiling/measure.py:measure_program",
+    "packages/engine/src/shadowspill/communication/measure.py:measure_communication",
+    "packages/engine/src/shadowspill/profiling/overlap.py:measure_overlap",
+    "packages/engine/src/shadowspill/planning/plan.py:plan_program",
+    "packages/engine/src/shadowspill/planning/sweep.py:sweep_programs",
+    "packages/engine/src/shadowspill/training/trainer.py:Trainer.__init__",
+    "packages/engine/src/shadowspill/training/trainer.py:Trainer.step",
+    "packages/engine/src/shadowspill/training/trainer.py:Trainer.fit",
 }
 
 
@@ -153,7 +154,7 @@ def _heading_anchors(document: Path) -> set[str]:
 
 
 def _all_exports(path: Path) -> tuple[str, ...]:
-    parts = path.relative_to(ROOT / "src").with_suffix("").parts
+    parts = path.relative_to(ROOT / "packages/engine/src").with_suffix("").parts
     module = ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
     value = importlib.import_module(module).__all__
     assert isinstance(value, list) and all(isinstance(name, str) for name in value)
@@ -850,7 +851,7 @@ def test_every_step_diagnostics_field_is_described_in_its_guide() -> None:
     every field of every record, not only the timings.
     """
 
-    source = (ROOT / "src/shadowspill/diagnostics/step.py").read_text()
+    source = (ROOT / "packages/engine/src/shadowspill/diagnostics/step.py").read_text()
     guide = (ROOT / "docs/python/advanced/step-diagnostics.md").read_text()
     undocumented: dict[str, list[str]] = {}
     for node in ast.walk(ast.parse(source)):
@@ -877,7 +878,7 @@ def test_step_diagnostics_names_instants_and_durations_apart() -> None:
     finished, reached, queued -- has to carry the instant suffix.
     """
 
-    source = (ROOT / "src/shadowspill/diagnostics/step.py").read_text()
+    source = (ROOT / "packages/engine/src/shadowspill/diagnostics/step.py").read_text()
     moments = (
         "started",
         "finished",
@@ -913,11 +914,11 @@ def test_step_diagnostics_names_instants_and_durations_apart() -> None:
 def test_search_diagnostic_fields_are_described_in_the_reference() -> None:
     """Document the inspectable search records used by the current Plan."""
     modules = (
-        "src/shadowspill/planner/diagnostics/plan_summary.py",
-        "src/shadowspill/planner/diagnostics/summary.py",
-        "src/shadowspill/planner/diagnostics/resolved_programs.py",
-        "src/shadowspill/planner/diagnostics/candidates.py",
-        "src/shadowspill/planner/diagnostics/counters.py",
+        "packages/engine/src/shadowspill/planner/diagnostics/plan_summary.py",
+        "packages/engine/src/shadowspill/planner/diagnostics/summary.py",
+        "packages/engine/src/shadowspill/planner/diagnostics/resolved_programs.py",
+        "packages/engine/src/shadowspill/planner/diagnostics/candidates.py",
+        "packages/engine/src/shadowspill/planner/diagnostics/counters.py",
     )
     reference = (ROOT / "docs/python/advanced/plan-report-fields.md").read_text()
     undocumented: dict[str, list[str]] = {}
@@ -943,9 +944,14 @@ def test_search_diagnostic_fields_are_described_in_the_reference() -> None:
 #: others say in their own text that they stop at one level.
 _DOCUMENTED_TREES = (
     ("docs/development/repository.md", "shadowspill/", ".", False),
-    ("docs/development/repository.md", "src/shadowspill/", "src/shadowspill", True),
+    (
+        "docs/development/repository.md",
+        "packages/engine/src/shadowspill/",
+        "packages/engine/src/shadowspill",
+        True,
+    ),
     ("docs/development/repository.md", "tests/", "tests", False),
-    ("csrc/README.md", "csrc/", "csrc", False),
+    ("packages/engine/csrc/README.md", "csrc/", "packages/engine/csrc", False),
     ("qualification/README.md", "qualification/", "qualification", False),
 )
 

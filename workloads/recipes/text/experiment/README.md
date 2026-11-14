@@ -129,11 +129,11 @@ silently changing their meaning.
 
 With `ranks` the runner launches that many workers under
 `torch.distributed.run`, on one node or, with `nodes`, across several; the
-[Qwen3 distributed recipe](../qwen3/) is the sharded-DP reference the phases
+[Qwen3 distributed recipe](../qwen3) is the sharded-DP reference the phases
 follow. `rank_tokens_per_step` is set by the
 [heterogeneous recipe](../heterogeneous/README.md) for each node, its ranks'
 share of the step; the runner refuses it in a config.
-`engine="pytorch"` selects the ordinary [PyTorch reference loop](../reference/).
+`engine="pytorch"` selects the ordinary [PyTorch reference loop](../reference).
 It uses `device` (default `"auto"`) and `compile` (default `true`), without
 constructing ShadowSpill Plans or installing the execution allocator. It preserves
 packing, schedules, optional observations, evaluation and local PyTorch checkpoints.

@@ -83,14 +83,14 @@ def _refuse_a_stale_library() -> str | None:
         library = resolve_library("libshadowspill.so")
     except Exception:
         return None
-    sources = Path("csrc")
+    sources = Path("packages/engine/csrc")
     if library is None or not sources.is_dir() or not library.is_file():
         return None
     built_from = {".c", ".h", ".cpp", ".hpp", ".txt", ".cmake"}
     if _newest(library.parent) >= _newest(sources, built_from):
         return None
     return (
-        f"the build the gates will load is older than csrc/:\n"
+        f"the build the gates will load is older than packages/engine/csrc/:\n"
         f"    {library.parent}\n"
         f"Rebuild the tree the editable install reads, not build/dev:\n"
         f"    cmake --build {library.parent} --parallel\n"

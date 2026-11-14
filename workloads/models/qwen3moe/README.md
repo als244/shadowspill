@@ -7,7 +7,7 @@ probabilities sum to one. The default shape follows the published
 ## Shapes
 
 [config.py](config.py) holds `Config` and `PRESETS`, the named shapes the
-[catalog](../catalog/) serves; the
+[catalog](../catalog) serves; the
 [catalog table](../../MODELS.md#preset-dimensions-and-parameter-counts) lists
 their widths and parameter counts.
 
@@ -46,7 +46,7 @@ Qwen convention: balanced top-8 routing gives an unweighted auxiliary near 8.
 
 [implementations/mlops.py](implementations/mlops.py) exposes `Model`, built
 from the decoder, mixers and experts in
-[shared/qwen_moe/](../shared/qwen_moe/) that both Qwen mixture families use,
+[shared/qwen_moe/](../shared/qwen_moe) that both Qwen mixture families use,
 with local experts by default or experts sharded over an expert-parallel group
 through the constructor arguments the
 [model catalog](../../MODELS.md#expert-parallelism) describes. There is no

@@ -512,7 +512,7 @@ to leave a stage intact. The callback must be deterministic and read-only;
 it must not run model kernels or mutate capture metadata. Unknown operations
 in a selected region fail capture rather than silently running unchunked.
 
-<!-- source-signature: src/shadowspill/pytorch/chunking/policy.py:ChunkPolicy.configure_stage -->
+<!-- source-signature: packages/engine/src/shadowspill/pytorch/chunking/policy.py:ChunkPolicy.configure_stage -->
 ```text
 configure_stage(stage: StageInfo) -> AxisChunks | None
 ```

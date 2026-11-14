@@ -23,9 +23,9 @@
 #include <stdatomic.h>
 #include <shadowspill/runtime.h>
 
-#include "../../../csrc/src/runtime/internal.h"
-#include "../../../csrc/src/runtime/transfers/internal.h"
-#include "../../../csrc/network/internal.h"
+#include "../../../packages/engine/csrc/src/runtime/internal.h"
+#include "../../../packages/engine/csrc/src/runtime/transfers/internal.h"
+#include "../../../packages/engine/csrc/network/internal.h"
 
 #define DEVICE_POOL 0U
 #define REMOTE_POOL 1U

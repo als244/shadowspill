@@ -26,7 +26,7 @@ sys.meta_path[:0] = [wrong, unrelated]
 runpy.run_path({str(BOOTSTRAP)!r})
 assert wrong not in sys.meta_path and unrelated in sys.meta_path
 import shadowspill
-assert shadowspill.__file__.startswith({str(ROOT / "src")!r})
+assert shadowspill.__file__.startswith({str(ROOT / "packages/engine/src")!r})
 assert 'torch' not in sys.modules
 """
     subprocess.run([sys.executable, "-c", code], check=True, timeout=30)
@@ -59,6 +59,6 @@ print(json.dumps({'parent': shadowspill.__file__, 'child': child,
         timeout=30,
     )
     observed = json.loads(result.stdout)
-    assert Path(observed["parent"]).is_relative_to(ROOT / "src")
+    assert Path(observed["parent"]).is_relative_to(ROOT / "packages/engine/src")
     assert observed["child"] == observed["parent"]
     assert not Path(observed["cache"]).exists()

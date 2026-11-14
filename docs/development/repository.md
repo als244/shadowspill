@@ -4,12 +4,12 @@
 
 ```text
 shadowspill/
-├── src/
-│   ├── shadowspill/       installed Python package
-│   └── tools/             trace analysis/videos, naming checks and sanitizer support
-├── csrc/                  the C library, its backends and public C headers,
-│                          the network and SSD extensions, the memory daemon,
-│                          and the PyTorch adapter
+├── packages/engine/       installable engine distribution
+│   ├── src/shadowspill/   Python phase APIs and runtime bindings
+│   ├── csrc/             native planner, runtime, backends and adapter
+│   ├── CMakeLists.txt    native build entry point
+│   └── pyproject.toml    engine metadata and dependencies
+├── src/tools/             trace analysis/videos, naming checks and sanitizer support
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
 ├── orchestration/         shared worker launch, host coordination and phase journals
@@ -21,8 +21,7 @@ shadowspill/
 ├── baselines/             the training systems ShadowSpill is measured against
 ├── docs/                  architecture, Python, C, examples, and development
 ├── scripts/               one-command setup
-├── CMakeLists.txt         build orchestrator for the C tree
-└── pyproject.toml         Python build, dependency, lint, type, and test configuration
+└── pyproject.toml         workspace lint, type, and test configuration
 ```
 
 `qualification/` owns the complete gate implementation and its documentation.
@@ -30,7 +29,7 @@ There is no forwarding package under `src/tools/`. `qualification/gates/`
 runs the selected gates; the numerical and performance gates' `matrix/`
 packages select and launch their cases, and the SSD and remote gates run those
 same matrices; `run.py` implements the single-case command. Product behavior
-remains under `src/shadowspill/`. The numerical gate is a package,
+remains under `packages/engine/src/shadowspill/`. The numerical gate is a package,
 `qualification/numerical/`, holding one case end to end: the
 request and its identity, the reference arm, the planned run, the two
 comparisons, the artifact, the verdict, and the matrix that launches cells.
@@ -74,7 +73,7 @@ before the baseline worker creates spill pools.
 ## Python package
 
 ```text
-src/shadowspill/
+packages/engine/src/shadowspill/
 ├── artifacts/             portable Program, Profiles, ProfiledProgram and Plan archives
 ├── build/                 capture, compile and lower finalized task definitions
 │   ├── compilation/       package task code and physical storage contracts
@@ -186,7 +185,7 @@ modules are avoided.
 
 ## The C tree
 
-[csrc/README.md](../../csrc/README.md) draws the layout of `csrc/`: the
+[csrc/README.md](../../packages/engine/csrc/README.md) draws the layout of `csrc/`: the
 public headers, the one library under `src/` (common, simulator, planner,
 runtime with a directory per runtime component), the backends, and the
 PyTorch adapter.
@@ -208,12 +207,12 @@ one that covers what it touches.
 ## Tests
 
 The test tree mirrors the boundary under test, all the way down: a test for
-`src/shadowspill/profiling/` lives in
+`packages/engine/src/shadowspill/profiling/` lives in
 `tests/shadowspill/profiling/`.
 
 ```text
 tests/
-├── shadowspill/           package tests matching src/shadowspill subpackages
+├── shadowspill/           package tests matching packages/engine/src/shadowspill subpackages
 ├── csrc/                  C, mock-backend, and device canaries, one directory per library
 ├── integration/           fresh-process framework/backend integration
 ├── tools/                 source-tree tool tests
@@ -292,10 +291,10 @@ storage operations build against PyTorch's CMake package, which
 PyTorch canary fails:
 
 ```bash
-cmake -S . -B build/dev -DBUILD_TESTING=ON \
+cmake -S packages/engine -B packages/engine/build/dev -DBUILD_TESTING=ON \
     -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
-cmake --build build/dev --parallel
-ctest --test-dir build/dev --output-on-failure
+cmake --build packages/engine/build/dev --parallel
+ctest --test-dir packages/engine/build/dev --output-on-failure
 ```
 
 An unnamed build type builds `RelWithDebInfo`, matching the editable install;
@@ -304,12 +303,12 @@ planner is several times slower at exactly the work this project measures.
 Pass `-DCMAKE_BUILD_TYPE=Debug` when that is what you want.
 
 Python never picks up a build directory in the working tree on its own. It
-searches the installed package and the editable `build/{wheel_tag}` location, in
+searches the installed package and the editable `packages/engine/build/{wheel_tag}` location, in
 that order, and nothing else unless `SHADOWSPILL_LIBRARY_DIRECTORY` names a
 directory to try first:
 
 ```bash
-SHADOWSPILL_LIBRARY_DIRECTORY=build/dev pytest tests/shadowspill
+SHADOWSPILL_LIBRARY_DIRECTORY=packages/engine/build/dev pytest tests/shadowspill
 ```
 
 A build the loader finds without being told to is the kind of mistake that

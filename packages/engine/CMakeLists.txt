@@ -53,7 +53,10 @@ target_compile_options(
 # gives.
 add_subdirectory(csrc)
 
-if(BUILD_TESTING)
-  add_subdirectory(tests/csrc)
-  add_subdirectory(tests/integration)
+# Repository tests remain workspace-owned until their migration. A wheel/sdist
+# builds independently of the checkout and does not require those tests.
+get_filename_component(SHADOWSPILL_REPOSITORY_ROOT "${PROJECT_SOURCE_DIR}/../.." ABSOLUTE)
+if(BUILD_TESTING AND EXISTS "${SHADOWSPILL_REPOSITORY_ROOT}/tests/csrc/CMakeLists.txt")
+  add_subdirectory("${SHADOWSPILL_REPOSITORY_ROOT}/tests/csrc" tests/csrc)
+  add_subdirectory("${SHADOWSPILL_REPOSITORY_ROOT}/tests/integration" tests/integration)
 endif()

@@ -82,3 +82,8 @@ compile_commands.json
 !/training/backends/
 !/training/configs/
 !/training/scripts/
+
+# Independent package build outputs.
+/packages/*/build/
+/packages/*/dist/
+/packages/*/_skbuild/

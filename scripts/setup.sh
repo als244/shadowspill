@@ -137,7 +137,7 @@ print(Path(next(iter(spec.submodule_search_locations))) / "share" / "cmake")
   --torch-backend "${torch_backend}" \
   --config-setting "cmake.define.CMAKE_PREFIX_PATH=${torch_cmake_prefix}" \
   --config-setting "cmake.define.Python3_EXECUTABLE=${python_executable}" \
-  --editable "${project_root}[pytorch,dev,training]"
+  --editable "${project_root}/packages/engine[pytorch,dev,training]"
 
 echo "[3/5] Installing mlops with its implementation providers"
 if [[ -x "${mlops_checkout}/scripts/setup.sh" ]]; then

@@ -32,7 +32,7 @@ its message. This page gathers its rules.
 [Data](#data) · [Measurement](#measurement) ·
 [What a run writes](#what-a-run-writes) · [Limits](#limits)
 
-The [options catalog](options/) groups declarations by parallelism, model and
+The [options catalog](options) groups declarations by parallelism, model and
 training. [settings.py](settings.py) validates and translates them; adding an
 option does not require editing the training loop.
 

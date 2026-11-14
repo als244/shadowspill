@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include "../../csrc/ssd/internal.h"
+#include "../../packages/engine/csrc/ssd/internal.h"
 
 #include <dirent.h>
 #include <dlfcn.h>

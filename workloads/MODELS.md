@@ -54,7 +54,7 @@ For a non-text example, see the [regression recipe](recipes/regression/benchmark
 ## Preset dimensions and parameter counts
 
 Each family's `config.py` holds `PRESETS`, its named shapes by size, and the
-[catalog](models/catalog/) names every one `<family>-<size>`: a `numerical`
+[catalog](models/catalog) names every one `<family>-<size>`: a `numerical`
 shape is the small exact-scale one the numerical gate runs, `tiny` a smoke-test
 shape, and a published size is that checkpoint's text decoder (every Qwen 3.5
 size without its multi-token prediction layer). The GLM families' shapes come
@@ -104,7 +104,7 @@ also depends on dtype, tensor representations, sharding, and runtime resources.
 
 ## Families
 
-Each family package under [models/](models/) has a README with its
+Each family package under [models/](models) has a README with its
 architecture, shapes, configuration fields, implementations and construction,
 and a checkpoint reader (`checkpoint.py`, a local Hugging Face checkpoint into
 the model, parameter by parameter, through `config.from_huggingface` and
@@ -128,9 +128,9 @@ into a run, so a fine-tune is a config naming a family and a directory, its
 | [GLM-5.3-Flash](models/glm53_flash/README.md) | 45 layers of KDA and NoPE sparse MLA on mHC streams with 288-expert MoE and an optional vision encoder, LoRA over a local checkpoint streamed into the pool; `mlops` |
 
 The two GLM families share their building blocks, checkpoint importer and LoRA
-switch through [models/shared/glm/](models/shared/glm/), and their stage
+switch through [models/shared/glm/](models/shared/glm), and their stage
 partition and quickstart factories through
-[recipes/text/glm/](recipes/text/glm/); their catalog entries name those
+[recipes/text/glm/](recipes/text/glm); their catalog entries name those
 factories, so `--factory workloads.recipes.text.glm.quickstart:glm53_flash`
 with `--factory-args` runs one.
 
@@ -301,7 +301,7 @@ Failed construction releases the resources it created. Ordinary CPU/meta model
 construction does not load MoonEP or Quack kernels.
 
 The optional EP setup is shared in
-[models/shared/expert_parallel](models/shared/expert_parallel/); it is temporary
+[models/shared/expert_parallel](models/shared/expert_parallel); it is temporary
 construction state, not part of the model or the generic training API. Routing
 normalization, shared experts, and auxiliary-loss definitions remain properties
 of each architecture. In local mode, ordinary model dtype controls the router
@@ -416,15 +416,15 @@ workers recreate the explicitly described resources.
 
 | Path | Responsibility |
 |---|---|
-| [models/](models/) | One package per family: `config.py`, its `checkpoint.py` reading a local Hugging Face checkpoint, a README and `implementations/` with one module per implementation |
-| [models/shared/](models/shared/) | Code families share: reference decoder math, rotary tables, packing metadata and loss helpers, the mlops norm containers, the Gated DeltaNet mixer, EP construction, the Qwen mixture blocks and the GLM building blocks |
-| [models/shared/qwen_moe/](models/shared/qwen_moe/) | Initialization, mixers, experts and the decoder shared by the two Qwen MoE families |
-| [models/shared/expert_parallel](models/shared/expert_parallel/) | Shared EP construction and routing helpers for the MLOps OLMoE and Qwen MoE models |
-| [lora/](lora/) | Model-family LoRA targeting over the reusable projections in MLOps |
-| [recipes/](recipes/) | Caller-side model construction, objectives and data composition |
+| [models/](models) | One package per family: `config.py`, its `checkpoint.py` reading a local Hugging Face checkpoint, a README and `implementations/` with one module per implementation |
+| [models/shared/](models/shared) | Code families share: reference decoder math, rotary tables, packing metadata and loss helpers, the mlops norm containers, the Gated DeltaNet mixer, EP construction, the Qwen mixture blocks and the GLM building blocks |
+| [models/shared/qwen_moe/](models/shared/qwen_moe) | Initialization, mixers, experts and the decoder shared by the two Qwen MoE families |
+| [models/shared/expert_parallel](models/shared/expert_parallel) | Shared EP construction and routing helpers for the MLOps OLMoE and Qwen MoE models |
+| [lora/](lora) | Model-family LoRA targeting over the reusable projections in MLOps |
+| [recipes/](recipes) | Caller-side model construction, objectives and data composition |
 | [precision.py](precision.py) | Supplied workload precision configuration |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
-| [training/configs/](../training/configs/) | Concrete example training requests |
+| [training/configs/](../training/configs) | Concrete example training requests |
 
 The shared Qwen package factors code two architectures use, including
 DeltaNet and full attention. Family packages remain small; adding EP does

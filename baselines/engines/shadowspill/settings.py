@@ -30,7 +30,7 @@ SOURCE_PATHS = (
     "benchmarking/quickstart/orchestrate.py",
     "benchmarking/quickstart/launch.py",
     "orchestration",
-    "src/shadowspill",
+    "packages/engine/src/shadowspill",
 )
 
 #: The environment beside the launcher's that the trainer runs in.

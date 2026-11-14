@@ -21,7 +21,7 @@ write_report(plan, "report")
 
 ## Options
 
-<!-- api-options: src/shadowspill/planning/plan.py:plan_program -->
+<!-- api-options: packages/engine/src/shadowspill/planning/plan.py:plan_program -->
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ equivalent useful work. It returns `SweepResult`: `cases` retains Plans or
 capacity/search failures, and `best_per_budget` chooses lowest simulated time.
 Invalid inputs and implementation errors propagate.
 
-<!-- api-options: src/shadowspill/planning/sweep.py:sweep_programs -->
+<!-- api-options: packages/engine/src/shadowspill/planning/sweep.py:sweep_programs -->
 
 | Argument | Default | Meaning |
 | --- | --- | --- |

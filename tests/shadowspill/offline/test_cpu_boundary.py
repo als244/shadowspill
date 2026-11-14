@@ -30,7 +30,7 @@ def test_fresh_cpu_process_load_plan_replan_and_report(tmp_path):
         CUDA_VISIBLE_DEVICES="",
         PYTHONPATH=os.pathsep.join(
             (
-                str(root / "src"),
+                str(root / "packages/engine/src"),
                 str(root),
                 sysconfig.get_path("purelib"),
             )

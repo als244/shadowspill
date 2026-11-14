@@ -10,8 +10,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PYTHON_ROOT = ROOT / "src" / "shadowspill"
-C_ROOT = ROOT / "csrc"
+PYTHON_ROOT = ROOT / "packages" / "engine" / "src" / "shadowspill"
+C_ROOT = ROOT / "packages" / "engine" / "csrc"
 
 
 def _production_sources() -> tuple[Path, ...]:
@@ -140,5 +140,5 @@ def test_worker_hot_loop_has_no_sleeping_wait_primitive() -> None:
 
 
 def test_only_shadowspill_is_installed_from_the_source_tree() -> None:
-    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    project = (ROOT / "packages/engine/pyproject.toml").read_text(encoding="utf-8")
     assert 'wheel.packages = ["src/shadowspill"]' in project

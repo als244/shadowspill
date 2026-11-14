@@ -143,8 +143,8 @@ row records from the model its framework built.
 
 ## Sweeps
 
-The [sweep package](sweep/) separates case configuration, process lifetime,
-result classification and reporting. The [experiment package](experiment/)
+The [sweep package](sweep) separates case configuration, process lifetime,
+result classification and reporting. The [experiment package](experiment)
 composes those sweeps, with its own configuration and run journal. Their `run.py`
 files own orchestration; `__main__.py` provides the command-line entry point.
 

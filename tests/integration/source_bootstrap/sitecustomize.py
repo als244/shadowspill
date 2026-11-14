@@ -9,4 +9,4 @@ sys.meta_path[:] = [
     for finder in sys.meta_path
     if type(finder).__module__ != "_shadowspill_editable"
 ]
-sys.path[:0] = [str(root / "src"), str(root)]
+sys.path[:0] = [str(root / "packages/engine/src"), str(root / "src"), str(root)]

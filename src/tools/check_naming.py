@@ -8,25 +8,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = (
-    ROOT / "src" / "shadowspill",
-    ROOT / "csrc",
+    ROOT / "packages" / "engine" / "src" / "shadowspill",
+    ROOT / "packages" / "engine" / "csrc",
 )
 NEUTRAL_ROOTS = (
-    ROOT / "src" / "shadowspill" / "diagnostics",
-    ROOT / "src" / "shadowspill" / "ir",
-    ROOT / "src" / "shadowspill" / "pipeline",
-    ROOT / "src" / "shadowspill" / "planner",
-    ROOT / "src" / "shadowspill" / "runtime",
-    ROOT / "src" / "shadowspill" / "search",
-    ROOT / "src" / "shadowspill" / "simulator",
-    ROOT / "src" / "shadowspill" / "step",
-    ROOT / "src" / "shadowspill" / "store",
-    ROOT / "src" / "shadowspill" / "task",
-    ROOT / "csrc" / "include",
-    ROOT / "csrc" / "src" / "common",
-    ROOT / "csrc" / "src" / "planner",
-    ROOT / "csrc" / "src" / "runtime",
-    ROOT / "csrc" / "src" / "simulator",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "diagnostics",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "ir",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "pipeline",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "planner",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "runtime",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "search",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "simulator",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "step",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "store",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "task",
+    ROOT / "packages" / "engine" / "csrc" / "include",
+    ROOT / "packages" / "engine" / "csrc" / "src" / "common",
+    ROOT / "packages" / "engine" / "csrc" / "src" / "planner",
+    ROOT / "packages" / "engine" / "csrc" / "src" / "runtime",
+    ROOT / "packages" / "engine" / "csrc" / "src" / "simulator",
 )
 TEXT_SUFFIXES = {".c", ".cc", ".cpp", ".h", ".hpp", ".py"}
 FORBIDDEN = {

@@ -16,7 +16,7 @@ is no silent buffered-I/O fallback.
 
 Load the library and resolve `SHADOWSPILL_LIBRARY_DESCRIBE_SYMBOL`
 (`shadowspill_library_describe`) using the types in
-[`shadowspill/runtime/library.h`](../../csrc/include/shadowspill/runtime/library.h).
+[`shadowspill/runtime/library.h`](../../packages/engine/csrc/include/shadowspill/runtime/library.h).
 Check the returned `ShadowSpillLibraryDescription.abi_version` against
 `SHADOWSPILL_ABI_VERSION`. Append its `pool_memory` and `lanes` entries to
 `ShadowSpillRuntimeConfig`, preserving other registered extensions. Keep the
@@ -25,7 +25,7 @@ performs no allocation or device probing; runtime creation does that.
 
 ## Configuration
 
-[`shadowspill/ssd.h`](../../csrc/include/shadowspill/ssd.h) declares:
+[`shadowspill/ssd.h`](../../packages/engine/csrc/include/shadowspill/ssd.h) declares:
 
 ```c
 #define SHADOWSPILL_SSD_POOL_KIND 3U

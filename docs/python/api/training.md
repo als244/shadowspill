@@ -41,7 +41,7 @@ latter describes computation and memory placement.
 
 ## Constructor options
 
-<!-- api-options: src/shadowspill/training/trainer.py:Trainer.__init__ -->
+<!-- api-options: packages/engine/src/shadowspill/training/trainer.py:Trainer.__init__ -->
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -87,7 +87,7 @@ result = trainer.step(
 print(result.step, result.loss, result.seconds)
 ```
 
-<!-- api-options: src/shadowspill/training/trainer.py:Trainer.step -->
+<!-- api-options: packages/engine/src/shadowspill/training/trainer.py:Trainer.step -->
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
@@ -137,7 +137,7 @@ def training_batches():
 trainer.fit(training_batches(), steps=100, run_dir="run", log_every=10)
 ```
 
-<!-- api-options: src/shadowspill/training/trainer.py:Trainer.fit -->
+<!-- api-options: packages/engine/src/shadowspill/training/trainer.py:Trainer.fit -->
 
 | Argument | Default | Meaning |
 | --- | --- | --- |

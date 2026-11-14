@@ -4,7 +4,7 @@ The test tree mirrors the code boundary being exercised:
 
 ```text
 tests/
-├── shadowspill/    Python unit/property tests for src/shadowspill
+├── shadowspill/    Python unit/property tests for packages/engine/src/shadowspill
 ├── csrc/           C and device-backend canaries for csrc, one directory per library
 ├── integration/    fresh-process framework/backend integration canaries
 ├── tools/          reusable source-tool tests
@@ -18,7 +18,7 @@ tests/
 ```
 
 Inside `shadowspill/`, the mirror goes all the way down: a test for
-`src/shadowspill/profiling/` lives in
+`packages/engine/src/shadowspill/profiling/` lives in
 `tests/shadowspill/profiling/`. A test that exercises two packages
 belongs to the one it is about, not the one it imports for a fixture.
 

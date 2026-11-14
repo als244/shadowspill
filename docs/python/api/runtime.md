@@ -115,7 +115,7 @@ same arguments minus that one. Executor constructs it once in a fresh worker.
 Application preparation uses the public build, measurement and planning APIs;
 those phases do not construct this runtime.
 
-<!-- source-signature: src/shadowspill/pytorch/runtime.py:Runtime.__init__ -->
+<!-- source-signature: packages/engine/src/shadowspill/pytorch/runtime.py:Runtime.__init__ -->
 ```text
 Runtime(
     *,

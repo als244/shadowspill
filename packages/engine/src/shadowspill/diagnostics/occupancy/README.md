@@ -3,7 +3,7 @@
 `python -m shadowspill.diagnostics.occupancy` and this package's public imports
 walk a stored plan's step and attribute what occupies the execution and spill
 pools at every moment to objects and their categories, beside the fetch,
-compute and evict lanes. The [occupancy guide](../../../../docs/python/advanced/occupancy.md)
+compute and evict lanes. The [occupancy guide](../../../../../../docs/python/advanced/occupancy.md)
 covers the command, the categories and the rules the walk follows. The
 implementation has these responsibilities:
 

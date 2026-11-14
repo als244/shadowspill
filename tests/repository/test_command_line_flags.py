@@ -212,7 +212,15 @@ def test_no_caller_passes_a_keyword_a_public_entry_point_does_not_accept() -> No
     entry_points = {name: getattr(shadowspill, name) for name in names}
 
     offences: list[str] = []
-    roots = ("src", "tests", "benchmarking", "reference", "workloads", "training")
+    roots = (
+        "packages",
+        "src",
+        "tests",
+        "benchmarking",
+        "reference",
+        "workloads",
+        "training",
+    )
     for path in _repository_python_files():
         if path.relative_to(ROOT).parts[0] not in roots:
             continue

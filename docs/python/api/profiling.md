@@ -49,7 +49,7 @@ validates and attaches compatible measurements, returning a `ProfiledProgram`
 without GPU work. It does not measure missing tasks or assume missing memory is
 zero. Changing Profiles afterward does not alter an existing ProfiledProgram.
 
-<!-- api-options: src/shadowspill/profiling/measure.py:measure_program -->
+<!-- api-options: packages/engine/src/shadowspill/profiling/measure.py:measure_program -->
 
 | Argument | Default | Meaning |
 | --- | --- | --- |

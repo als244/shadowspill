@@ -15,4 +15,4 @@ installed `shadowspill.diagnostics` package; see the
 [occupancy guide](../../docs/python/advanced/occupancy.md).
 
 The development install and test configuration put `src/` on Python's import
-path. Product behavior remains in `src/shadowspill/`.
+path. Product behavior remains in `packages/engine/src/shadowspill/`.

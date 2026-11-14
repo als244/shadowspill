@@ -11,7 +11,7 @@ def test_repository_clients_have_one_way_dependencies():
     rules = {
         "workloads": ("benchmarking", "qualification"),
         "orchestration": ("workloads", "benchmarking", "qualification", "training"),
-        "src/shadowspill": (
+        "packages/engine/src/shadowspill": (
             "orchestration",
             "workloads",
             "benchmarking",

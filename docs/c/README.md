@@ -11,16 +11,16 @@ the inventory and the reference index.
 
 | Component | Header | Reference | What the page covers |
 |---|---|---|---|
-| Runtime | [`runtime.h`](../../csrc/include/shadowspill/runtime.h) | [Runtime API](runtime.md) | Creating a runtime and its pools and routes, reserving the records a hot path must never allocate, admitting a plan, the two task boundaries, allocation scopes, tracing, and the statistics and first-failure snapshots |
-| Admission replay | [`admission_replay.h`](../../csrc/include/shadowspill/admission_replay.h) | [Runtime API](runtime.md#admission-replay) | Replaying a schedule's pool ownership transitions through the production allocator policy, with no backend and no device |
-| Backend | [`backend.h`](../../csrc/include/shadowspill/backend.h) | [Backends](backends.md) | The driver-level call table a provider shared object implements, the two symbols it exports, and what a new provider directory has to build |
-| Lane | [`runtime/lane.h`](../../csrc/include/shadowspill/runtime/lane.h), [`runtime/lane_base.h`](../../csrc/include/shadowspill/runtime/lane_base.h) | [Lane contract](lanes.md) | What moves bytes between two pools: the table a transport implements, the struct it embeds, the obligation it is under, and how a route resolves one from its two pools' kinds |
-| Pool memory | [`runtime/pool_memory.h`](../../csrc/include/shadowspill/runtime/pool_memory.h) | [Pool memory contract](pool-memory.md) | Where a pool's region comes from: the acquire/release pair a kind of memory implements, and why nothing reads through the address it returns |
-| SSD extension | [`ssd.h`](../../csrc/include/shadowspill/ssd.h), [`runtime/library.h`](../../csrc/include/shadowspill/runtime/library.h) | [SSD pool and lanes](ssd.md) | Extension registration, temporary direct-I/O storage, bounded host staging, stream ordering, cleanup and calibration |
-| Planner | [`planner.h`](../../csrc/include/shadowspill/planner.h) | [Planner API](planner.md) | The planning question in indexed form and the certification a schedule passes whichever search found it: exact schedule admission, the admission operations a schedule implies, the lease lifetimes those resolve to, and fixed-offset placement |
-| PressureFit | [`pressurefit/pressurefit.h`](../../csrc/include/shadowspill/pressurefit/pressurefit.h) | [PressureFit API](pressurefit.md) | The search that ships: residency/fetch policies, fixed cut scoring, tracing, per-candidate diagnostics, preflight, and the shared placed-plan record |
-| Simulator | [`simulator.h`](../../csrc/include/shadowspill/simulator.h) | [Simulator API](simulator.md) | The one call that times an already selected schedule, and the intervals, peaks, stalls and capacity shortfalls it reports |
-| PyTorch adapter | [`pytorch_adapter.h`](../../csrc/adapter/pytorch/include/shadowspill/pytorch_adapter.h) | [PyTorch adapter](pytorch-adapter.md) | Only what needs PyTorch: bootstrap and the physical ledger, the pluggable-allocator callbacks, storage validation, and the stream-wrapping task boundaries |
+| Runtime | [`runtime.h`](../../packages/engine/csrc/include/shadowspill/runtime.h) | [Runtime API](runtime.md) | Creating a runtime and its pools and routes, reserving the records a hot path must never allocate, admitting a plan, the two task boundaries, allocation scopes, tracing, and the statistics and first-failure snapshots |
+| Admission replay | [`admission_replay.h`](../../packages/engine/csrc/include/shadowspill/admission_replay.h) | [Runtime API](runtime.md#admission-replay) | Replaying a schedule's pool ownership transitions through the production allocator policy, with no backend and no device |
+| Backend | [`backend.h`](../../packages/engine/csrc/include/shadowspill/backend.h) | [Backends](backends.md) | The driver-level call table a provider shared object implements, the two symbols it exports, and what a new provider directory has to build |
+| Lane | [`runtime/lane.h`](../../packages/engine/csrc/include/shadowspill/runtime/lane.h), [`runtime/lane_base.h`](../../packages/engine/csrc/include/shadowspill/runtime/lane_base.h) | [Lane contract](lanes.md) | What moves bytes between two pools: the table a transport implements, the struct it embeds, the obligation it is under, and how a route resolves one from its two pools' kinds |
+| Pool memory | [`runtime/pool_memory.h`](../../packages/engine/csrc/include/shadowspill/runtime/pool_memory.h) | [Pool memory contract](pool-memory.md) | Where a pool's region comes from: the acquire/release pair a kind of memory implements, and why nothing reads through the address it returns |
+| SSD extension | [`ssd.h`](../../packages/engine/csrc/include/shadowspill/ssd.h), [`runtime/library.h`](../../packages/engine/csrc/include/shadowspill/runtime/library.h) | [SSD pool and lanes](ssd.md) | Extension registration, temporary direct-I/O storage, bounded host staging, stream ordering, cleanup and calibration |
+| Planner | [`planner.h`](../../packages/engine/csrc/include/shadowspill/planner.h) | [Planner API](planner.md) | The planning question in indexed form and the certification a schedule passes whichever search found it: exact schedule admission, the admission operations a schedule implies, the lease lifetimes those resolve to, and fixed-offset placement |
+| PressureFit | [`pressurefit/pressurefit.h`](../../packages/engine/csrc/include/shadowspill/pressurefit/pressurefit.h) | [PressureFit API](pressurefit.md) | The search that ships: residency/fetch policies, fixed cut scoring, tracing, per-candidate diagnostics, preflight, and the shared placed-plan record |
+| Simulator | [`simulator.h`](../../packages/engine/csrc/include/shadowspill/simulator.h) | [Simulator API](simulator.md) | The one call that times an already selected schedule, and the intervals, peaks, stalls and capacity shortfalls it reports |
+| PyTorch adapter | [`pytorch_adapter.h`](../../packages/engine/csrc/adapter/pytorch/include/shadowspill/pytorch_adapter.h) | [PyTorch adapter](pytorch-adapter.md) | Only what needs PyTorch: bootstrap and the physical ledger, the pluggable-allocator callbacks, storage validation, and the stream-wrapping task boundaries |
 
 ## ABI use
 
@@ -141,7 +141,7 @@ portable by construction rather than by test.
 `libshadowspill` and the mock backend build without PyTorch or a
 device-provider SDK. Provider code is confined to `csrc/backends/` and the
 PyTorch adapter, which stay separate libraries for that reason. See the
-[C tree guide](../../csrc/README.md) for source layout and build
+[C tree guide](../../packages/engine/csrc/README.md) for source layout and build
 dependencies.
 
 Pool/lane extensions compile separately against the runtime's public contracts

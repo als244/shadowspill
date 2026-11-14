@@ -1,5 +1,5 @@
 /* CPU-only checks; all affinity changes live in this short-lived process. */
-#include "../../../csrc/src/runtime/numa.c"
+#include "../../../packages/engine/csrc/src/runtime/numa.c"
 #undef NDEBUG
 #include <assert.h>
 

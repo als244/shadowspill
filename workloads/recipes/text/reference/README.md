@@ -1,6 +1,6 @@
 # PyTorch text reference
 
-Select `"engine": "pytorch"` in the [text runner](../experiment/) configuration
+Select `"engine": "pytorch"` in the [text runner](../experiment) configuration
 to train with ordinary PyTorch. Use `"device": "cpu"` or `"device": "cuda:0"`
 and `"compile": false` for eager execution; compilation defaults to `true`.
 The model, objective and data configuration are shared with the phase runner.

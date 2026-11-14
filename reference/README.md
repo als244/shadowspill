@@ -16,6 +16,6 @@ and differential testing. Production imports never select these modules.
   planner library must reproduce, and are the baseline those versions are timed
   against.
 
-The wheel includes only `src/shadowspill`. Missing or ABI-incompatible compiled
+The wheel includes only `packages/engine/src/shadowspill`. Missing or ABI-incompatible compiled
 planner and simulator libraries therefore fail immediately instead of changing
 the production algorithm.

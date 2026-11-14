@@ -12,7 +12,7 @@ supports direct I/O and file preallocation, such as ext4 on an NVMe drive.
 
 ## Configuration
 
-<!-- source-signature: src/shadowspill/ssd.py:ssd -->
+<!-- source-signature: packages/engine/src/shadowspill/ssd.py:ssd -->
 ```text
 ssd(
     *,
@@ -159,4 +159,4 @@ These are machine-specific observations, not hard-coded planner bandwidths.
 
 For extension loading, exact C configuration and ownership, see the
 [C SSD API](../../c/ssd.md) and
-[`shadowspill/ssd.h`](../../../csrc/include/shadowspill/ssd.h).
+[`shadowspill/ssd.h`](../../../packages/engine/csrc/include/shadowspill/ssd.h).

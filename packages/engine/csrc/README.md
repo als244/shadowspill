@@ -105,7 +105,7 @@ libraries are available. See [its README](daemon/README.md) for the protocol.
 pool plus direct-I/O lanes, with bounded pinned staging and Linux AIO syscalls;
 it needs no `libaio` or GPU SDK. Its disk worker never invokes a GPU API.
 The public configuration is `include/shadowspill/ssd.h`; see the
-[SSD C API](../docs/c/ssd.md) for registration, ownership and synchronization.
+[SSD C API](../../../docs/c/ssd.md) for registration, ownership and synchronization.
 
 `src/common/platform.h` holds what the library asks of the operating system
 that POSIX and Windows spell differently: a monotonic clock, a thread yield, a
@@ -124,5 +124,5 @@ operators include -- `allocator/`, `failure/`, `tasks/`, `storage/` -- keeps
 that header free of C11 atomics, and its C files include the adapter's state
 header, `../internal.h`, themselves.
 
-The [C API guide](../docs/c/README.md) documents ownership, threading, and each
+The [C API guide](../../../docs/c/README.md) documents ownership, threading, and each
 public component boundary.

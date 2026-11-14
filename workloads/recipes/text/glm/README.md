@@ -1,7 +1,7 @@
 # Shared GLM recipes
 
 Model definitions and checkpoint tensor mappings live in
-[the model families](../../../models/). This package owns their caller-side policy.
+[the model families](../../../models). This package owns their caller-side policy.
 
 - `quickstart.py`: GLM-5.3 and Flash factories for the ordinary phase runner.
 - `factory.py`, `model.py`: meta model construction, precision and build options.

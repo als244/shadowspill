@@ -7,7 +7,7 @@ then one full-attention block. This family has no routed experts.
 ## Shapes
 
 [config.py](config.py) holds `Config` and `PRESETS`, the named shapes the
-[catalog](../catalog/) serves; the
+[catalog](../catalog) serves; the
 [catalog table](../../MODELS.md#preset-dimensions-and-parameter-counts) lists
 their widths and parameter counts. Each published size is the text decoder
 alone: the checkpoints' vision encoder and multi-token prediction layer are
@@ -45,7 +45,7 @@ freezing or training either name affects the same Parameter.
 
 ## Implementations
 
-[implementations/pytorch/](implementations/pytorch/) is the readable
+[implementations/pytorch/](implementations/pytorch) is the readable
 numerical authority; [implementations/mlops.py](implementations/mlops.py) is
 its state-dictionary-compatible twin on the operation library, whose DeltaNet
 mixer lives in [shared/delta_net.py](../shared/delta_net.py) because the Qwen
