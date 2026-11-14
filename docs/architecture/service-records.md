@@ -45,6 +45,22 @@ multi-node deployment remain separate implementation work.
 
 ## Request and worker ownership
 
+`server.storage.ServiceStorage` composes the run catalog with bounded request and
+artifact owners. Deployment supplies persistent/cache roots and a host envelope
+for each open request journal/index, reserved before recovery. Names below those
+roots are fixed or hashes of validated owner/session/run IDs. Another service
+cannot acquire the catalog lock until all retained owners finish cleanup.
+
+Startup calls the existing request recovery engine on each older unfinished run
+before marking it stopped. Incomplete/accepted uploads never started; running
+work without a receipt is uncertain; saved execution receipts keep their known
+effect and update count. Completed results stay immutable. Creation without a
+request journal stops without inventing one; missing or empty initialized-run
+journals fail recovery. Read-only HTTP contexts reopen the same saved records
+and artifact files. This storage layer neither creates workers nor replays work.
+Transient resource failures can retry recovery; journal/index durability failures
+require closing and reopening the storage namespace for reconciliation.
+
 `server.owners.OwnerCache` bounds open record/artifact owners, including pending
 opens and failed evictions. Live controllers pin a borrow for their lifetime;
 HTTP lookups borrow through I/O. Only idle owners may be evicted. Factories and

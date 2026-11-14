@@ -58,11 +58,20 @@ class RequestRecords:
     coordinator explicitly classifies restart failure; nothing is replayed here.
     """
 
-    def __init__(self, directory: Path, *, identity: RunIdentity, cache_root: Path):
+    def __init__(
+        self,
+        directory: Path,
+        *,
+        identity: RunIdentity,
+        cache_root: Path,
+        create: bool = True,
+    ):
         self.identity = identity
         self._mutex = threading.RLock()
         self._broken = self._closed = self._closing = False
         self._writer: WriterLease | None = None
+        if not create and not directory.is_dir():
+            raise FileNotFoundError("registered run request journal is missing")
         # A maximum-size portable request also carries its digest and journal
         # wrapper. Reserve that envelope before writing any authoritative data.
         self._journal = Journal(directory, limits=JournalLimits(record_bytes=2 << 20))
@@ -71,6 +80,8 @@ class RequestRecords:
             rows = self._journal.records()
             first = next(rows, None)
             if first is None:
+                if not create:
+                    raise ValueError("request journal has no committed registration")
                 self._journal.append([("run.open", identity.to_dict())])
             elif first.kind != "run.open" or dict(first.data) != identity.to_dict():
                 raise ValueError("journal belongs to another owner/session/run")

@@ -29,11 +29,11 @@ from shadowspill.orchestration.launch.host_arena import HostArena  # noqa: E402
 from shadowspill.orchestration.launch.node_capacity import discover_capacity  # noqa: E402
 from shadowspill.orchestration.launch.publication import require_output  # noqa: E402
 from shadowspill.orchestration.launch.staging import FileDelivery  # noqa: E402
-from shadowspill.server.artifacts import ArtifactStore  # noqa: E402
 from shadowspill.server.authentication import BearerTokens  # noqa: E402
 from shadowspill.server.http import HTTP_SCRATCH_BYTES, HTTPService, RunAccess  # noqa: E402
-from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
+from shadowspill.server.records.requests import RunIdentity  # noqa: E402
 from shadowspill.server.results import ResultPublisher  # noqa: E402
+from shadowspill.server.storage import ServiceStorage  # noqa: E402
 from shadowspill.training.definitions import load_registry  # noqa: E402
 from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
 from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
@@ -46,6 +46,7 @@ from shadowspill.training.worker.requests import WorkerRequests  # noqa: E402
 from shadowspill.training.worker.resources import WorkerHost  # noqa: E402
 from shadowspill.training.worker.runtime import PreparedWorker  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
+from shadowspill_client.protocol.codec import encode  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
 from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
 from shadowspill_client.protocol.requests import (  # noqa: E402
@@ -66,6 +67,7 @@ with (root / "training.ssp").open("rb") as stream:
         hashlib.file_digest(stream, "sha256").hexdigest(),
         (root / "training.ssp").stat().st_size,
     )
+bundle_reference = reference
 prepared_worker = PreparedWorker.resolve(
     family, WorkerScope("run", "agent", "gpu-1", 0), bundle=reference
 )
@@ -91,6 +93,40 @@ observations = []
 published = []
 token = "integration-" + os.urandom(32).hex()
 route = "/v1/runs/session/run"
+run_identity = RunIdentity("owner", "session", "run")
+
+
+def persistent_storage(memory, *, incarnation="agent"):
+    storage = ServiceStorage(
+        directory / "service",
+        cache_root=directory,
+        incarnation=incarnation,
+        memory=memory,
+        request_host_bytes=128 << 20,
+        max_request_owners=1,
+        max_artifact_owners=1,
+        artifact_bytes=128 << 20,
+        artifact_count=100,
+    )
+    storage.recover()
+    return storage
+
+
+@contextmanager
+def new_storage(memory):
+    with persistent_storage(memory) as storage, storage.artifacts("owner") as artifacts:
+        config = encode(prepared_worker.bindings.setup.config)
+        config_ref = ArtifactRef(
+            "configuration", hashlib.sha256(config).hexdigest(), len(config)
+        )
+        artifacts.put(config_ref, lambda _: io.BytesIO(config))
+        artifacts.put(bundle_reference, lambda _: (root / "training.ssp").open("rb"))
+        _, created = storage.catalog.create(
+            run_identity, request_sha256=config_ref.sha256, configuration=config_ref
+        )
+        assert created
+        storage.catalog.progress(run_identity, "initializing")
+        yield storage, artifacts
 
 
 def host_peak(pid):
@@ -152,23 +188,19 @@ def owned_node(memory):
 
 
 @contextmanager
-def serving(controller, journal, artifacts, memory, client_memory):
+def serving(controller, storage, memory, client_memory):
     @contextmanager
     def runs(identity):
-        assert identity == journal.identity
-        yield RunAccess(journal, controller)
-
-    @contextmanager
-    def stores(owner):
-        assert owner == artifacts.owner_id
-        yield artifacts
+        assert identity == run_identity
+        with storage.requests(identity) as journal:
+            yield RunAccess(journal, controller)
 
     service = HTTPService(
         ("127.0.0.1", 0),
         incarnation="agent",
         authentication=BearerTokens({token: "owner"}),
         runs=runs,
-        artifacts=stores,
+        artifacts=storage.artifacts,
         memory=memory,
     )
     thread = Thread(target=service.serve_forever, kwargs={"poll_interval": 0.01})
@@ -195,21 +227,15 @@ with (
     HostArena(admission, 64 << 20, 3) as publication,
     HostArena(admission, HTTP_SCRATCH_BYTES * 2, 2) as http_server,
     HostArena(admission, HTTP_SCRATCH_BYTES, 1) as http_client,
+    HostArena(admission, 160 << 20, 8) as storage_arena,
     HostArena(
         admission, execution.max_staging_bytes, execution.max_pending_requests
     ) as uploads,
-    ArtifactStore(
-        directory / "artifacts",
-        owner_id="owner",
-        cache_root=directory,
-        memory=transfers.budget,
-        max_bytes=128 << 20,
-        max_artifacts=100,
-    ) as artifacts,
+    new_storage(storage_arena.budget) as (storage, artifacts),
     owned_node(transfers.budget) as node,
 ):
     memory, metadata = transfers.budget, commands.budget
-    arena_bytes = (144 << 20) + execution.max_staging_bytes + 3 * HTTP_SCRATCH_BYTES
+    arena_bytes = (304 << 20) + execution.max_staging_bytes + 3 * HTTP_SCRATCH_BYTES
     assert admission.used.host_bytes == arena_bytes
     processes = node.start(lambda _: (root / "training.ssp").open("rb"))
     process, lease = processes[0], node.lease
@@ -225,11 +251,7 @@ with (
             {0: node.files},
             metadata=metadata,
         ) as transfer,
-        RequestRecords(
-            directory / "requests",
-            identity=RunIdentity("owner", "session", "run"),
-            cache_root=directory,
-        ) as journal,
+        storage.requests(run_identity) as journal,
         ResultPublisher(
             artifacts,
             history_id="history",
@@ -247,11 +269,12 @@ with (
             server_incarnation="agent",
             budget=uploads.budget,
         ) as controller,
-        serving(
-            controller, journal, artifacts, http_server.budget, http_client.budget
-        ) as client,
+        serving(controller, storage, http_server.budget, http_client.budget) as client,
     ):
         assert process.child._ready and process.child._socket.gettimeout() is None
+        storage.catalog.ready(
+            run_identity, plans=bundle_reference, initial_history_id="history"
+        )
         observe("ready", process)
         assert client.request("GET", "/v1/info").value.owner_id == "owner"
         assert client.request("POST", route + "/writers/writer").status == 200
@@ -359,6 +382,7 @@ with (
         assert controller.boundary.completed_updates == 2 and controller.boundary.valid
         invoke("close")
         assert controller.boundary.closed and controller.closed
+        storage.catalog.finish(run_identity)
         # Completed handles remain downloadable after execution workers exit.
         for reference, _ in published:
             downloaded = io.BytesIO()
@@ -390,6 +414,24 @@ with (
             assert decoded.datums  # Valid binary payload after worker-file deletion.
 assert admission.used.claims == 0
 assert disk.used == memory.used == metadata.used == publication.budget.used == (0, 0)
+assert storage_arena.budget.used == (0, 0)
+with (
+    HostArena(admission, 160 << 20, 8) as reopened_arena,
+    persistent_storage(reopened_arena.budget, incarnation="replacement") as reopened,
+    reopened.requests(run_identity) as saved_requests,
+    reopened.artifacts("owner") as saved_artifacts,
+):
+    assert reopened.catalog.get(run_identity).state == "closed"
+    assert (
+        saved_requests.get(f"request-{saved_requests.last_sequence}")[
+            1
+        ].result.operation
+        == "close"
+    )
+    for reference, _ in published:
+        with saved_artifacts.open(reference) as stream:
+            assert hashlib.file_digest(stream, "sha256").hexdigest() == reference.sha256
+assert admission.used.claims == 0 and reopened_arena.budget.used == (0, 0)
 (directory / "host-accounting.json").write_text(
     json.dumps(
         {
@@ -415,3 +457,4 @@ print("Qualified production caller-order result and scalar publication")
 print("Qualified ordered production discard followed by fresh backward/update")
 print("Qualified ordered close with confirmed child exit and queryable result")
 print("Qualified authenticated HTTP queue and post-exit artifact downloads")
+print("Qualified bounded service storage and original GPU outcomes after restart")
