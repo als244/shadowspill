@@ -6,6 +6,17 @@ worker dispatch and HTTP. Contiguous acceptance, dependency handling and restart
 classification belong to the request coordinator; the journal does not make an
 interrupted GPU update replayable.
 
+The engine's `training.session.staging.OrderedStaging` grants complete input
+pipeline reservations in submission order. A bounded metadata window leaves room
+for an earlier request whose metadata has not arrived. A later upload cannot
+consume the bytes needed by that earlier pipeline and then wait behind it forever.
+After reservations are granted, producers may finish out of order. A ticket hands
+its owner the existing staging arena; the owner closes all payloads before closing
+the ticket. Timeouts preserve tickets, and shutdown wakes waiters while acquired
+owners retain their storage until they release it. Reservation is not durable
+request acceptance. The coordinator supplies the admitted pipeline bound, connects
+validation to acceptance, and handles expired or fenced producers.
+
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.
 Canonical request digests include binary payload checksums. An identical ID/content
