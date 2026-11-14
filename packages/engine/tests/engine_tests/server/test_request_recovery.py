@@ -5,6 +5,7 @@ import pytest
 from engine_tests.server.test_request_records import request, result, store
 from shadowspill.training.session.recovery import fail_interrupted_requests
 from shadowspill.training.session.state import OperationState
+from shadowspill_client.protocol.results import ExecutionReceipt
 
 
 def prepare(records):
@@ -18,6 +19,7 @@ def prepare(records):
             continue
         records.dispatch(name)
         if name == "done":
+            records.executed(ExecutionReceipt.from_result(result(command)))
             records.complete(result(command))
 
 

@@ -22,7 +22,7 @@ from .definitions import DefinitionSource, OutputSet
 from .inputs import InputSchema
 from .preparation import ResolvedPreparation
 from .requests import ComputeRequest, WriterLease
-from .results import Acceptance, ComputeResult, Failure, RequestStatus
+from .results import Acceptance, ComputeResult, ExecutionReceipt, Failure, RequestStatus
 from .training import ResolvedTraining
 
 VERSION = 1
@@ -45,6 +45,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "writer.lease": WriterLease,
     "request.acceptance": Acceptance,
     "compute.result": ComputeResult,
+    "compute.execution": ExecutionReceipt,
     "request.failure": Failure,
     "request.status": RequestStatus,
 }

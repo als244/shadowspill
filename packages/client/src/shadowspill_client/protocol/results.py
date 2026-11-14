@@ -106,6 +106,43 @@ class ArtifactIssue(Record):
 
 
 @dataclass(frozen=True)
+class ExecutionReceipt(Record):
+    """All workers and required terminal transfers finished; publication may remain."""
+
+    identity: RequestIdentity
+    operation: ComputeOperation
+    outcome: Literal["completed", "skipped"]
+    completed_updates: int
+    accumulation: Accumulation = field(default_factory=Accumulation)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "identity", record(RequestIdentity, self.identity, "identity")
+        )
+        if self.operation not in COMPUTE_OPERATIONS or self.outcome not in (
+            "completed",
+            "skipped",
+        ):
+            raise ValueError("unknown execution operation or outcome")
+        integer(self.completed_updates, "completed_updates")
+        object.__setattr__(
+            self,
+            "accumulation",
+            record(Accumulation, self.accumulation, "accumulation"),
+        )
+
+    @classmethod
+    def from_result(cls, result: ComputeResult) -> ExecutionReceipt:
+        return cls(
+            result.identity,
+            result.operation,
+            result.outcome,
+            result.completed_updates,
+            result.accumulation,
+        )
+
+
+@dataclass(frozen=True)
 class ComputeResult(Record):
     identity: RequestIdentity
     operation: ComputeOperation

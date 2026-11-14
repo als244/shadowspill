@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 
 from shadowspill_client.protocol.codec import decode, digest, encode
 from shadowspill_client.protocol.requests import ComputeRequest, WriterLease
-from shadowspill_client.protocol.results import RequestStatus
+from shadowspill_client.protocol.results import ExecutionReceipt, RequestStatus
 
 
 class RequestIndex:
@@ -25,7 +25,7 @@ class RequestIndex:
             self._db.execute("""CREATE TABLE requests (
                 id TEXT PRIMARY KEY, sequence INTEGER UNIQUE NOT NULL,
                 digest TEXT NOT NULL, request BLOB NOT NULL, status BLOB NOT NULL,
-                state TEXT NOT NULL)""")
+                state TEXT NOT NULL, execution BLOB)""")
             self._db.execute(
                 "CREATE TABLE writers (id TEXT PRIMARY KEY, lease BLOB NOT NULL)"
             )
@@ -62,6 +62,26 @@ class RequestIndex:
             is not None
         )
 
+    def execution(self, request_id: str) -> ExecutionReceipt | None:
+        row = self._db.execute(
+            "SELECT execution FROM requests WHERE id=?", (request_id,)
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        receipt = decode(row[0])
+        if (
+            not isinstance(receipt, ExecutionReceipt)
+            or receipt.identity.request_id != request_id
+        ):
+            raise ValueError("invalid derived execution receipt")
+        return receipt
+
+    def executed(self, receipt: ExecutionReceipt) -> None:
+        self._db.execute(
+            "UPDATE requests SET execution=? WHERE id=?",
+            (encode(receipt), receipt.identity.request_id),
+        )
+
     def id_at_sequence(self, sequence: int) -> str | None:
         row = self._db.execute(
             "SELECT id FROM requests WHERE sequence=?", (sequence,)
@@ -88,7 +108,7 @@ class RequestIndex:
         self, request: ComputeRequest, status: RequestStatus, checksum: str
     ) -> None:
         self._db.execute(
-            "INSERT INTO requests VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO requests VALUES (?, ?, ?, ?, ?, ?, NULL)",
             (
                 request.identity.request_id,
                 request.identity.sequence,

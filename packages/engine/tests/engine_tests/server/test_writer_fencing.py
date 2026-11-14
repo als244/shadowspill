@@ -6,6 +6,7 @@ import pytest
 
 from engine_tests.server.test_request_records import IDENTITY, request, result, store
 from shadowspill.server.records.requests import RequestRecords
+from shadowspill_client.protocol.results import ExecutionReceipt
 
 
 def test_takeover_fences_pending_and_new_work_but_preserves_accepted_work(tmp_path):
@@ -31,6 +32,7 @@ def test_takeover_fences_pending_and_new_work_but_preserves_accepted_work(tmp_pa
         )
         assert records.submit(current).state == "uploading"
         records.dispatch("a")
+        records.executed(ExecutionReceipt.from_result(result(accepted)))
         completed = records.complete(result(accepted))
         assert records.submit(accepted) == completed
         # Repeating a pending upload retrieves its status but cannot accept it.

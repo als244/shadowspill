@@ -16,6 +16,7 @@ from shadowspill_client.protocol.requests import (
 from shadowspill_client.protocol.results import (
     Acceptance,
     ComputeResult,
+    ExecutionReceipt,
     Failure,
     RequestStatus,
 )
@@ -58,6 +59,7 @@ def test_request_and_result_deduplication_survive_reopen_and_index_rebuild(tmp_p
         records.dispatch("a")
         with pytest.raises(ValueError, match="never replay"):
             records.dispatch("a")
+        records.executed(ExecutionReceipt.from_result(result(command)))
         completed = records.complete(result(command))
         assert records.complete(result(command)) == completed
         assert not records.pending()
@@ -142,7 +144,11 @@ def test_known_execution_and_output_publication_failure_remain_distinct(tmp_path
         with pytest.raises(ValueError, match="undispatched"):
             records.fail("a", Failure("output", "failed output", "completed", True, 1))
         records.dispatch("a")
-        failure = Failure("output", "failed output", "completed", True, 1)
+        receipt = ExecutionReceipt(command.identity, command.operation, "completed", 1)
+        records.executed(receipt)
+        failure = Failure(
+            "output", "failed output", "completed", True, 1, receipt.accumulation
+        )
         failed = records.fail("a", failure)
         assert records.submit(command) == failed
         assert failed.failure.execution_effect == "completed"
@@ -158,6 +164,7 @@ def test_index_failure_after_durable_completion_requires_reconciliation(
     records.submit(command)
     records.accept("a")
     records.dispatch("a")
+    records.executed(ExecutionReceipt.from_result(result(command)))
 
     def fail_index(status):
         raise OSError("query cache unavailable")

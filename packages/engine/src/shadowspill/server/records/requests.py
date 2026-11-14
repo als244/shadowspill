@@ -17,10 +17,12 @@ from shadowspill_client.protocol.requests import ComputeRequest, WriterLease, id
 from shadowspill_client.protocol.results import (
     Acceptance,
     ComputeResult,
+    ExecutionReceipt,
     Failure,
     RequestStatus,
 )
 
+from .execution_receipts import validate_outcome, validate_receipt
 from .journal import Journal
 from .journal_format import JournalLimits, JournalRecord
 from .request_index import RequestIndex
@@ -203,6 +205,27 @@ class RequestRecords:
                 )
             )
 
+    def execution(self, request_id: str) -> ExecutionReceipt | None:
+        with self._mutex:
+            self._usable()
+            self._require(request_id)
+            return self._index.execution(request_id)
+
+    def executed(self, receipt: ExecutionReceipt) -> ExecutionReceipt:
+        """Persist confirmed worker effects before publishing requested outputs."""
+        with self._mutex:
+            self._usable()
+            request, status = self._require(receipt.identity.request_id)
+            prior = self._index.execution(receipt.identity.request_id)
+            if prior is not None:
+                if prior != receipt:
+                    raise ValueError("confirmed execution receipts are immutable")
+                return prior
+            validate_receipt(request, status, receipt)
+            encode(receipt)
+            self._commit("request.executed", receipt.to_dict())
+            return receipt
+
     def fail(self, request_id: str, failure: Failure) -> RequestStatus:
         with self._mutex:
             self._usable()
@@ -218,6 +241,7 @@ class RequestRecords:
         if status == before:
             return before
         _transition(before, status)
+        validate_outcome(status, self._index.execution(status.identity.request_id))
         encode(status)  # Validate the bounded portable result before durable mutation.
         self._commit("request.status", status.to_dict())
         return status
@@ -275,10 +299,18 @@ class RequestRecords:
                 RequestStatus(request.identity, "uploading"),
                 record.data["digest"],
             )
+        elif record.kind == "request.executed":
+            receipt = ExecutionReceipt.from_dict(record.data)
+            request, status = self._require(receipt.identity.request_id)
+            validate_receipt(request, status, receipt)
+            if self._index.execution(receipt.identity.request_id) is not None:
+                raise ValueError("journal repeated an immutable execution receipt")
+            self._index.executed(receipt)
         elif record.kind == "request.status":
             status = RequestStatus.from_dict(record.data)
             request, before = self._require(status.identity.request_id)
             _transition(before, status)
+            validate_outcome(status, self._index.execution(status.identity.request_id))
             if (
                 status.state == "accepted"
                 and status.acceptance is not None

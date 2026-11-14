@@ -23,6 +23,12 @@ Canonical request digests include binary payload checksums. An identical ID/cont
 retry returns its original status; conflicting content or sequence reuse fails.
 Acceptance records retain their original journal position. Completed/skipped/failed
 outcomes are immutable, and a running request cannot be dispatched again.
+After all workers and required terminal transfers finish, `executed` commits an
+immutable `ExecutionReceipt` before requested output publication. It records the
+operation, outcome, completed updates and accumulation. Terminal results and
+publication failures must match those facts. A receipt does not promise published
+outputs or live workers; it prevents a known update from becoming an unknown
+effect merely because publication or the controller subsequently fails.
 
 `training.session.acceptance.AcceptanceOrder` commits the contiguous validated
 prefix using that record interface, without importing server storage. Later upload
@@ -56,9 +62,12 @@ reconciliation. The recovered journal may already contain the original completio
 Unfinished records remain inspectable without automatic replay. The engine's
 `training.session.recovery.fail_interrupted_requests` invalidates the existing
 operation state and commits restart failures in bounded pages. A durable running
-record without a terminal receipt has unknown execution effects; accepted work and
+record without an execution receipt has unknown execution effects; accepted work and
 incomplete uploads are recorded as not started. This requires dispatch to be
 journaled before sending any worker command. Completed outcomes stay unchanged.
+An execution receipt with unfinished publication instead yields a failure with
+known completed effects and its saved counters. Live state is still invalidated;
+those saved facts are not restoration of weights, gradients or optimizer state.
 Even a fully completed journal cannot establish that its former mutable workers
 still exist. Service startup must invoke this classification; it is not a worker
 restart or checkpoint restoration mechanism.
