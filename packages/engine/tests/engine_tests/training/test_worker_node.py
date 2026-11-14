@@ -15,6 +15,8 @@ from shadowspill.orchestration.launch.admission import (
     AssignedDevice,
     NodeAdmission,
     NodeCapacity,
+    ReservationCancelled,
+    ResourceRequest,
 )
 from shadowspill.orchestration.launch.host_arena import HostArena
 from shadowspill.orchestration.launch.publication import OutputSpec
@@ -45,6 +47,38 @@ with socket.socket(fileno=int(sys.argv[1])) as peer:
             pass
 print('owned CPU worker stopped')
 """
+
+
+def test_stop_interrupts_only_its_pending_resource_wait(tmp_path, monkeypatch):
+    node, admission, arena, disk = configured(tmp_path)
+    occupied = admission.reserve(ResourceRequest({"a": 100}, 0))
+    waiting = Event()
+    original = admission.reserve
+
+    def reserve(*args, **kwargs):
+        waiting.set()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(admission, "reserve", reserve)
+    try:
+        with ThreadPoolExecutor(1) as pool:
+            pending = pool.submit(node.start, lambda _: io.BytesIO(PAYLOAD), wait=True)
+            assert waiting.wait(5)
+            with pytest.raises(RuntimeError, match="creation has not finished"):
+                node.stop()
+            with pytest.raises(ReservationCancelled):
+                pending.result(timeout=5)
+        node.close()
+        assert not occupied.closed
+        assert arena.budget.used == disk.used == (0, 0)
+        # Stopping this job did not close admission or release another job's GPU.
+        with admission.reserve(ResourceRequest({"b": 100}, 0)):
+            pass
+    finally:
+        node.close()
+        occupied.close()
+        arena.close()
+    assert admission.used.claims == 0
 
 
 def test_stop_during_startup_copy_retains_storage_until_producer_settles(tmp_path):

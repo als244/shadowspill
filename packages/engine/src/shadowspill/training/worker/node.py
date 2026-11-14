@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Lock, RLock
+from threading import Event, Lock, RLock
 from types import MappingProxyType
 from typing import BinaryIO, Self
 
@@ -92,6 +92,7 @@ class WorkerNode:
         self._environment = MappingProxyType(dict(environment))
         self._log_limit = integer(log_limit_bytes, "per-stream log bytes")
         self._lock, self._busy = RLock(), Lock()
+        self._cancelled = Event()
         self._lease: NodeLease | None = None
         self._metadata: BufferLease | None = None
         self._directory: TemporaryDirectory[str] | None = None
@@ -142,7 +143,7 @@ class WorkerNode:
                 raise RuntimeError("node workers can only be started once")
             self._started = True
             self._lease = self._admission.reserve(
-                self._request, wait=wait, timeout=timeout
+                self._request, wait=wait, timeout=timeout, cancelled=self._cancelled
             )
             self._active()
             self._metadata = self._memory.reserve(
@@ -197,6 +198,7 @@ class WorkerNode:
 
     def stop(self) -> None:
         """Worker-group stop callback: retain files until their owners finish."""
+        self._cancelled.set()
         with self._lock:
             self._stopping = True
             if self._delivery is not None:
