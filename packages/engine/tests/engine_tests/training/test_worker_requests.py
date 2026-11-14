@@ -22,23 +22,31 @@ from shadowspill_client.buffers import BufferBudget
 
 
 @contextmanager
-def configured(tmp_path, monkeypatch, *, failure=None):
+def configured(tmp_path, monkeypatch, *, failure=None, operation="step"):
     disk, memory, metadata = (
         BufferBudget(16 << 20, 100),
         BufferBudget(16 << 20, 100),
         BufferBudget(16 << 20),
     )
     with (
-        invocation(tmp_path) as (data, transition, command, bindings, _),
+        invocation(tmp_path, operation) as (data, transition, command, bindings, _),
         FileGrants(root=tmp_path, memory=memory) as grants,
         OutputFiles(root=tmp_path, disk=disk, memory=memory) as outputs,
     ):
         selected = data.worker_plans(transition)[0]
-        frame = WorkerOutputFrame(*description(count=len(command.frames)))
+        frames = (
+            {}
+            if selected is None
+            else {
+                (command.candidate, selected): WorkerOutputFrame(
+                    *description(count=len(command.frames))
+                )
+            }
+        )
         worker = SimpleNamespace(
             startup=SimpleNamespace(scope=bindings.scope),
             bindings=bindings,
-            outputs={(command.candidate, selected): frame},
+            outputs=frames,
         )
         connection = WorkerConnection(bindings.scope, io.BytesIO(), io.BytesIO())
         connection.next_invocation = command.invocation
@@ -122,6 +130,20 @@ def test_results_retain_inputs_outputs_and_metadata_through_verification(
         work.close()
         assert ctx.metadata.used == ctx.disk.used == (0, 0)
         assert ctx.group.valid
+
+
+def test_discard_needs_command_metadata_but_no_tensor_file_owners(
+    tmp_path, monkeypatch
+):
+    with configured(tmp_path, monkeypatch, operation="discard") as ctx:
+        work = ctx.transport.execute(ctx.data, ctx.transition)
+        assert len(ctx.executions) == 1 and ctx.metadata.used[0] > 0
+        assert not ctx.grants._owners and ctx.disk.used == (0, 0)
+        assert not work.frames and not work._deliveries and not work._files
+        work.verify()
+        assert work.replies[0].result is None
+        work.close()
+        assert ctx.metadata.used == (0, 0) and ctx.group.valid
 
 
 @pytest.mark.parametrize("failure", ["stage", "lost", "stop"])

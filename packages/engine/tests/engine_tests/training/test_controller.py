@@ -110,6 +110,33 @@ def submit(controller, command, data=None):
         )
 
 
+def test_discard_is_ordered_deduplicated_and_resolves_only_the_old_generation(tmp_path):
+    with configured(tmp_path, blocked=True) as ctx:
+        controller = ctx.controller
+        backward, body = upload(operation="forward_backward")
+        submit(controller, backward, body)
+        assert ctx.workers.entered.wait(5)
+        discard = OperationRequest(request("discard", 2).identity, "discard")
+        assert submit(controller, discard).state == "accepted"
+        assert ctx.workers.calls == ["a"]
+        ctx.workers.release.set()
+        result = controller.wait("discard", timeout=5).result
+        assert result.completed_updates == 0 and not result.accumulation.open
+        assert result.accumulation.generation == 1
+        controller.drain(timeout=5)
+        assert controller.register(discard).result == result
+        assert controller.receive("discard").result == result
+        assert ctx.workers.calls == ["a", "discard"]
+        backward, body = upload(operation="forward_backward", name="fresh", sequence=3)
+        submit(controller, backward, body)
+        next_result = controller.wait("fresh", timeout=5).result
+        assert next_result.accumulation.generation == 2
+        assert next_result.accumulation.contributions == ("fresh",)
+        discard = OperationRequest(request("resolve", 4).identity, "discard")
+        submit(controller, discard)
+        assert controller.wait("resolve", timeout=5).state == "completed"
+
+
 def test_accepted_work_survives_closed_body_timed_out_waiter_and_duplicate_request(
     tmp_path,
 ):

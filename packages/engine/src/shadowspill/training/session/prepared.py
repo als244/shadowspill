@@ -25,7 +25,7 @@ from shadowspill_client._records import number
 from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.payload import BatchSnapshot, snapshot_batch
-from shadowspill_client.protocol.requests import OperationRequest
+from shadowspill_client.protocol.requests import STATE_OPERATIONS, OperationRequest
 from shadowspill_client.protocol.results import RequestStatus
 
 from .controls import CallControls, call_controls, operation_key
@@ -36,8 +36,8 @@ from .state import Transition
 @dataclass
 class PreparedCall:
     request: OperationRequest
-    key: OperationKey
-    candidate: PlannedCandidate
+    key: OperationKey | None
+    candidate: PlannedCandidate | None
     controls: CallControls
     participates: bool | None
     budget: BufferBudget
@@ -46,6 +46,7 @@ class PreparedCall:
     _workspace: BufferLease | None = None
     _empty_snapshot: BatchSnapshot | None = None
     closed: bool = False
+    ranks: tuple[int, ...] = ()
 
     def worker_plans(self, transition: Transition) -> Mapping[int, str | None]:
         """Select main/masked/optimizer forms using the existing state decision."""
@@ -53,13 +54,22 @@ class PreparedCall:
             raise RuntimeError("prepared request inputs are closed")
         if (
             transition.request_id != self.request.identity.request_id
-            or transition.command != self.key.operation
+            or transition.command != self.request.operation
             or (
                 self.participates is not None
                 and transition.participates != self.participates
             )
         ):
             raise ValueError("operation transition differs from its prepared request")
+        if self.candidate is None:
+            if (
+                self.key is not None
+                or self.request.operation not in STATE_OPERATIONS
+                or not self.ranks
+            ):
+                raise ValueError("prepared state command requires its worker ranks")
+            return MappingProxyType(dict.fromkeys(self.ranks))
+        assert self.key is not None
         result = {}
         for rank, worker in self.candidate.workers.items():
             if self.key.operation == "optim_step":
@@ -160,6 +170,8 @@ class PreparedRequests:
         self, inputs: RequestInputs[PreparedCall], request: OperationRequest
     ) -> RequestStatus:
         """Derive upload limits from preparation, never from submitted byte claims."""
+        if request.operation in STATE_OPERATIONS:
+            return inputs.register(request, staging_bytes=1, envelope=None)
         try:
             key = operation_key(self.setup, request)
         except ValueError as error:
@@ -198,6 +210,18 @@ class PreparedRequests:
         snapshot: BatchSnapshot | None,
         budget: BufferBudget,
     ) -> PreparedCall:
+        if request.operation in STATE_OPERATIONS:
+            if snapshot is not None:
+                raise ValueError("state commands have no tensor input")
+            return PreparedCall(
+                request,
+                None,
+                None,
+                CallControls(),
+                None,
+                budget,
+                ranks=tuple(self.prepared.plans),
+            )
         key = operation_key(self.setup, request)
         controls = call_controls(self.setup, request, key)
         if key.operation == "optim_step":

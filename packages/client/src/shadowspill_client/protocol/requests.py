@@ -12,6 +12,10 @@ from .controls import Scalar
 
 type ComputeOperation = Literal["step", "forward_backward", "optim_step", "forward"]
 COMPUTE_OPERATIONS = frozenset({"step", "forward_backward", "optim_step", "forward"})
+type StateOperation = Literal["discard"]
+type Operation = ComputeOperation | StateOperation
+STATE_OPERATIONS = frozenset({"discard"})
+OPERATIONS = COMPUTE_OPERATIONS | STATE_OPERATIONS
 
 
 def identifier(value: object, name: str) -> str:
@@ -91,7 +95,7 @@ class WriterLease(Record):
 @dataclass(frozen=True)
 class OperationRequest(Record):
     identity: RequestIdentity
-    operation: ComputeOperation
+    operation: Operation
     payload: ArtifactRef | None = None
     datum_count: int = 0
     optim: Mapping[str, Scalar] = field(default_factory=dict)
@@ -106,8 +110,8 @@ class OperationRequest(Record):
         object.__setattr__(
             self, "identity", record(RequestIdentity, self.identity, "identity")
         )
-        if self.operation not in COMPUTE_OPERATIONS:
-            raise ValueError("unknown compute operation")
+        if self.operation not in OPERATIONS:
+            raise ValueError("unknown operation")
         if self.payload is not None:
             object.__setattr__(
                 self, "payload", record(ArtifactRef, self.payload, "payload")
@@ -129,6 +133,15 @@ class OperationRequest(Record):
             raise ValueError(
                 "optimizer controls and grad_scale require step or optim_step"
             )
+        if self.operation in STATE_OPERATIONS and (
+            self.payload is not None
+            or self.datum_count
+            or self.loss_params
+            or self.outputs is not None
+            or self.mode is not None
+            or self.runtime_trace
+        ):
+            raise ValueError("state commands have no batch, controls, outputs or trace")
         if self.operation == "optim_step" and (
             self.payload is not None
             or self.datum_count
@@ -139,7 +152,7 @@ class OperationRequest(Record):
             raise ValueError(
                 "optim_step has no batch, objective controls, outputs or mode"
             )
-        if self.operation != "optim_step":
+        if self.operation in ("step", "forward_backward", "forward"):
             mode = self.mode or (
                 "evaluation" if self.operation == "forward" else "training"
             )

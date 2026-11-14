@@ -9,12 +9,14 @@ from typing import Any, Self
 import torch
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.artifacts.state_inventory import program_state
 from shadowspill.communication.binding.ranks import RankAssignment
 from shadowspill.memory import SpillPool
 from shadowspill.parallelism import GroupRef
 from shadowspill.pytorch.invocation import InvocationResult, ReusableCompletionEvent
 from shadowspill.pytorch.numerics import validate_numerical_settings
 from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
+from shadowspill.runtime.plan.objects import PlanObjects
 
 from .dispatch import dispatch
 from .distributed.checks import check_external_budget, check_invocation, coordinated
@@ -322,6 +324,43 @@ class Executor:
 
     def _failed(self, error: BaseException) -> None:
         self._failure = error
+
+    def discard_gradients(self) -> None:
+        """Release every shared persistent gradient value once, without updating.
+
+        Logical objects and admitted Plans survive. The next participating
+        backward must use its fresh-write form; the session owns that decision.
+        """
+        self.synchronize()
+        if not self._initialized:
+            raise RuntimeError("initialize persistent tensors before discarding")
+
+        def release() -> None:
+            gradients: dict[int, tuple[PlanObjects, str]] = {}
+            other_state = set()
+            for path in (*self._paths, *self._named_paths.values()):
+                objects = path.bridge.objects
+                for binding in program_state(
+                    path.plan.program, self.logical_rank
+                ).bindings:
+                    alias = binding.alias_group_id
+                    if alias is None or not objects.requires_storage(alias):
+                        continue
+                    identity = objects.runtime_object_id(alias)
+                    if binding.identity.role == "gradient":
+                        gradients.setdefault(identity, (objects, alias))
+                    else:
+                        other_state.add(identity)
+            if gradients.keys() & other_state:
+                raise ValueError("gradient storage overlaps other persistent state")
+            for objects, alias in gradients.values():
+                objects.release_value(alias)
+
+        try:
+            coordinated(self._distributed, release)
+        except BaseException as error:
+            self._failed(error)
+            raise
 
     def synchronize(self) -> None:
         if self._closed or self._plan_released:

@@ -17,10 +17,12 @@ from shadowspill.runtime import Runtime
 from shadowspill.runtime.abi import (
     ObjectBinding,
     ObjectLocationSnapshot,
+    ObjectSnapshot,
 )
 from shadowspill.runtime.failures import RuntimeExecutionError
 from shadowspill.runtime.objects import (
     register_object,
+    release_object_generation,
     reserve_runtime_object_ids,
 )
 from shadowspill.runtime.occupancy import PoolAllocation
@@ -237,6 +239,30 @@ class PlanObjects:
 
     def registered_aliases(self) -> frozenset[str]:
         return frozenset(self._registered)
+
+    def release_value(self, alias_id: str) -> None:
+        """Release completed residency, preserving all shared Plan bindings.
+
+        The caller must synchronize execution and release borrowed value views
+        first. The runtime rejects pending actions and generation mismatches.
+        """
+        if not self.requires_storage(alias_id):
+            return
+        with self.runtime._lock:
+            object_id = self.runtime_object_id(alias_id)
+            snapshot = ObjectSnapshot()
+            require_status(
+                self.library,
+                self.runtime_library.shadowspill_object_snapshot(
+                    self.runtime._runtime_handle, object_id, ctypes.byref(snapshot)
+                ),
+                f"read completed generation of {alias_id}",
+            )
+            release_object_generation(
+                self.runtime,
+                object_id=object_id,
+                expected_generation=int(snapshot.generation),
+            )
 
     def registered_runtime_objects(self) -> Mapping[str, int]:
         """Return plan aliases and their stable runtime object identities."""

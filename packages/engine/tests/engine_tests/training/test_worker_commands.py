@@ -16,6 +16,7 @@ from shadowspill.training.worker.protocol import CODEC, WorkerCall, WorkerScope
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.codec import ProtocolError, decode
 from shadowspill_client.protocol.payload import snapshot_batch
+from shadowspill_client.protocol.requests import OperationRequest
 
 SCOPE = WorkerScope("run", "server", "process-1", 0)
 
@@ -26,7 +27,9 @@ def invocation(root, operation="step", *, masked=False, accumulated=False):
 
     prepared = PreparedRequests(family(), cache_root=root)
     datums = records(masked=masked)
-    if operation == "optim_step":
+    if operation == "discard":
+        command = OperationRequest(request().identity, operation)
+    elif operation == "optim_step":
         command = replace(request(), operation=operation, mode=None)
     else:
         command, _ = upload(
@@ -40,7 +43,11 @@ def invocation(root, operation="step", *, masked=False, accumulated=False):
             state.begin("forward_backward", "previous", participates=not masked)
         )
     budget = BufferBudget(16 << 20, max_requests=5)
-    snapshot = None if operation == "optim_step" else snapshot_batch(datums, budget)
+    snapshot = (
+        None
+        if operation in ("optim_step", "discard")
+        else snapshot_batch(datums, budget)
+    )
     data = prepared(command, snapshot, budget)
     try:
         transition = state.begin(operation, "a", participates=data.participates)
@@ -72,6 +79,7 @@ def invocation(root, operation="step", *, masked=False, accumulated=False):
         ("forward", False, False),
         ("optim_step", False, False),
         ("optim_step", True, False),
+        ("discard", False, False),
     ],
 )
 def test_wire_rechecks_saved_forms_frames_and_controls(
@@ -94,7 +102,7 @@ def test_wire_rechecks_saved_forms_frames_and_controls(
         budget = BufferBudget(max(1, bound.input_bytes))
         bound.verify_inputs(budget)
         loader = bound.input_loader(budget)
-        if operation == "optim_step":
+        if operation in ("optim_step", "discard"):
             assert loader is None
         else:
             with loader:
@@ -112,6 +120,22 @@ def test_wire_rechecks_saved_forms_frames_and_controls(
         if bound.hyperparams:
             assert bound.hyperparams["scale"] == 1
         assert bound.command.accumulate_gradients == accumulated
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"candidate": "saved-plan"},
+        {"skipped": True},
+        {"accumulate_gradients": True},
+    ],
+)
+def test_discard_cannot_select_compute_forms(tmp_path, change):
+    with (
+        invocation(tmp_path, "discard") as (_, _, command, _, _),
+        pytest.raises(ValueError, match="no compute candidate"),
+    ):
+        replace(command, **change)
 
 
 def test_commands_cannot_cross_scope_candidate_or_input_abi(tmp_path):

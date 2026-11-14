@@ -52,14 +52,15 @@ class ResultPublisher:
                 raise RuntimeError("result publisher is closed")
             if (
                 receipt.identity != call.request.identity
-                or receipt.operation != call.key.operation
+                or receipt.operation != call.request.operation
             ):
                 raise ValueError("publication differs from confirmed execution")
             work.verify()
             loss: float | int | None = None
             metrics: dict[str, float | int] = {}
             outputs: dict[str, ArtifactRef] = {}
-            if call.key.operation != "optim_step":
+            if call.key is not None and call.key.operation != "optim_step":
+                assert call.candidate is not None
                 layout = call.candidate.source.layout.outputs
                 if call.assignment is None:
                     raise ValueError(
@@ -86,7 +87,7 @@ class ResultPublisher:
                         self._owners.remove(owner)
             return OperationResult(
                 call.request.identity,
-                call.key.operation,
+                call.request.operation,
                 self.history_id,
                 receipt.outcome,
                 receipt.completed_updates,

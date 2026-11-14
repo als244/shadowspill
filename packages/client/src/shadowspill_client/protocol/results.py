@@ -10,9 +10,10 @@ from typing import Literal
 from .._records import Record, integer, names, number, record, text
 from .controls import Scalar
 from .requests import (
-    COMPUTE_OPERATIONS,
+    OPERATIONS,
+    STATE_OPERATIONS,
     ArtifactRef,
-    ComputeOperation,
+    Operation,
     RequestIdentity,
     identifier,
     scalars,
@@ -110,7 +111,7 @@ class ExecutionReceipt(Record):
     """All workers and required terminal transfers finished; publication may remain."""
 
     identity: RequestIdentity
-    operation: ComputeOperation
+    operation: Operation
     outcome: Literal["completed", "skipped"]
     completed_updates: int
     accumulation: Accumulation = field(default_factory=Accumulation)
@@ -119,7 +120,7 @@ class ExecutionReceipt(Record):
         object.__setattr__(
             self, "identity", record(RequestIdentity, self.identity, "identity")
         )
-        if self.operation not in COMPUTE_OPERATIONS or self.outcome not in (
+        if self.operation not in OPERATIONS or self.outcome not in (
             "completed",
             "skipped",
         ):
@@ -130,6 +131,10 @@ class ExecutionReceipt(Record):
             "accumulation",
             record(Accumulation, self.accumulation, "accumulation"),
         )
+        if self.operation in STATE_OPERATIONS and (
+            self.outcome != "completed" or self.accumulation.open
+        ):
+            raise ValueError("completed state commands require resolved accumulation")
 
     @classmethod
     def from_result(cls, result: OperationResult) -> ExecutionReceipt:
@@ -145,7 +150,7 @@ class ExecutionReceipt(Record):
 @dataclass(frozen=True)
 class OperationResult(Record):
     identity: RequestIdentity
-    operation: ComputeOperation
+    operation: Operation
     history_id: str
     outcome: Literal["completed", "skipped"]
     completed_updates: int
@@ -163,13 +168,21 @@ class OperationResult(Record):
         object.__setattr__(
             self, "identity", record(RequestIdentity, self.identity, "identity")
         )
-        if self.operation not in COMPUTE_OPERATIONS or self.outcome not in (
+        if self.operation not in OPERATIONS or self.outcome not in (
             "completed",
             "skipped",
         ):
             raise ValueError("unknown result operation or outcome")
         identifier(self.history_id, "history ID")
         integer(self.completed_updates, "completed_updates")
+        if self.operation in STATE_OPERATIONS and (
+            self.outcome != "completed"
+            or self.metrics
+            or self.outputs
+            or self.loss_params
+            or self.loss is not None
+        ):
+            raise ValueError("state results have no compute outputs or controls")
         if self.loss is not None:
             number(self.loss, "loss")
             if self.operation == "optim_step":
@@ -193,6 +206,8 @@ class OperationResult(Record):
             "accumulation",
             record(Accumulation, self.accumulation, "accumulation"),
         )
+        if self.operation in STATE_OPERATIONS and self.accumulation.open:
+            raise ValueError("completed state commands require resolved accumulation")
         metrics = dict(self.metrics)
         for name, value in metrics.items():
             text(name, "metric name")

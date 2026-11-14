@@ -37,6 +37,7 @@ class FileOutputs:
     def spec(self, call: BoundWorkerCall) -> OutputSpec | None:
         if call.plan is None:
             return None
+        assert call.command.candidate is not None
         frame = self.frames[call.command.candidate, call.plan]
         return OutputSpec(
             "result." + ticket(call.command).call_sha256,
@@ -55,7 +56,7 @@ class FileOutputs:
         spec = self.spec(call)
         if spec is None:
             return None
-        assert call.plan is not None
+        assert call.plan is not None and call.command.candidate is not None
         frame = self.frames[call.command.candidate, call.plan]
         return write_output(
             self.root, spec, lambda stream: frame.write(value, stream, budget, spec.id)

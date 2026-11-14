@@ -178,6 +178,8 @@ class WorkerRequests:
                 if ref.id not in sources or sources[ref.id].reference != ref:
                     raise ValueError("worker input reference is not owned by the call")
         for node, references in grouped.items():
+            if not references:
+                continue
             delivery = FileDelivery(
                 tuple(references.values()),
                 root=node.root,
@@ -198,7 +200,7 @@ class WorkerRequests:
             spec = sink.spec(bound)
             if spec is not None:
                 result._files[rank] = node.outputs.reserve(spec)
-                assert bound.plan is not None
+                assert bound.plan is not None and command.candidate is not None
                 result.frames[rank] = worker.outputs[command.candidate, bound.plan]
 
     def close(self) -> None:

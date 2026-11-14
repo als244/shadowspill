@@ -9,7 +9,7 @@ import pytest
 
 from engine_tests.fixtures.definition_operations import records
 from engine_tests.server.test_artifacts import store as artifact_store
-from engine_tests.server.test_request_records import store
+from engine_tests.server.test_request_records import request, store
 from engine_tests.training.test_outputs import assemble
 from engine_tests.training.test_prepared_requests import queue, upload
 from shadowspill.server.results import ResultPublisher
@@ -17,12 +17,15 @@ from shadowspill.training.inputs.frames import InputFrame
 from shadowspill.training.result_frames import ResultFrames
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload_io import read_payload
+from shadowspill_client.protocol.requests import OperationRequest
 
 
 class Work:
     def __init__(self, call):
         self.frames, self.files, self.values = {}, {}, {}
         self.verified = self.closed = False
+        if call.candidate is None:
+            return
         layout = call.candidate.source.layout
         for rank in call.candidate.workers:
             buffers = tuple(
@@ -68,6 +71,35 @@ class Work:
 
     def close(self):
         self.closed = True
+
+
+def test_discard_publishes_confirmed_state_without_tensor_scratch(tmp_path):
+    memory, disk = BufferBudget(8 << 20, 1), BufferBudget(1)
+    with (
+        store(tmp_path) as journal,
+        artifact_store(tmp_path, memory=memory) as artifacts,
+        ResultPublisher(
+            artifacts, history_id="history", root=tmp_path, memory=memory, disk=disk
+        ) as publisher,
+    ):
+        prepared, state, dispatcher, inputs = queue(journal, tmp_path)
+        state.complete(state.begin("forward_backward", "prior", participates=True))
+        command = OperationRequest(request().identity, "discard")
+        prepared.register(inputs, command)
+        assert inputs.receive("a").state == "accepted"
+        call = inputs.take("a")
+        work = Work(call)
+        status = dispatcher.run(
+            "a", lambda _: work, lambda receipt, value: publisher(call, receipt, value)
+        )
+        assert status.state == "completed", status
+        assert work.closed and work.verified and not status.result.outputs
+        assert status.result.completed_updates == 0
+        assert status.result.accumulation.generation == 1
+        assert not status.result.accumulation.open and disk.used == (0, 0)
+        inputs.finish("a")
+        inputs.staging.close()
+    assert memory.used == (0, 0)
 
 
 @pytest.mark.parametrize("operation", ["forward", "step"])

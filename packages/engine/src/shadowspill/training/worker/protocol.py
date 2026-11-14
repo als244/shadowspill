@@ -9,6 +9,7 @@ from typing import Literal
 from shadowspill_client._records import Record, integer, names, record, text
 from shadowspill_client.protocol.codec import RecordCodec
 from shadowspill_client.protocol.requests import (
+    STATE_OPERATIONS,
     ArtifactRef,
     OperationRequest,
     identifier,
@@ -129,7 +130,7 @@ class WorkerCall(Record):
     scope: WorkerScope
     invocation: int
     request: OperationRequest
-    candidate: str
+    candidate: str | None
     skipped: bool
     accumulate_gradients: bool
     frames: Sequence[ArtifactRef] = ()
@@ -140,7 +141,11 @@ class WorkerCall(Record):
             self, "request", record(OperationRequest, self.request, "request")
         )
         integer(self.invocation, "worker invocation", minimum=1)
-        identifier(self.candidate, "prepared candidate")
+        if self.request.operation in STATE_OPERATIONS:
+            if self.candidate is not None or self.skipped or self.accumulate_gradients:
+                raise ValueError("state commands have no compute candidate or flags")
+        else:
+            identifier(self.candidate, "prepared candidate")
         identity = self.request.identity
         if (
             identity.run_id != self.scope.run_id
@@ -163,8 +168,11 @@ class WorkerCall(Record):
         frames = tuple(record(ArtifactRef, item, "frame") for item in self.frames)
         if len({item.id for item in frames}) != len(frames):
             raise ValueError("worker frame IDs must be distinct")
-        if self.request.operation == "optim_step" and frames:
-            raise ValueError("optimizer-only commands have no input frames")
+        if (
+            self.request.operation == "optim_step"
+            or self.request.operation in STATE_OPERATIONS
+        ) and frames:
+            raise ValueError("commands without batches have no input frames")
         object.__setattr__(self, "frames", frames)
 
 

@@ -211,7 +211,7 @@ with (
             sequence = journal.last_sequence + 1
             name = f"request-{sequence}"
             payload, wire, count = None, None, 0
-            if operation != "optim_step":
+            if operation not in ("optim_step", "discard"):
                 datums = records(targets=operation != "forward")
                 with snapshot_batch(datums, publication.budget) as snapshot:
                     payload = ArtifactRef(
@@ -281,6 +281,11 @@ with (
             loss_params={"temperature": 2.0},
         )
         invoke("forward", outputs="predictions", predictions="after_step")
+        invoke("forward_backward", loss_params={"temperature": 2.0})
+        invoke("discard")
+        assert not controller.boundary.accumulation.open
+        assert controller.boundary.completed_updates == 1
+        invoke("forward", outputs="predictions", predictions="after_step")
         invoke("forward_backward", loss_params={"temperature": 0.5})
         invoke("forward_backward", loss_params={"temperature": 1.0})
         invoke("optim_step", optim={"lr": 0.02}, grad_scale=-0.5, corrupt=True)
@@ -331,3 +336,4 @@ print("Qualified production node worker lifecycle")
 print("Qualified connection-independent production controller queue")
 print("Qualified durable GPU artifacts after node and output-file cleanup")
 print("Qualified production caller-order result and scalar publication")
+print("Qualified ordered production discard followed by fresh backward/update")

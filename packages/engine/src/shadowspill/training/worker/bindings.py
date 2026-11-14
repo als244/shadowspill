@@ -19,7 +19,7 @@ from shadowspill.training.session.worker_inputs import ReadyInputLoader
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.payload import MEDIA_TYPE
-from shadowspill_client.protocol.requests import ArtifactRef
+from shadowspill_client.protocol.requests import STATE_OPERATIONS, ArtifactRef
 
 from .protocol import CODEC, WorkerCall, WorkerScope
 
@@ -45,7 +45,7 @@ def worker_call(
         scope,
         invocation,
         call.request,
-        call.candidate.id,
+        None if call.candidate is None else call.candidate.id,
         transition.skipped,
         transition.accumulate_gradients,
         frames,
@@ -117,8 +117,13 @@ class WorkerBindings:
     ) -> BoundWorkerCall:
         if command.scope != self.scope:
             raise ValueError("command belongs to another worker scope")
+        if command.request.operation in STATE_OPERATIONS:
+            return BoundWorkerCall(
+                command, None, CallControls(), MappingProxyType({}), ()
+            )
         key = operation_key(self.setup, command.request)
         controls = call_controls(self.setup, command.request, key)
+        assert command.candidate is not None
         candidate = self._candidates.get(command.candidate)
         if candidate is None or self.scope.rank not in candidate.workers:
             raise ValueError("command has no saved candidate for this worker")

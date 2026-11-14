@@ -36,6 +36,9 @@ class WorkerExecution:
     def __call__(self, call: BoundWorkerCall) -> ArtifactRef | None:
         if call.command.scope != self._bindings.scope:
             raise ValueError("execution call belongs to another worker")
+        if call.command.request.operation == "discard":
+            self._executor.discard_gradients()
+            return None
         if call.plan is None:
             return None
         value = None

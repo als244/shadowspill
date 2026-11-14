@@ -1,7 +1,7 @@
 """One CPU resolution of prepared capabilities and captured call controls."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from shadowspill.training.preparation.operations import OperationContract
@@ -16,12 +16,16 @@ _SCALE = ControlSchema({"grad_scale": ScalarControl(1.0)})
 
 @dataclass(frozen=True)
 class CallControls:
-    optim: Mapping[str, Scalar]
-    loss_params: Mapping[str, Scalar]
-    grad_scale: float | None
+    optim: Mapping[str, Scalar] = field(default_factory=lambda: MappingProxyType({}))
+    loss_params: Mapping[str, Scalar] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    grad_scale: float | None = None
 
 
 def operation_key(setup: ResolvedSetup, request: OperationRequest) -> OperationKey:
+    if request.operation not in ("step", "forward_backward", "forward", "optim_step"):
+        raise ValueError("state commands do not select a compute capability")
     key = OperationKey(
         request.operation,
         None

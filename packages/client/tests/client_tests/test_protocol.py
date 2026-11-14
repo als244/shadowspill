@@ -56,6 +56,8 @@ def result():
         OperationRequest(IDENTITY, "forward_backward", PAYLOAD, 2),
         OperationRequest(IDENTITY, "forward", PAYLOAD, 2, mode="training"),
         OperationRequest(IDENTITY, "optim_step", grad_scale=-1),
+        OperationRequest(IDENTITY, "discard"),
+        OperationResult(IDENTITY, "discard", "history_1", "completed", 3),
         Acceptance(IDENTITY, 3),
         result(),
         RequestStatus(IDENTITY, "completed", Acceptance(IDENTITY, 3), result()),
@@ -113,6 +115,43 @@ def test_request_hash_covers_identity_controls_and_payload_integrity():
     assert digest(left) != digest(replace(left, grad_scale=0))
     assert left.grad_scale == 1
     assert OperationRequest(IDENTITY, "forward").mode == "evaluation"
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"payload": PAYLOAD},
+        {"datum_count": 1},
+        {"optim": {"lr": 1}},
+        {"grad_scale": 1},
+        {"loss_params": {"temperature": 1}},
+        {"outputs": "predictions"},
+        {"mode": "training"},
+        {"runtime_trace": True},
+    ],
+)
+def test_discard_rejects_compute_inputs_and_controls(options):
+    with pytest.raises(ValueError):
+        OperationRequest(IDENTITY, "discard", **options)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"metrics": {"value": 1}},
+        {"outputs": {"value": PAYLOAD}},
+        {"loss": 0},
+        {"outcome": "skipped"},
+        {"grad_scale": 1},
+        {"optim": {"lr": 1}},
+        {"loss_params": {"temperature": 1}},
+        {"accumulation": Accumulation(1, True, ("old",), 1)},
+    ],
+)
+def test_discard_result_records_only_resolved_state(options):
+    result = OperationResult(IDENTITY, "discard", "history_1", "completed", 3)
+    with pytest.raises(ValueError):
+        replace(result, **options)
 
 
 @pytest.mark.parametrize(

@@ -22,6 +22,7 @@ triton.knobs.compilation.listener = compilation_finished
 forbid_preparation()
 
 from engine_tests.fixtures.definition_operations import records  # noqa: E402
+from shadowspill.artifacts.state_inventory import program_state  # noqa: E402
 from shadowspill.execution.results import TrainingResult  # noqa: E402
 from shadowspill.orchestration.launch.publication import (  # noqa: E402
     OutputFiles,
@@ -158,7 +159,7 @@ def exchange(message):
 def submit(name, operation, *, datums=None, **options):
     wire, payload = None, None
     count = 0
-    if operation != "optim_step":
+    if operation not in ("optim_step", "discard"):
         datums = records() if datums is None else datums
         with snapshot_batch(datums, BufferBudget(8 << 20)) as owned:
             wire = b"".join(owned.chunks())
@@ -329,6 +330,32 @@ with (
     actual = snapshot(executor)
     for name, target in oracle["after_step"].items():
         torch.testing.assert_close(actual[name].reshape(target.shape), target)
+    invoke("discarded-part", "forward_backward", loss_params={"temperature": 2.0})
+    gradients = {}
+    for path in (*executor._paths, *executor._named_paths.values()):
+        for binding in program_state(path.plan.program).bindings:
+            if binding.identity.role == "gradient":
+                alias = binding.alias_group_id
+                objects = path.bridge.objects
+                gradients.setdefault(objects.runtime_object_id(alias), (objects, alias))
+    assert gradients and all(
+        objects.spill_location(alias) for objects, alias in gradients.values()
+    )
+    invoke("discard", "discard")
+    assert (
+        not state.boundary.accumulation.open and state.boundary.completed_updates == 1
+    )
+    assert all(
+        objects.spill_location(alias) is None for objects, alias in gradients.values()
+    )
+    invoke("discard-empty", "discard")
+    invoke(
+        "eval-discarded",
+        "forward",
+        datums=records(targets=False),
+        outputs="predictions",
+        observe=check_predictions,
+    )
     for index, overrides in enumerate(({"temperature": 0.5}, {})):
         if index == 1:
             bad = records()
@@ -385,3 +412,4 @@ print("Qualified persistent worker invocation loop")
 print("Qualified worker publication failure with completed optimizer state")
 print("Qualified bounded output frames from admitted Executor storage")
 print("Qualified pre-reserved worker output files")
+print("Qualified physical gradient discard and fresh accumulation without state reset")

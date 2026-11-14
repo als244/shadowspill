@@ -65,7 +65,7 @@ class WorkerGroup:
                 )
                 for rank, connection in self.connections.items()
             }
-            if call.candidate.workers.keys() != self.connections.keys():
+            if call.worker_plans(transition).keys() != self.connections.keys():
                 raise ValueError("prepared call requires a different worker set")
         except (TypeError, ValueError, RuntimeError) as error:
             raise ExecutionNotStarted(str(error)) from error

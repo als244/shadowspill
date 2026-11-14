@@ -44,7 +44,7 @@ def test_output_failure_classification_requires_both_terminal_boundaries(failure
         command=SimpleNamespace(
             scope=SCOPE,
             accumulate_gradients=False,
-            request=SimpleNamespace(runtime_trace=False),
+            request=SimpleNamespace(operation="step", runtime_trace=False),
         ),
         plan="main",
         hyperparams={},
@@ -91,7 +91,7 @@ def test_input_lease_is_released_before_the_same_budget_is_used_for_output():
         command=SimpleNamespace(
             scope=SCOPE,
             accumulate_gradients=False,
-            request=SimpleNamespace(runtime_trace=False),
+            request=SimpleNamespace(operation="step", runtime_trace=False),
         ),
         plan="main",
         hyperparams={},
