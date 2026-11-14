@@ -30,6 +30,7 @@ from .results import (
     OperationResult,
     RequestStatus,
 )
+from .service import ServiceError, ServiceInfo
 from .training import ResolvedTraining
 
 VERSION = 1
@@ -55,6 +56,8 @@ _KINDS: Mapping[str, type[Record]] = {
     "compute.execution": ExecutionReceipt,
     "request.failure": Failure,
     "request.status": RequestStatus,
+    "service.info": ServiceInfo,
+    "service.error": ServiceError,
 }
 
 
