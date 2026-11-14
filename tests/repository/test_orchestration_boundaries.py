@@ -63,7 +63,7 @@ sys.meta_path.insert(0, block)
 for module in ('launch.processes', 'launch.rank_device', 'launch.workers',
                'launch.staging', 'launch.supervision', 'launch.connected',
                'launch.admission', 'launch.host_memory', 'launch.device_inventory',
-               'launch.device_probe', 'monitoring.lifecycle',
+               'launch.device_probe', 'launch.file_grants', 'monitoring.lifecycle',
                'candidates', 'communication',
                'capture.nsys', 'capture.nsys_worker'):
     importlib.import_module('shadowspill.orchestration.' + module)
