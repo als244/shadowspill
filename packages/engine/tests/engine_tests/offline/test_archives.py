@@ -1,3 +1,4 @@
+import hashlib
 import json
 import zipfile
 from dataclasses import replace
@@ -118,3 +119,55 @@ def test_report_from_restored_plan_has_numeric_rows_and_figures(tmp_path):
     assert json.loads((index.parent / "summary.json").read_text())["fetch_bytes"] == 64
     assert (index.parent / "timeline.svg").stat().st_size > 100
     assert (index.parent / "timeline.png").stat().st_size > 100
+
+
+@pytest.mark.parametrize("limit", ["metadata", "payload"])
+def test_archive_size_limits_precede_any_content_read(tmp_path, monkeypatch, limit):
+    source = program()
+    source = replace(source, executables={"one": b"x" * 4096})
+    path = tmp_path / "bounded.ssp"
+    source.save(path)
+    with zipfile.ZipFile(path) as archive:
+        metadata = sum(
+            archive.getinfo(name).file_size
+            for name in ("manifest.json", "artifact.json")
+        )
+    assert (
+        type(source)
+        .load(path, max_metadata_bytes=metadata, max_payload_bytes=4096)
+        .to_dict()
+        == source.to_dict()
+    )
+
+    def no_read(*args, **kwargs):
+        pytest.fail("read content before checking byte limits")
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", no_read)
+    with pytest.raises(ValueError, match=f"{limit} byte limit"):
+        type(source).load(
+            path, **{f"max_{limit}_bytes": 4095 if limit == "payload" else 1}
+        )
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        (b'{"x":1,"x":2}', "duplicate archive JSON"),
+        (b'{"x":NaN}', "nonfinite archive JSON"),
+        (b"[]", "must contain an object"),
+    ],
+)
+def test_archive_rejects_ambiguous_metadata_even_with_valid_checksum(
+    tmp_path, data, message
+):
+    path = tmp_path / "invalid.ssp"
+    source = program()
+    source.save(path)
+    with zipfile.ZipFile(path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    manifest["sha256"] = hashlib.sha256(data).hexdigest()
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        archive.writestr("artifact.json", data)
+    with pytest.raises(ValueError, match=message):
+        type(source).load(path)
