@@ -22,13 +22,11 @@ forbid_preparation()
 
 from engine_tests.fixtures.definition_operations import records  # noqa: E402
 from shadowspill.execution.results import TrainingResult  # noqa: E402
-from shadowspill.execution.tensor_copy import host_chunks  # noqa: E402
 from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
 from shadowspill.training.definitions import (  # noqa: E402
     InitializationRuntime,
     load_registry,
 )
-from shadowspill.training.inputs.frames import FRAME_CHUNK_BYTES, InputFrame  # noqa: E402
 from shadowspill.training.observations import to_host  # noqa: E402
 from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
 from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
@@ -93,44 +91,35 @@ class HostOutputs:
         self.value = None
 
 
-def collect(value):
+def collect(call, value):
+    frame = startup.outputs[call.command.candidate, call.plan]
+    stream = io.BytesIO()
+    assert running.staging.used == (0, 0)
+    reference = frame.write(value, stream, running.staging, "worker-output")
     logical = (
         (value.losses, value.metrics) if isinstance(value, TrainingResult) else value
     )
-    leaves, _ = torch.utils._pytree.tree_flatten(logical)
-    fields = {
-        ("inputs", str(index)): tensor
-        for index, tensor in enumerate(leaves)
-        if isinstance(tensor, torch.Tensor)
-    }
-    frame = InputFrame(
-        {path: tuple(tensor.shape) for path, tensor in fields.items()},
-        {
-            path: str(tensor.dtype).removeprefix("torch.")
-            for path, tensor in fields.items()
-        },
-    )
-    stream = io.BytesIO()
-    reference = frame.write_chunks(
-        stream,
-        lambda path, values=fields: host_chunks(
-            values[path], chunk_bytes=FRAME_CHUNK_BYTES
-        ),
-        BufferBudget(frame.write_bytes),
-        "worker-output",
-    )
     host = to_host(logical)
-    expected, _ = torch.utils._pytree.tree_flatten(host)
+    groups = (
+        tuple(zip(*host, strict=True)) if isinstance(value, TrainingResult) else host
+    )
     stream.seek(0)
     with read_payload(
-        stream, reference, BufferBudget(frame.size.staging), limits=frame.size
+        stream,
+        reference,
+        BufferBudget(frame.frame.size.staging),
+        limits=frame.frame.size,
     ) as decoded:
-        for path in fields:
-            tensor = expected[int(path[1])]
-            assert decoded.datums[0].inputs[path[1]].data == (
-                tensor.contiguous().reshape(-1).view(torch.uint8).numpy().tobytes()
+        for path in frame.frame.shapes:
+            loss, values = groups[int(path[1])]
+            tensor = loss if path[2] == "loss" else values[path[3]]
+            leaf = decoded.datums[0].inputs
+            for key in path[1:]:
+                leaf = leaf[key]
+            assert (
+                leaf.data
+                == tensor.contiguous().reshape(-1).view(torch.uint8).numpy().tobytes()
             )
-    del fields, leaves, logical
     if fail_worker_publication:
         raise OSError("injected worker output disk failure")
     worker_outputs.append(host)

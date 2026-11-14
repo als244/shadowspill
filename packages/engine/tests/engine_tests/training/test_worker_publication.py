@@ -1,5 +1,6 @@
 """Only confirmed compute and released output views permit publication failure."""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -31,7 +32,7 @@ def test_output_failure_classification_requires_both_terminal_boundaries(failure
             if failure == ("before" if self.synchronizations == 1 else "after"):
                 raise RuntimeError("device synchronization failed")
 
-    def collect(value):
+    def collect(call, value):
         events.append("copy")
         if failure == "disk":
             raise OSError("output disk full")
@@ -64,3 +65,43 @@ def test_output_failure_classification_requires_both_terminal_boundaries(failure
     else:
         assert worker(call) is None
         assert events == ["execute", "sync", "copy", "released", "sync"]
+
+
+def test_input_lease_is_released_before_the_same_budget_is_used_for_output():
+    budget = BufferBudget(64, max_requests=1)
+    events = []
+
+    @contextmanager
+    def loader(memory):
+        with memory.reserve(64, timeout=0):
+            events.append("input")
+            yield object()
+        events.append("input_closed")
+
+    def execute(**kwargs):
+        assert budget.used == (64, 1)
+        return SimpleNamespace(result=lambda: object())
+
+    def collect(call, value):
+        assert budget.used == (0, 0)
+        with budget.reserve(64, timeout=0):
+            events.append("output")
+
+    call = SimpleNamespace(
+        command=SimpleNamespace(
+            scope=SCOPE,
+            accumulate_gradients=False,
+            request=SimpleNamespace(runtime_trace=False),
+        ),
+        plan="main",
+        hyperparams={},
+        input_loader=loader,
+    )
+    worker = WorkerExecution(
+        SimpleNamespace(run=execute, synchronize=lambda: None),
+        SimpleNamespace(scope=SCOPE, primary="main"),
+        budget,
+        collect,
+    )
+    assert worker(call) is None
+    assert events == ["input", "input_closed", "output"] and budget.used == (0, 0)

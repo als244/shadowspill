@@ -13,14 +13,16 @@ from shadowspill.communication.binding.ranks import RankAssignment
 from shadowspill.orchestration.launch.workers import workers
 from shadowspill.planning.spill import spill_configuration
 from shadowspill.training.definitions.initialization import InitializationRuntime
+from shadowspill.training.inputs.staging import StagingLimitError
 from shadowspill.training.preparation.family_records import PreparedPlans
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef
 
-from .bindings import WorkerBindings
+from .bindings import BoundWorkerCall, WorkerBindings
 from .execution import WorkerExecution
 from .initialization import PreparedInitialization, initialize, prepare_initialization
 from .loop import WorkerLoop
+from .output_frame import WorkerOutputFrame, prepare_output_frames
 from .protocol import WorkerScope, WorkerStartup
 from .startup import await_start, report_ready
 
@@ -40,6 +42,7 @@ class PreparedWorker:
     bindings: WorkerBindings
     initialization: PreparedInitialization
     startup: WorkerStartup
+    outputs: Mapping[tuple[str, str], WorkerOutputFrame]
 
     @classmethod
     def resolve(
@@ -59,6 +62,16 @@ class PreparedWorker:
             require_compiled_device(plan.program, 0)
         primary = plans[bindings.primary]
         initial = prepare_initialization(bindings.setup)[scope.rank]
+        outputs = prepare_output_frames(prepared, scope.rank)
+        staging = max(
+            initial.description.peak_bytes,
+            bindings.input_bytes,
+            *(frame.frame.write_bytes for frame in outputs.values()),
+        )
+        if staging > bindings.setup.config.execution.max_staging_bytes:
+            raise StagingLimitError(
+                "worker outputs exceed the configured staging capacity"
+            )
         spill = spill_configuration(
             prepared.memory[scope.rank].spill_bytes,
             primary.memory_budgets.spill_bytes,
@@ -71,16 +84,16 @@ class PreparedWorker:
             assignment.logical_by_worker,
             primary.memory_budgets.execution_bytes,
             spill.capacity,
-            max(initial.description.peak_bytes, bindings.input_bytes),
+            staging,
         )
-        return cls(bindings, initial, description)
+        return cls(bindings, initial, description, outputs)
 
     @contextmanager
     def open(
         self,
         runtime: InitializationRuntime,
         resolve: Callable[[ArtifactRef], Path],
-        collect: Callable[[Any], ArtifactRef | None],
+        collect: Callable[[BoundWorkerCall, Any], ArtifactRef | None],
     ) -> Iterator["RunningWorker"]:
         # The agent must have isolated visibility before this import. Each saved
         # process-local compiler ordinal is zero, independent of physical GPU ID.
@@ -127,7 +140,7 @@ class PreparedWorker:
         writer: BinaryIO,
         runtime: InitializationRuntime,
         resolve: Callable[[ArtifactRef], Path],
-        collect: Callable[[Any], ArtifactRef | None],
+        collect: Callable[[BoundWorkerCall, Any], ArtifactRef | None],
     ) -> None:
         """Own the private startup/invocation streams, without an idle timeout."""
         with ExitStack() as cleanup:

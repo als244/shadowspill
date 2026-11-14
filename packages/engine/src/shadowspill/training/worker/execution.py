@@ -28,7 +28,7 @@ class WorkerExecution:
         executor: "Executor",
         bindings: WorkerBindings,
         budget: BufferBudget,
-        collect: Callable[[Any], ArtifactRef | None],
+        collect: Callable[[BoundWorkerCall, Any], ArtifactRef | None],
     ) -> None:
         self._executor, self._bindings = executor, bindings
         self._budget, self._collect = budget, collect
@@ -38,35 +38,38 @@ class WorkerExecution:
             raise ValueError("execution call belongs to another worker")
         if call.plan is None:
             return None
-        with call.input_loader(self._budget) or nullcontext(None) as loader:
-            value = self._executor.run(
-                plan=None if call.plan == self._bindings.primary else call.plan,
-                input_loader=loader,
-                hyperparams=call.hyperparams,
-                accumulate_gradients=call.command.accumulate_gradients,
-                runtime_trace=call.command.request.runtime_trace,
-            ).result()
+        value = None
+        try:
+            with call.input_loader(self._budget) or nullcontext(None) as loader:
+                value = self._executor.run(
+                    plan=None if call.plan == self._bindings.primary else call.plan,
+                    input_loader=loader,
+                    hyperparams=call.hyperparams,
+                    accumulate_gradients=call.command.accumulate_gradients,
+                    runtime_trace=call.command.request.runtime_trace,
+                ).result()
+            # Input spill copies are synchronous. Release their staging before
+            # starting serial host-output publication.
             publication_error = None
             result = None
-            try:
-                # Establish completed device effects before classifying a later
-                # filesystem/transport error as publication failure.
-                self._executor.synchronize()
-                try:
-                    result = self._collect(value)
-                except OSError as error:
-                    publication_error = (
-                        str(error).strip() or type(error).__name__
-                    )[:1024].rstrip()
-                    # A collector traceback can retain the borrowed GPU output
-                    # argument. Only a bounded message may survive this scope.
-                    error.__traceback__ = None
-                    error.__cause__ = error.__context__ = None
-            finally:
-                del value
-            # Transfer/cleanup failure still invalidates the worker. A normal
-            # publication error alone leaves its confirmed training state live.
+            # Establish completed device effects before classifying a later
+            # filesystem/transport error as publication failure.
             self._executor.synchronize()
-            if publication_error is not None:
-                raise WorkerOutputError(publication_error)
-            return result
+            try:
+                result = self._collect(call, value)
+            except OSError as error:
+                publication_error = (str(error).strip() or type(error).__name__)[
+                    :1024
+                ].rstrip()
+                # A collector traceback can retain the borrowed GPU output
+                # argument. Only a bounded message may survive this scope.
+                error.__traceback__ = None
+                error.__cause__ = error.__context__ = None
+        finally:
+            del value
+        # Transfer/cleanup failure still invalidates the worker. A normal
+        # publication error alone leaves its confirmed training state live.
+        self._executor.synchronize()
+        if publication_error is not None:
+            raise WorkerOutputError(publication_error)
+        return result

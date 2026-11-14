@@ -193,6 +193,70 @@ def test_worker_refuses_foreign_release_before_any_mutable_state():
 
 def prepared_worker():
     prepared = family()
+    # These CPU startup tests use sentinel Plans, so supply synthetic compiler
+    # views matching their real prepared output declarations. GPU tests use the
+    # actual saved compiler artifacts and independently verify result bytes.
+    for rows in prepared.families.values():
+        for row in rows:
+            for rank, worker in row.workers.items():
+                bindings = [
+                    binding
+                    for (_, logical), binding in sorted(
+                        row.source.layout.bindings.items()
+                    )
+                    if logical == rank
+                ]
+                for name in worker.members():
+                    groups, slots, views = [], [], []
+                    for binding in () if name == worker.optimizer else bindings:
+                        names = sorted(
+                            set(binding.contract.outputs.metrics)
+                            | set(binding.tensor_shapes)
+                        )
+                        group = []
+                        for position, output in enumerate(("loss", *names)):
+                            if not position and row.operation.operation == "forward":
+                                group.append(None)
+                                continue
+                            leaf = len(views)
+                            identity = f"output.{leaf}"
+                            group.append(identity)
+                            slots.append({"object_id": identity, "leaf_index": leaf})
+                            tensor = (
+                                binding.contract.outputs.tensors.get(output)
+                                if position
+                                else None
+                            )
+                            views.append(
+                                {
+                                    "leaf_index": leaf,
+                                    "dtype": "torch."
+                                    + (tensor.dtype if tensor else "float32"),
+                                    "shape": binding.tensor_shapes[output]
+                                    if tensor
+                                    else (),
+                                    "layout": "torch.strided",
+                                }
+                            )
+                        groups.append(group)
+                    program = prepared.plans[rank][name].program
+                    program.tasks = (
+                        SimpleNamespace(task_id="task", profile_id="result"),
+                    )
+                    program.bindings.update(
+                        {
+                            "kind": "forward"
+                            if name == worker.masked
+                            or row.operation.operation == "forward"
+                            else "step",
+                            "forward_templates": (),
+                            "public_outputs": groups,
+                            "entrypoints": [{"task_id": "task", "output_slots": slots}],
+                            "manifests": {
+                                "result": {"storage_contract": {"output_views": views}}
+                            },
+                        }
+                    )
     for plans in prepared.plans.values():
         for plan in plans.values():
             plan.program.bindings["compiled_device_index"] = 0
@@ -257,7 +321,9 @@ def test_runtime_owns_one_executor_and_releases_it_after_failure(
     runtime = InitializationRuntime(tmp_path, lambda _: pytest.fail("artifact opened"))
 
     def invoke():
-        with prepared.open(runtime, lambda _: tmp_path, lambda _: None) as running:
+        with prepared.open(
+            runtime, lambda _: tmp_path, lambda call, value: None
+        ) as running:
             events.append("ready")
             assert running.loop.valid
         assert not running.loop.valid
@@ -290,7 +356,7 @@ def test_worker_requires_explicit_single_device_before_executor_import(
     runtime = InitializationRuntime(tmp_path, lambda _: pytest.fail("artifact opened"))
     with (
         pytest.raises(ValueError, match="explicitly assigned visible device"),
-        prepared.open(runtime, lambda _: tmp_path, lambda _: None),
+        prepared.open(runtime, lambda _: tmp_path, lambda call, value: None),
     ):
         pytest.fail("opened an unassigned worker")
 
@@ -367,7 +433,7 @@ def test_worker_serve_orders_readiness_and_closes_channels(
             outgoing,
             InitializationRuntime(tmp_path, lambda _: tmp_path),
             lambda _: tmp_path,
-            lambda _: None,
+            lambda call, value: None,
         )
 
     if failure:

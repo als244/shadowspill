@@ -12,6 +12,44 @@ if TYPE_CHECKING:
     import torch
 
 
+def public_tensor_geometry(program: Program) -> dict[str, Mapping[str, Any]]:
+    """Resolve public tensor geometry from the original saved compiler contracts.
+
+    Output slots bind semantic leaves to Program object IDs. Input geometry and
+    storage byte extents cannot substitute for the output's logical view shape.
+    """
+    from .examples import output_groups
+
+    wanted = {name for group in output_groups(program.bindings) for name in group}
+    wanted.discard(None)
+    tasks = {task.task_id: task for task in program.tasks}
+    result: dict[str, Mapping[str, Any]] = {}
+    for entry in program.bindings["entrypoints"]:
+        selected = [
+            slot for slot in entry["output_slots"] if slot["object_id"] in wanted
+        ]
+        if not selected:
+            continue
+        task = tasks[entry["task_id"]]
+        views = {
+            view["leaf_index"]: view
+            for view in program.bindings["manifests"][task.profile_id][
+                "storage_contract"
+            ]["output_views"]
+        }
+        for slot in selected:
+            view = views.get(slot["leaf_index"])
+            if view is None or view["layout"] != "torch.strided":
+                raise ValueError("public tensor has no saved strided output geometry")
+            geometry = {"shape": tuple(view["shape"]), "dtype": view["dtype"]}
+            name = slot["object_id"]
+            if result.setdefault(name, geometry) != geometry:
+                raise ValueError("public tensor writers disagree on output geometry")
+    if result.keys() != wanted:
+        raise ValueError("public tensor has no saved producer geometry")
+    return result
+
+
 @dataclass(frozen=True)
 class TensorChunk:
     """A contiguous region of physical tensor storage, in dtype elements.
