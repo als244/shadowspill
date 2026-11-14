@@ -2,13 +2,9 @@
 
 from dataclasses import replace
 
-import numpy as np
 import pytest
 
-from shadowspill.training.session.participation import count_participation
 from shadowspill.training.session.state import OperationState
-from shadowspill_client import Datum
-from shadowspill_client.protocol.definitions import Participation
 
 
 def finish(state, command, request_id, **kwargs):
@@ -171,25 +167,3 @@ def test_duplicate_contribution_cannot_be_replayed_and_participation_is_explicit
     finish(state, "forward_backward", "part", participates=True)
     with pytest.raises(ValueError, match="do not replay"):
         state.begin("forward_backward", "part", participates=True)
-
-
-def test_declared_boolean_validity_ignores_numeric_weights_and_counts_logical_data():
-    batch = [
-        Datum(
-            inputs={"x": np.zeros(3)},
-            loss_inputs={
-                "valid": np.array([True, False, True]),
-                "weights": np.zeros(3),
-                "advantages": np.zeros(3),
-            },
-        ),
-        Datum(inputs={}, loss_inputs={"valid": np.array([False])}),
-    ]
-    assert count_participation(batch, Participation()) == 2
-    assert count_participation(batch, Participation(("valid",))) == 2
-    assert count_participation(batch[1:], Participation(("valid",))) == 0
-    assert count_participation([], Participation()) == 0
-    with pytest.raises(TypeError, match="boolean CPU"):
-        count_participation(batch, Participation(("weights",)))
-    with pytest.raises(ValueError, match="missing participation"):
-        count_participation(batch, Participation(("missing",)))

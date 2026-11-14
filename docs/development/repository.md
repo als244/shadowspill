@@ -170,6 +170,7 @@ packages/engine/src/shadowspill/
 ├── training/              saved-Plan training loops, schedules and checkpoints
 │   ├── definitions/       public model/objective functions and CPU schema resolution
 │   ├── diagnostics/       no-update startup calls, state preservation and reports
+│   ├── inputs/            owned global input validation and packing
 │   ├── session/           confirmed operation boundaries and participation
 │   └── preparation/       model-independent saved recipe phases and reuse
 └── pytorch/

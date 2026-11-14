@@ -42,6 +42,16 @@ declare their units, counted field axis and global sum/maximum or example count.
 Scheduled capacities include padding. These descriptions do not establish
 packing coverage or admit memory; that work belongs to preparation.
 
+The developing input pipeline validates owned binary snapshots with these same
+schemas before packing. It checks every supplied field, shared dimension, numeric
+range and global capacity, including later records in the call. Required paths
+come from the selected computation/output closure; known unused fields may be
+supplied, but are still checked. Optional defaults retain their broadcast shape
+without allocating a second full batch. Checked dtype conversion happens when
+filling an admitted packed buffer. CPU validation handles generic image geometry
+and token fields through the same implementation, without importing a model stack.
+Packing still must check scheduled padding against the cap separately.
+
 `Participation` identifies a boolean validity field with false padding, or
 declares that each real example contributes. It does not inspect weights,
 advantages, observed gradients or gradient scaling. `ControlSchema` validates
@@ -70,5 +80,6 @@ Saved geometry, parameter ownership and physical storage bindings remain distinc
 The inventory serializes without importing Torch or the SDK. It detects layout,
 optimizer-family and alias conflicts when matching state between Programs, and
 refuses to alias different logical workers. This is the shared description for
-the upcoming operation-state and checkpoint-conversion work; it does not yet make
-additional mutable Plans executable through the current Trainer.
+shared mutable Executor Plans and upcoming checkpoint conversion. The current
+public Trainer still accepts its existing step/evaluation interface; the client
+service integration is under development.

@@ -60,6 +60,10 @@ class BatchSnapshot:
         self._lease = lease
         self._closed = False
 
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
     def chunks(self, chunk_bytes: int = 1 << 20) -> Iterator[memoryview]:
         if type(chunk_bytes) is not int or chunk_bytes < 1:
             raise ValueError("chunk_bytes must be a positive integer")
