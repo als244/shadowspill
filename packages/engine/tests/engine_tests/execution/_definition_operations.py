@@ -84,7 +84,7 @@ with Executor(primary, plans=plans) as executor:
                 observed,
             ):
                 args = forward.arguments(observed)
-                loss, outputs = to_host(executor.run(args=[args]).result())
+                ((loss, outputs),) = to_host(executor.run(args=[args]).result())
                 assert loss is None
                 expected = (
                     args[0]["pixels"].flatten(start_dim=1)
@@ -103,7 +103,7 @@ with Executor(primary, plans=plans) as executor:
     ):
         transition = state.begin("forward_backward", "masked", participates=False)
         assert transition.skipped
-        loss, outputs = to_host(
+        ((loss, outputs),) = to_host(
             executor.run(plan="masked", args=[binding.arguments(adapted)]).result()
         )
         assert loss.item() == 0.0 and outputs["valid_examples"].item() == 0

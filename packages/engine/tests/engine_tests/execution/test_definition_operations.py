@@ -11,6 +11,7 @@ import torch
 
 from engine_tests.fixtures import external_definition
 from engine_tests.fixtures.definition_operations import definitions, example
+from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill import (
     CommunicationInfo,
     MemoryBudgets,
@@ -18,8 +19,15 @@ from shadowspill import (
     measure_program,
     plan_program,
 )
-from shadowspill.planning.training.operations import optimizer_program
+from shadowspill.training.preparation.capture import build_template
+from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.operation_build import build_operation
+from shadowspill.training.preparation.setup import resolve_training
+from shadowspill.training.preparation.templates import (
+    capture_inventory,
+    instantiate_template,
+)
+from shadowspill_client import BuildCandidates, PlanningOptions, Preparation
 from shadowspill_client.protocol.operations import OperationKey
 
 
@@ -27,43 +35,64 @@ from shadowspill_client.protocol.operations import OperationKey
 def test_definition_bound_operations_in_cold_worker(tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    resolved, objective, optimizer = definitions()
-    with torch.device("meta"):
-        model = resolved.create()
-    programs = {}
-    for name, key, output_only in (
-        ("step", OperationKey("step", "metrics"), False),
-        ("backward", OperationKey("forward_backward", "metrics"), False),
-        ("masked", OperationKey("step", "metrics"), True),
-        ("evaluation", OperationKey("forward", "predictions", "evaluation"), False),
+    resolved, objective, _ = definitions()
+    registry = installed()
+    setup = resolve_training(
+        registry,
+        **arguments(),
+        operations={
+            "step": ["metrics"],
+            "forward_backward": ["metrics"],
+            "forward": ["predictions"],
+        },
+        prepare=Preparation(
+            candidates=BuildCandidates(microbatch_sizes=[4]),
+            planning=PlanningOptions(microbatch_counts=[1]),
+        ),
+    )
+    inventory = capture_inventory(prepare_layouts(setup))
+    assert len(inventory.templates) == 3
+    captures, measurements = {}, {}
+    for key, template in inventory.templates.items():
+        with example(resolved, objective, template.binding.contract.key) as (
+            _,
+            adapted,
+        ):
+            program = build_template(registry, inventory, key, adapted)
+        assert program.bindings["operation_mode"] == template.binding.contract.key.mode
+        saved = program.bindings["training_operation"]
+        assert saved["objective"]["source"] == objective.source.to_dict()
+        assert saved["contributes_loss"]
+        program.save(tmp_path / f"capture-{key}.ssp")
+        captures[key] = program
+        measurements[key] = measure_program(
+            program, warmup_seconds=0.001, measure_seconds=0.002
+        )
+    step = inventory.families[OperationKey("step", "metrics")][0].workers[0]
+    backward = inventory.families[OperationKey("forward_backward", "metrics")][
+        0
+    ].workers[0]
+    evaluation = inventory.families[
+        OperationKey("forward", "predictions", "evaluation")
+    ][0].workers[0]
+    assert step.main.template == backward.main.template
+    for name, use in (
+        ("step", step.main),
+        ("backward", backward.main),
+        ("masked", backward.masked),
+        ("evaluation", evaluation.main),
+        ("optim", backward.optimizer),
     ):
-        with example(resolved, objective, key) as (binding, adapted):
-            programs[name] = build_operation(
-                model,
-                binding,
-                adapted,
-                optimizer=optimizer,
-                output_only=output_only,
-                options={"partition": "whole"},
-            )
-            assert model.training
-            assert programs[name].bindings["operation_mode"] == key.mode
-            saved = programs[name].bindings["training_operation"]
-            assert saved["objective"]["source"] == objective.source.to_dict()
-            assert saved["contributes_loss"]
-    for name, program in programs.items():
-        profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
+        program = instantiate_template(
+            inventory.templates[use.template], use, captures[use.template]
+        )
         options = {
             "memory_budgets": MemoryBudgets(2 << 30, 64 << 20),
             "communication_info": CommunicationInfo(1e10, 1e10),
         }
-        plan_program(apply_profiles(program, profiles), **options).save(
-            tmp_path / f"{name}.ssp"
-        )
-        if name == "step":
-            plan_program(
-                apply_profiles(optimizer_program(program), profiles), **options
-            ).save(tmp_path / "optim.ssp")
+        plan_program(
+            apply_profiles(program, measurements[use.template]), **options
+        ).save(tmp_path / f"{name}.ssp")
 
     reference = resolved.create()
     initial = {
