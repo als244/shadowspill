@@ -101,7 +101,7 @@ packages/engine/src/shadowspill/
 │   ├── capture/           external profiler launch and Trainer capture boundaries
 │   └── monitoring/        worker phase journals
 ├── checkpoint/            streamed checkpoint format over Executor tensor access
-├── parallelism/           logical groups, parameter placement and storage declarations
+├── parallelism/           logical groups, parameter storage and input placement
 ├── resources/             portable provider descriptions, setup and cleanup
 ├── planning/              CPU-only profile binding, scheduling and physical layout
 │   ├── admission/         resolve saved memory evidence without a live pool
@@ -170,6 +170,7 @@ packages/engine/src/shadowspill/
 ├── training/              saved-Plan training loops, schedules and checkpoints
 │   ├── definitions/       public model/objective functions and CPU schema resolution
 │   ├── diagnostics/       no-update startup calls, state preservation and reports
+│   ├── session/           confirmed operation boundaries and participation
 │   └── preparation/       model-independent saved recipe phases and reuse
 └── pytorch/
     ├── capture/           Export/AOT capture and semantic storage contracts
