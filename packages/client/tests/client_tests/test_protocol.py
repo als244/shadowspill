@@ -6,7 +6,13 @@ from dataclasses import replace
 import pytest
 
 from shadowspill_client import Datum, Model
-from shadowspill_client.protocol.codec import ProtocolError, decode, digest, encode
+from shadowspill_client.protocol.codec import (
+    ProtocolError,
+    RecordCodec,
+    decode,
+    digest,
+    encode,
+)
 from shadowspill_client.protocol.requests import (
     ArtifactRef,
     ComputeRequest,
@@ -177,3 +183,32 @@ def test_metadata_is_bounded_and_does_not_expand_binary_payloads():
     )
     with pytest.raises(ProtocolError, match="nesting"):
         decode(nested)
+
+
+def test_private_codec_owns_its_allowlist_and_uses_the_same_strict_envelope():
+    kinds = {"private.request": ComputeRequest}
+    codec = RecordCodec(kinds)
+    kinds.clear()
+    request = ComputeRequest(IDENTITY, "forward")
+    encoded = codec.encode(request)
+    assert codec.decode(encoded) == request
+    assert encoded == encode(request).replace(b"compute.request", b"private.request")
+    with pytest.raises(ProtocolError, match="unknown protocol record"):
+        decode(encoded)
+    with pytest.raises(ProtocolError, match="unknown protocol record"):
+        codec.decode(encode(request))
+    with pytest.raises(ProtocolError, match="unregistered"):
+        codec.encode(Model("x"))
+    with pytest.raises(ProtocolError, match="exceeds 10"):
+        codec.decode(encoded, max_bytes=10)
+    with pytest.raises(ProtocolError, match="duplicate JSON"):
+        codec.decode(encoded.replace(b'"version":1', b'"version":1,"version":1'))
+
+
+@pytest.mark.parametrize(
+    "kinds",
+    [{}, {"": Model}, {"bad": object}, {"a": Model, "b": Model}],
+)
+def test_codec_registries_must_be_nonempty_unambiguous_record_classes(kinds):
+    with pytest.raises((TypeError, ValueError)):
+        RecordCodec(kinds)

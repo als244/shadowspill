@@ -85,7 +85,10 @@ def family(inv=None):
                 workers[rank] = worker
                 for member in worker.members():
                     plans.setdefault(rank, {})[member] = SimpleNamespace(
-                        timeline=SimpleNamespace(makespan_ns=100 + index)
+                        timeline=SimpleNamespace(makespan_ns=100 + index),
+                        program=SimpleNamespace(
+                            bindings={"gradient_scale_control": "scale"}
+                        ),
                     )
             shape = source.layout.candidate.schedule.buffers[0]
             duration = sum(np.prod(dims) for dims in shape.fields.values())

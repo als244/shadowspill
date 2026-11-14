@@ -20,27 +20,17 @@ from shadowspill.training.preparation.family_records import (
     PreparedPlans,
 )
 from shadowspill.training.preparation.operations import OperationContract
-from shadowspill.training.preparation.scalars import control_values
 from shadowspill_client import BatchConfig
 from shadowspill_client._records import number
 from shadowspill_client.buffers import BufferBudget, BufferLease
-from shadowspill_client.protocol.controls import ControlSchema, Scalar, ScalarControl
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.payload import BatchSnapshot, snapshot_batch
 from shadowspill_client.protocol.requests import ComputeRequest
 from shadowspill_client.protocol.results import RequestStatus
 
+from .controls import CallControls, call_controls, operation_key
 from .inputs import RequestInputs
 from .state import Transition
-
-_SCALE = ControlSchema({"grad_scale": ScalarControl(1.0)})
-
-
-@dataclass(frozen=True)
-class CallControls:
-    optim: Mapping[str, Scalar]
-    loss_params: Mapping[str, Scalar]
-    grad_scale: float | None
 
 
 @dataclass
@@ -166,24 +156,12 @@ class PreparedRequests:
             )
         return max(costs), row.id
 
-    def _key(self, request: ComputeRequest) -> OperationKey:
-        key = OperationKey(
-            request.operation,
-            None
-            if request.operation == "optim_step"
-            else request.outputs or self.setup.objective.definition.default_outputs,
-            request.mode or "training",
-        )
-        if key not in self.setup.config.operations:
-            raise ValueError("operation/output/mode was not prepared for this client")
-        return key
-
     def register(
         self, inputs: RequestInputs[PreparedCall], request: ComputeRequest
     ) -> RequestStatus:
         """Derive upload limits from preparation, never from submitted byte claims."""
         try:
-            key = self._key(request)
+            key = operation_key(self.setup, request)
         except ValueError as error:
             # Persist a normal ordered rejection without reading a rejected body.
             # A known valid bound supplies a temporary metadata slot; it does not
@@ -214,39 +192,14 @@ class PreparedRequests:
             envelope=None if bound is None else bound.envelope,
         )
 
-    def _controls(self, request: ComputeRequest, key: OperationKey) -> CallControls:
-        loss: Mapping[str, Scalar] = MappingProxyType({})
-        optim: Mapping[str, Scalar] = MappingProxyType({})
-        scale = None
-        if key.operation != "optim_step":
-            contract = OperationContract(key, self.setup.objective)
-            loss = control_values(
-                contract.controls, contract.loss_params(request.loss_params)
-            )
-        if key.operation in ("step", "optim_step"):
-            optimizer = self.setup.optimizer
-            if optimizer is None:
-                raise ValueError("optimizer was not prepared for this client")
-            optim = control_values(
-                optimizer.definition.controls,
-                optimizer.definition.controls.resolve(
-                    defaults=optimizer.defaults, overrides=request.optim
-                ),
-            )
-            assert request.grad_scale is not None
-            scale = float(
-                control_values(_SCALE, {"grad_scale": request.grad_scale})["grad_scale"]
-            )
-        return CallControls(optim, loss, scale)
-
     def __call__(
         self,
         request: ComputeRequest,
         snapshot: BatchSnapshot | None,
         budget: BufferBudget,
     ) -> PreparedCall:
-        key = self._key(request)
-        controls = self._controls(request, key)
+        key = operation_key(self.setup, request)
+        controls = call_controls(self.setup, request, key)
         if key.operation == "optim_step":
             if snapshot is not None:
                 raise ValueError("optimizer-only requests have no tensor input")

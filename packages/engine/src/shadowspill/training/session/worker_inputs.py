@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Mapping, Sequence
 from typing import Any, Self
 
-from shadowspill.training.preparation.binding import control_tensors
+from shadowspill.training.inputs.spool import SpooledFrame
+from shadowspill.training.preparation.binding import OperationBinding, control_tensors
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.payload import BatchSnapshot
-
-from .prepared import PreparedCall
 
 
 class ReadyInputLoader:
@@ -22,17 +23,14 @@ class ReadyInputLoader:
     """
 
     def __init__(
-        self, call: PreparedCall, rank: int, *, budget: BufferBudget | None = None
+        self,
+        frames: Sequence[tuple[SpooledFrame, OperationBinding]],
+        loss_params: Mapping[str, Scalar],
+        budget: BufferBudget,
     ) -> None:
-        if call.closed or call.spool is None or call.spool.closed:
-            raise ValueError("worker input loader requires a live prepared tensor call")
-        self.call = call
-        self.budget = call.budget if budget is None else budget
-        self._frames = tuple(
-            (frame, call.candidate.source.layout.bindings[buffer, rank])
-            for (buffer, worker), frame in sorted(call.spool.frames.items())
-            if worker == rank
-        )
+        self.budget = budget
+        self.loss_params = loss_params
+        self._frames = tuple(frames)
         if not self._frames:
             raise ValueError("worker rank has no prepared input frames")
         self._snapshot: BatchSnapshot | None = None
@@ -42,7 +40,7 @@ class ReadyInputLoader:
     def __call__(self, index: int) -> tuple[tuple[Any, ...], dict[str, Any]]:
         import torch
 
-        if self.closed or self.call.closed:
+        if self.closed:
             raise RuntimeError("ready input loader is closed")
         if type(index) is not int or index != self._next or index >= len(self._frames):
             raise ValueError("consume prepared input frames exactly once in order")
@@ -70,9 +68,7 @@ class ReadyInputLoader:
                 for name in path[1:-1]:
                     tree = tree.setdefault(name, {})
                 tree[path[-1]] = tensor
-        controls = control_tensors(
-            binding.contract.controls, self.call.controls.loss_params
-        )
+        controls = control_tensors(binding.contract.controls, self.loss_params)
         self._next += 1
         return (trees["inputs"], trees["loss_inputs"], controls), {}
 

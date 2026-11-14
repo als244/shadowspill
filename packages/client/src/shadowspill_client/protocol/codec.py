@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
-from .._records import Record, integer
+from .._records import Record, integer, text
 from ..config import (
     BatchConfig,
     Execution,
@@ -49,7 +50,6 @@ _KINDS: Mapping[str, type[Record]] = {
     "request.failure": Failure,
     "request.status": RequestStatus,
 }
-_NAMES = {value: key for key, value in _KINDS.items()}
 
 
 class ProtocolError(ValueError):
@@ -81,56 +81,93 @@ def _depth(value: Any) -> None:
             pending.extend((v, depth + 1) for v in current)
 
 
+class RecordCodec:
+    """A fixed, explicit record allowlist using the common bounded JSON format.
+
+    Protocols can own independent registries without adding private records to
+    the public client protocol or importing classes named by incoming messages.
+    """
+
+    def __init__(self, kinds: Mapping[str, type[Record]]) -> None:
+        if not kinds:
+            raise ValueError("a protocol codec requires at least one record kind")
+        for kind, cls in kinds.items():
+            text(kind, "record kind")
+            if not isinstance(cls, type) or not issubclass(cls, Record):
+                raise TypeError("protocol record kinds must be Record classes")
+        if len(set(kinds.values())) != len(kinds):
+            raise ValueError("a record class cannot have multiple protocol kinds")
+        self._kinds = MappingProxyType(dict(kinds))
+        self._names = MappingProxyType({value: key for key, value in kinds.items()})
+
+    def encode(self, value: Record, *, max_bytes: int = MAX_METADATA_BYTES) -> bytes:
+        integer(max_bytes, "max_bytes", minimum=1)
+        kind = self._names.get(type(value))
+        if kind is None:
+            raise ProtocolError(f"unregistered protocol record: {type(value).__name__}")
+        try:
+            payload = value.to_dict()
+            _depth(payload)
+            encoded = json.dumps(
+                {"version": VERSION, "kind": kind, "value": payload},
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError, RecursionError) as error:
+            raise ProtocolError(f"invalid {kind} metadata: {error}") from error
+        if len(encoded) > max_bytes:
+            raise ProtocolError(
+                f"metadata exceeds {max_bytes} bytes; "
+                "transfer tensor payloads separately"
+            )
+        return encoded
+
+    def decode(self, data: bytes, *, max_bytes: int = MAX_METADATA_BYTES) -> Record:
+        integer(max_bytes, "max_bytes", minimum=1)
+        if not isinstance(data, bytes):
+            raise TypeError("protocol metadata must be bytes")
+        if len(data) > max_bytes:
+            raise ProtocolError(f"metadata exceeds {max_bytes} bytes")
+        try:
+            envelope = json.loads(
+                data, object_pairs_hook=_object, parse_constant=_constant
+            )
+            _depth(envelope)
+            if not isinstance(envelope, dict) or set(envelope) != {
+                "version",
+                "kind",
+                "value",
+            }:
+                raise ProtocolError("expected version, kind and value envelope fields")
+            if type(envelope["version"]) is not int or envelope["version"] != VERSION:
+                raise ProtocolError(
+                    f"unsupported protocol version {envelope['version']!r}; "
+                    f"expected {VERSION}"
+                )
+            if (
+                not isinstance(envelope["kind"], str)
+                or envelope["kind"] not in self._kinds
+            ):
+                raise ProtocolError(
+                    f"unknown protocol record kind: {envelope['kind']!r}"
+                )
+            return self._kinds[envelope["kind"]].from_dict(envelope["value"])
+        except (TypeError, ValueError, UnicodeError, RecursionError) as error:
+            if isinstance(error, ProtocolError):
+                raise
+            raise ProtocolError(f"invalid protocol metadata: {error}") from error
+
+
+_DEFAULT = RecordCodec(_KINDS)
+
+
 def encode(value: Record, *, max_bytes: int = MAX_METADATA_BYTES) -> bytes:
-    integer(max_bytes, "max_bytes", minimum=1)
-    kind = _NAMES.get(type(value))
-    if kind is None:
-        raise ProtocolError(f"unregistered protocol record: {type(value).__name__}")
-    try:
-        payload = value.to_dict()
-        _depth(payload)
-        encoded = json.dumps(
-            {"version": VERSION, "kind": kind, "value": payload},
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError, RecursionError) as error:
-        raise ProtocolError(f"invalid {kind} metadata: {error}") from error
-    if len(encoded) > max_bytes:
-        raise ProtocolError(
-            f"metadata exceeds {max_bytes} bytes; transfer tensor payloads separately"
-        )
-    return encoded
+    return _DEFAULT.encode(value, max_bytes=max_bytes)
 
 
 def decode(data: bytes, *, max_bytes: int = MAX_METADATA_BYTES) -> Record:
-    integer(max_bytes, "max_bytes", minimum=1)
-    if not isinstance(data, bytes):
-        raise TypeError("protocol metadata must be bytes")
-    if len(data) > max_bytes:
-        raise ProtocolError(f"metadata exceeds {max_bytes} bytes")
-    try:
-        envelope = json.loads(data, object_pairs_hook=_object, parse_constant=_constant)
-        _depth(envelope)
-        if not isinstance(envelope, dict) or set(envelope) != {
-            "version",
-            "kind",
-            "value",
-        }:
-            raise ProtocolError("expected version, kind and value envelope fields")
-        if type(envelope["version"]) is not int or envelope["version"] != VERSION:
-            raise ProtocolError(
-                f"unsupported protocol version {envelope['version']!r}; "
-                f"expected {VERSION}"
-            )
-        if not isinstance(envelope["kind"], str) or envelope["kind"] not in _KINDS:
-            raise ProtocolError(f"unknown protocol record kind: {envelope['kind']!r}")
-        return _KINDS[envelope["kind"]].from_dict(envelope["value"])
-    except (TypeError, ValueError, UnicodeError, RecursionError) as error:
-        if isinstance(error, ProtocolError):
-            raise
-        raise ProtocolError(f"invalid protocol metadata: {error}") from error
+    return _DEFAULT.decode(data, max_bytes=max_bytes)
 
 
 def digest(value: Record) -> str:

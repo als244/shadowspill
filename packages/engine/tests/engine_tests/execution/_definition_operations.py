@@ -31,7 +31,8 @@ from shadowspill.training.session.dispatch import RequestDispatcher  # noqa: E40
 from shadowspill.training.session.inputs import RequestInputs  # noqa: E402
 from shadowspill.training.session.prepared import PreparedRequests  # noqa: E402
 from shadowspill.training.session.state import OperationState  # noqa: E402
-from shadowspill.training.session.worker_inputs import ReadyInputLoader  # noqa: E402
+from shadowspill.training.worker.bindings import WorkerBindings, worker_call  # noqa: E402
+from shadowspill.training.worker.protocol import CODEC, WorkerScope  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
 from shadowspill_client.protocol.requests import (  # noqa: E402
@@ -45,6 +46,7 @@ root = Path(sys.argv[1])
 registry = load_registry(PreparationJob.load(root / JOB_NAME).packages)
 family = TrainingBundle.load(root / "training.ssp").recheck(registry)
 prepared = PreparedRequests(family, cache_root=root)
+worker = WorkerBindings(family, WorkerScope("run", "worker", "execution-1", 0))
 plans = dict(family.plans[0])
 primary_name = min(plans)
 primary = plans.pop(primary_name)
@@ -110,27 +112,28 @@ def invoke(name, operation, *, observe=None, publication_error=False, **options)
 
     def execute(transition):
         assert journal.get(name)[1].state == "running"
-        identity = data.worker_plans(transition)[0]
+        command = CODEC.decode(
+            CODEC.encode(worker_call(data, transition, worker.scope, 1))
+        )
+        files = (
+            {}
+            if data.spool is None
+            else {
+                frame.reference.id: frame.path for frame in data.spool.frames.values()
+            }
+        )
+        bound = worker.bind(command, lambda ref: files[ref.id])
+        worker_budget = BufferBudget(max(1, bound.input_bytes))
+        bound.verify_inputs(worker_budget)
+        identity = bound.plan
         if identity is None:
             return HostOutputs(None)
-        plan = family.plans[0][identity]
-        hyperparams = {}
-        if operation in ("step", "optim_step") and not transition.skipped:
-            optimizer = prepared.setup.optimizer
-            for control, targets in optimizer.definition.control_bindings.items():
-                for target in targets:
-                    hyperparams[target] = data.controls.optim[control]
-            hyperparams[plan.program.bindings["gradient_scale_control"]] = (
-                data.controls.grad_scale
-            )
-        with (
-            ReadyInputLoader(data, 0) if data.spool is not None else nullcontext(None)
-        ) as loader:
+        with bound.input_loader(worker_budget) or nullcontext(None) as loader:
             value = executor.run(
                 plan=None if identity == primary_name else identity,
                 input_loader=loader,
-                hyperparams=hyperparams,
-                accumulate_gradients=transition.accumulate_gradients,
+                hyperparams=bound.hyperparams,
+                accumulate_gradients=command.accumulate_gradients,
             ).result()
             owned = to_host(
                 (value.losses, value.metrics)
@@ -139,6 +142,7 @@ def invoke(name, operation, *, observe=None, publication_error=False, **options)
             )
             del value
             executor.synchronize()
+        assert worker_budget.used == (0, 0)
         return HostOutputs(owned)
 
     def publish(receipt, outputs):
@@ -278,3 +282,4 @@ with (
 print("Qualified definition-bound operations")
 print("Qualified durable request dispatcher")
 print("Qualified prepared binary request inputs")
+print("Qualified saved worker commands")

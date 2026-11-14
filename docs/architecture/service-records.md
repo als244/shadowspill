@@ -69,6 +69,22 @@ binary uploads, selection, spooling, shared updates, interposed evaluation,
 invalid-input recovery and publication failure. Persistent worker/agent transport
 and public service clients remain integration work.
 
+`training.worker.protocol` uses the common bounded JSON codec with its own fixed
+record allowlist. A worker command identifies the run, controller incarnation,
+worker incarnation, logical rank, invocation, original request and saved candidate.
+Input frames carry opaque artifact IDs, sizes and checksums. Commands contain no
+filesystem paths, arbitrary Plan names or executable objects. Public request
+decoding does not accept private worker records.
+`training.worker.bindings.WorkerBindings` resolves commands against one rechecked
+family and identity, using the same capability and captured-control validation as
+controller preprocessing. It derives main, masked and optimizer forms from the
+coordinator's decision, checks the complete rank-local frame ABI and verifies all
+local input files before execution. The agent supplies an owned-file resolver;
+network metadata cannot name local files. Worker reads use a separate bounded
+arena and the existing serial input loader. This boundary does not duplicate
+update/gradient state or provide command replay. Persistent process transport and
+invocation fencing are subsequent integration work.
+
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.
 Canonical request digests include binary payload checksums. An identical ID/content

@@ -96,7 +96,14 @@ def test_worker_reconstructs_strides_storage_extents_bf16_and_empty_views(
                 completed = len(calls)
                 before = arena.used
                 for rank in range(workers):
-                    with ReadyInputLoader(data, rank) as loader:
+                    frames = [
+                        (frame, data.candidate.source.layout.bindings[buffer, worker])
+                        for (buffer, worker), frame in sorted(data.spool.frames.items())
+                        if worker == rank
+                    ]
+                    with ReadyInputLoader(
+                        frames, data.controls.loss_params, arena
+                    ) as loader:
                         with pytest.raises(ValueError, match="once in order"):
                             loader(1)
                         for buffer in range(len(data.assignment.schedule.buffers)):

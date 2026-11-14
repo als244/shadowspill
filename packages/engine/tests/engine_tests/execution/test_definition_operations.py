@@ -236,6 +236,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     assert "Qualified definition-bound operations" in worker.stdout
     assert "Qualified durable request dispatcher" in worker.stdout
     assert "Qualified prepared binary request inputs" in worker.stdout
+    assert "Qualified saved worker commands" in worker.stdout
     if provider:
         events = [json.loads(line) for line in event_path.read_text().splitlines()]
         by_process = {}

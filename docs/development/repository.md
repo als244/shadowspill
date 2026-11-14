@@ -174,6 +174,7 @@ packages/engine/src/shadowspill/
 │   ├── diagnostics/       no-update startup calls, state preservation and reports
 │   ├── inputs/            owned global input validation and packing
 │   ├── session/           confirmed operation boundaries and participation
+│   ├── worker/            bounded commands and fixed prepared worker bindings
 │   └── preparation/       model-independent saved recipe phases and reuse
 └── pytorch/
     ├── capture/           Export/AOT capture and semantic storage contracts
