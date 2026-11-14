@@ -92,6 +92,43 @@ def test_gpu_phase_slot_order_and_cpu_planning_release_children_but_keep_logs(tm
     assert node.used.claims == 0 and os.environ.get("CUDA_VISIBLE_DEVICES") == original
 
 
+@pytest.mark.parametrize("fail_progress", [False, True])
+def test_admitted_progress_and_actual_phase_use_one_complete_host_claim(
+    tmp_path, fail_progress
+):
+    node, disk, progress = resources(), BufferBudget(1 << 20, 10), []
+    with HostArena(node, 9 << 20, 2) as arena:
+        scratch = arena.partition(1 << 20, 10)
+        processes = arena.partition(8 << 20, 1)
+
+        def admitted(phase):
+            assert node.used.host_bytes == 9 << 20
+            assert node.used.devices == {"a"} and processes.budget.used == (8 << 20, 1)
+            progress.append(phase)
+            if fail_progress:
+                raise OSError("cannot publish progress")
+
+        with runner(
+            node, scratch, disk, tmp_path, host=processes, admitted=admitted
+        ) as launch:
+            with (
+                node.reserve(ResourceRequest({"a": 1024}, 0)),
+                pytest.raises(ResourcesUnavailable),
+            ):
+                launch(invocation(tmp_path))
+            assert not progress and processes.budget.used == (0, 0)
+            if fail_progress:
+                with pytest.raises(OSError, match="publish progress"):
+                    launch(invocation(tmp_path))
+            else:
+                assert launch(invocation(tmp_path)).returncode == 0
+            assert progress == ["build"] and processes.budget.used == (0, 0)
+            assert node.used.claims == 1
+        scratch.close()
+        processes.close()
+    assert node.used.claims == 0 and disk.used == (0, 0)
+
+
 def test_disjoint_phase_jobs_use_separate_environment_snapshots_concurrently(tmp_path):
     node, disk = resources(), BufferBudget(1 << 20, 10)
     outcomes, errors, threads = [], [], []

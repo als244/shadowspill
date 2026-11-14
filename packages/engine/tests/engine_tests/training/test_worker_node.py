@@ -208,6 +208,31 @@ def test_all_startup_files_and_logs_are_reserved_before_any_child(
     assert admission.used.claims == 0
 
 
+def test_actual_workers_borrow_their_full_host_demand_from_one_parent_claim(
+    tmp_path, monkeypatch
+):
+    cpu_workers(monkeypatch)
+    node, admission, transfers, disk = configured(tmp_path)
+    host_bytes = node._request.host_bytes
+    with HostArena(admission, host_bytes, 1) as arena:
+        host = arena.partition(host_bytes, 1)
+        node._host_memory = host
+        try:
+            processes = node.start(lambda _: io.BytesIO(PAYLOAD), startup_timeout=5)
+            with start_processes(processes, stop=node.stop):
+                assert node.lease.request.host_bytes == host_bytes
+                assert admission.used.host_bytes == (64 << 20) + host_bytes
+                assert host.budget.used == (host_bytes, 1)
+            assert host.budget.used == (0, 0)
+            assert admission.used.host_bytes == (64 << 20) + host_bytes
+            node.close()
+        finally:
+            node.close()
+            host.close()
+            transfers.close()
+    assert admission.used.claims == 0 and disk.used == (0, 0)
+
+
 @pytest.mark.parametrize("fault", ["disk", "checksum", "second_launch"])
 def test_partial_start_retains_all_owners_until_explicit_cleanup(
     tmp_path, monkeypatch, fault

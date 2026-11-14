@@ -164,3 +164,59 @@ def test_cancelled_whole_arena_wait_never_acquires_a_partial_reservation(monkeyp
     assert not occupied.closed
     occupied.close()
     assert admission.used.claims == 0
+
+
+def test_child_process_demand_is_reported_fully_but_charged_to_parent_once():
+    admission = node()
+    with HostArena(admission, 900, 2) as arena:
+        host = arena.partition(700, 1)
+        scratch = arena.partition(200, 1)
+        child = admission.reserve(ResourceRequest({"gpu": 100}, 600), host=host)
+        assert child.request.host_bytes == 600 and admission.used.host_bytes == 900
+        assert admission.used.claims == 2 and host.budget.used == (600, 1)
+        with pytest.raises(RuntimeError, match="live buffer owners"):
+            host.close()
+        with scratch.budget.reserve(200):
+            child.close()
+            assert host.budget.used == (0, 0) and admission.used.host_bytes == 900
+        host.close()
+        scratch.close()
+    assert admission.used.claims == 0
+
+
+def test_preclaimed_memory_cannot_cross_nodes_or_leak_after_failed_device_admission():
+    admission, other = node(), node()
+    with HostArena(admission, 900, 1) as arena, arena.partition(800, 1) as host:
+        with pytest.raises(ValueError, match="another node"):
+            other.reserve(ResourceRequest({"gpu": 100}, 600), host=host)
+        assert host.budget.used == (0, 0) and other.used.claims == 0
+        with (
+            admission.reserve(ResourceRequest({"gpu": 100}, 0)),
+            pytest.raises(ResourcesUnavailable),
+        ):
+            admission.reserve(ResourceRequest({"gpu": 100}, 600), host=host)
+        assert host.budget.used == (0, 0)
+
+
+def test_failed_child_exit_retains_its_preclaimed_slice(monkeypatch):
+    admission = node()
+    with HostArena(admission, 900, 1) as arena, arena.partition(800, 1) as host:
+        child = admission.reserve(ResourceRequest({"gpu": 100}, 600), host=host)
+
+        class FailedChild:
+            closed = False
+
+            def disconnect(self):
+                pass
+
+            def close(self):
+                raise OSError("exit not confirmed")
+
+        failed = FailedChild()
+        child._children["gpu"] = failed
+        with pytest.raises(ExceptionGroup):
+            child.close()
+        assert host.budget.used == (600, 1) and admission.used.devices == {"gpu"}
+        monkeypatch.setattr(failed, "close", lambda: setattr(failed, "closed", True))
+        child.close()
+        assert host.budget.used == (0, 0) and not admission.used.devices

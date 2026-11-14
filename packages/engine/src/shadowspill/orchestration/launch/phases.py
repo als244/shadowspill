@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, RLock
@@ -13,6 +13,7 @@ from shadowspill_client._records import integer
 from shadowspill_client.buffers import BufferBudget
 
 from .admission import NodeAdmission, NodeLease, ReservationCancelled, ResourceRequest
+from .host_arena import HostPartition
 from .log_files import LogFiles
 from .supervision import LogStatus
 
@@ -80,6 +81,8 @@ class NodePhases:
         memory: BufferBudget,
         log_limit_bytes: int = 64 << 20,
         wait_for_resources: bool = False,
+        admitted: Callable[[str], None] | None = None,
+        host: HostPartition | None = None,
     ) -> None:
         if (
             isinstance(devices, (str, bytes))
@@ -94,6 +97,14 @@ class NodePhases:
         self.root, self.disk, self.memory = root, disk, memory
         self.log_limit_bytes = integer(log_limit_bytes, "phase log bytes")
         self.wait_for_resources = wait_for_resources
+        self._admitted = admitted
+        self._host = host
+        if host is not None:
+            host.require_node(admission)
+            if host.budget.max_bytes < host_bytes:
+                raise ValueError(
+                    "phase host slice cannot cover its whole process group"
+                )
         self._mutex, self._stopped = RLock(), Event()
         self._runs: dict[str, _PhaseOwner] = {}
         self._active = self.closed = False
@@ -140,6 +151,7 @@ class NodePhases:
             ),
             wait=self.wait_for_resources,
             cancelled=self._stopped,
+            host=self._host,
         )
         try:
             with self._mutex:
@@ -147,6 +159,8 @@ class NodePhases:
                 self._runs[invocation.phase] = owner
                 if self._stopped.is_set():
                     raise ReservationCancelled("phase owner stopped before launch")
+                if self._admitted is not None:
+                    self._admitted(invocation.phase)
                 owner.logs = LogFiles(
                     lease,
                     None,

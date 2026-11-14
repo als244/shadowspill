@@ -1,5 +1,7 @@
 """Keep bounded agent/artifact memory charged to the node for its full lifetime."""
 
+from __future__ import annotations
+
 from threading import Event, RLock
 from typing import Self
 
@@ -11,11 +13,18 @@ from .admission import NodeAdmission, ResourceRequest
 class HostPartition:
     """A fixed slice of an already admitted arena, with independent close gates."""
 
-    def __init__(self, parent: BufferBudget, max_bytes: int, max_requests: int) -> None:
+    def __init__(self, parent: HostArena, max_bytes: int, max_requests: int) -> None:
         self.budget = BufferBudget(max_bytes, max_requests)
-        self._claim = parent.reserve(max_bytes, timeout=0)
+        self._arena = parent
+        self._claim = parent.budget.reserve(max_bytes, timeout=0)
         self._lock = RLock()
         self.closed = self._closing = False
+
+    def require_node(self, node: NodeAdmission) -> None:
+        if self._arena._node is not node:
+            raise ValueError("preclaimed host memory belongs to another node")
+        if self._closing or self._arena._closing:
+            raise RuntimeError("preclaimed host arena is closing or closed")
 
     def close(self) -> None:
         with self._lock:
@@ -57,6 +66,7 @@ class HostArena:
         cancelled: Event | None = None,
     ) -> None:
         self.budget = BufferBudget(max_bytes, max_requests)
+        self._node = node
         self._claim = node.reserve(
             ResourceRequest({}, self.budget.max_bytes),
             wait=wait,
@@ -76,7 +86,7 @@ class HostArena:
         with self._lock:
             if self._closing:
                 raise RuntimeError("host arena is closing or closed")
-            return HostPartition(self.budget, max_bytes, max_requests)
+            return HostPartition(self, max_bytes, max_requests)
 
     def close(self) -> None:
         with self._lock:

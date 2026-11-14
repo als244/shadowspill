@@ -1,18 +1,24 @@
 """Atomic admission on explicitly assigned node resources, before child launch."""
 
+from __future__ import annotations
+
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Condition, Event, RLock
 from time import monotonic
 from types import MappingProxyType
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from shadowspill_client._records import integer, number
+from shadowspill_client.buffers import BufferLease
 from shadowspill_client.protocol.requests import identifier
 
 from .connected import ConnectedProcess
 from .supervision import OwnedProcess
+
+if TYPE_CHECKING:
+    from .host_arena import HostPartition
 
 
 @dataclass(frozen=True)
@@ -124,7 +130,8 @@ class NodeAdmission:
         wait: bool = False,
         timeout: float | None = None,
         cancelled: Event | None = None,
-    ) -> "NodeLease":
+        host: HostPartition | None = None,
+    ) -> NodeLease:
         if not isinstance(request, ResourceRequest):
             raise TypeError("node reservation requires a complete resource request")
         if type(wait) is not bool or (timeout is not None and not wait):
@@ -137,6 +144,28 @@ class NodeAdmission:
         ):
             raise ValueError("request cannot fit the assigned node resources")
         deadline = None if timeout is None else monotonic() + timeout
+        memory = None
+        if host is not None:
+            host.require_node(self)
+            memory = host.budget.reserve(request.host_bytes, timeout=0)
+        try:
+            return self._reserve(request, wait, deadline, cancelled, memory)
+        except BaseException:
+            if memory is not None:
+                memory.close()
+            raise
+
+    def _reserve(
+        self,
+        request: ResourceRequest,
+        wait: bool,
+        deadline: float | None,
+        cancelled: Event | None,
+        memory: BufferLease | None,
+    ) -> NodeLease:
+        # A same-node parent arena already charged its entire capacity. The child
+        # still reports its full demand and retains that slice through actual exit.
+        charged = request.host_bytes if memory is None else 0
         with self._condition:
             while True:
                 if self.closed:
@@ -144,13 +173,13 @@ class NodeAdmission:
                 if cancelled is not None and cancelled.is_set():
                     raise ReservationCancelled("node resource wait was cancelled")
                 if (
-                    self._host + request.host_bytes <= self.capacity.host_bytes
+                    self._host + charged <= self.capacity.host_bytes
                     and not self._devices.intersection(request.devices)
                     and len(self._claims) < self.max_claims
                 ):
-                    owner = NodeLease(self, request)
+                    owner = NodeLease(self, request, memory=memory)
                     self._claims.add(owner)
-                    self._host += request.host_bytes
+                    self._host += charged
                     self._devices.update(request.devices)
                     return owner
                 if not wait:
@@ -164,10 +193,10 @@ class NodeAdmission:
                     remaining = 0.1 if remaining is None else min(remaining, 0.1)
                 self._condition.wait(remaining)
 
-    def _release(self, owner: "NodeLease") -> None:
+    def _release(self, owner: NodeLease) -> None:
         with self._condition:
             self._claims.remove(owner)
-            self._host -= owner.request.host_bytes
+            self._host -= owner._charged_host
             self._devices.difference_update(owner.request.devices)
             self._condition.notify_all()
 
@@ -179,8 +208,16 @@ class NodeAdmission:
 
 
 class NodeLease:
-    def __init__(self, owner: NodeAdmission, request: ResourceRequest) -> None:
+    def __init__(
+        self,
+        owner: NodeAdmission,
+        request: ResourceRequest,
+        *,
+        memory: BufferLease | None = None,
+    ) -> None:
         self._owner, self.request = owner, request
+        self._memory = memory
+        self._charged_host = request.host_bytes if memory is None else 0
         self._children: dict[str, ConnectedProcess] = {}
         self._command: OwnedProcess | None = None
         self._lock = RLock()
@@ -294,6 +331,8 @@ class NodeLease:
             if errors:
                 # Keep every reservation until a subsequent cleanup succeeds.
                 raise BaseExceptionGroup("node children did not finish cleanup", errors)
+            if self._memory is not None:
+                self._memory.close()
             self._owner._release(self)
             self._children.clear()
             self.closed = True

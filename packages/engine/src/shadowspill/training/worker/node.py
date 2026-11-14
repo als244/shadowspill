@@ -12,6 +12,7 @@ from typing import BinaryIO, Self
 
 from shadowspill.orchestration.launch.admission import NodeAdmission, NodeLease
 from shadowspill.orchestration.launch.file_grants import FileGrant, FileGrants
+from shadowspill.orchestration.launch.host_arena import HostPartition
 from shadowspill.orchestration.launch.log_files import LogFiles
 from shadowspill.orchestration.launch.publication import OutputFiles
 from shadowspill.orchestration.launch.staging import FileDelivery
@@ -57,6 +58,7 @@ class WorkerNode:
         memory: BufferBudget,
         environment: Mapping[str, str],
         log_limit_bytes: int = 64 << 20,
+        host_memory: HostPartition | None = None,
     ) -> None:
         if (
             not prepared
@@ -85,6 +87,13 @@ class WorkerNode:
             }
         )
         self._admission = admission
+        self._host_memory = host_memory
+        if host_memory is not None:
+            host_memory.require_node(admission)
+            if host_memory.budget.max_bytes < self._request.host_bytes:
+                raise ValueError(
+                    "worker host slice cannot cover the complete node group"
+                )
         self.devices = MappingProxyType(dict(devices))
         self.prepared = MappingProxyType(dict(prepared))
         self._parent, self._cache = root.resolve(), cache.resolve()
@@ -143,7 +152,11 @@ class WorkerNode:
                 raise RuntimeError("node workers can only be started once")
             self._started = True
             self._lease = self._admission.reserve(
-                self._request, wait=wait, timeout=timeout, cancelled=self._cancelled
+                self._request,
+                wait=wait,
+                timeout=timeout,
+                cancelled=self._cancelled,
+                host=self._host_memory,
             )
             self._active()
             self._metadata = self._memory.reserve(
