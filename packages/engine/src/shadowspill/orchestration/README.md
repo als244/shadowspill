@@ -13,6 +13,7 @@ choose a training or measurement protocol, or interpret a saved recipe directory
 | `launch/workers` | Host Gloo rendezvous, launcher-to-logical rank mapping and small result gathers |
 | `launch/staging` | Quota-bound node-local artifact delivery, complete size/checksum checks and consumer ownership |
 | `launch/supervision` | Fresh owned process groups, non-reaping exit observation, bounded logs and orderly/forced shutdown |
+| `launch/connected` | One inherited private control socket per owned child, startup I/O timeout and channel-before-process shutdown |
 | `monitoring/lifecycle` | Append-only host phase journals, including context entry/cleanup and failures |
 | `candidates` | Record a local candidate's device exhaustion after releasing its traceback; other failures propagate |
 | `communication` | Union exact collective requests across compatible caller-selected Programs; measurement remains in the public phase APIs |
@@ -90,3 +91,13 @@ remaining group descendants are removed before reaping the leader, preventing
 PID reuse from targeting unrelated work. Non-reaping observation is required on
 the worker host. Startup handshakes, assigned-device admission and agent/service
 authentication are separate integration responsibilities.
+
+`ConnectedProcess` composes that supervisor with a private inherited socket pair.
+Its installed command factory receives only the child descriptor number; no
+public listener or request-selected executable is introduced. The parent drops
+its copy of the child end immediately after spawn, so child death produces EOF.
+Startup reads/writes have a configurable I/O timeout. After the caller verifies
+the startup barrier, `ready()` removes that timeout; live workers have no default
+idle timeout. Close shuts down the socket before waiting on the owned process,
+waking blocked readers and permitting orderly worker/report finalization. Actual
+child tests cover startup, commands, log pressure, lost replies and timeout cleanup.

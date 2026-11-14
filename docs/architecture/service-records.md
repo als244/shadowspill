@@ -160,6 +160,15 @@ registration, authenticated transports and public client readiness remain
 integration requirements. Socket startup barriers and cold-worker Executor
 composition do not qualify multi-node startup by themselves.
 
+`orchestration.launch.connected.ConnectedProcess` gives the local agent an owned
+child and an inherited private socket, independent of stdout/stderr. The existing
+supervisor passes only explicitly granted private descriptors. Once all startup
+responses pass, the caller marks the connection ready and removes its startup
+I/O timeout. Normal live connections have no idle timeout. Closing the channel
+precedes process-group cleanup and wakes blocked I/O; the parent retains no copy
+of the child's socket end. Real CPU children cover the startup barrier and command
+protocol under log pressure, lost readiness, lost completion and startup timeout.
+
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.
 Canonical request digests include binary payload checksums. An identical ID/content

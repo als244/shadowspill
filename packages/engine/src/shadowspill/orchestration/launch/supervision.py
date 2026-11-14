@@ -95,6 +95,7 @@ class OwnedProcess:
         directory: Path,
         cwd: Path,
         log_limit_bytes: int = 64 << 20,
+        pass_fds: Sequence[int] = (),
     ) -> None:
         if os.name != "posix" or not hasattr(os, "WNOWAIT"):
             raise RuntimeError(
@@ -107,6 +108,15 @@ class OwnedProcess:
         ):
             raise ValueError("provide a nonempty installed worker command")
         integer(log_limit_bytes, "per-stream log byte limit")
+        if (
+            not isinstance(pass_fds, (tuple, list))
+            or len(pass_fds) > 32
+            or any(type(fd) is not int or fd < 3 for fd in pass_fds)
+            or len(set(pass_fds)) != len(pass_fds)
+        ):
+            raise ValueError(
+                "pass_fds must name at most 32 distinct private descriptors"
+            )
         directory.mkdir(mode=0o700)
         output = (directory / "stdout.log").open("xb", buffering=0)
         try:
@@ -124,6 +134,7 @@ class OwnedProcess:
                 stderr=subprocess.PIPE,
                 bufsize=0,
                 start_new_session=True,
+                pass_fds=tuple(pass_fds),
             )
         except BaseException:
             output.close()
