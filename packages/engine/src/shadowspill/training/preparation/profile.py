@@ -1,15 +1,20 @@
 """Measure each exact candidate, with its declared resource participants."""
 
 import sys
+from collections.abc import Mapping
+from functools import partial
+from pathlib import Path
+from typing import Any, cast
 
 from shadowspill import (
+    ProfiledProgram,
     Program,
     TaskProfileCache,
     apply_profiles,
     measure_communication,
     measure_program,
 )
-from shadowspill.orchestration.launch.workers import workers
+from shadowspill.orchestration.launch.workers import Workers, workers
 from shadowspill.orchestration.profiling import profiling_options
 from shadowspill.training.preparation.phases import settings
 
@@ -17,7 +22,14 @@ from .candidates import attempt_candidate, available, program_paths
 from .profile_reuse import completed
 
 
-def profile_candidate(root, options, candidate, group, timing, cache=None):
+def profile_candidate(
+    root: Path,
+    options: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    group: Workers,
+    timing: Mapping[str, Any],
+    cache: TaskProfileCache | None = None,
+) -> bool:
     for kind in ("training", "evaluation") if options["eval_every"] else ("training",):
         relative = f"{candidate['path']}/{kind}.ssp"
         print(f"profiling {relative}", flush=True)
@@ -37,11 +49,11 @@ def profile_candidate(root, options, candidate, group, timing, cache=None):
         elif group.rank == 0:
             print(f"reusing completed measurements for {relative}", flush=True)
         if group.rank == 0:
-            profiled.save(root / "profiled" / relative)
+            cast(ProfiledProgram, profiled).save(root / "profiled" / relative)
     return True
 
 
-def run(directory):
+def run(directory: str | Path) -> None:
     root, options = settings(directory)
     timing = {"options": profiling_options(options)}
     with workers(options["preparation_ranks"]) as group:
@@ -54,8 +66,8 @@ def run(directory):
                 root,
                 candidate,
                 "profile",
-                lambda candidate=candidate: profile_candidate(
-                    root, options, candidate, group, timing, cache
+                partial(
+                    profile_candidate, root, options, candidate, group, timing, cache
                 ),
                 group,
             )

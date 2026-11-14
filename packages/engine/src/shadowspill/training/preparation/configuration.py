@@ -6,6 +6,8 @@ import math
 from collections.abc import Mapping
 from os import PathLike, fspath
 from pathlib import Path, PurePosixPath
+from types import ModuleType
+from typing import Any
 
 from shadowspill.orchestration.profiling import profiling_options
 
@@ -60,13 +62,15 @@ MUTABLE = {
 }
 
 
-def adapter(name):
+def adapter(name: str) -> ModuleType:
     if not isinstance(name, str) or not name:
         raise ValueError("recipe must name an importable adapter module")
     return importlib.import_module(name)
 
 
-def configure(recipe, config, phase):
+def configure(
+    recipe: str, config: Mapping[str, Any], phase: str
+) -> tuple[Path, dict[str, Any]]:
     if phase not in PHASES:
         raise ValueError(f"unknown recipe phase: {phase!r}")
     if not isinstance(config, Mapping) or not config.get("run_dir"):

@@ -1,5 +1,10 @@
 """Execute saved Plans with bounded initialization and stateful real inputs."""
 
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from shadowspill.training.results import StepResult
+    from shadowspill.training.trainer import Trainer
 import json
 import os
 import sys
@@ -10,14 +15,14 @@ from pathlib import Path
 from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
 
 
-def run(directory):
+def run(directory: str | Path) -> None:
     rank = int(os.environ.get("RANK", "0"))
     path = Path(directory) / "logs" / f"execution-rank-{rank:05d}.jsonl"
     with Lifecycle(path, rank=rank) as timing, timing.phase("execution"):
         _execute(directory, timing)
 
 
-def _execute(directory, timing):
+def _execute(directory: str | Path, timing: Lifecycle) -> None:
     with timing.phase("imports"):
         from shadowspill import Plan, Trainer
         from shadowspill.orchestration.launch.workers import workers
@@ -89,7 +94,7 @@ def _execute(directory, timing):
             training / f"rank-{group.logical_rank:05d}" if group.count > 1 else training
         )
         with timing.phase("logging.setup"):
-            logger = None
+            logger: Wandb | DistributedLogger | None = None
             if group.count > 1:
                 import torch.distributed as dist
 
@@ -124,9 +129,9 @@ def _execute(directory, timing):
             if group.rank == 0 and options["eval_every"]
             else None
         )
-        records = []
+        records: list[dict[str, Any]] = []
 
-        def completed(owner, result):
+        def completed(owner: "Trainer", result: "StepResult") -> None:
             # This callback follows the existing scalar/table logging. It is a
             # host progress marker; result.seconds is Trainer's update timer.
             timing.event(

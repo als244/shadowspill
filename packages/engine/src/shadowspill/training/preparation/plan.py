@@ -5,14 +5,19 @@ import multiprocessing
 import os
 import shutil
 import time
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
+from typing import Any
 
 from shadowspill.training.preparation.phases import settings
 
 from .candidates import build_candidates, failures
 
 
-def _candidate(request):
+def _candidate(
+    request: tuple[Path, Mapping[str, Any], Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Load, plan and serialize one Program's ordering cases in a CPU worker."""
     from shadowspill import (
         CommunicationInfo,
@@ -30,7 +35,7 @@ def _candidate(request):
     root, options, candidate = request
     started = time.monotonic()
     path = candidate["path"]
-    inputs = dict(
+    inputs: dict[str, Any] = dict(
         memory_budgets=MemoryBudgets(
             int(options["execution_gib"] * (1 << 30)),
             int(options["spill_gib"] * (1 << 30)),
@@ -98,7 +103,9 @@ def _candidate(request):
     )
 
 
-def _search(root, options, candidates):
+def _search(
+    root: Path, options: Mapping[str, Any], candidates: Sequence[Mapping[str, Any]]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rejected = failures(root)
     rows = {
         index: [{**candidate, "failure": rejected[candidate["path"]]}]
@@ -145,7 +152,7 @@ def _search(root, options, candidates):
     )
 
 
-def run(directory):
+def run(directory: str | Path) -> None:
     from shadowspill import Plan, write_report
     from shadowspill.errors import PlanInfeasibleError
 

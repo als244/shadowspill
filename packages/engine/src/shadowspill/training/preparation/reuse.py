@@ -2,13 +2,14 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 from .candidates import available, program_paths
 
 SHARED = ("programs", "profiles", "profiled", "communication", "overlap")
 
 
-def source_settings(source, destination):
+def source_settings(source: str | Path, destination: Path) -> dict[str, Any]:
     source = Path(source).resolve()
     if destination.is_relative_to(source):
         raise ValueError("run_dir must be outside prepared_from")
@@ -33,7 +34,7 @@ def source_settings(source, destination):
     }
 
 
-def link_artifacts(source, destination):
+def link_artifacts(source: str | Path, destination: Path) -> None:
     """The child may only plan/execute; it never profiles through these links."""
     source = Path(source)
     artifacts = [

@@ -1,7 +1,9 @@
 """Current target checks shared by saved build and measurement reuse."""
 
+from shadowspill import Program
 
-def check_target(program):
+
+def check_target(program: Program) -> None:
     import torch
 
     from shadowspill.artifacts._values import plain

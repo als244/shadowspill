@@ -1,11 +1,15 @@
 """A configuration entry point; GPU work belongs to fresh phase workers."""
 
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
 from shadowspill.training.preparation.phases import run_phases
 
 from .configuration import configure
 
 
-def run(recipe, config, *, phase="all"):
+def run(recipe: str, config: Mapping[str, Any], *, phase: str = "all") -> Path:
     """Run an importable recipe adapter through the shared training pipeline.
 
     The adapter supplies model/data setup and explicit build candidates. It

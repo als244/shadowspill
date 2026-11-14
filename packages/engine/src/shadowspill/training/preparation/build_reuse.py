@@ -3,14 +3,17 @@
 import json
 import os
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from shadowspill import Program
+from shadowspill.orchestration.launch.workers import Workers
 
 from .target import check_target
 
 
-def completed(path, group, *, kind, num_examples=1):
+def completed(path: Path, group: Workers, *, kind: str, num_examples: int = 1) -> bool:
     # Every participant must take the same branch before a communicating build.
     if not all(group.gather(path.is_file())):
         return False
@@ -31,7 +34,7 @@ def completed(path, group, *, kind, num_examples=1):
     return True
 
 
-def check_metadata(path, metadata, group):
+def check_metadata(path: Path, metadata: Mapping[str, Any], group: Workers) -> None:
     error = None
     try:
         if (
@@ -47,7 +50,7 @@ def check_metadata(path, metadata, group):
         raise ValueError(f"cannot reuse build metadata {path}: {'; '.join(errors)}")
 
 
-def save_metadata(path, metadata):
+def save_metadata(path: Path, metadata: Mapping[str, Any]) -> None:
     """A completed Program can recover missing metadata from its frozen adapter."""
     if path.is_file():
         return

@@ -4,17 +4,25 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from shadowspill.orchestration.launch.processes import worker_command
 from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
 
 
-def settings(directory):
+def settings(directory: str | Path) -> tuple[Path, dict[str, Any]]:
     root = Path(directory)
     return root, json.loads((root / "config.json").read_text())
 
 
-def run_phases(package, root, selected, *, ranks=1, preparation_ranks=1):
+def run_phases(
+    package: str,
+    root: Path,
+    selected: str,
+    *,
+    ranks: int = 1,
+    preparation_ranks: int = 1,
+) -> None:
     phases = ["build", "profile"]
     if ranks > 1:
         phases.append("communicate")

@@ -1,12 +1,19 @@
 """Resume measurements after checking the current target and saved artifact."""
 
-from shadowspill import Profiles, apply_profiles
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+from shadowspill import ProfiledProgram, Profiles, Program, apply_profiles
+from shadowspill.orchestration.launch.workers import Workers
 from shadowspill.orchestration.profiling import profiling_options
 
 from .target import check_target
 
 
-def completed(path, program, options, group):
+def completed(
+    path: Path, program: Program, options: Mapping[str, Any], group: Workers
+) -> ProfiledProgram | None:
     if options.get("refresh_profiles", False):
         return None
     # Every collective participant must choose the same branch before any task

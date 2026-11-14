@@ -1,9 +1,13 @@
 """Pass only explicit CLI choices to the common saved-run configuration."""
 
 import argparse
+from collections.abc import Sequence
+from typing import Any
 
 
-def arguments(parser, argv):
+def arguments(
+    parser: argparse.ArgumentParser, argv: Sequence[str] | None
+) -> tuple[str, dict[str, Any]]:
     directory = parser.get_default("run_dir")
     for action in parser._actions:
         if action.dest != "help":

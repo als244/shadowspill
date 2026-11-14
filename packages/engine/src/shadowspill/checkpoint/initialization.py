@@ -1,13 +1,16 @@
 """Bounded random generation independent of runtime chunks and rank ownership."""
 
 import math
+from collections.abc import Callable
 from hashlib import sha256
 
 import numpy as np
 import torch
 
+from shadowspill.artifacts.tensors import TensorChunk
 
-def validate_chunk(request, destination):
+
+def validate_chunk(request: TensorChunk, destination: torch.Tensor) -> None:
     """Recipes fill flat CPU chunks of a contiguous declared tensor."""
     if (
         destination.device.type != "cpu"
@@ -22,8 +25,14 @@ def validate_chunk(request, destination):
 
 
 def fill_generated(
-    request, destination, *, sample, seed, block_elements=256 << 10, constant=None
-):
+    request: TensorChunk,
+    destination: torch.Tensor,
+    *,
+    sample: Callable[[str, tuple[int, ...], int, int, torch.Generator], torch.Tensor],
+    seed: int,
+    block_elements: int = 256 << 10,
+    constant: float | None = None,
+) -> None:
     """Generate fixed RNG blocks, then copy only the requested intersection.
 
     ``sample(name, shape, start, stop, generator)`` supplies the model's values.
@@ -41,10 +50,10 @@ def fill_generated(
         destination.fill_(torch.tensor(constant, dtype=torch.float32).item())
         return
     end = request.offset + destination.numel()
-    pending = []
+    pending: list[torch.Tensor] = []
     copied = 0
 
-    def flush():
+    def flush() -> None:
         nonlocal copied
         if not pending:
             return

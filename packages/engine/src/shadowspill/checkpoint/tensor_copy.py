@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 
 
@@ -16,7 +18,7 @@ def copy_into(parameter: torch.Tensor, value: torch.Tensor) -> None:
         )
     with torch.no_grad():
         if hasattr(parameter, "to_local") and hasattr(parameter, "device_mesh"):
-            placements = getattr(parameter, "placements", ())
+            placements: Any = getattr(parameter, "placements", ())
             if (
                 len(placements) != 1
                 or not getattr(placements[0], "is_shard", lambda: False)()

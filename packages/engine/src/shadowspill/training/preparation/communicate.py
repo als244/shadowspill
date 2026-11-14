@@ -1,6 +1,7 @@
 """Calibrate each saved Program's collectives on the participating GPUs."""
 
 from datetime import timedelta
+from pathlib import Path
 
 import torch.distributed as dist
 
@@ -20,7 +21,7 @@ from shadowspill.training.preparation.phases import settings
 from .candidates import program_paths
 
 
-def run(directory):
+def run(directory: str | Path) -> None:
     root, options = settings(directory)
     dist.init_process_group("gloo", timeout=timedelta(seconds=7200))
     try:

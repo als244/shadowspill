@@ -9,5 +9,5 @@ class BuildSetup:
     model: Any
     optimizer: Any
     objective: Any
-    build_options: dict = field(default_factory=dict)
-    metadata: dict = field(default_factory=dict)
+    build_options: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)

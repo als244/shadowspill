@@ -1,6 +1,8 @@
 """Recipe concurrency and optional PressureFit search-space controls."""
 
+from collections.abc import Mapping
 from fractions import Fraction
+from typing import Any
 
 from shadowspill.planner import GenericPlanningOptions, SearchOptions
 from shadowspill.planner.search.algorithms.pressurefit import (
@@ -9,10 +11,10 @@ from shadowspill.planner.search.algorithms.pressurefit import (
 )
 
 
-def search_options(options):
+def search_options(options: Mapping[str, Any]) -> SearchOptions:
     resolutions = options.get("resolution_options")
     tails = options.get("tail_save_counts")
-    controls = {}
+    controls: dict[str, Any] = {}
     if resolutions is not None:
         controls["resolution_options"] = tuple(Fraction(value) for value in resolutions)
     if tails is not None:

@@ -1,9 +1,14 @@
 """Build adapter-supplied candidates with the ordinary public frontend."""
 
 import sys
+from collections.abc import Mapping
+from functools import partial
+from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 from shadowspill import build_forward, build_step
-from shadowspill.orchestration.launch.workers import workers
+from shadowspill.orchestration.launch.workers import Workers, workers
 from shadowspill.training.preparation.phases import settings
 
 from .build_reuse import check_metadata, completed, save_metadata
@@ -11,7 +16,13 @@ from .candidates import attempt_candidate, available
 from .configuration import adapter
 
 
-def build_candidate(root, options, candidate, definition, group):
+def build_candidate(
+    root: Path,
+    options: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    definition: ModuleType,
+    group: Workers,
+) -> bool:
     configured = {**options, **candidate}
     source = definition.inputs(configured, rank=group.logical_rank)
     examples = source.example()
@@ -65,7 +76,7 @@ def build_candidate(root, options, candidate, definition, group):
     return True
 
 
-def run(directory):
+def run(directory: str | Path) -> None:
     root, options = settings(directory)
     definition = adapter(options["recipe"])
     with workers(options["preparation_ranks"]) as group:
@@ -74,9 +85,7 @@ def run(directory):
                 root,
                 candidate,
                 "build",
-                lambda candidate=candidate: build_candidate(
-                    root, options, candidate, definition, group
-                ),
+                partial(build_candidate, root, options, candidate, definition, group),
                 group,
             )
 
