@@ -41,7 +41,10 @@ def result(command):
 
 
 def store(root, *, identity=IDENTITY):
-    return RequestRecords(root / "journal", identity=identity, cache_root=root)
+    records = RequestRecords(root / "journal", identity=identity, cache_root=root)
+    if records.writer is None:
+        records.claim_writer("writer", "server")
+    return records
 
 
 def test_request_and_result_deduplication_survive_reopen_and_index_rebuild(tmp_path):
@@ -50,7 +53,7 @@ def test_request_and_result_deduplication_survive_reopen_and_index_rebuild(tmp_p
         submitted = records.submit(command)
         assert submitted.state == "uploading" and submitted.acceptance is None
         accepted = records.accept("a")
-        assert accepted.acceptance.journal_position == 3  # run, submit, accept
+        assert accepted.acceptance.journal_position == 4  # run, writer, submit, accept
         assert records.submit(command) == accepted
         records.dispatch("a")
         with pytest.raises(ValueError, match="never replay"):
@@ -208,9 +211,10 @@ from shadowspill_client.protocol.requests import ComputeRequest, RequestIdentity
 root = Path(sys.argv[1])
 with RequestRecords(root/'journal', identity=RunIdentity('o','s','r'),
                     cache_root=root) as records:
+    records.claim_writer('w', 'server')
     command = ComputeRequest(RequestIdentity('a','r',1,'w',1,'server'), 'forward')
     records.submit(command)
-    assert records.accept('a').acceptance.journal_position == 3
+    assert records.accept('a').acceptance.journal_position == 4
 """
     result = subprocess.run(
         [sys.executable, "-c", code, str(tmp_path)],

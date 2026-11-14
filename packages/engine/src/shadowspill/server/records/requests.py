@@ -13,7 +13,7 @@ from types import TracebackType
 from typing import Any, Self
 
 from shadowspill_client.protocol.codec import digest, encode
-from shadowspill_client.protocol.requests import ComputeRequest, identifier
+from shadowspill_client.protocol.requests import ComputeRequest, WriterLease, identifier
 from shadowspill_client.protocol.results import (
     Acceptance,
     ComputeResult,
@@ -56,6 +56,7 @@ class RequestRecords:
         self.identity = identity
         self._mutex = threading.RLock()
         self._broken = self._closed = False
+        self._writer: WriterLease | None = None
         # A maximum-size portable request also carries its digest and journal
         # wrapper. Reserve that envelope before writing any authoritative data.
         self._journal = Journal(directory, limits=JournalLimits(record_bytes=2 << 20))
@@ -74,6 +75,40 @@ class RequestRecords:
                 self._index.close()
             self._journal.close()
             raise
+
+    @property
+    def writer(self) -> WriterLease | None:
+        with self._mutex:
+            self._usable()
+            return self._writer
+
+    def claim_writer(self, writer_id: str, server_incarnation: str) -> WriterLease:
+        """Transfer ownership durably; previously accepted work keeps its identity.
+
+        Unaccepted old uploads are fenced immediately. The coordinator owns their
+        terminal rejection and staging cleanup, using its actual surviving state.
+        """
+        with self._mutex:
+            self._usable()
+            previous = self._index.writer(identifier(writer_id, "writer ID"))
+            if previous is not None:
+                if (
+                    previous == self._writer
+                    and previous.server_incarnation == server_incarnation
+                ):
+                    return previous
+                raise PermissionError(
+                    "writer identity is retired; use a new explicit attachment"
+                )
+            lease = WriterLease(
+                self.identity.run_id,
+                writer_id,
+                1 if self._writer is None else self._writer.writer_epoch + 1,
+                server_incarnation,
+                self._index.last_sequence + 1,
+            )
+            self._commit("writer.claim", lease.to_dict())
+            return lease
 
     @property
     def last_sequence(self) -> int:
@@ -114,6 +149,7 @@ class RequestRecords:
                 if checksum != previous[2]:
                     raise ValueError("request ID already names different content")
                 return previous[1]
+            self._check_writer(request)
             if self._index.sequence_used(request.identity.sequence):
                 raise ValueError(
                     "submission sequence already belongs to another request"
@@ -126,11 +162,12 @@ class RequestRecords:
     def accept(self, request_id: str) -> RequestStatus:
         with self._mutex:
             self._usable()
-            _, status = self._require(request_id)
+            request, status = self._require(request_id)
             if status.acceptance is not None:
                 return status  # Original acceptance, even after completion.
             if status.state != "uploading":
                 raise ValueError("only a validated pending upload can be accepted")
+            self._check_writer(request)
             acceptance = Acceptance(status.identity, self._journal.position + 1)
             return self._status(RequestStatus(status.identity, "accepted", acceptance))
 
@@ -191,6 +228,12 @@ class RequestRecords:
         if request.identity.sequence > (1 << 63) - 1:
             raise ValueError("submission sequence exceeds the supported 63-bit range")
 
+    def _check_writer(self, request: ComputeRequest) -> None:
+        if self._writer is None or not self._writer.permits(request.identity):
+            raise PermissionError(
+                "writer lease is absent or fenced; reattach explicitly"
+            )
+
     def _require(self, request_id: str) -> tuple[ComputeRequest, RequestStatus]:
         row = self._index.get(identifier(request_id, "request ID"))
         if row is None:
@@ -198,11 +241,25 @@ class RequestRecords:
         return row[:2]
 
     def _apply(self, record: JournalRecord) -> None:
-        if record.kind == "request.submit":
+        if record.kind == "writer.claim":
+            writer = WriterLease.from_dict(record.data)
+            if (
+                writer.run_id != self.identity.run_id
+                or writer.writer_epoch
+                != (1 if self._writer is None else self._writer.writer_epoch + 1)
+                or writer.next_sequence != self._index.last_sequence + 1
+            ):
+                raise ValueError("journal writer lease epoch/run/sequence differs")
+            if self._index.writer(writer.writer_id) is not None:
+                raise ValueError("journal reused a retired writer identity")
+            self._index.add_writer(writer)
+            self._writer = writer
+        elif record.kind == "request.submit":
             if set(record.data) != {"request", "digest"}:
                 raise ValueError("invalid submitted request record")
             request = ComputeRequest.from_dict(record.data["request"])
             self._check_request(request)
+            self._check_writer(request)
             if digest(request) != record.data["digest"]:
                 raise ValueError("journal request checksum differs")
             self._index.insert(
@@ -222,6 +279,8 @@ class RequestRecords:
                 raise ValueError(
                     "acceptance names a different durable journal position"
                 )
+            if status.state == "accepted":
+                self._check_writer(request)
             if (
                 status.result is not None
                 and status.result.operation != request.operation

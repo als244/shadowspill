@@ -65,6 +65,30 @@ class RequestIdentity(Record):
 
 
 @dataclass(frozen=True)
+class WriterLease(Record):
+    run_id: str
+    writer_id: str
+    writer_epoch: int
+    server_incarnation: str
+    next_sequence: int
+
+    def __post_init__(self) -> None:
+        for name in ("run_id", "writer_id", "server_incarnation"):
+            identifier(getattr(self, name), name)
+        integer(self.writer_epoch, "writer epoch", minimum=1)
+        integer(self.next_sequence, "next submission sequence", minimum=1)
+
+    def permits(self, identity: RequestIdentity) -> bool:
+        return (
+            identity.run_id == self.run_id
+            and identity.writer_id == self.writer_id
+            and identity.writer_epoch == self.writer_epoch
+            and identity.server_incarnation == self.server_incarnation
+            and identity.sequence >= self.next_sequence
+        )
+
+
+@dataclass(frozen=True)
 class ComputeRequest(Record):
     identity: RequestIdentity
     operation: ComputeOperation

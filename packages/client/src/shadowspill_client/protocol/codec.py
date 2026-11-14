@@ -21,7 +21,7 @@ from .controls import ControlSchema
 from .definitions import DefinitionSource, OutputSet
 from .inputs import InputSchema
 from .preparation import ResolvedPreparation
-from .requests import ComputeRequest
+from .requests import ComputeRequest, WriterLease
 from .results import Acceptance, ComputeResult, Failure, RequestStatus
 from .training import ResolvedTraining
 
@@ -42,6 +42,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "schema.outputs": OutputSet,
     "definition.source": DefinitionSource,
     "compute.request": ComputeRequest,
+    "writer.lease": WriterLease,
     "request.acceptance": Acceptance,
     "compute.result": ComputeResult,
     "request.failure": Failure,

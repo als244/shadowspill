@@ -2,9 +2,9 @@
 
 `shadowspill.server.records.Journal` is the service's filesystem persistence
 primitive. It owns ordered durable metadata, independently of training state,
-worker dispatch and HTTP. Request ordering, deduplication, writer leases and
-restart outcomes still need the request coordinator; the journal does not make
-an interrupted GPU update replayable.
+worker dispatch and HTTP. Contiguous acceptance, dependency handling and restart
+classification belong to the request coordinator; the journal does not make an
+interrupted GPU update replayable.
 
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.
@@ -12,8 +12,17 @@ Canonical request digests include binary payload checksums. An identical ID/cont
 retry returns its original status; conflicting content or sequence reuse fails.
 Acceptance records retain their original journal position. Completed/skipped/failed
 outcomes are immutable, and a running request cannot be dispatched again. The
-training coordinator still must enforce contiguous acceptance, dependencies and
-writer fencing before invoking these methods.
+training coordinator still must enforce contiguous acceptance and dependencies.
+
+Writable attachment calls `claim_writer` with a fresh handle identity and the
+current server incarnation. The durable `WriterLease` carries its epoch and next
+submission sequence. New metadata and acceptance of pending uploads require the
+current lease; already accepted requests retain their original identity and may
+finish after takeover. Identical request retries remain read-only lookups. A lost
+claim response can retrieve the same current lease; a retired handle ID cannot
+silently take ownership back. The coordinator rejects fenced uploads and releases
+their staging using the actual surviving training state. Claiming a writer does
+not restore workers or make a run lost to server restart executable.
 
 The record layer rebuilds a disposable SQLite query index under the configured
 node-local cache root on every open. Its journal and synchronization modes are

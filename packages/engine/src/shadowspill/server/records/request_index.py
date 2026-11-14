@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from shadowspill_client.protocol.codec import decode, digest, encode
-from shadowspill_client.protocol.requests import ComputeRequest
+from shadowspill_client.protocol.requests import ComputeRequest, WriterLease
 from shadowspill_client.protocol.results import RequestStatus
 
 
@@ -26,6 +26,9 @@ class RequestIndex:
                 id TEXT PRIMARY KEY, sequence INTEGER UNIQUE NOT NULL,
                 digest TEXT NOT NULL, request BLOB NOT NULL, status BLOB NOT NULL,
                 state TEXT NOT NULL)""")
+            self._db.execute(
+                "CREATE TABLE writers (id TEXT PRIMARY KEY, lease BLOB NOT NULL)"
+            )
         except BaseException:
             if hasattr(self, "_db"):
                 self._db.close()
@@ -57,6 +60,22 @@ class RequestIndex:
                 "SELECT 1 FROM requests WHERE sequence=?", (sequence,)
             ).fetchone()
             is not None
+        )
+
+    def writer(self, writer_id: str) -> WriterLease | None:
+        row = self._db.execute(
+            "SELECT lease FROM writers WHERE id=?", (writer_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        lease = decode(row[0])
+        if not isinstance(lease, WriterLease) or lease.writer_id != writer_id:
+            raise ValueError("invalid derived writer index")
+        return lease
+
+    def add_writer(self, lease: WriterLease) -> None:
+        self._db.execute(
+            "INSERT INTO writers VALUES (?, ?)", (lease.writer_id, encode(lease))
         )
 
     def insert(
