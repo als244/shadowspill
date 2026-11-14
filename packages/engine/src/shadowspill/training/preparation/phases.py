@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -22,11 +23,25 @@ def run_phases(
     *,
     ranks: int = 1,
     preparation_ranks: int = 1,
+    phases: Sequence[str] | None = None,
 ) -> None:
-    phases = ["build", "profile"]
-    if ranks > 1:
-        phases.append("communicate")
-    for phase in [*phases, "plan", "execute"]:
+    order = ("build", "profile", "communicate", "plan", "execute")
+    sequence = (
+        tuple(phases)
+        if phases is not None
+        else tuple(phase for phase in order if phase != "communicate" or ranks > 1)
+    )
+    if (
+        not sequence
+        or len(set(sequence)) != len(sequence)
+        or any(phase not in order for phase in sequence)
+        or sequence != tuple(sorted(sequence, key=order.index))
+        or selected not in {"all", *sequence}
+    ):
+        raise ValueError(
+            "select an ordered, distinct sequence of known training phases"
+        )
+    for phase in sequence:
         if selected not in {"all", phase}:
             continue
         log_path = root / f"logs/{phase}.log"
