@@ -62,6 +62,7 @@ groups, divide model code, or rewrite a local layer into a distributed layer.
 | `groups` | Named, ordered groups of logical ranks within one complete-model replica |
 | `parameter_placements` | Which logical parameter or parameter slice the local model computes with |
 | `parameter_storage` | Where weights, gradients and optimizer data are persistently stored |
+| `inputs` | Independent input partitions, field delivery, loss and output ownership |
 | `parallelism.group(name)` | A typed `GroupRef` for a compatible distributed layer/backend |
 
 Each named group collection covers the replica exactly once, with equal-sized
@@ -127,8 +128,8 @@ references execution resolves to the process groups it creates.
 Weights and gradients may be replicated while optimizer data is sharded; when
 weights or gradients are sharded, their storage groups must match the
 optimizer group. Other layouts need explicit redistribution.
-Equal contiguous model slices are represented; noncontiguous maps and
-distributed input-placement maps are not, and ranks' Programs differ only as
+Equal contiguous model slices are represented; noncontiguous parameter maps
+are not, and ranks' Programs differ only as
 [Ranks on different hardware](#ranks-on-different-hardware) describes. The
 declaration API must not be mistaken for qualification of every layout it can
 describe.
@@ -140,6 +141,52 @@ Select data using the application's data-replica relationship, which can differ
 from parameter-storage or model-communication groups. Model-parallel operations
 also need explicit input-layout semantics; parameter placement alone cannot
 infer them.
+
+`Parallelism.inputs` can declare that relationship explicitly. It defaults to
+`None`, preserving existing rank-local callers and saved declarations. These
+framework-free records describe delivery and ownership; Executor still receives
+rank-local tensors and does not route a global batch itself.
+
+```python
+from shadowspill.parallelism import (
+    GroupRef, InputFieldPlacement, InputPlacement, OutputPlacement, Parallelism,
+)
+
+inputs = InputPlacement(
+    partitions=GroupRef("input_pairs", ((0, 1), (2, 3))),
+    fields=(
+        InputFieldPlacement(("inputs", "tokens"), "replicate"),
+        InputFieldPlacement(("loss_inputs", "mask"), "replicate"),
+    ),
+    loss="leader",
+    outputs={"predictions": OutputPlacement("leader")},
+)
+parallelism = Parallelism.dp(ranks_per_replica=4, inputs=inputs)
+assert inputs.partition_count == 2
+assert inputs.scheduled_capacity([[65536], [65536]]) == 131072
+```
+
+Input groups use global logical ranks and cover every worker exactly once.
+Their declared order determines the leader and contiguous slice order. Groups
+currently have equal size, following `GroupRef`. `InputPlacement.independent(4)`
+instead declares four distinct partitions, irrespective of parameter storage.
+Fields can be shared metadata, replicated payload or a balanced contiguous
+`"slice"` on an explicit axis. The definition must declare every routed field
+and use matching slices for aligned model/loss fields, including empty slices.
+`region(path, shape, logical_rank)` supplies those slice bounds.
+
+`loss="leader"` assigns a replicated contribution to the first member only;
+`"partitioned"` sums disjoint contributions from all members. Output rules select
+the leader, sum partial results or concatenate them along a declared axis. The
+model/objective and routing code must honor these declarations and collective
+ordering; declaring sliced inputs does not implement a distributed model.
+
+`scheduled_capacity` counts actual padded buffer positions once per input
+partition. Three 64K buffers exceed a 128K step cap even if only 120K positions
+are valid. Replicated copies on cooperating workers count once; masked model
+buffers still count in full. This arithmetic does not by itself admit a schedule
+or enforce an application's cap. Global packing, collective-safe routing and
+output reordering are separate from these declarations.
 
 Gradient contributions are **summed**, without implicit world-size division.
 For an additive objective, every rank/example can contribute

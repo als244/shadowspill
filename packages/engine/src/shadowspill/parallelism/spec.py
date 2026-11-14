@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Any
 
 from .groups import GroupRef
+from .inputs import InputPlacement
 from .placements import (
     Placement,
     Replicated,
@@ -44,6 +45,7 @@ class Parallelism:
         )
     )
     parameter_storage: Mapping[str, ParameterStorage] = field(default_factory=dict)
+    inputs: InputPlacement | None = None
 
     def __post_init__(self) -> None:
         for name in ("ranks_per_replica", "num_replicas"):
@@ -82,6 +84,10 @@ class Parallelism:
             storage = storage.inherit(self.default_parameter_storage)
             for component in ("weights", "gradients", "optimizer"):
                 self.group(storage.group_for(component))
+        if self.inputs is not None:
+            if not isinstance(self.inputs, InputPlacement):
+                raise TypeError("inputs must be InputPlacement")
+            self.inputs.validate(self.world_size)
 
     @classmethod
     def dp(
@@ -93,10 +99,12 @@ class Parallelism:
         gradients: StorageMode = "sharded",
         optimizer: StorageMode = "sharded",
         min_shard_bytes: int = 0,
+        inputs: InputPlacement | None = None,
     ) -> Parallelism:
         return cls(
             ranks_per_replica=ranks_per_replica,
             num_replicas=num_replicas,
+            inputs=inputs,
             default_parameter_storage=ParameterStorage(
                 group="all_ranks",
                 weights=weights,
@@ -124,6 +132,7 @@ class Parallelism:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            **({"inputs": self.inputs.to_dict()} if self.inputs is not None else {}),
             "ranks_per_replica": self.ranks_per_replica,
             "num_replicas": self.num_replicas,
             "groups": {
@@ -146,6 +155,8 @@ class Parallelism:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> Parallelism:
         data = dict(value)
+        if "inputs" in data:
+            data["inputs"] = InputPlacement.from_dict(data["inputs"])
         data["default_parameter_placement"] = placement_from_record(
             data["default_parameter_placement"]
         )
