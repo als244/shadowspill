@@ -1,9 +1,13 @@
 """Record recoverable device exhaustion while trying independent candidates."""
 
 import gc
+from collections.abc import Callable, MutableMapping
+from typing import Any
 
 
-def attempt(entry, phase, operation, device):
+def attempt[T](
+    entry: MutableMapping[str, Any], phase: str, operation: Callable[[], T], device: Any
+) -> T | None:
     import torch
 
     from shadowspill.pytorch.failures import device_exhausted, exception_chain
@@ -23,7 +27,7 @@ def attempt(entry, phase, operation, device):
     # Leave the exception handler first so its traceback no longer retains
     # the failed task's temporary tensors, streams and compiled functions.
     gc.collect()
-    if torch.cuda.is_initialized():
+    if torch.cuda.is_initialized():  # type: ignore[no-untyped-call]
         with torch.cuda.device(device):
             torch.cuda.empty_cache()
     print(f"{phase}: {entry['name']} failed: {entry['failure']['message']}", flush=True)

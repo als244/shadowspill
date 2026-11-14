@@ -18,10 +18,13 @@ def communication_probes(
     requires a separate calibration. Ordered ranks and buffer aliasing remain
     part of each distinct collective request.
     """
-    from shadowspill.communication.requests import collective_requests
+    from shadowspill.communication.requests import (
+        CollectiveRequest,
+        collective_requests,
+    )
 
     first = None
-    requests = set()
+    requests: set[CollectiveRequest] = set()
     for program in programs:
         if first is None:
             first = program

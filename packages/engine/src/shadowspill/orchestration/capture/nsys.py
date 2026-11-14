@@ -2,9 +2,11 @@
 
 import json
 import sys
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from shutil import which
+from typing import Any, cast
 
 
 @dataclass(frozen=True)
@@ -26,7 +28,7 @@ class NsysCapture:
     executable: str = "nsys"
     output_dir: str | Path | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for name in ("start_step", "steps"):
             if type(getattr(self, name)) is not int or getattr(self, name) < 1:
                 raise ValueError(f"{name} must be a positive integer")
@@ -45,10 +47,12 @@ class NsysCapture:
             object.__setattr__(self, "output_dir", str(self.output_dir))
 
     @property
-    def step_numbers(self):
+    def step_numbers(self) -> range:
         return range(self.start_step, self.start_step + self.steps)
 
-    def command(self, worker_command, *, output):
+    def command(
+        self, worker_command: Iterable[object], *, output: str | Path
+    ) -> list[str]:
         """Collector command for one already isolated rank; output is a stem.
 
         Prefer ``rank_command`` to mask devices and check the resulting report.
@@ -81,7 +85,9 @@ class NsysCapture:
             ]
         return command + list(map(str, worker_command))
 
-    def rank_command(self, worker_command, *, output_dir=None):
+    def rank_command(
+        self, worker_command: Sequence[object], *, output_dir: str | Path | None = None
+    ) -> list[str]:
         """Wrap one worker command, suitable for torchrun's ``--no-python``.
 
         Each rank writes ``output_dir/rank-NNNNN/{trace.nsys-rep,capture.json}``.
@@ -109,14 +115,15 @@ class NsysCapture:
         ]
 
 
-def nsight_trainer(base):
+def nsight_trainer[T: type[Any]](base: T) -> T:
     """Add bounded capture to a Trainer subclass, preserving its other hooks."""
     from ._nsys_trainer import NsightTrainerMixin
 
     if issubclass(base, NsightTrainerMixin):
         return base
 
-    class NsightTrainer(NsightTrainerMixin, base):
+    # The caller selects the concrete class; its MRO is composed at runtime.
+    class NsightTrainer(NsightTrainerMixin, base):  # type: ignore[misc, valid-type]
         pass
 
-    return NsightTrainer
+    return cast(T, NsightTrainer)

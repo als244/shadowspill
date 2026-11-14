@@ -12,14 +12,18 @@ import os
 import socket
 import subprocess
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from ..launch.rank_device import isolate_device
 from .nsys import NsysCapture
 
 
-def collect(command, *, capture, output_dir):
+def collect(
+    command: Iterable[object], *, capture: NsysCapture, output_dir: str | Path
+) -> dict[str, Any]:
     """Run one worker and require a nonempty report before returning success."""
     environment = dict(os.environ)
     rank = int(environment.get("RANK", "0"))
@@ -33,7 +37,7 @@ def collect(command, *, capture, output_dir):
     report = directory / "trace.nsys-rep"
     collector = capture.command(command, output=report.with_suffix(""))
     directory.mkdir(parents=True, exist_ok=False)
-    metadata = dict(
+    metadata: dict[str, Any] = dict(
         rank=rank,
         local_rank=local_rank,
         world_size=world_size,
@@ -48,7 +52,7 @@ def collect(command, *, capture, output_dir):
         started_unix_ns=time.time_ns(),
     )
 
-    def record():
+    def record() -> None:
         path = directory / "capture.json"
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps(metadata, indent=2) + "\n")
@@ -80,7 +84,7 @@ def collect(command, *, capture, output_dir):
     return metadata
 
 
-def reports(output_dir, *, ranks):
+def reports(output_dir: str | Path, *, ranks: int) -> list[dict[str, Any]]:
     """Validate completed collectors after the distributed launcher exits."""
     root = Path(output_dir)
     found = []
@@ -107,7 +111,7 @@ def reports(output_dir, *, ranks):
     return found
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="{}", help="NsysCapture fields as JSON")
     parser.add_argument("--output-dir", required=True)

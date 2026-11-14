@@ -1,9 +1,11 @@
 """Host rendezvous and rank mapping, independent of any client's file formats."""
 
 import os
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -12,25 +14,27 @@ class Workers:
     rank_map: dict[int, int]
 
     @property
-    def count(self):
+    def count(self) -> int:
         return len(self.rank_map)
 
     @property
-    def logical_rank(self):
+    def logical_rank(self) -> int:
         return self.rank_map[self.rank]
 
-    def gather(self, value):
+    def gather[T](self, value: T) -> list[T]:
         if self.count == 1:
             return [value]
         import torch.distributed as dist
 
-        values = [None] * self.count
+        values: list[Any] = [None] * self.count
         dist.all_gather_object(values, value)
         return values
 
 
 @contextmanager
-def workers(world_size, *, rank_map=None):
+def workers(
+    world_size: int, *, rank_map: Mapping[int | str, int] | None = None
+) -> Iterator[Workers]:
     """Own a Gloo control group; reject invalid bindings before rendezvous.
 
     Clients pass the saved artifact's participant count and optional launcher

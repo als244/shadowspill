@@ -1,6 +1,8 @@
 """Worker-only capture boundaries, shared by recipes and Plan benchmarks."""
 
+from collections.abc import Callable
 from contextlib import nullcontext
+from typing import Any, cast
 
 import torch
 import torch.distributed as dist
@@ -16,17 +18,21 @@ class NsightTrainerMixin:
     until process exit, after the worker releases its runtime and pinned pool.
     """
 
-    def __init__(self, *args, nsys_start_step=2, nsys_steps=0, **kwargs):
+    step_count: int
+
+    def __init__(
+        self, *args: Any, nsys_start_step: int = 2, nsys_steps: int = 0, **kwargs: Any
+    ) -> None:
         if type(nsys_start_step) is not int or nsys_start_step < 1:
             raise ValueError("nsys_start_step must be a positive integer")
         if type(nsys_steps) is not int or nsys_steps < 0:
             raise ValueError("nsys_steps must be a nonnegative integer")
         self.nsys_start_step = nsys_start_step
         self.nsys_steps = nsys_steps
-        super().__init__(*args, **kwargs)
+        cast(Any, super()).__init__(*args, **kwargs)
 
     @staticmethod
-    def _capture_boundary(action):
+    def _capture_boundary(action: Callable[[], object]) -> None:
         distributed = dist.is_initialized()
         if distributed:
             dist.barrier()
@@ -34,7 +40,7 @@ class NsightTrainerMixin:
         if distributed:
             dist.barrier()
 
-    def step(self, **inputs):
+    def step(self, **inputs: Any) -> Any:
         number = self.step_count + 1
         last = self.nsys_start_step + self.nsys_steps - 1
         captured = self.nsys_steps > 0 and self.nsys_start_step <= number <= last
@@ -45,7 +51,7 @@ class NsightTrainerMixin:
         if captured:
             inputs["profiler_annotations"] = True
         with torch.cuda.nvtx.range(label) if captured else nullcontext():
-            result = super().step(**inputs)
+            result = cast(Any, super()).step(**inputs)
         # Trainer.step synchronizes execution before returning. Wait for every
         # worker before ending capture, including the final worker's GPU work.
         if captured and number == last:

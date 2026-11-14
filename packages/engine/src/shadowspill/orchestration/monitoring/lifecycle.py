@@ -5,8 +5,10 @@ import os
 import socket
 import sys
 import time
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
+from typing import Self
 
 
 class Lifecycle:
@@ -17,14 +19,14 @@ class Lifecycle:
     control-flow boundaries, not CUDA event timings.
     """
 
-    def __init__(self, path, *, rank=None):
+    def __init__(self, path: str | Path, *, rank: int | None = None) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._stream = path.open("a", buffering=1)
         self._identity = dict(pid=os.getpid(), hostname=socket.gethostname(), rank=rank)
         self._sequence = 0
 
-    def event(self, name, *, boundary="point", **fields):
+    def event(self, name: str, *, boundary: str = "point", **fields: object) -> None:
         self._sequence += 1
         record = dict(
             timestamp_ns=time.time_ns(),
@@ -38,7 +40,7 @@ class Lifecycle:
         self._stream.write(json.dumps(record) + "\n")
 
     @contextmanager
-    def phase(self, name):
+    def phase(self, name: str) -> Iterator[None]:
         self.event(name, boundary="begin")
         try:
             yield
@@ -49,7 +51,7 @@ class Lifecycle:
             self.event(name, boundary="end")
 
     @contextmanager
-    def managed(self, name, manager):
+    def managed[T](self, name: str, manager: AbstractContextManager[T]) -> Iterator[T]:
         """Time entry and exit while preserving context-manager error handling."""
         with self.phase(name + ".open"):
             value = manager.__enter__()
@@ -64,8 +66,8 @@ class Lifecycle:
             with self.phase(name + ".close"):
                 manager.__exit__(None, None, None)
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> None:
         self._stream.close()
