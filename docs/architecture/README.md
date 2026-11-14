@@ -16,6 +16,7 @@ do not define core architecture.
 - [The ShadowSpillProgram](program.md)
 - [Step structure and ordering](step.md)
 - [Training composition](training.md)
+- [Durable service records](service-records.md)
 
 ## Capture and compilation
 

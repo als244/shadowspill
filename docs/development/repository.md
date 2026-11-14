@@ -108,6 +108,8 @@ packages/engine/src/shadowspill/
 │   └── training/          bind example/update orderings and gradient completion
 ├── preparation/           provider-owned binary capture and saved task binding
 ├── reporting/             CPU-only reports and timeline/summary output
+├── server/                service storage and transport boundaries
+│   └── records/           durable bounded journal and committed-prefix recovery
 ├── ir/                    framework-neutral values and indexed projections
 │   └── program/           the program: its vocabularies, specs, alternatives,
 │                          and the checks it must satisfy
