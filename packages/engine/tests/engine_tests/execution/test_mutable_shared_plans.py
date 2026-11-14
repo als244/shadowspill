@@ -35,7 +35,8 @@ class Model(nn.Module):
 
 
 def objective(model, x, target, mask):
-    return ((model(x) - target).square() * mask).sum()
+    prediction = model(x)
+    return ((prediction - target).square() * mask).sum(), {"prediction": prediction}
 
 
 adam_update = inspect.unwrap(torch.optim.AdamW.step)
@@ -82,6 +83,9 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
         )
     }
     model.train()
+    programs["masked_outputs"] = build_forward(
+        model, forward_fn=objective, example_args=examples[0], partition="whole"
+    )
     for index, args in enumerate(examples):
         programs[f"backward{index}"] = build_forward_backward(
             model, objective=objective, example_args=args, partition="whole"
@@ -128,7 +132,7 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
     initial = {name: value.clone() for name, value in reference.state_dict().items()}
     gradients = []
     for args in examples:
-        objective(reference, *args).backward()
+        objective(reference, *args)[0].backward()
         gradients.append(
             {name: p.grad.clone() for name, p in reference.named_parameters()}
         )
@@ -149,7 +153,7 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
     for index, factor in enumerate(update_scales):
         args = examples[index % len(examples)]
         optimizer.zero_grad(set_to_none=True)
-        objective(reference, *args).backward()
+        objective(reference, *args)[0].backward()
         for parameter in reference.parameters():
             parameter.grad.mul_(1.0 if factor is None else factor)
         optimizer.step()

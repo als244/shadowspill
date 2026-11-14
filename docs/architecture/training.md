@@ -55,6 +55,29 @@ Trainer owns an Executor it creates; an externally supplied Executor remains
 caller-owned. Returned step observations contain CPU values. Direct Executor
 calls return a pending handle; `.result()` waits for caller-owned outputs.
 
+The internal `training.session.state.OperationState` records ordered operation
+boundaries for the developing client/service path. It chooses fresh versus
+additive backward execution from completed participation, tracks accumulation
+generations separately from optimizer updates, and rejects save/restore/close
+while a valid accumulation is open. A masked first call opens a generation but
+creates no gradient contribution. A later valid call still uses first-write
+destinations. Discard and all-masked optimization close a generation without
+advancing updates.
+
+The worker/coordinator confirms this state only after device work and terminal
+transfers complete. Rejection before execution preserves completed gradients;
+unknown execution effects invalidate live state. Output publication occurs after
+the known execution boundary, so its failure cannot undo or replay an update.
+This component does not implement request queues, durability or a second public
+Trainer. Those service responsibilities are still under development.
+
+Participation comes from declared boolean validity on original logical inputs,
+before routing or padding. Numeric loss, weights, advantages and final gradient
+scale do not determine participation. A skipped update can still need an
+already prepared output-only computation; it must return requested observations
+without dispatching backward or optimizer tasks. Cold-worker tests cover that
+path, shared Adam state, tied parameters and evaluation between unequal parts.
+
 ## Data and observations
 
 Each `fit` source item is a mapping of arguments for `Trainer.step`, normally
