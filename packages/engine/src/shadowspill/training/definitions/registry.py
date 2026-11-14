@@ -18,6 +18,7 @@ from .contracts import (
     ObjectiveDefinition,
     Schema,
 )
+from .optimizer import OptimizerDefinition
 
 
 def _configuration(
@@ -75,6 +76,22 @@ class ResolvedObjective:
         return computation
 
 
+@dataclass(frozen=True)
+class ResolvedOptimizer:
+    definition: OptimizerDefinition
+    source: DefinitionSource
+    config: Mapping[str, Value]
+    defaults: Mapping[str, Scalar]
+
+    def create(self, model: Any, controls: Mapping[str, Any]) -> Any:
+        if controls.keys() != self.definition.controls.fields.keys():
+            raise ValueError(
+                "provide exactly the optimizer's declared runtime controls"
+            )
+        configured, _ = _configuration(self.definition.config, self.config)
+        return self.definition.create(model, configured, controls)
+
+
 class Registry:
     """One explicit registry for supplied and external installed definitions.
 
@@ -86,6 +103,40 @@ class Registry:
     def __init__(self) -> None:
         self._models: dict[str, tuple[ModelDefinition, DefinitionSource]] = {}
         self._objectives: dict[str, tuple[ObjectiveDefinition, DefinitionSource]] = {}
+        self._optimizers: dict[str, tuple[OptimizerDefinition, DefinitionSource]] = {}
+
+    def add_optimizer(
+        self, definition: OptimizerDefinition, *, source: DefinitionSource
+    ) -> None:
+        if not isinstance(definition, OptimizerDefinition) or not isinstance(
+            source, DefinitionSource
+        ):
+            raise TypeError("register an OptimizerDefinition with DefinitionSource")
+        if definition.id in self._optimizers:
+            raise ValueError(f"optimizer already registered: {definition.id}")
+        self._optimizers[definition.id] = (definition, source)
+
+    def resolve_optimizer(
+        self,
+        definition: str,
+        *,
+        config: Mapping[str, Value] | None = None,
+        defaults: Mapping[str, Scalar] | None = None,
+        source: DefinitionSource | None = None,
+    ) -> ResolvedOptimizer:
+        try:
+            optimizer, installed = self._optimizers[definition]
+        except KeyError as error:
+            raise ValueError(
+                f"optimizer definition is not installed: {definition}"
+            ) from error
+        if source is not None and source != installed:
+            raise ValueError(f"optimizer definition source changed: {definition}")
+        _, settings = _configuration(optimizer.config, {} if config is None else config)
+        controls = optimizer.controls.resolve(
+            defaults=optimizer.defaults, overrides=defaults
+        )
+        return ResolvedOptimizer(optimizer, installed, settings, controls)
 
     def add_model(
         self, definition: ModelDefinition, *, source: DefinitionSource

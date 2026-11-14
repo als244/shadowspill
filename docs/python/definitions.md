@@ -53,3 +53,12 @@ The extension tests capture and execute a real CPU classifier, compare masked,
 signed-weight gradients with an independent formula, change a runtime coefficient
 without recapture, and check the external path with catalog imports blocked.
 These are capture/interface checks, not qualification of the future service.
+
+`OptimizerDefinition` registers a factory for an ordinary capturable optimizer.
+The factory receives `(model, config, controls)`, where the build worker provides
+tensor-valued runtime controls. Each advertised control explicitly names its
+captured scalar bindings. After existing `capture_optimizer` runs,
+`validate_capture` checks that those bindings are read by the captured update.
+Static options and unused tensors cannot be advertised as runtime overrides.
+The registry resolves nonsticky defaults before construction; it does not run
+optimizer steps or introduce another optimizer implementation.
