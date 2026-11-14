@@ -27,7 +27,7 @@ def invocation(root, operation="step", *, masked=False, accumulated=False):
 
     prepared = PreparedRequests(family(), cache_root=root)
     datums = records(masked=masked)
-    if operation == "discard":
+    if operation in ("discard", "close"):
         command = OperationRequest(request().identity, operation)
     elif operation == "optim_step":
         command = replace(request(), operation=operation, mode=None)
@@ -45,7 +45,7 @@ def invocation(root, operation="step", *, masked=False, accumulated=False):
     budget = BufferBudget(16 << 20, max_requests=5)
     snapshot = (
         None
-        if operation in ("optim_step", "discard")
+        if operation in ("optim_step", "discard", "close")
         else snapshot_batch(datums, budget)
     )
     data = prepared(command, snapshot, budget)
@@ -80,6 +80,7 @@ def invocation(root, operation="step", *, masked=False, accumulated=False):
         ("optim_step", False, False),
         ("optim_step", True, False),
         ("discard", False, False),
+        ("close", False, False),
     ],
 )
 def test_wire_rechecks_saved_forms_frames_and_controls(
@@ -102,7 +103,7 @@ def test_wire_rechecks_saved_forms_frames_and_controls(
         budget = BufferBudget(max(1, bound.input_bytes))
         bound.verify_inputs(budget)
         loader = bound.input_loader(budget)
-        if operation in ("optim_step", "discard"):
+        if operation in ("optim_step", "discard", "close"):
             assert loader is None
         else:
             with loader:

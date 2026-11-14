@@ -12,9 +12,9 @@ from .controls import Scalar
 
 type ComputeOperation = Literal["step", "forward_backward", "optim_step", "forward"]
 COMPUTE_OPERATIONS = frozenset({"step", "forward_backward", "optim_step", "forward"})
-type StateOperation = Literal["discard"]
+type StateOperation = Literal["discard", "close"]
 type Operation = ComputeOperation | StateOperation
-STATE_OPERATIONS = frozenset({"discard"})
+STATE_OPERATIONS = frozenset({"discard", "close"})
 OPERATIONS = COMPUTE_OPERATIONS | STATE_OPERATIONS
 
 

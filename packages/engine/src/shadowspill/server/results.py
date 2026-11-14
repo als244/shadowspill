@@ -98,6 +98,7 @@ class ResultPublisher:
                 loss_params=call.controls.loss_params,
                 grad_scale=call.controls.grad_scale,
                 loss=loss,
+                state_valid=receipt.state_valid,
             )
         finally:
             self._busy.release()

@@ -7,6 +7,7 @@ import pytest
 from engine_tests.server.test_request_records import request, store
 from shadowspill.training.session.acceptance import AcceptanceOrder
 from shadowspill.training.session.state import OperationState
+from shadowspill_client.protocol.requests import OperationRequest
 from shadowspill_client.protocol.results import ExecutionReceipt, OperationResult
 
 
@@ -58,6 +59,24 @@ def test_later_complete_upload_waits_for_missing_metadata_and_validation(tmp_pat
         assert reopened.at_sequence(1)[1] == a
         assert reopened.at_sequence(2)[1] == b
         assert reopened.at_sequence(3) is None
+
+
+def test_closed_run_rejects_later_upload_despite_a_missing_sequence(tmp_path):
+    with store(tmp_path) as records:
+        state = OperationState()
+        order = AcceptanceOrder(records, state, max_pending=3)
+        close = OperationRequest(request("close", 1).identity, "close")
+        records.submit(close)
+        records.submit(request("late", 3))
+        order.validated("close")
+        assert order.validated("late").state == "uploading"
+        finish(records, state, "close")
+        order.advance()
+        failure = records.get("late")[1].failure
+        assert (
+            failure.code == "state_closed" and failure.execution_effect == "not_started"
+        )
+        assert not records.pending() and not order._ready
 
 
 def test_malformed_b_fails_queued_optimizer_but_preserves_a_for_corrected_work(
@@ -206,7 +225,9 @@ def test_unavailable_operation_state_rejects_without_creating_acceptance(
         records.submit(request())
         status = order.validated("a")
         assert status.acceptance is None
-        assert status.failure.code == "state_unavailable"
+        assert status.failure.code == (
+            "state_closed" if closed else "state_unavailable"
+        )
         assert status.failure.state_valid == closed
 
 

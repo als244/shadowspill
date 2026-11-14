@@ -39,6 +39,9 @@ class WorkerExecution:
         if call.command.request.operation == "discard":
             self._executor.discard_gradients()
             return None
+        if call.command.request.operation == "close":
+            self._executor.close()
+            return None
         if call.plan is None:
             return None
         value = None

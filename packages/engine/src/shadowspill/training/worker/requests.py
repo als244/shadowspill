@@ -86,11 +86,21 @@ class WorkerRequests:
         if not self._busy.acquire(blocking=False):
             raise RuntimeError("another worker file invocation is in flight")
         try:
+            closing = call.request.operation == "close"
             if self.closed:
                 raise RuntimeError("worker request delivery is closed")
-            if not self.group.valid:
+            if not self.group.valid and not closing:
                 self.group.close()
                 raise RuntimeError("worker group is invalid; never replay execution")
+            cleanup_only = closing and (
+                not transition.before.valid or not self.group.valid
+            )
+            if cleanup_only:
+                # Failed channels cannot receive another invocation. Confirm
+                # shutdown and retire previous owners before reserving metadata
+                # again: a failed stop may still own the full command arena.
+                self.group.close()
+                self._finish_results()
             try:
                 lease = self._metadata.reserve(self._bytes, timeout=0)
             except (ValueError, TimeoutError, RuntimeError) as error:
@@ -98,6 +108,9 @@ class WorkerRequests:
             result = WorkerResults(self, lease)
             with self._owners_lock:
                 self._owners.add(result)
+            if cleanup_only:
+                self.closed = result.ready = True
+                return result
             try:
                 commands = self.group.commands(call, transition)
                 self._prepare(result, call, commands)
@@ -135,6 +148,11 @@ class WorkerRequests:
                 raise
             try:
                 replies = self.group.run(commands)
+                if closing:
+                    # Executor close replies precede process/log finalization.
+                    # The dispatcher's receipt requires confirmed child exit.
+                    self.group.close()
+                    self.closed = True
             except BaseException as error:
                 if isinstance(error, ExecutionNotStarted) or self.group.closed:
                     result._finished()
@@ -209,11 +227,14 @@ class WorkerRequests:
         self.group.close()
         with self._busy:
             self.closed = True
-            with self._owners_lock:
-                owners = tuple(self._owners)
-            for result in owners:
-                result._finished()
-                result.close()
+            self._finish_results()
+
+    def _finish_results(self) -> None:
+        with self._owners_lock:
+            owners = tuple(self._owners)
+        for result in owners:
+            result._finished()
+            result.close()
 
     def __enter__(self) -> Self:
         if self.closed:

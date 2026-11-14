@@ -44,8 +44,27 @@ def test_completion_fact_roundtrips_independently_of_published_result():
         {"outcome": "running"},
         {"completed_updates": True},
         {"completed_updates": -1},
+        {"state_valid": False},
+        {"state_valid": 1},
     ],
 )
 def test_invalid_completion_fact_is_rejected(change):
-    with pytest.raises(ValueError):
+    with pytest.raises((TypeError, ValueError)):
         replace(receipt(), **change)
+
+
+def test_closing_invalid_state_preserves_uncertainty_in_receipt_and_result():
+    closed = replace(receipt(), operation="close", state_valid=False)
+    assert decode(encode(closed)) == closed
+    result = OperationResult(
+        closed.identity,
+        "close",
+        "history",
+        "completed",
+        closed.completed_updates,
+        closed.accumulation,
+        state_valid=False,
+    )
+    assert ExecutionReceipt.from_result(result) == closed
+    with pytest.raises(ValueError, match="resolved accumulation"):
+        replace(closed, state_valid=True)

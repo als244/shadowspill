@@ -115,6 +115,7 @@ class ExecutionReceipt(Record):
     outcome: Literal["completed", "skipped"]
     completed_updates: int
     accumulation: Accumulation = field(default_factory=Accumulation)
+    state_valid: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -126,13 +127,17 @@ class ExecutionReceipt(Record):
         ):
             raise ValueError("unknown execution operation or outcome")
         integer(self.completed_updates, "completed_updates")
+        if type(self.state_valid) is not bool:
+            raise TypeError("state_valid must be boolean")
+        if not self.state_valid and self.operation != "close":
+            raise ValueError("only close can complete with invalid training state")
         object.__setattr__(
             self,
             "accumulation",
             record(Accumulation, self.accumulation, "accumulation"),
         )
         if self.operation in STATE_OPERATIONS and (
-            self.outcome != "completed" or self.accumulation.open
+            self.outcome != "completed" or (self.state_valid and self.accumulation.open)
         ):
             raise ValueError("completed state commands require resolved accumulation")
 
@@ -144,6 +149,7 @@ class ExecutionReceipt(Record):
             result.outcome,
             result.completed_updates,
             result.accumulation,
+            result.state_valid,
         )
 
 
@@ -163,6 +169,7 @@ class OperationResult(Record):
     loss_params: Mapping[str, Scalar] = field(default_factory=dict)
     grad_scale: float | None = None
     loss: float | int | None = None
+    state_valid: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -175,6 +182,10 @@ class OperationResult(Record):
             raise ValueError("unknown result operation or outcome")
         identifier(self.history_id, "history ID")
         integer(self.completed_updates, "completed_updates")
+        if type(self.state_valid) is not bool:
+            raise TypeError("state_valid must be boolean")
+        if not self.state_valid and self.operation != "close":
+            raise ValueError("only close can complete with invalid training state")
         if self.operation in STATE_OPERATIONS and (
             self.outcome != "completed"
             or self.metrics
@@ -206,7 +217,11 @@ class OperationResult(Record):
             "accumulation",
             record(Accumulation, self.accumulation, "accumulation"),
         )
-        if self.operation in STATE_OPERATIONS and self.accumulation.open:
+        if (
+            self.operation in STATE_OPERATIONS
+            and self.state_valid
+            and self.accumulation.open
+        ):
             raise ValueError("completed state commands require resolved accumulation")
         metrics = dict(self.metrics)
         for name, value in metrics.items():

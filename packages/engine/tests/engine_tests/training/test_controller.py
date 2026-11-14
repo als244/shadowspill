@@ -3,7 +3,7 @@
 import io
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from threading import Event
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -39,6 +39,8 @@ class Workers:
         assert call.worker_plans(transition)
         self.entered.set()
         assert self.release.wait(5)
+        if call.request.operation == "close":
+            self.close()
         work = Work()
         self.works.append(work)
         return work
@@ -72,6 +74,7 @@ def configured(tmp_path, *, blocked=False, fail_publication=False):
                 optim=call.controls.optim,
                 loss_params=call.controls.loss_params,
                 grad_scale=call.controls.grad_scale,
+                state_valid=receipt.state_valid,
             )
 
         controller = RunController(
@@ -244,6 +247,149 @@ def test_close_refuses_open_accumulation_without_disabling_corrected_work(tmp_pa
         result = ctx.controller.wait("optim", timeout=5)
         assert result.result.completed_updates == 1
         assert not result.result.accumulation.open
+
+
+def test_ordered_close_drains_prior_work_and_keeps_its_result_queryable(tmp_path):
+    with configured(tmp_path, blocked=True) as ctx:
+        controller = ctx.controller
+        command, body = upload()
+        submit(controller, command, body)
+        assert ctx.workers.entered.wait(5)
+        close = OperationRequest(request("close", 2).identity, "close")
+        assert submit(controller, close).state == "accepted"
+        assert not ctx.workers.closed
+        ctx.workers.release.set()
+        result = controller.wait("close", timeout=5)
+        controller.drain(timeout=5)
+        assert result.result.completed_updates == 1 and result.result.state_valid
+        assert controller.closed and ctx.workers.closed
+        with pytest.raises(RuntimeError, match="closed"):
+            ctx.budget.reserve(1)
+        assert ctx.workers.calls == ["a", "close"]
+        assert controller.register(close) == controller.receive("close") == result
+        with pytest.raises(RuntimeError, match="closed"):
+            controller.register(upload(name="late", sequence=3)[0])
+
+
+def test_close_rejects_already_accepted_suffix_without_worker_execution(tmp_path):
+    with configured(tmp_path, blocked=True) as ctx:
+        close = OperationRequest(request("close", 1).identity, "close")
+        submit(ctx.controller, close)
+        assert ctx.workers.entered.wait(5)
+        late, body = upload(name="late", sequence=2)
+        assert submit(ctx.controller, late, body).state == "accepted"
+        ctx.workers.release.set()
+        assert ctx.controller.wait("close", timeout=5).state == "completed"
+        failure = ctx.controller.wait("late", timeout=5).failure
+        assert (
+            failure.code == "state_closed" and failure.execution_effect == "not_started"
+        )
+        ctx.controller.drain(timeout=5)
+        assert ctx.workers.calls == ["close"] and ctx.controller.closed
+
+
+def test_close_retires_incomplete_upload_without_waiting_for_body(tmp_path):
+    with configured(tmp_path, blocked=True) as ctx:
+        close = OperationRequest(request("close", 1).identity, "close")
+        submit(ctx.controller, close)
+        assert ctx.workers.entered.wait(5)
+        # A later registered upload is incomplete; no receive call is required
+        # for close to classify and release its metadata/pipeline ownership.
+        late, _ = upload(name="late", sequence=2)
+        ctx.controller.register(late)
+        ctx.workers.release.set()
+        assert ctx.controller.wait("late", timeout=5).failure.code == "state_closed"
+        ctx.controller.drain(timeout=5)
+        assert ctx.controller.closed and ctx.budget.used == (0, 0)
+
+
+def test_close_keeps_active_cancelled_upload_storage_until_io_returns(tmp_path):
+    entered, release = Event(), Event()
+    received = []
+    with configured(tmp_path, blocked=True) as ctx:
+        close = OperationRequest(request("close", 1).identity, "close")
+        submit(ctx.controller, close)
+        assert ctx.workers.entered.wait(5)
+        late, wire = upload(name="late", sequence=2)
+        ctx.controller.register(late)
+
+        class Body(io.BytesIO):
+            def readinto(self, buffer):
+                entered.set()
+                assert release.wait(5)
+                return super().readinto(buffer)
+
+        def receive():
+            with Body(wire) as body:
+                received.append(ctx.controller.receive("late", body))
+
+        producer = Thread(target=receive)
+        producer.start()
+        try:
+            assert entered.wait(5)
+            ctx.workers.release.set()
+            assert ctx.controller.wait("close", timeout=5).state == "completed"
+            assert ctx.controller.wait("late", timeout=5).failure.code == "state_closed"
+            assert ctx.budget.used[0] > 0
+            with pytest.raises(TimeoutError):
+                ctx.controller.drain(timeout=0.01)
+        finally:
+            release.set()
+            producer.join(timeout=5)
+        assert not producer.is_alive() and received[0].failure.code == "state_closed"
+        ctx.controller.drain(timeout=5)
+        assert ctx.controller.closed and ctx.budget.used == (0, 0)
+
+
+def test_ordered_close_refuses_gradients_then_accepts_explicit_discard(tmp_path):
+    with configured(tmp_path) as ctx:
+        backward, wire = upload(operation="forward_backward")
+        submit(ctx.controller, backward, wire)
+        ctx.controller.wait("a", timeout=5)
+        close = OperationRequest(request("premature", 2).identity, "close")
+        submit(ctx.controller, close)
+        rejected = ctx.controller.wait("premature", timeout=5)
+        assert rejected.failure.code == "operation_conflict"
+        assert rejected.failure.accumulation.contributions == ("a",)
+        assert not ctx.workers.closed
+        discard = OperationRequest(request("discard", 3).identity, "discard")
+        submit(ctx.controller, discard)
+        ctx.controller.wait("discard", timeout=5)
+        close = OperationRequest(request("close", 4).identity, "close")
+        submit(ctx.controller, close)
+        assert ctx.controller.wait("close", timeout=5).state == "completed"
+        ctx.controller.drain(timeout=5)
+        assert ctx.workers.calls == ["a", "discard", "close"]
+
+
+def test_close_of_invalid_state_retains_uncertainty_and_last_known_history(tmp_path):
+    with configured(tmp_path) as ctx:
+        backward, wire = upload(operation="forward_backward")
+        submit(ctx.controller, backward, wire)
+        ctx.controller.wait("a", timeout=5)
+        ctx.controller.drain(timeout=5)
+        with ctx.controller._dispatcher.order.synchronized():
+            ctx.controller._state.invalidate()
+        close = OperationRequest(request("close", 2).identity, "close")
+        submit(ctx.controller, close)
+        result = ctx.controller.wait("close", timeout=5)
+        ctx.controller.drain(timeout=5)
+        assert result.state == "completed" and not result.result.state_valid
+        assert result.result.accumulation.contributions == ("a",)
+        assert not ctx.journal.execution("close").state_valid
+        assert ctx.controller.boundary.closed and not ctx.controller.boundary.valid
+
+
+def test_close_publication_failure_cannot_reopen_or_replay_workers(tmp_path):
+    with configured(tmp_path, fail_publication=True) as ctx:
+        close = OperationRequest(request().identity, "close")
+        submit(ctx.controller, close)
+        status = ctx.controller.wait("a", timeout=5)
+        ctx.controller.drain(timeout=5)
+        assert status.failure.execution_effect == "completed"
+        assert ctx.controller.closed and ctx.workers.closed
+        assert ctx.controller.register(close) == status
+        assert ctx.workers.calls == ["a"]
 
 
 def test_fatal_completion_storage_failure_never_replays_confirmed_effects(

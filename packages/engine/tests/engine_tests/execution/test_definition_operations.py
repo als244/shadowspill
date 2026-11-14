@@ -275,6 +275,9 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     )
     assert "Qualified pre-reserved worker output files" in worker.stdout
     assert "Qualified physical gradient discard and fresh accumulation" in worker.stdout
+    assert (
+        "Qualified ordered Executor close through the worker barrier" in worker.stdout
+    )
     agent = subprocess.run(
         [
             sys.executable,
@@ -306,6 +309,9 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         agent.stdout
     )
     assert "Qualified ordered production discard followed by fresh backward/update" in (
+        agent.stdout
+    )
+    assert "Qualified ordered close with confirmed child exit and queryable result" in (
         agent.stdout
     )
     assert (

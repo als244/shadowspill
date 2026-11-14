@@ -212,6 +212,7 @@ class RequestDispatcher:
             optim=request.optim,
             loss_params=request.loss_params,
             grad_scale=request.grad_scale,
+            state_valid=after.valid,
         )
         encode(ExecutionReceipt.from_result(result))
         encode(
@@ -229,6 +230,7 @@ class RequestDispatcher:
                 "skipped" if transition.skipped else "completed",
                 boundary.completed_updates,
                 boundary.accumulation,
+                state_valid=boundary.valid,
             )
             self._records.executed(receipt)
             return receipt

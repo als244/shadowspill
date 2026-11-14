@@ -24,6 +24,7 @@ from shadowspill.training.worker.protocol import (
 )
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.codec import ProtocolError
+from shadowspill_client.protocol.requests import OperationRequest
 
 SCOPE = WorkerScope("run", "server", "process-1", 0)
 
@@ -80,6 +81,27 @@ def test_execution_requires_ready_ticket_and_separate_contiguous_invocations():
         ("execute", 3),
     ]
     assert worker.valid
+
+
+def test_close_returns_one_final_reply_and_retires_the_private_channel():
+    worker, events = loop()
+    command = call()
+    command = replace(
+        command,
+        candidate=None,
+        request=OperationRequest(command.request.identity, "close"),
+    )
+    incoming, outgoing = io.BytesIO(), io.BytesIO()
+    write_message(incoming, command)
+    write_message(incoming, WorkerControl(ticket(command), "execute"))
+    write_message(incoming, call(2, 2))  # Must remain unread after close.
+    incoming.seek(0)
+    worker.serve(incoming, outgoing)
+    outgoing.seek(0)
+    assert read_message(outgoing).status == "ready"
+    assert read_message(outgoing).status == "completed"
+    assert read_message(outgoing) is None and not worker.valid
+    assert events == [("stage", 1), ("execute", 1)]
 
 
 @pytest.mark.parametrize("point", ["before_stage", "completed"])
@@ -240,7 +262,9 @@ def test_serve_never_keeps_mutable_worker_reusable_after_eof_or_broken_reply():
     assert not worker.valid
 
 
-@pytest.mark.parametrize("mode", ["normal", "lost_completion", "duplicate_execute"])
+@pytest.mark.parametrize(
+    "mode", ["normal", "lost_completion", "duplicate_execute", "close"]
+)
 def test_actual_child_process_channel_and_lost_completion_never_replay(tmp_path, mode):
     marker = tmp_path / "executions"
     process = subprocess.Popen(
@@ -256,7 +280,14 @@ def test_actual_child_process_channel_and_lost_completion_never_replay(tmp_path,
         bufsize=0,
     )
     try:
-        write_message(process.stdin, call())
+        command = call()
+        if mode == "close":
+            command = replace(
+                command,
+                candidate=None,
+                request=OperationRequest(command.request.identity, "close"),
+            )
+        write_message(process.stdin, command)
         assert select.select([process.stdout], [], [], 10)[0]
         ready = read_message(process.stdout)
         assert ready.status == "ready" and not marker.exists()

@@ -159,7 +159,7 @@ def exchange(message):
 def submit(name, operation, *, datums=None, **options):
     wire, payload = None, None
     count = 0
-    if operation not in ("optim_step", "discard"):
+    if operation not in ("optim_step", "discard", "close"):
         datums = records() if datums is None else datums
         with snapshot_batch(datums, BufferBudget(8 << 20)) as owned:
             wire = b"".join(owned.chunks())
@@ -216,7 +216,8 @@ def invoke(
             assert completed.status == (
                 "failed" if worker_publication_error else "completed"
             ), completed
-            assert completed.effect == "completed" and worker_loop.valid
+            assert completed.effect == "completed"
+            assert worker_loop.valid == (operation != "close")
             assert running.staging.used == (0, 0)
             if owner:
                 owner.finished()
@@ -244,6 +245,7 @@ def invoke(
             optim=data.controls.optim,
             loss_params=data.controls.loss_params,
             grad_scale=data.controls.grad_scale,
+            state_valid=receipt.state_valid,
         )
 
     try:
@@ -402,6 +404,8 @@ with (
     assert (
         state.boundary.completed_updates == 2 and not state.boundary.accumulation.open
     )
+    invoke("close", "close")
+    assert state.boundary.closed and executor._closed and not worker_loop.valid
 
 assert output_disk.used == output_memory.used == (0, 0)
 print("Qualified definition-bound operations")
@@ -413,3 +417,4 @@ print("Qualified worker publication failure with completed optimizer state")
 print("Qualified bounded output frames from admitted Executor storage")
 print("Qualified pre-reserved worker output files")
 print("Qualified physical gradient discard and fresh accumulation without state reset")
+print("Qualified ordered Executor close through the worker barrier")

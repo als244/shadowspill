@@ -184,6 +184,20 @@ class AcceptanceOrder:
                 after = pending.identity.sequence
 
     def _advance(self) -> None:
+        if self._state.boundary.closed:
+            # A successful close ends this run even when later uploads have
+            # gaps or active producers. Their owners still release themselves;
+            # durable failure must not wait for bodies which can never execute.
+            after = 0
+            while page := self._records.pending(after=after, limit=128):
+                for status in page:
+                    if status.state != "running":
+                        self._fail(
+                            status.identity.request_id,
+                            Rejection("state_closed", "The training run is closed."),
+                        )
+                    after = status.identity.sequence
+            return
         while True:
             row = self._records.at_sequence(self._next)
             if row is None:
@@ -216,7 +230,9 @@ class AcceptanceOrder:
             self._next += 1
 
     def _invalid(self, request: OperationRequest) -> Rejection | None:
-        if not self._state.boundary.valid or self._state.boundary.closed:
+        if self._state.boundary.closed or (
+            not self._state.boundary.valid and request.operation != "close"
+        ):
             return Rejection(
                 "state_unavailable", "Live training state is invalid or closed."
             )

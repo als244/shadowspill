@@ -100,11 +100,13 @@ class WorkerLoop:
             return WorkerReply(identity, "aborted", "not_started")
         try:
             result = self._execute(bound)
+            if bound.command.request.operation == "close":
+                # serve writes this final receipt before leaving its normal
+                # installed-worker cleanup scope. No further call can execute.
+                self.invalidate()
             return WorkerReply(identity, "completed", "completed", result=result)
         except WorkerOutputError as error:
-            return WorkerReply(
-                identity, "failed", "completed", message=_message(error)
-            )
+            return WorkerReply(identity, "failed", "completed", message=_message(error))
         except Exception as error:
             self.invalidate()
             return WorkerReply(identity, "failed", "unknown", message=_message(error))

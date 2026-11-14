@@ -146,6 +146,45 @@ def test_discard_needs_command_metadata_but_no_tensor_file_owners(
         assert ctx.metadata.used == (0, 0) and ctx.group.valid
 
 
+@pytest.mark.parametrize("invalid", [False, True])
+def test_close_confirms_group_stop_before_publishing_ready_work(
+    tmp_path, monkeypatch, invalid
+):
+    with configured(tmp_path, monkeypatch, operation="close") as ctx:
+        transition = ctx.transition
+        if invalid:
+            transition = replace(
+                transition, before=replace(transition.before, valid=False)
+            )
+            ctx.group.valid = False
+        work = ctx.transport.execute(ctx.data, transition)
+        assert ctx.group.closed and ctx.transport.closed and ctx.stops == [True]
+        assert len(ctx.executions) == (0 if invalid else 1)
+        assert work.ready
+        work.verify()
+        assert ctx.metadata.used[0] > 0
+        work.close()
+        assert ctx.metadata.used == (0, 0)
+
+
+def test_failed_close_keeps_cleanup_owned_until_explicit_retry(tmp_path, monkeypatch):
+    with configured(tmp_path, monkeypatch, operation="close", failure="stop") as ctx:
+        with pytest.raises(OSError, match="stop failed"):
+            ctx.transport.execute(ctx.data, ctx.transition)
+        assert not ctx.group.closed and ctx.metadata.used[0] > 0
+        assert not ctx.group.valid
+        transition = replace(
+            ctx.transition, before=replace(ctx.transition.before, valid=False)
+        )
+        work = ctx.transport.execute(ctx.data, transition)
+        assert ctx.group.closed and ctx.stops == [True, True]
+        assert len(ctx.executions) == 1  # Retry stops the group; never sends execute.
+        work.verify()
+        work.close()
+        ctx.transport.close()
+        assert ctx.metadata.used == (0, 0)
+
+
 @pytest.mark.parametrize("failure", ["stage", "lost", "stop"])
 def test_abort_and_lost_worker_cleanup_have_distinct_file_lifetimes(
     tmp_path, monkeypatch, failure

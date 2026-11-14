@@ -57,7 +57,18 @@ def result():
         OperationRequest(IDENTITY, "forward", PAYLOAD, 2, mode="training"),
         OperationRequest(IDENTITY, "optim_step", grad_scale=-1),
         OperationRequest(IDENTITY, "discard"),
+        OperationRequest(IDENTITY, "close"),
         OperationResult(IDENTITY, "discard", "history_1", "completed", 3),
+        OperationResult(IDENTITY, "close", "history_1", "completed", 3),
+        OperationResult(
+            IDENTITY,
+            "close",
+            "history_1",
+            "completed",
+            3,
+            accumulation=Accumulation(1, True, ("old",), 1),
+            state_valid=False,
+        ),
         Acceptance(IDENTITY, 3),
         result(),
         RequestStatus(IDENTITY, "completed", Acceptance(IDENTITY, 3), result()),
@@ -130,9 +141,10 @@ def test_request_hash_covers_identity_controls_and_payload_integrity():
         {"runtime_trace": True},
     ],
 )
-def test_discard_rejects_compute_inputs_and_controls(options):
+@pytest.mark.parametrize("operation", ["discard", "close"])
+def test_state_commands_reject_compute_inputs_and_controls(options, operation):
     with pytest.raises(ValueError):
-        OperationRequest(IDENTITY, "discard", **options)
+        OperationRequest(IDENTITY, operation, **options)
 
 
 @pytest.mark.parametrize(
@@ -148,8 +160,9 @@ def test_discard_rejects_compute_inputs_and_controls(options):
         {"accumulation": Accumulation(1, True, ("old",), 1)},
     ],
 )
-def test_discard_result_records_only_resolved_state(options):
-    result = OperationResult(IDENTITY, "discard", "history_1", "completed", 3)
+@pytest.mark.parametrize("operation", ["discard", "close"])
+def test_state_command_result_records_only_resolved_state(options, operation):
+    result = OperationResult(IDENTITY, operation, "history_1", "completed", 3)
     with pytest.raises(ValueError):
         replace(result, **options)
 

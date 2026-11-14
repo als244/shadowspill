@@ -211,7 +211,7 @@ with (
             sequence = journal.last_sequence + 1
             name = f"request-{sequence}"
             payload, wire, count = None, None, 0
-            if operation not in ("optim_step", "discard"):
+            if operation not in ("optim_step", "discard", "close"):
                 datums = records(targets=operation != "forward")
                 with snapshot_batch(datums, publication.budget) as snapshot:
                     payload = ArtifactRef(
@@ -272,7 +272,13 @@ with (
             else:
                 assert status.state == "completed", status
             assert controller.inputs.staging.used == (0, 0)
-            observe(name, process)
+            if operation != "close":
+                observe(name, process)
+            else:
+                assert process.child.closed and lease.closed and controller.closed
+                assert (
+                    controller.register(request) == controller.receive(name) == status
+                )
 
         invoke(
             "step",
@@ -291,6 +297,8 @@ with (
         invoke("optim_step", optim={"lr": 0.02}, grad_scale=-0.5, corrupt=True)
         invoke("forward", outputs="predictions", predictions="after_split")
         assert controller.boundary.completed_updates == 2 and controller.boundary.valid
+        invoke("close")
+        assert controller.boundary.closed and controller.closed
     assert process.child.closed and lease.closed
     assert admission.used.host_bytes == arena_bytes
     log_refs = logs.references()
@@ -337,3 +345,4 @@ print("Qualified connection-independent production controller queue")
 print("Qualified durable GPU artifacts after node and output-file cleanup")
 print("Qualified production caller-order result and scalar publication")
 print("Qualified ordered production discard followed by fresh backward/update")
+print("Qualified ordered close with confirmed child exit and queryable result")

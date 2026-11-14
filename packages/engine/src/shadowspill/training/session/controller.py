@@ -44,8 +44,8 @@ class RunController[Work: CompletedWork]:
     after the durable execution receipt. Status reads and writer reattachment do
     not execute work. A timeout on a waiter does not cancel an accepted request.
 
-    This is an internal live-run owner. ``close`` requires an idle queue and the
-    existing close-state guard; it is not the public ordered close/checkpoint RPC.
+    Ordered close uses the same request path and state guard as compute. The
+    internal ``close`` method also releases an idle run or retries failed cleanup.
     Records remain owned by the service and readable after worker cleanup.
     """
 
@@ -92,7 +92,7 @@ class RunController[Work: CompletedWork]:
     def _usable(self) -> None:
         if self._error is not None:
             raise RuntimeError(f"live controller failed: {self._error}")
-        if self._closing or self.closed:
+        if self._closing or self.closed or self._state.boundary.closed:
             raise RuntimeError("live controller is closing or closed")
 
     def _notify(self, *, dispatch: bool = True) -> None:
@@ -174,7 +174,11 @@ class RunController[Work: CompletedWork]:
                 with self._dispatcher.order.synchronized():
                     if self._error is not None:
                         raise RuntimeError(f"live controller failed: {self._error}")
-                    if not self._active and not self._records.pending(limit=1):
+                    if (
+                        not self._active
+                        and not self._records.pending(limit=1)
+                        and (not self._state.boundary.closed or self.closed)
+                    ):
                         return
                 self._wait(deadline)
 
@@ -198,10 +202,12 @@ class RunController[Work: CompletedWork]:
             self._wake.clear()
             while True:
                 with self._dispatcher.order.synchronized():
-                    if self._closing:
+                    if self._closing or self.closed:
                         return
                 try:
                     if not self._one():
+                        if self.closed:
+                            return
                         break
                 except BaseException as error:
                     self._failed(error)
@@ -216,12 +222,17 @@ class RunController[Work: CompletedWork]:
             if self._closing:
                 return False
             self._active = True
-            pending = self._records.pending(limit=1)
-            if not pending or pending[0].state != "accepted":
-                self._active = False
-                return False
-            request_id = pending[0].identity.request_id
-            call = self.inputs.take(request_id)
+            retired = self._state.boundary.closed
+            if not retired:
+                pending = self._records.pending(limit=1)
+                if not pending or pending[0].state != "accepted":
+                    self._active = False
+                    return False
+                request_id = pending[0].identity.request_id
+                call = self.inputs.take(request_id)
+        if retired:
+            self._retire_closed()
+            return False
         try:
             self._dispatcher.run(
                 request_id,
@@ -236,6 +247,19 @@ class RunController[Work: CompletedWork]:
             if writer is not None:
                 self._writers.status(writer.writer_id)
         return True
+
+    def _retire_closed(self) -> None:
+        """Finish queue ownership after ordered close, retaining active uploads."""
+        self._workers.close()
+        with self._dispatcher.order.synchronized():
+            self.inputs.pause_registration(True)
+            self.inputs.reap()
+            if self.inputs.staging.used != (0, 0):
+                # A cancelled producer still owns these bytes. Its receive
+                # finally notifies this consumer after its actual I/O returns.
+                return
+            self.inputs.staging.close()
+            self.closed = True
 
     def _failed(self, error: BaseException) -> None:
         # Retain a bounded diagnostic, never a traceback holding payload buffers.
@@ -262,23 +286,24 @@ class RunController[Work: CompletedWork]:
         """Close an idle resolved run, or retry cleanup after controller failure."""
         with self._closing_lock:
             with self._dispatcher.order.synchronized():
-                if self.closed:
-                    return
-                if self._active or (
-                    self._error is None and self._records.pending(limit=1)
+                if not self.closed and (
+                    self._active
+                    or (self._error is None and self._records.pending(limit=1))
                 ):
                     raise RuntimeError(
                         "drain the controller before closing live workers"
                     )
                 transition = (
                     None
-                    if self._error is not None
+                    if self._error is not None or self._state.boundary.closed
                     else self._state.begin("close", "controller-close")
                 )
                 self._closing = True
                 self.inputs.pause_registration(True)
             self._notify()
             self._thread.join()
+            if self.closed:
+                return
             try:
                 self._workers.close()
                 if self._error is not None:
@@ -289,9 +314,10 @@ class RunController[Work: CompletedWork]:
                     )
                 self.inputs.staging.close()
                 with self._dispatcher.order.synchronized():
-                    if transition is None:
-                        transition = self._state.begin("close", "controller-close")
-                    self._state.complete(transition)
+                    if not self._state.boundary.closed:
+                        if transition is None:
+                            transition = self._state.begin("close", "controller-close")
+                        self._state.complete(transition)
                     self.closed = True
             except BaseException:
                 with self._dispatcher.order.synchronized():
