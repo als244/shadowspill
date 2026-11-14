@@ -1,5 +1,6 @@
 """Execute prepared external definitions with capture and compilation forbidden."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -27,6 +28,12 @@ plans = {
     name: Plan.load(root / f"{name}.ssp")
     for name in ("step", "backward", "masked", "evaluation", "optim")
 }
+plans.update(
+    {
+        name: Plan.load(root / f"{name}.ssp")
+        for name in json.loads((root / "extra-plans.json").read_text())
+    }
+)
 oracle = torch.load(root / "oracle.pt", weights_only=True)
 resolved, objective, _ = definitions()
 

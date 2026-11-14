@@ -1,5 +1,6 @@
 """Installed operation bindings through real build/profile/plan/cold execution."""
 
+import json
 import os
 import subprocess
 import sys
@@ -12,23 +13,17 @@ import torch
 from engine_tests.fixtures import external_definition
 from engine_tests.fixtures.definition_operations import definitions, example
 from engine_tests.training.test_setup_resolution import arguments, installed
-from shadowspill import (
-    CommunicationInfo,
-    MemoryBudgets,
-    apply_profiles,
-    plan_program,
-)
+from shadowspill import CommunicationInfo
 from shadowspill.training.preparation.capture import build_template
+from shadowspill.training.preparation.family import plan_family
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.operation_build import build_operation
 from shadowspill.training.preparation.profile import profile_template
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import (
-    capture_inventory,
-    instantiate_template,
-)
+from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client import (
     BuildCandidates,
+    Memory,
     PlanningOptions,
     Preparation,
     ProfilingOptions,
@@ -42,25 +37,26 @@ def test_definition_bound_operations_in_cold_worker(tmp_path):
         pytest.skip("requires CUDA")
     resolved, objective, _ = definitions()
     registry = installed()
+    requested = {**arguments(), "memory": Memory(device_gib=2, spill_gib=0.0625)}
     setup = resolve_training(
         registry,
-        **arguments(),
+        **requested,
         operations={
             "step": ["metrics"],
             "forward_backward": ["metrics"],
             "forward": ["predictions"],
         },
         prepare=Preparation(
-            candidates=BuildCandidates(microbatch_sizes=[4]),
-            planning=PlanningOptions(microbatch_counts=[1]),
+            candidates=BuildCandidates(microbatch_sizes=[2, 4]),
+            planning=PlanningOptions(microbatch_counts=[1, 2]),
             profiling=ProfilingOptions(
                 conditioning_seconds=0.001, measurement_seconds=0.002
             ),
         ),
     )
     inventory = capture_inventory(prepare_layouts(setup))
-    assert len(inventory.templates) == 3
-    captures, measurements = {}, {}
+    assert len(inventory.templates) == 6
+    measured = {}
     for key, template in inventory.templates.items():
         program = build_template(registry, inventory, key)
         assert program.bindings["operation_mode"] == template.binding.contract.key.mode
@@ -68,40 +64,48 @@ def test_definition_bound_operations_in_cold_worker(tmp_path):
         assert saved["objective"]["source"] == objective.source.to_dict()
         assert saved["contributes_loss"]
         program.save(tmp_path / f"capture-{key}.ssp")
-        captures[key] = program
         profiled = profile_template(inventory, key, program)
-        measurements[key] = profiled.profiles
+        measured[key] = profiled
         assert profiled.profiles.metadata["preparation_template"] == key
         assert (
             profiled.profiles.metadata["profiling_scenario"]
             == template.signature()["scenario"]
         )
         profiled.save(tmp_path / f"profiled-{key}.ssp")
-    step = inventory.families[OperationKey("step", "metrics")][0].workers[0]
-    backward = inventory.families[OperationKey("forward_backward", "metrics")][
-        0
-    ].workers[0]
-    evaluation = inventory.families[
-        OperationKey("forward", "predictions", "evaluation")
-    ][0].workers[0]
-    assert step.main.template == backward.main.template
-    for name, use in (
+    family = plan_family(
+        inventory,
+        measured,
+        {key: CommunicationInfo(1e10, 1e10) for key in measured},
+    )
+    assert len(family.coverage) == 3 and len(family.plans[0]) == 14
+    assert all(len(rows) == 3 for rows in family.families.values())
+    assert family.memory[0].execution_bytes <= 2 << 30
+    assert family.memory[0].spill_bytes <= 64 << 20
+
+    def full_buffer(operation):
+        return next(
+            row.workers[0]
+            for row in family.families[operation]
+            if row.source.layout.candidate.schedule.buffers[0].max_datums == 4
+        )
+
+    step = full_buffer(OperationKey("step", "metrics"))
+    backward = full_buffer(OperationKey("forward_backward", "metrics"))
+    evaluation = full_buffer(OperationKey("forward", "predictions", "evaluation"))
+    used = set()
+    for name, identity in (
         ("step", step.main),
         ("backward", backward.main),
         ("masked", backward.masked),
         ("evaluation", evaluation.main),
         ("optim", backward.optimizer),
     ):
-        program = instantiate_template(
-            inventory.templates[use.template], use, captures[use.template]
-        )
-        options = {
-            "memory_budgets": MemoryBudgets(2 << 30, 64 << 20),
-            "communication_info": CommunicationInfo(1e10, 1e10),
-        }
-        plan_program(
-            apply_profiles(program, measurements[use.template]), **options
-        ).save(tmp_path / f"{name}.ssp")
+        family.plans[0][identity].save(tmp_path / f"{name}.ssp")
+        used.add(identity)
+    extra = sorted(family.plans[0].keys() - used)
+    for identity in extra:
+        family.plans[0][identity].save(tmp_path / f"{identity}.ssp")
+    (tmp_path / "extra-plans.json").write_text(json.dumps(extra))
 
     reference = resolved.create()
     initial = {
