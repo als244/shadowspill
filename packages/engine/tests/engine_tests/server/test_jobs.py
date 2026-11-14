@@ -157,6 +157,70 @@ def test_host_memory_precedes_catalog_and_factory(tmp_path):
         assert ctx.service.catalog.get(IDENTITY) is None and not ctx.made
 
 
+def test_publication_obeys_admission_and_runs_once_before_registration(tmp_path):
+    with configured(tmp_path, blocked=True) as ctx:
+        published = []
+
+        def publish():
+            assert ctx.jobs.used == (1, 0) and ctx.memory.used == (64 << 10, 1)
+            assert ctx.service.catalog.get(IDENTITY) is None and not ctx.made
+            published.append(True)
+
+        kwargs = dict(request_sha256="c" * 64, configuration=CONFIG, publish=publish)
+        original = ctx.jobs.create(IDENTITY, **kwargs)
+        assert ctx.jobs.create(IDENTITY, **kwargs) == original and published == [True]
+        with pytest.raises(TimeoutError):
+            ctx.jobs.create(replace(IDENTITY, run_id="other"), **kwargs)
+        assert published == [True]
+
+
+def test_failed_publication_has_no_registered_job_or_stranded_reservation(tmp_path):
+    with configured(tmp_path) as ctx:
+
+        def failed():
+            raise OSError("metadata publication failed")
+
+        with pytest.raises(OSError, match="publication"):
+            ctx.jobs.create(
+                IDENTITY, request_sha256="c" * 64, configuration=CONFIG, publish=failed
+            )
+        assert not ctx.made and ctx.jobs.used == ctx.memory.used == (0, 0)
+        assert ctx.service.catalog.get(IDENTITY) is None
+        assert create(ctx.jobs).state == "preparing"
+
+
+def test_shutdown_and_duplicate_publication_wait_for_the_original_io(tmp_path):
+    with configured(tmp_path) as ctx:
+        entered, release = Event(), Event()
+
+        def publish():
+            entered.set()
+            assert release.wait(5)
+
+        with ThreadPoolExecutor(1) as pool:
+            future = pool.submit(
+                ctx.jobs.create,
+                IDENTITY,
+                request_sha256="c" * 64,
+                configuration=CONFIG,
+                publish=publish,
+            )
+            assert entered.wait(5)
+            try:
+                with pytest.raises(TimeoutError, match="already being published"):
+                    create(ctx.jobs)
+                with pytest.raises(RuntimeError, match="still own"):
+                    ctx.jobs.close(timeout=0.01)
+                assert ctx.jobs.used == (1, 0) and ctx.memory.used == (64 << 10, 1)
+                assert not ctx.made and ctx.service.catalog.get(IDENTITY) is None
+            finally:
+                release.set()
+            future.result(timeout=5)
+        ctx.jobs.close(timeout=5)
+        assert ctx.service.catalog.get(IDENTITY).state == "stopped"
+        assert ctx.made[0].starts == 0
+
+
 def test_failed_creation_is_terminal_but_cleanup_retains_its_slot_and_envelope(
     tmp_path,
 ):

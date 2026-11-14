@@ -19,6 +19,7 @@ from ..config import (
     Preparation,
 )
 from .controls import ControlSchema
+from .creation import TrainingCreation
 from .definitions import DefinitionSource, OutputSet
 from .inputs import InputSchema
 from .preparation import ResolvedPreparation
@@ -61,6 +62,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "service.info": ServiceInfo,
     "service.error": ServiceError,
     "run.info": RunInfo,
+    "training.creation": TrainingCreation,
 }
 
 

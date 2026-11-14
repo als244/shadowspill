@@ -68,6 +68,16 @@ creation retries return the saved identity even at capacity or after retirement;
 historical runs consume no live slot. Disconnects leave jobs and workers running.
 There is no executor queue or idle eviction.
 
+The optional metadata publisher runs after admission and before registration,
+outside the registry lock. Concurrent attempts at that unpublished identity get
+backpressure; capacity rejection never invokes publication. Publication failure
+leaves no registered job, and shutdown retains an in-flight publisher until its
+I/O returns. The portable `TrainingCreation` record separates resolved settings
+from saved Plans, checkpoint and explicit resource-wait choices. `CreationRecord`
+stores it by content digest alongside the resolved configuration; a factory
+checks both scoped artifacts and their content before using them. This record
+does not itself implement checkpoint loading or the public creation endpoint.
+
 One maintenance thread joins completed creation threads, retires orderly closed
 or failed controllers, and retries failed cleanup while retaining admission. Its
 HTTP lookup context pins the controller through the exchange. Allocation stop

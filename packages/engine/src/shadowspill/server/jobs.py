@@ -133,7 +133,15 @@ class RunJobs:
         configuration: ArtifactRef,
         name: str | None = None,
         labels: Mapping[str, str] | None = None,
+        publish: Callable[[], None] | None = None,
     ) -> RunInfo:
+        """Publish optional creation metadata after admission, before registration.
+
+        Publication runs outside the registry lock and is never repeated for a
+        registered identity. A publishing identity occupies its slot/host envelope
+        but is not yet acknowledged; concurrent attempts receive backpressure.
+        The callback must finish its own I/O before returning or raising.
+        """
         with self._mutex:
             if self._thread is None or self._closing:
                 raise RuntimeError("run registry is not accepting creations")
@@ -148,25 +156,47 @@ class RunJobs:
                     name=name,
                     labels=labels,
                 )[0]
+            if identity in self._jobs:
+                raise TimeoutError("creation metadata is already being published")
             if len(self._jobs) >= self.max_runs:
                 raise TimeoutError("all creation/live-run slots are occupied")
+            info = RunInfo(
+                identity.owner_id,
+                identity.session_id,
+                identity.run_id,
+                self.storage.incarnation,
+                request_sha256,
+                configuration,
+                name=name,
+                labels={} if labels is None else labels,
+            )
             memory = self._memory.reserve(self.host_bytes, timeout=0)
-            try:
-                info, created = catalog.create(
+            job = _Job(info, memory)
+            self._jobs[identity] = job
+        try:
+            if publish is not None:
+                publish()
+            with self._mutex:
+                job.info, created = catalog.create(
                     identity,
                     request_sha256=request_sha256,
                     configuration=configuration,
                     name=name,
                     labels=labels,
                 )
-            except BaseException:
+                if not created:
+                    del self._jobs[identity]
+                    memory.close()
+                    self._wake.set()
+                    return job.info
+        except BaseException:
+            # No factory or creation thread exists yet. Even an uncertain catalog
+            # commit cannot authorize replay: its poisoned writer requires recovery.
+            with self._mutex:
+                del self._jobs[identity]
                 memory.close()
-                raise
-            if not created:  # Another registration is never a second execution.
-                memory.close()
-                return info
-            job = _Job(info, memory)
-            self._jobs[identity] = job
+            self._wake.set()
+            raise
         try:
             job.owner = self._factory(info)
             with self._mutex:
