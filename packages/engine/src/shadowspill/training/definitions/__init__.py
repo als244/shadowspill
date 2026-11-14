@@ -6,6 +6,7 @@ from .contracts import ModelDefinition, ObjectiveDefinition, simple_loss
 from .optimizer import OptimizerDefinition
 from .policies import PolicyDefinition
 from .preparation import PreparationContext, PreparationDefinition
+from .references import ModelReferenceDefinition
 from .registry import Registry, ResolvedModel, ResolvedObjective, ResolvedOptimizer
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     "InputLayout",
     "InputView",
     "ModelDefinition",
+    "ModelReferenceDefinition",
     "ObjectiveDefinition",
     "OptimizerDefinition",
     "PolicyDefinition",

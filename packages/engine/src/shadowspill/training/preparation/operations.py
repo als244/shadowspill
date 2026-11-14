@@ -4,39 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
 
 from shadowspill.training.definitions.registry import ResolvedObjective
 from shadowspill.training.inputs.validation import Path
 from shadowspill_client.config.operations import Operation
 from shadowspill_client.protocol.controls import ControlSchema, Scalar
 from shadowspill_client.protocol.definitions import OutputSet
-
-type ComputeOperation = Literal["step", "forward_backward", "forward", "optim_step"]
-type Mode = Literal["training", "evaluation"]
-
-
-@dataclass(frozen=True)
-class OperationKey:
-    operation: ComputeOperation
-    outputs: str | None
-    mode: Mode = "training"
-
-    def __post_init__(self) -> None:
-        if self.operation not in ("step", "forward_backward", "forward", "optim_step"):
-            raise ValueError("unknown compute operation")
-        if self.mode not in ("training", "evaluation") or (
-            self.operation != "forward" and self.mode != "training"
-        ):
-            raise ValueError("only forward supports evaluation mode")
-        if self.operation == "optim_step":
-            if self.outputs is not None:
-                raise ValueError("optimizer-only execution has no objective outputs")
-        elif not isinstance(self.outputs, str) or not self.outputs:
-            raise ValueError("compute operation requires an output set")
-
-    def to_dict(self) -> dict[str, str | None]:
-        return {"operation": self.operation, "outputs": self.outputs, "mode": self.mode}
+from shadowspill_client.protocol.operations import OperationKey
 
 
 def resolve_operations(

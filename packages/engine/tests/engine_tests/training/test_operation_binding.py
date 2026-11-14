@@ -15,11 +15,11 @@ from shadowspill.training.preparation.binding import control_tensors
 from shadowspill.training.preparation.operation_build import build_operation
 from shadowspill.training.preparation.operations import (
     OperationContract,
-    OperationKey,
     resolve_operations,
 )
 from shadowspill_client import Operation
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
+from shadowspill_client.protocol.operations import OperationKey
 
 
 def test_operation_order_modes_defaults_and_optimizer_dependency():

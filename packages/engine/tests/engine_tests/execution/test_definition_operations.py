@@ -20,7 +20,7 @@ from shadowspill import (
 )
 from shadowspill.planning.training.operations import optimizer_program
 from shadowspill.training.preparation.operation_build import build_operation
-from shadowspill.training.preparation.operations import OperationKey
+from shadowspill_client.protocol.operations import OperationKey
 
 
 @pytest.mark.cuda

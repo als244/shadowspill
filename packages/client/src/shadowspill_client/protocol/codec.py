@@ -23,6 +23,7 @@ from .inputs import InputSchema
 from .preparation import ResolvedPreparation
 from .requests import ComputeRequest
 from .results import Acceptance, ComputeResult, Failure, RequestStatus
+from .training import ResolvedTraining
 
 VERSION = 1
 MAX_METADATA_BYTES = 1024 * 1024
@@ -35,6 +36,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "config.execution": Execution,
     "config.preparation": Preparation,
     "config.resolved_preparation": ResolvedPreparation,
+    "config.resolved_training": ResolvedTraining,
     "schema.inputs": InputSchema,
     "schema.controls": ControlSchema,
     "schema.outputs": OutputSet,

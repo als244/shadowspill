@@ -7,11 +7,14 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
+from shadowspill_client import Model
+from shadowspill_client._records import Value
 from shadowspill_client.protocol.controls import ControlSchema
 from shadowspill_client.protocol.definitions import OutputSet, Participation
 from shadowspill_client.protocol.inputs import InputSchema
 
 if TYPE_CHECKING:
+    from shadowspill.parallelism import Parallelism
     from shadowspill.training.inputs.adapters import InputAdapter, InputLayout
 
 type Configuration = Callable[..., Any]
@@ -32,6 +35,16 @@ def versioned_id(value: str) -> str:
 
 @dataclass(frozen=True)
 class ModelDefinition:
+    """An ordinary constructor plus CPU description and preparation hooks.
+
+    Optional ``configure(Model)`` validates implementation/precision/LoRA
+    choices and translates them into the same typed constructor config. It must
+    be stable when resolved defaults are supplied again. Common parameter-name
+    globs apply trainable selection after construction, including tied aliases.
+    Weight initialization is separate. ``default_parallelism`` describes named
+    logical placement without reserving workers or constructing the model.
+    """
+
     id: str
     config: Configuration
     create: Callable[[Any], Any]
@@ -41,6 +54,8 @@ class ModelDefinition:
     mutable_buffers: Sequence[str] = ()
     input_adapter: Callable[[Any, InputLayout], InputAdapter] | None = None
     preparation: str | None = None
+    configure: Callable[[Model], Mapping[str, Value]] | None = None
+    default_parallelism: Callable[[Any, InputSchema], Parallelism] | None = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -54,6 +69,12 @@ class ModelDefinition:
             raise TypeError("input_adapter must be an installed binding function")
         if self.preparation is not None:
             versioned_id(self.preparation)
+        if self.configure is not None and not callable(self.configure):
+            raise TypeError("configure must be an installed CPU settings function")
+        if self.default_parallelism is not None and not callable(
+            self.default_parallelism
+        ):
+            raise TypeError("default_parallelism must be an installed CPU function")
         for name in ("capabilities", "mutable_buffers"):
             values = tuple(getattr(self, name))
             if any(not isinstance(v, str) or not v for v in values) or len(

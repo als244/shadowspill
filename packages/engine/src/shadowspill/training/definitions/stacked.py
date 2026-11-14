@@ -22,6 +22,8 @@ STACKED_PRESET = "shadowspill/stacked@1"
 
 
 def _check(context: PreparationContext) -> int:
+    if any(batch.typical for batch in context.batches):
+        raise ValueError("the generic stacked preset does not declare timing hints")
     if context.model.definition.batching != "independent" or any(
         field.batching != "stack" or any(not isinstance(n, int) for n in field.shape)
         for field in context.schema.fields

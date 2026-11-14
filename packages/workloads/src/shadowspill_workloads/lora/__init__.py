@@ -9,6 +9,7 @@ import torch
 from mlops.lora import LoRAConfig, apply_lora, parameter_report
 from torch import nn
 
+from shadowspill.pytorch.trainable import select_trainable
 from shadowspill_workloads.models.shared.routed_lora import add_factors
 
 
@@ -108,25 +109,10 @@ def configure_lora(
     if dense:
         model = apply_lora(model, config, targets=dense, trainable_base=trainable_base)
     else:
-        _freeze(model, trainable_base)
+        select_trainable(model, trainable_base)
     for module in routed:
         add_factors(module, config)
     return model
-
-
-def _freeze(model, trainable_base):
-    """Freeze every parameter but the ``trainable_base`` globs, as the
-    generic conversion does when it replaces modules."""
-
-    parameters = dict(model.named_parameters(remove_duplicate=False))
-    trainable = set()
-    for pattern in trainable_base:
-        names = [name for name in parameters if fnmatchcase(name, pattern)]
-        if not names:
-            raise ValueError(f"trainable_base {pattern!r} matched no parameters")
-        trainable.update(id(parameters[name]) for name in names)
-    for parameter in parameters.values():
-        parameter.requires_grad_(id(parameter) in trainable)
 
 
 __all__ = ["configure_lora", "parameter_report"]

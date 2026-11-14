@@ -19,8 +19,8 @@ forbid_preparation()
 from engine_tests.fixtures.definition_operations import definitions, example, records  # noqa: E402
 from shadowspill import Executor, Plan  # noqa: E402
 from shadowspill.training.observations import to_host  # noqa: E402
-from shadowspill.training.preparation.operations import OperationKey  # noqa: E402
 from shadowspill.training.session.state import OperationState  # noqa: E402
+from shadowspill_client.protocol.operations import OperationKey  # noqa: E402
 
 root = Path(sys.argv[1])
 plans = {

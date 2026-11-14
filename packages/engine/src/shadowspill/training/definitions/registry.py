@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, is_dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+from shadowspill.parallelism import Parallelism
+from shadowspill_client import Model, Optimizer
 from shadowspill_client._records import Value, mapping, plain
 from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.definitions import DefinitionSource
@@ -21,6 +23,8 @@ from .contracts import (
 from .optimizer import OptimizerDefinition
 from .policies import PolicyDefinition, PolicyKind, ResolvedPolicy
 from .preparation import PreparationDefinition, ResolvedPreparationDefinition
+from .references import ModelReferenceDefinition
+from .settings import constructor_config
 
 if TYPE_CHECKING:
     from shadowspill.training.inputs.adapters import InputBinding, InputLayout
@@ -53,11 +57,26 @@ class ResolvedModel:
     source: DefinitionSource
     config: Mapping[str, Value]
     inputs: InputSchema
+    settings: Model | None = None
 
     def create(self) -> Any:
         """Construct only when requested by preparation, never during inspection."""
         configured, _ = _configuration(self.definition.config, self.config)
-        return self.definition.create(configured)
+        model = self.definition.create(configured)
+        if self.settings is not None and self.settings.trainable is not None:
+            from shadowspill.pytorch.trainable import select_trainable
+
+            select_trainable(model, self.settings.trainable)
+        return model
+
+    def default_parallelism(self, schema: InputSchema) -> Parallelism:
+        if self.definition.default_parallelism is None:
+            return Parallelism()
+        configured, _ = _configuration(self.definition.config, self.config)
+        result = self.definition.default_parallelism(configured, schema)
+        if not isinstance(result, Parallelism):
+            raise TypeError("model default_parallelism must return generic Parallelism")
+        return result
 
     def bind_inputs(self, layout: InputLayout) -> InputBinding:
         """Resolve fixed views/metadata without constructing the model or CUDA."""
@@ -123,6 +142,7 @@ class ResolvedOptimizer:
     source: DefinitionSource
     config: Mapping[str, Value]
     defaults: Mapping[str, Scalar]
+    settings: Optimizer | None = None
 
     def create(self, model: Any, controls: Mapping[str, Any]) -> Any:
         if controls.keys() != self.definition.controls.fields.keys():
@@ -148,10 +168,56 @@ class Registry:
         self._models: dict[str, tuple[ModelDefinition, DefinitionSource]] = {}
         self._objectives: dict[str, tuple[ObjectiveDefinition, DefinitionSource]] = {}
         self._optimizers: dict[str, tuple[OptimizerDefinition, DefinitionSource]] = {}
+        self._references: dict[
+            str, tuple[ModelReferenceDefinition, DefinitionSource]
+        ] = {}
         default = builtin_preparation()
         self._preparations = {default.definition.id: default}
         policy, source = builtin_policy()
         self._policies = {policy.id: (policy, source)}
+
+    def add_model_reference(
+        self, definition: ModelReferenceDefinition, *, source: DefinitionSource
+    ) -> None:
+        if not isinstance(definition, ModelReferenceDefinition) or not isinstance(
+            source, DefinitionSource
+        ):
+            raise TypeError("register a ModelReferenceDefinition with DefinitionSource")
+        if definition.id in self._references:
+            raise ValueError(f"model reference already registered: {definition.id}")
+        self._references[definition.id] = (definition, source)
+
+    def model_reference(
+        self, definition: str, *, source: DefinitionSource | None = None
+    ) -> tuple[ModelReferenceDefinition, DefinitionSource]:
+        try:
+            resolver, installed = self._references[definition]
+        except KeyError as error:
+            raise ValueError(
+                f"model reference definition is not installed: {definition}"
+            ) from error
+        if source is not None and source != installed:
+            raise ValueError(f"model reference definition source changed: {definition}")
+        return resolver, installed
+
+    def resolve_model_reference(
+        self, requested: Model
+    ) -> tuple[Model, str, DefinitionSource]:
+        weights = requested.initialize
+        if weights is None or weights.kind != "pretrained" or weights.reference is None:
+            raise ValueError("metadata resolution requires pretrained weights")
+        matches = [
+            (definition, source)
+            for definition, source in self._references.values()
+            if definition.accepts(weights.reference)
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                "pretrained reference requires one installed metadata resolver; "
+                f"found {len(matches)}"
+            )
+        definition, installed = matches[0]
+        return definition.pin(requested), definition.id, installed
 
     def add_policy(
         self, definition: PolicyDefinition, *, source: DefinitionSource
@@ -229,6 +295,7 @@ class Registry:
         config: Mapping[str, Value] | None = None,
         defaults: Mapping[str, Scalar] | None = None,
         source: DefinitionSource | None = None,
+        settings: Optimizer | None = None,
     ) -> ResolvedOptimizer:
         try:
             optimizer, installed = self._optimizers[definition]
@@ -238,11 +305,31 @@ class Registry:
             ) from error
         if source is not None and source != installed:
             raise ValueError(f"optimizer definition source changed: {definition}")
-        _, settings = _configuration(optimizer.config, {} if config is None else config)
+        if settings is not None:
+            if (
+                settings.definition != definition
+                or config is not None
+                or defaults is not None
+            ):
+                raise ValueError(
+                    "optimizer settings cannot overlap another configuration"
+                )
+            config = constructor_config(settings, optimizer.configure)
+            defaults = cast(Mapping[str, Scalar], settings.defaults)
+        _, values = _configuration(optimizer.config, {} if config is None else config)
         controls = optimizer.controls.resolve(
             defaults=optimizer.defaults, overrides=defaults
         )
-        return ResolvedOptimizer(optimizer, installed, settings, controls)
+        if settings is not None:
+            settings = replace(settings, config=values, defaults=controls)
+            _, checked = _configuration(
+                optimizer.config, constructor_config(settings, optimizer.configure)
+            )
+            if checked != values:
+                raise ValueError(
+                    "optimizer settings hook is not stable with resolved defaults"
+                )
+        return ResolvedOptimizer(optimizer, installed, values, controls, settings)
 
     def add_model(
         self, definition: ModelDefinition, *, source: DefinitionSource
@@ -272,6 +359,7 @@ class Registry:
         *,
         config: Mapping[str, Value] | None = None,
         source: DefinitionSource | None = None,
+        settings: Model | None = None,
     ) -> ResolvedModel:
         try:
             model, installed = self._models[definition]
@@ -281,11 +369,24 @@ class Registry:
             ) from error
         if source is not None and source != installed:
             raise ValueError(f"model definition source changed: {definition}")
-        configured, settings = _configuration(
+        if settings is not None:
+            if settings.definition != definition or config is not None:
+                raise ValueError("model settings cannot overlap another configuration")
+            config = constructor_config(settings, model.configure)
+        configured, values = _configuration(
             model.config, {} if config is None else config
         )
+        if settings is not None:
+            settings = replace(settings, config=values)
+            _, checked = _configuration(
+                model.config, constructor_config(settings, model.configure)
+            )
+            if checked != values:
+                raise ValueError(
+                    "model settings hook is not stable with resolved defaults"
+                )
         return ResolvedModel(
-            model, installed, settings, _schema(model.inputs, configured)
+            model, installed, values, _schema(model.inputs, configured), settings
         )
 
     def resolve_objective(

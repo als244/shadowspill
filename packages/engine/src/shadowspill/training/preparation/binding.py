@@ -187,6 +187,9 @@ class OperationBinding:
                 "id": self.model.definition.id,
                 "source": self.model.source.to_dict(),
                 "config": dict(self.model.config),
+                "trainable": None
+                if self.model.settings is None or self.model.settings.trainable is None
+                else list(self.model.settings.trainable),
                 "mutable_buffers": list(self.model.definition.mutable_buffers),
             },
             "objective": {

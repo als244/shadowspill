@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from shadowspill_client import Optimizer
+from shadowspill_client._records import Value
 from shadowspill_client.protocol.controls import ControlSchema
 
 from .contracts import Configuration, versioned_id
@@ -22,6 +24,8 @@ class OptimizerDefinition:
     The factory receives the model, validated configuration and tensor-valued
     controls prepared by the build worker. Public control names map explicitly
     to captured bindings; a declared override must affect the saved computation.
+    Optional ``configure(Optimizer)`` validates groups/precision and translates
+    them into that same factory config on CPU, with stable resolved defaults.
     """
 
     id: str
@@ -30,11 +34,14 @@ class OptimizerDefinition:
     control_bindings: Mapping[str, Sequence[str]]
     config: Configuration = dict
     defaults: Mapping[str, Any] = field(default_factory=dict)
+    configure: Callable[[Optimizer], Mapping[str, Value]] | None = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
         if not callable(self.config) or not callable(self.create):
             raise TypeError("optimizer config and create must be callable")
+        if self.configure is not None and not callable(self.configure):
+            raise TypeError("configure must be an installed CPU settings function")
         if not isinstance(self.controls, ControlSchema):
             raise TypeError("optimizer requires a ControlSchema")
         if self.control_bindings.keys() != self.controls.fields.keys():
