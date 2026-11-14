@@ -130,8 +130,12 @@ Path(sys.argv[1]).write_text(str(child.pid))
         descendant = int((tmp_path / "descendant").read_text())
     deadline = time.monotonic() + 5
     state_path = type(tmp_path)(f"/proc/{descendant}/stat")
-    while state_path.exists():
-        if state_path.read_text().rsplit(")", 1)[1].strip().split()[0] == "Z":
+    while True:
+        try:
+            state = state_path.read_text()
+        except FileNotFoundError:
+            break
+        if state.rsplit(")", 1)[1].strip().split()[0] == "Z":
             break
         assert time.monotonic() < deadline, "owned descendant survived group cleanup"
         time.sleep(0.005)
