@@ -7,6 +7,23 @@ import pytest
 from shadowspill.training.session.state import OperationState
 
 
+def test_completion_projection_is_the_same_boundary_without_committing_it():
+    state = OperationState()
+    before = state.boundary
+    pending = state.begin("forward_backward", "a", participates=True)
+    projected = state.completion(pending)
+    assert state.boundary is before
+    assert state.completion(pending) == projected
+    assert projected.accumulation.contributions == ("a",)
+    assert state.complete(pending) == projected
+    before = state.boundary
+    pending = state.begin("optim_step", "optim")
+    projected = state.completion(pending)
+    assert state.boundary is before
+    assert projected.completed_updates == 1 and not projected.accumulation.open
+    assert state.complete(pending) == projected
+
+
 def finish(state, command, request_id, **kwargs):
     pending = state.begin(command, request_id, **kwargs)
     state.complete(pending)

@@ -4,8 +4,10 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Protocol
 
+from shadowspill_client.protocol.codec import ProtocolError, encode
 from shadowspill_client.protocol.requests import ComputeRequest
 from shadowspill_client.protocol.results import (
+    Acceptance,
     ComputeResult,
     ExecutionReceipt,
     Failure,
@@ -146,11 +148,51 @@ class RequestDispatcher:
                 request_id, code="operation_conflict", message=str(error)
             )
         try:
+            assert status.acceptance is not None
+            self._preflight(request, transition, status.acceptance)
+        except ProtocolError:
+            self._state.fail(transition, execution_started=False)
+            return self.order.reject(
+                request_id,
+                code="metadata_limit",
+                message="Completion metadata exceeds the portable record bound; "
+                "reduce metadata or finish the current accumulation.",
+            )
+        try:
             self._records.dispatch(request_id)
         except BaseException:
             self._state.invalidate()
             raise
         return request, transition
+
+    def _preflight(
+        self,
+        request: ComputeRequest,
+        transition: Transition,
+        acceptance: Acceptance,
+    ) -> None:
+        """Reserve the contribution-history envelope before a mutating invocation.
+
+        The prepared publisher separately admits its metric/artifact descriptors.
+        This check covers the known counters, request controls and worst-length
+        history ID, so growing accumulation cannot overflow the execution receipt.
+        """
+        after = self._state.completion(transition)
+        result = ComputeResult(
+            request.identity,
+            request.operation,
+            "h" * 128,
+            "skipped" if transition.skipped else "completed",
+            after.completed_updates,
+            after.accumulation,
+            optim=request.optim,
+            loss_params=request.loss_params,
+            grad_scale=request.grad_scale,
+        )
+        encode(ExecutionReceipt.from_result(result))
+        encode(
+            RequestStatus(request.identity, result.outcome, acceptance, result=result)
+        )
 
     def _confirm(
         self, request: ComputeRequest, transition: Transition

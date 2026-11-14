@@ -128,6 +128,14 @@ class OperationState:
     def complete(
         self, pending: Transition, *, restored_updates: int | None = None
     ) -> Boundary:
+        self._boundary = self.completion(pending, restored_updates=restored_updates)
+        self._pending = None
+        return self._boundary
+
+    def completion(
+        self, pending: Transition, *, restored_updates: int | None = None
+    ) -> Boundary:
+        """Project this queue-head completion for admission without mutating state."""
         self._require_pending(pending)
         command, before = pending.command, pending.before
         if command == "restore":
@@ -155,14 +163,12 @@ class OperationState:
         elif command == "restore":
             assert restored_updates is not None
             updates = restored_updates
-        self._boundary = Boundary(
+        return Boundary(
             updates,
             accumulation,
             before.valid or command == "restore",
             command == "close",
         )
-        self._pending = None
-        return self._boundary
 
     def fail(self, pending: Transition, *, execution_started: bool) -> Boundary:
         """Unknown partial effects invalidate state; rejection preserves it.

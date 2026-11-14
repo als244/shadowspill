@@ -7,9 +7,16 @@ from threading import Event
 import pytest
 
 from engine_tests.server.test_request_records import request, store
+from shadowspill.training.session import dispatch
 from shadowspill.training.session.dispatch import RequestDispatcher
 from shadowspill.training.session.state import OperationState
-from shadowspill_client.protocol.results import ArtifactIssue, ComputeResult, Failure
+from shadowspill_client.protocol.codec import encode
+from shadowspill_client.protocol.results import (
+    ArtifactIssue,
+    ComputeResult,
+    Failure,
+    RequestStatus,
+)
 
 
 @dataclass
@@ -314,3 +321,46 @@ def test_masked_backward_then_empty_optimizer_preserves_update_count(tmp_path):
         skipped = dispatcher.run("optim", output_only, publish)
         assert skipped.state == "skipped" and skipped.result.completed_updates == 0
         assert not skipped.result.accumulation.open and len(observed) == 2
+
+
+def test_growing_completion_history_is_rejected_before_gpu_work_and_can_be_optimized(
+    tmp_path, monkeypatch
+):
+    with store(tmp_path) as records:
+        state = OperationState()
+        dispatcher = RequestDispatcher(records, state, max_pending=1)
+        first, second = "a" * 128, "b" * 128
+        submit(dispatcher, records, first, 1, "forward_backward")
+        completed = dispatcher.run(
+            first, lambda t: HostWork(), publish, participates=True
+        )
+        maximum = (
+            len(
+                encode(
+                    RequestStatus(
+                        completed.identity,
+                        completed.state,
+                        completed.acceptance,
+                        result=replace(completed.result, history_id="h" * 128),
+                    )
+                )
+            )
+            + 16
+        )
+        monkeypatch.setattr(
+            dispatch, "encode", lambda value: encode(value, max_bytes=maximum)
+        )
+        before = state.boundary
+        submit(dispatcher, records, second, 2, "forward_backward")
+
+        def forbidden(transition):
+            pytest.fail("oversized completion metadata reached workers")
+
+        failed = dispatcher.run(second, forbidden, publish, participates=True)
+        assert failed.failure.code == "metadata_limit"
+        assert failed.failure.execution_effect == "not_started"
+        assert state.boundary == before and state.boundary.valid
+        assert records.execution(second) is None
+        submit(dispatcher, records, "optim", 3, "optim_step")
+        completed = dispatcher.run("optim", lambda t: HostWork(), publish)
+        assert completed.result.completed_updates == 1

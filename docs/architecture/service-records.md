@@ -57,6 +57,12 @@ storage failure stops further work. This is the internal dispatch boundary;
 persistent worker transport and the complete upload lifecycle remain integration
 work. The adapter must honor prepared participation and accumulation decisions,
 including output-only masked execution and empty optimizer skips.
+Before dispatch, the same state transition logic projects completion without
+committing it. The receipt and known result envelope must fit the portable record
+bound, including growing contribution history and submitted controls. An oversized
+history rejects the new contribution while preserving earlier gradients, which
+can still be optimized. The prepared publisher must additionally admit its own
+metric and artifact descriptor bounds.
 
 Writable attachment calls `claim_writer` with a fresh handle identity and the
 current server incarnation. The durable `WriterLease` carries its epoch and next
