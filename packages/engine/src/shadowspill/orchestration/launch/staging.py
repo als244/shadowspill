@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, RLock
@@ -72,7 +72,9 @@ class FileDelivery:
         self._receiving = False
         self._started = self.ready = self.closed = False
 
-    def receive(self, open_source: Callable[[ArtifactRef], BinaryIO]) -> None:
+    def receive(
+        self, open_source: Callable[[ArtifactRef], AbstractContextManager[BinaryIO]]
+    ) -> None:
         """Copy once; any failure leaves an unready owner for explicit cleanup."""
         with self._mutex:
             if self.closed or self._started:
