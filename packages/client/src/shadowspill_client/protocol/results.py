@@ -157,6 +157,7 @@ class ComputeResult(Record):
     optim: Mapping[str, Scalar] = field(default_factory=dict)
     loss_params: Mapping[str, Scalar] = field(default_factory=dict)
     grad_scale: float | None = None
+    loss: float | int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -169,6 +170,10 @@ class ComputeResult(Record):
             raise ValueError("unknown result operation or outcome")
         identifier(self.history_id, "history ID")
         integer(self.completed_updates, "completed_updates")
+        if self.loss is not None:
+            number(self.loss, "loss")
+            if self.operation == "optim_step":
+                raise ValueError("optimizer-only results have no forward loss")
         object.__setattr__(self, "optim", scalars(self.optim, "optim"))
         object.__setattr__(
             self, "loss_params", scalars(self.loss_params, "loss_params")

@@ -30,6 +30,7 @@ from shadowspill.orchestration.launch.publication import require_output  # noqa:
 from shadowspill.orchestration.launch.staging import FileDelivery  # noqa: E402
 from shadowspill.server.artifacts import ArtifactStore  # noqa: E402
 from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
+from shadowspill.server.results import ResultPublisher  # noqa: E402
 from shadowspill.training.definitions import load_registry  # noqa: E402
 from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
 from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
@@ -49,7 +50,6 @@ from shadowspill_client.protocol.requests import (  # noqa: E402
     ComputeRequest,
     RequestIdentity,
 )
-from shadowspill_client.protocol.results import ComputeResult  # noqa: E402
 
 root = Path(sys.argv[1])
 directory = root / "agent"
@@ -148,7 +148,8 @@ def owned_node(memory):
 with (
     HostArena(admission, 64 << 20, 100) as transfers,
     HostArena(admission, 16 << 20, 2) as commands,
-    HostArena(admission, 64 << 20, 2) as publication,
+    # One assembly owner, one frame reader and one reduction scratch owner.
+    HostArena(admission, 64 << 20, 3) as publication,
     HostArena(
         admission, execution.max_staging_bytes, execution.max_pending_requests
     ) as uploads,
@@ -184,6 +185,13 @@ with (
             identity=RunIdentity("owner", "session", "run"),
             cache_root=directory,
         ) as journal,
+        ResultPublisher(
+            artifacts,
+            history_id="history",
+            root=directory,
+            memory=publication.budget,
+            disk=disk,
+        ) as result_publisher,
         RunController(
             journal,
             prepared,
@@ -217,60 +225,31 @@ with (
                 count,
                 **options,
             )
+
             def publish(data, receipt, result):
                 assert journal.execution(name) == receipt
                 if corrupt:
                     path = require_output(outputs.root, result._files[0].spec)
                     with path.open("r+b", buffering=0) as stream:
                         stream.write(b"corrupt!")
-                result.verify()
-                frame = result.frames[0]
-                with (
-                    result.open(0) as stream,
-                    read_payload(
-                        stream,
-                        result.replies[0].result,
-                        publication.budget,
-                        limits=frame.frame.size,
-                    ) as decoded,
-                ):
-                    rows = decoded.datums[0].inputs
-                    if operation == "step":
-                        loss = sum(row["loss"].array().item() for row in rows.values())
-                        np.testing.assert_allclose(loss, oracle["loss"], rtol=1e-4)
-                    if predictions:
-                        actual = np.empty((3, 3), dtype=np.float32)
-                        buffers = {
-                            buffer: rows[str(index)]["values"]["prediction"].array()
-                            for index, buffer in enumerate(frame.buffers)
-                        }
-                        for piece in data.candidate.source.layout.outputs.pieces(
-                            data.assignment
-                        ):
-                            actual[piece.destination.datum][piece.destination_axes] = (
-                                buffers[piece.buffer][piece.source_axes]
-                            )
+                outcome = result_publisher(data, receipt, result)
+                if operation == "step":
+                    np.testing.assert_allclose(outcome.loss, oracle["loss"], rtol=1e-4)
+                if predictions:
+                    ref = outcome.outputs["prediction"]
+                    with (
+                        artifacts.open(ref) as stream,
+                        read_payload(stream, ref, publication.budget) as decoded,
+                    ):
+                        rows = decoded.datums[0].inputs
+                        actual = np.stack(
+                            [rows[str(index)].array() for index in range(3)]
+                        )
                         np.testing.assert_allclose(
                             actual, oracle[predictions], rtol=1e-4, atol=1e-5
                         )
-                saved = {}
-                if predictions:
-                    ref = result.replies[0].result
-                    artifacts.put(ref, lambda _: result.open(0))
-                    published.append((ref, frame.frame.size))
-                    saved["worker-0"] = ref
-                return ComputeResult(
-                    request.identity,
-                    operation,
-                    "history",
-                    receipt.outcome,
-                    receipt.completed_updates,
-                    receipt.accumulation,
-                    outputs=saved,
-                    optim=data.controls.optim,
-                    loss_params=data.controls.loss_params,
-                    grad_scale=data.controls.grad_scale,
-                )
+                    published.append((ref, None))
+                return outcome
 
             publishers[name] = publish
             controller.register(request)
@@ -351,3 +330,4 @@ print("Qualified pre-reserved worker logs and post-exit artifact transfer")
 print("Qualified production node worker lifecycle")
 print("Qualified connection-independent production controller queue")
 print("Qualified durable GPU artifacts after node and output-file cleanup")
+print("Qualified production caller-order result and scalar publication")

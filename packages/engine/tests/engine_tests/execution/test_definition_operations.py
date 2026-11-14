@@ -301,6 +301,9 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     assert "Qualified durable GPU artifacts after node and output-file cleanup" in (
         agent.stdout
     )
+    assert "Qualified production caller-order result and scalar publication" in (
+        agent.stdout
+    )
     assert (
         "Qualified pre-reserved worker logs and post-exit artifact transfer"
         in agent.stdout

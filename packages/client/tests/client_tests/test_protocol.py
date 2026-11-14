@@ -45,6 +45,7 @@ def result():
         ],
         optim={"lr": 0.01},
         grad_scale=0.5,
+        loss=0.75,
     )
 
 
@@ -137,11 +138,19 @@ def test_request_hash_covers_identity_controls_and_payload_integrity():
             IDENTITY, "running", Acceptance(replace(IDENTITY, request_id="other"), 3)
         ),
         lambda: replace(result(), grad_scale=None),
+        lambda: replace(result(), loss=float("nan")),
+        lambda: replace(result(), operation="optim_step", loss=1),
     ],
 )
 def test_invalid_controls_identities_and_ambiguous_outcomes_are_rejected(factory):
     with pytest.raises((TypeError, ValueError)):
         factory()
+
+
+def test_objective_loss_and_custom_metric_named_loss_remain_distinct():
+    value = replace(result(), loss=0.75, metrics={"loss": 0.25})
+    restored = decode(encode(value))
+    assert restored.loss == 0.75 and restored.metrics["loss"] == 0.25
 
 
 def test_decoder_rejects_unknown_versions_types_fields_and_duplicate_keys():
