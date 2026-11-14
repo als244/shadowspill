@@ -21,7 +21,15 @@ from shadowspill.planning.shared import shared_memory  # noqa: E402
 root = Path(sys.argv[1])
 plans = {
     name: Plan.load(root / f"{name}.ssp")
-    for name in ("evaluation", "backward0", "backward1", "step0", "step1")
+    for name in (
+        "evaluation",
+        "backward0",
+        "backward1",
+        "step0",
+        "step1",
+        "optim",
+        "complete",
+    )
 }
 primary = plans.pop("evaluation")
 oracle = torch.load(root / "oracle.pt", weights_only=True)
@@ -75,6 +83,16 @@ with Executor(primary, plans=plans) as executor:
         torch.testing.assert_close(output.cpu(), expected)
         torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
         del output
+    result = executor.run(plan="optim").result()
+    assert not result.losses and not result.metrics
+    split = snapshot(executor)
+    for name, value in oracle["split"].items():
+        torch.testing.assert_close(split[name].reshape(value.shape), value)
+    executor.initialize(fill, chunk_bytes=32)
+    executor.run(plan="complete", args=oracle["examples"]).result()
+    complete = snapshot(executor)
+    for name, value in oracle["split"].items():
+        torch.testing.assert_close(complete[name].reshape(value.shape), value)
     executor.initialize(fill, chunk_bytes=32)
     for index, args in enumerate(oracle["examples"]):
         executor.run(plan=f"step{index}", args=[args]).result()

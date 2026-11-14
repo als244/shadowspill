@@ -20,6 +20,10 @@ def stage_inputs(
 ) -> None:
     bindings = state.plan.program.bindings
     count = bindings.get("num_examples", 1)
+    if count == 0:
+        if input_loader is not None or args or kwargs:
+            raise ValueError("optimizer-only invocation accepts no examples")
+        return
     if input_loader is not None:
         if args is not None or kwargs is not None:
             raise ValueError("supply args/kwargs or input_loader, not both")

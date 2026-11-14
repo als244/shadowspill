@@ -23,6 +23,7 @@ from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.execution.host_values import HostValues
 from shadowspill.ir import ResourceKind
 from shadowspill.parallelism.views import owned_view_offsets
+from shadowspill.planning.training.operations import optimizer_program
 from shadowspill.pytorch.executable import restore_executable
 
 
@@ -64,6 +65,21 @@ def test_step_build_measure_plan_and_local_owned_updates(
         program,
         topology={"node": (0, 1, 2, 3)},
     )
+    derived = optimizer_program(program)
+    check_shard_loading(derived)
+    derived_plan = plan_program(
+        apply_profiles(derived, profiles),
+        memory_budgets=MemoryBudgets(profiled.fixed_device_bytes + (8 << 20), 8 << 20),
+        communication_info=info,
+    )
+    _check_completion(derived_plan)
+    assert {task.phase for task in derived_plan.program.tasks} <= {
+        "control",
+        "gradient_local",
+        "gradient_communication",
+        "optimizer",
+        "weight_communication",
+    }
     for ordering in ("tail", "stage_interleaved"):
         plan = plan_program(
             profiled,

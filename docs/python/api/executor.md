@@ -26,8 +26,8 @@ once those outputs have been released.
 
 ## Sharing state across Plans
 
-An Executor can admit named forward, backward and complete-step Plans alongside
-its default Plan:
+An Executor can admit named forward, backward, optimizer-only and complete-step
+Plans alongside its default Plan:
 
 ```python
 executor = Executor(training_plan, plans={"evaluation": validation_plan})

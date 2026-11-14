@@ -27,6 +27,15 @@ def stage_jobs(
             for completion in program.bindings.get("gradient_templates", ()):
                 if completion["padding"] is not None:
                     yield {"gradient": completion["padding"]}
+    elif program.bindings.get("kind") == "optim_step":
+        components = program.bindings["optimizer_templates"]
+        selected = _selection(stages, len(components))
+        for index, component in enumerate(components):
+            if index in selected:
+                yield {"optimizer": component}
+                for reduction in component.get("reductions", ()):
+                    if reduction["padding"] is not None:
+                        yield {"gradient": reduction["padding"]}
     else:
         tasks = {task.task_id: task for task in program.tasks}
         entries = program.bindings["entrypoints"]

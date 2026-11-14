@@ -90,7 +90,7 @@ def tensor_regions(program: Program, logical_rank: int) -> dict[str, TensorRegio
         regions[value] = _parameter_region(
             parameters[name], "optimizer", item, logical_rank
         )
-    if bindings.get("kind") == "forward_backward":
+    if bindings.get("kind") in {"forward_backward", "optim_step"}:
         for item in bindings.get("persistent_gradients", ()):
             regions[item["gradient_object_id"]] = _parameter_region(
                 parameters[item["parameter_name"]], "gradients", item, logical_rank

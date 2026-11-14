@@ -43,6 +43,28 @@ See [pool memory](pool-memory.md), [artifacts](artifacts.md#plan) and
 
 ## Traversal and save choices
 
+`optimizer_program(step_program)` derives an optimizer-only `Program` from the
+saved update components of a complete-step Program. It needs no model, framework
+import, capture or measurement. Apply the original profiles to the derived
+Program, then plan it with the usual budgets and communication evidence:
+
+```python
+from shadowspill import apply_profiles, optimizer_program, plan_program
+
+optimizer_plan = plan_program(
+    apply_profiles(optimizer_program(step_program), step_profiles),
+    memory_budgets=budgets,
+    communication_info=communication,
+)
+```
+
+It retains the captured optimizer tasks, reduction dependencies and weight
+publications, with the same gradient-storage ownership as the source Program.
+Admit it alongside compatible backward Plans in one Executor and invoke it with
+`executor.run(plan="optimizer").result()`. It takes no examples and consumes the
+existing gradients. The caller controls whether a generation is ready to update;
+this low-level operation does not infer participation from gradient values.
+
 Traversal is a planning choice; microbatch geometry is a build choice. For eight
 captured calls, `StepDataOrdering(depth=2, breadth=4)` makes two passes of four
 microbatches each. Within a pass, stage-major execution can reuse fetched weights

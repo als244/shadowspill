@@ -36,7 +36,8 @@ def simulation_inputs(
         not (
             profiled.program.bindings.get("kind") == "forward"
             or (
-                profiled.program.bindings.get("kind") in {"forward_backward", "step"}
+                profiled.program.bindings.get("kind")
+                in {"forward_backward", "step", "optim_step"}
                 and profiled.program.bindings.get("distributed_training_lowered")
                 in {"gradients", "step"}
             )

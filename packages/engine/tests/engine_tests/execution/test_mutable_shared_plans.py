@@ -20,6 +20,7 @@ from shadowspill import (
     measure_program,
     plan_program,
 )
+from shadowspill.planning.training.operations import optimizer_program
 
 
 class Model(nn.Module):
@@ -92,6 +93,13 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
             example_args=args,
             partition="whole",
         )
+    programs["complete"] = build_step(
+        model,
+        optimizer=CountedAdamW(model.parameters(), lr=0.01, foreach=False),
+        objective=objective,
+        example_calls=[(args, {}) for args in examples],
+        partition="whole",
+    )
     for name, program in programs.items():
         profile = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
         plan = plan_program(
@@ -100,6 +108,17 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
             communication_info=CommunicationInfo(1e10, 1e10),
         )
         plan.save(tmp_path / f"{name}.ssp")
+        if name == "step0":
+            derived = optimizer_program(program)
+            assert {task.phase for task in derived.tasks} == {"control", "optimizer"}
+            assert all(
+                program.executables[k] == v for k, v in derived.executables.items()
+            )
+            plan_program(
+                apply_profiles(derived, profile),
+                memory_budgets=plan.memory_budgets,
+                communication_info=plan.communication_info,
+            ).save(tmp_path / "optim.ssp")
     reference = Model()
     with torch.no_grad():
         reference.weight.copy_(torch.arange(16).reshape(4, 4) / 32)
@@ -111,6 +130,14 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
         gradients.append(
             {name: p.grad.clone() for name, p in reference.named_parameters()}
         )
+    split_optimizer = CountedAdamW(reference.parameters(), lr=0.01, foreach=False)
+    split_optimizer.step()
+    split = {name: p.detach().clone() for name, p in reference.named_parameters()} | {
+        f"optimizer.{name}.{key}": value.clone()
+        for name, p in reference.named_parameters()
+        for key, value in split_optimizer.state[p].items()
+    }
+    reference.load_state_dict(initial)
     optimizer = CountedAdamW(reference.parameters(), lr=0.01, foreach=False)
     updated = []
     for args in examples:
@@ -127,7 +154,13 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
         )
         updated.append(state)
     torch.save(
-        dict(initial=initial, examples=examples, gradients=gradients, updated=updated),
+        dict(
+            initial=initial,
+            examples=examples,
+            gradients=gradients,
+            updated=updated,
+            split=split,
+        ),
         tmp_path / "oracle.pt",
     )
     worker = subprocess.run(

@@ -31,6 +31,7 @@ _PUBLIC = {
     "CommunicationInfo": "communication",
     "measure_communication": "communication.measure",
     "plan_program": "planning.plan",
+    "optimizer_program": "planning.training.operations",
     "sweep_programs": "planning.sweep",
     "write_report": "reporting",
     "Executor": "execution",

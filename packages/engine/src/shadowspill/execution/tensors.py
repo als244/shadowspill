@@ -41,7 +41,7 @@ def tensor_entries(
             and item["object_id"] is not None
         ):
             yield item["name"], item["object_id"], item.get("initialization")
-    if bindings["kind"] == "forward_backward":
+    if bindings["kind"] in {"forward_backward", "optim_step"}:
         for item in bindings.get("persistent_gradients", bindings["gradients"]):
             yield "gradient." + item["parameter_name"], item["gradient_object_id"], None
     for item in bindings.get("fixed_inputs", ()):
