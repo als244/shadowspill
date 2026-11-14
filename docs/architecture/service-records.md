@@ -61,6 +61,16 @@ and artifact files. This storage layer neither creates workers nor replays work.
 Transient resource failures can retry recovery; journal/index durability failures
 require closing and reopening the storage namespace for reconciliation.
 
+Allocation shutdown uses `RunController.stop` with the node's confirmed-child-exit
+callback. It gates further dispatch, stops owned children, and joins the existing
+dispatcher before releasing result files or invalidating its pending transition.
+An execution receipt or completed result that won the race remains authoritative.
+Only then does the same recovery engine classify unfinished work and retire input
+owners. A failed stop, join timeout or blocked input producer retains ownership
+for retry. This internal allocation-loss path may end unresolved accumulation
+without an implicit update/discard; it does not relax ordered training close or
+offer accepted-request cancellation.
+
 `server.owners.OwnerCache` bounds open record/artifact owners, including pending
 opens and failed evictions. Live controllers pin a borrow for their lifetime;
 HTTP lookups borrow through I/O. Only idle owners may be evicted. Factories and

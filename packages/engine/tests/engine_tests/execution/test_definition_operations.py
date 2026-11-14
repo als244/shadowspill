@@ -392,6 +392,14 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         agent.stdout
     )
     assert (
+        "Qualified allocation stop with unresolved GPU gradients and no implicit update"
+        in agent.stdout
+    )
+    assert (
+        "Qualified bounded service storage and original GPU outcomes after restart"
+        in agent.stdout
+    )
+    assert (
         "Qualified pre-reserved worker logs and post-exit artifact transfer"
         in agent.stdout
     )

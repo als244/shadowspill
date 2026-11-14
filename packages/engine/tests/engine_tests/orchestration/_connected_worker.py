@@ -40,6 +40,8 @@ def execute(bound):
     record(str(bound.command.invocation))
     if mode == "lost_completion":
         os._exit(42)
+    if mode == "stall_execute":
+        time.sleep(60)
 
 
 with (

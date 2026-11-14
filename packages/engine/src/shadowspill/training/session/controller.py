@@ -77,7 +77,7 @@ class RunController[Work: CompletedWork]:
         )
         self._writers = WriterOwnership(records, self._dispatcher.order, self.inputs)
         self._wake, self._changed, self._closing_lock = Event(), Condition(), RLock()
-        self._active = self._closing = self.closed = False
+        self._active = self._closing = self._stopping = self.closed = False
         self._error: str | None = None
         self._thread = Thread(
             target=self._run, name="shadowspill-controller", daemon=True
@@ -286,6 +286,8 @@ class RunController[Work: CompletedWork]:
         """Close an idle resolved run, or retry cleanup after controller failure."""
         with self._closing_lock:
             with self._dispatcher.order.synchronized():
+                if self._stopping:
+                    raise RuntimeError("retry allocation stop before closing the run")
                 if not self.closed and (
                     self._active
                     or (self._error is None and self._records.pending(limit=1))
@@ -323,6 +325,73 @@ class RunController[Work: CompletedWork]:
                 with self._dispatcher.order.synchronized():
                     self._state.invalidate()
                 raise
+            finally:
+                self._notify(dispatch=False)
+
+    def stop(
+        self,
+        stop_workers: Callable[[], None],
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        """End allocation ownership, not an accepted-request cancellation API.
+
+        The callback must confirm exit of all owned children, without releasing
+        their input/output files. Gate dispatch before stopping those children;
+        let the sole dispatcher finish/classify its in-flight call and publication
+        before retiring its files. Known receipts and completed results survive.
+
+        ``timeout`` bounds the join after confirmed child exit, not idle lifetime.
+        Failed stop, join or producer cleanup keeps ownership for explicit retry.
+        """
+        self._deadline(timeout)  # Validate before gating dispatch or touching workers.
+        with self._closing_lock:
+            with self._dispatcher.order.synchronized():
+                if self.closed:
+                    return
+                self._closing = self._stopping = True
+                self.inputs.pause_registration(True)
+            self._notify()
+            try:
+                # Do not invalidate the pending OperationState transition or
+                # abort its input owner while execute/publication can still finish.
+                stop_workers()
+                self._thread.join(timeout=timeout)
+                if self._thread.is_alive():
+                    raise TimeoutError("controller still owns an in-flight result")
+                if self.closed:  # A preceding ordered close finished normally.
+                    self._stopping = False
+                    return
+                if self.boundary.closed:
+                    self._retire_closed()
+                    if not self.closed:
+                        raise RuntimeError(
+                            "input producers still retain controller storage"
+                        )
+                    self._stopping = False
+                    return
+                with self._dispatcher.order.synchronized():
+                    self._error = "Allocation ownership ended."
+                    self._state.invalidate()
+                self._workers.close()
+                with self._dispatcher.order.synchronized():
+                    self.inputs.abort()
+                    fail_interrupted_requests(
+                        self._records,
+                        self._state,
+                        code="allocation_stopped",
+                        message="Allocation ended; recover state from a checkpoint.",
+                    )
+                    if self.inputs.staging.used != (0, 0):
+                        raise RuntimeError(
+                            "input producers still retain controller storage"
+                        )
+                    self.inputs.staging.close()
+                    if not self._state.boundary.closed:
+                        self._state.complete(
+                            self._state.begin("close", "allocation-stop")
+                        )
+                    self.closed, self._stopping = True, False
             finally:
                 self._notify(dispatch=False)
 

@@ -54,6 +54,7 @@ from shadowspill_client.protocol.requests import (  # noqa: E402
     OperationRequest,
     RequestIdentity,
 )
+from shadowspill_client.protocol.service import ServiceError  # noqa: E402
 from shadowspill_client.transport.http import HTTPTransport  # noqa: E402
 
 root = Path(sys.argv[1])
@@ -156,10 +157,10 @@ def observe(phase, process):
 
 
 @contextmanager
-def owned_node(memory):
+def owned_node(memory, worker=prepared_worker):
     node = WorkerNode(
         admission,
-        {0: prepared_worker},
+        {0: worker},
         {0: device.id},
         {0: host_allowance},
         packages=packages,
@@ -432,6 +433,109 @@ with (
         with saved_artifacts.open(reference) as stream:
             assert hashlib.file_digest(stream, "sha256").hexdigest() == reference.sha256
 assert admission.used.claims == 0 and reopened_arena.budget.used == (0, 0)
+
+
+def qualify_allocation_stop():
+    identity = RunIdentity("owner", "session", "stopped")
+    worker = PreparedWorker.resolve(
+        family,
+        WorkerScope("stopped", "stop-agent", "gpu-2", 0),
+        bundle=bundle_reference,
+    )
+    with (
+        HostArena(admission, 64 << 20, 100) as transfers,
+        HostArena(admission, 16 << 20, 2) as commands,
+        HostArena(admission, 64 << 20, 3) as publication,
+        HostArena(admission, 160 << 20, 8) as storage_arena,
+        HostArena(
+            admission, execution.max_staging_bytes, execution.max_pending_requests
+        ) as uploads,
+        persistent_storage(storage_arena.budget, incarnation="stop-agent") as storage,
+        storage.artifacts("owner") as artifacts,
+        owned_node(transfers.budget, worker) as node,
+    ):
+        config = artifacts.get("configuration")
+        storage.catalog.create(
+            identity, request_sha256=config.sha256, configuration=config
+        )
+        storage.catalog.progress(identity, "initializing")
+        processes = node.start(artifacts.open)
+        with (
+            start_processes(processes, stop=node.stop) as group,
+            WorkerRequests(
+                group, {0: worker}, {0: node.files}, metadata=commands.budget
+            ) as transfer,
+            storage.requests(identity) as journal,
+            ResultPublisher(
+                artifacts,
+                history_id="stop-history",
+                root=directory,
+                memory=publication.budget,
+                disk=disk,
+            ) as publisher,
+            RunController(
+                journal,
+                PreparedRequests(family, cache_root=directory),
+                transfer,
+                publisher,
+                server_incarnation="stop-agent",
+                budget=uploads.budget,
+            ) as controller,
+        ):
+            storage.catalog.ready(
+                identity, plans=bundle_reference, initial_history_id="stop-history"
+            )
+            controller.attach("writer")
+            with snapshot_batch(records(targets=True), publication.budget) as snapshot:
+                payload = ArtifactRef(
+                    "backward", snapshot.sha256, snapshot.size_bytes, MEDIA_TYPE
+                )
+                wire = b"".join(snapshot.chunks())
+                command = OperationRequest(
+                    RequestIdentity(
+                        "backward", "stopped", 1, "writer", 1, "stop-agent"
+                    ),
+                    "forward_backward",
+                    payload,
+                    len(records(targets=True)),
+                    loss_params={"temperature": 2.0},
+                )
+            controller.register(command)
+            controller.receive("backward", io.BytesIO(wire))
+            result = controller.wait("backward", timeout=120)
+            controller.drain(timeout=120)
+            assert (
+                result.result.accumulation.open and result.result.completed_updates == 0
+            )
+            # Allocation ownership can end with unresolved gradients. It must
+            # not synthesize an optimizer update, a discard, or a valid new run.
+            controller.stop(node.stop, timeout=30)
+            assert controller.closed and not controller.boundary.valid
+            assert controller.boundary.accumulation == result.result.accumulation
+            assert controller.boundary.completed_updates == 0
+            assert controller.register(command) == result
+            assert processes[0].child.closed and node.lease.closed
+            storage.catalog.stop(
+                identity, ServiceError("allocation_stopped", "Allocation ended.")
+            )
+        node.close()
+    assert admission.used.claims == 0 and disk.used == (0, 0)
+    (directory / "allocation-stop.json").write_text(
+        json.dumps(
+            {
+                "completed_updates": 0,
+                "last_known_accumulation": result.result.accumulation.to_dict(),
+                "live_state_valid": False,
+                "worker_exit_confirmed": True,
+                "all_claims_released": True,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
+qualify_allocation_stop()
 (directory / "host-accounting.json").write_text(
     json.dumps(
         {
@@ -458,3 +562,4 @@ print("Qualified ordered production discard followed by fresh backward/update")
 print("Qualified ordered close with confirmed child exit and queryable result")
 print("Qualified authenticated HTTP queue and post-exit artifact downloads")
 print("Qualified bounded service storage and original GPU outcomes after restart")
+print("Qualified allocation stop with unresolved GPU gradients and no implicit update")
