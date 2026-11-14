@@ -9,12 +9,15 @@ base and uses prepared `train.bin`, `val.bin` and `meta.json` token files.
 from shadowspill_workloads.recipes import LoRA, Model, train
 
 model = Model.from_checkpoint("/checkpoints/Qwen3.5-35B-A3B", lora=LoRA())
-train(model, {
-    "data": "/data/tokenized-corpus",
-    "frozen_state_id": "qwen-base-revision-and-config",
-    "run_dir": "runs/qwen35-lora",
-    "microbatch_sizes": [1, 2, 4, 8],
-})
+train(
+    model,
+    {
+        "data": "/data/tokenized-corpus",
+        "frozen_state_id": "qwen-base-revision-and-config",
+        "run_dir": "runs/qwen35-lora",
+        "microbatch_sizes": [1, 2, 4, 8],
+    },
+)
 ```
 
 Each phase runs in a fresh process. Build constructs one training Program and
@@ -60,10 +63,14 @@ optimizer tensors, data position and RNG state. Resume supplies the same base
 through the bounded loader; no full-model snapshot is created:
 
 ```python
-train(model, {
-    **saved,
-    "resume": "runs/qwen35-lora/training/checkpoints/step_00000002.ssp",
-}, phase="execute")
+train(
+    model,
+    {
+        **saved,
+        "resume": "runs/qwen35-lora/training/checkpoints/step_00000002.ssp",
+    },
+    phase="execute",
+)
 ```
 
 The loader preserves checkpoint values, copies transformed projections directly

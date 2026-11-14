@@ -17,7 +17,7 @@ models, choose execution plans, or manage ShadowSpill pools.
 | `units.py` | Units of `max_seq_len` tokens divided among ranks: the held-out calls each rank evaluates, padded to its microbatches |
 
 ```bash
-python -m shadowspill_workloads.inputs.text.prepare --help
+python -m tools.datasets.prepare_text --help
 ```
 
 Use `from shadowspill_workloads.inputs.text.fixed import TokenUpdates` for fixed

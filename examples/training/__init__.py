@@ -22,7 +22,7 @@ from typing import Any
 def run(
     config: str | Path | Mapping[str, Any], *, phase: str = "all", **overrides: Any
 ) -> Any:
-    from shadowspill_workloads.recipes.text.run import run_config
+    from examples.training.run import run_config
 
     return run_config(
         config,

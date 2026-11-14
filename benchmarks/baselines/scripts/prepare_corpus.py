@@ -6,7 +6,7 @@
 
 Reads the parquet files the glob matches, in sorted order, and writes
 ``train.bin``, ``val.bin`` and ``meta.json`` in ``--output`` as
-``shadowspill_workloads.inputs.text.prepare`` does: every document's token ids
+``shadowspill_workloads.inputs.text.corpus`` does: every document's token ids
 followed by the tokenizer's end-of-text id, as uint32, the first
 ``--val-tokens`` to ``val.bin`` and ``train.bin`` stopping at the last whole
 document within ``--tokens``. An engine reads the result with ``--data DIR``;
@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from shadowspill_workloads.inputs.text.prepare import tokenize, write_meta
+from shadowspill_workloads.inputs.text.corpus import tokenize, write_meta
 
 
 def prepare(

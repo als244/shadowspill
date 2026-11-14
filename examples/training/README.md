@@ -82,7 +82,7 @@ request is recorded in the run directory. A model preset is optional user code.
 Data ingestion is also supplied as a recipe:
 
 ```bash
-python -m shadowspill_workloads.inputs.text.prepare --help
+python -m tools.datasets.prepare_text --help
 ```
 
 `PackedTokens` reads the prepared token directory. The recipe packs documents,
@@ -148,7 +148,7 @@ factors as for a catalog model; the two explicit entries remain available.
 
 ## Instruction data and the transformers check
 
-`python -m shadowspill_workloads.inputs.text.prepare_chat` renders a chat dataset's
+`python -m tools.datasets.prepare_chat` renders a chat dataset's
 conversations through the tokenizer's chat template and writes, beside the
 token files, a mask marking the assistant's tokens; a run on that directory
 trains only those, never the prompt. `python -m examples.training.reference <run dir>`

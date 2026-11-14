@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from shadowspill_workloads.recipes.text.run import run_config
+from examples.training.run import run_config
 from tests.training._synthetic import NOTES
 from tests.training._text_recipe import _config, _records
 

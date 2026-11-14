@@ -5,12 +5,12 @@ Each phase runs in its own process. Planning reads saved artifacts without
 importing Torch; execution loads Plans without constructing the model.
 
 ```bash
-python -m shadowspill_workloads.recipes.text.run experiment.json
-python -m shadowspill_workloads.recipes.text.run experiment.json --phase build
-python -m shadowspill_workloads.recipes.text.run experiment.json --phase profile
-python -m shadowspill_workloads.recipes.text.run experiment.json --phase communicate  # ranks > 1
-python -m shadowspill_workloads.recipes.text.run experiment.json --phase plan
-python -m shadowspill_workloads.recipes.text.run experiment.json --phase execute
+python -m examples.training.run experiment.json
+python -m examples.training.run experiment.json --phase build
+python -m examples.training.run experiment.json --phase profile
+python -m examples.training.run experiment.json --phase communicate  # ranks > 1
+python -m examples.training.run experiment.json --phase plan
+python -m examples.training.run experiment.json --phase execute
 ```
 
 Start build in a fresh run directory. Later phases use the same configuration
@@ -115,7 +115,7 @@ Buffers, RNG and training progress are preserved; ordinary PyTorch AdamW is
 rejected. See [startup diagnostics](../../../../../../../docs/python/api/training.md#startup-diagnostics).
 
 ```bash
-python -m shadowspill_workloads.recipes.text.run experiment.json \
+python -m examples.training.run experiment.json \
   resume=runs/text/checkpoints/step_00000003.ssp steps=6 --phase execute
 ```
 

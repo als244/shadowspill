@@ -12,8 +12,8 @@ import pytest
 
 from shadowspill_workloads.inputs.text.documents import IGNORE, TokenDocuments
 from shadowspill_workloads.inputs.text.packed import PackedTokens
-from shadowspill_workloads.inputs.text.prepare import write_meta
-from shadowspill_workloads.inputs.text.prepare_chat import (
+from shadowspill_workloads.inputs.text.corpus import write_meta
+from shadowspill_workloads.inputs.text.chat import (
     assistant_mask,
     choose_separator,
     render,

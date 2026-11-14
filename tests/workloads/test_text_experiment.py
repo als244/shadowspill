@@ -27,7 +27,7 @@ from shadowspill_workloads.recipes.text.experiment.inputs import (
     candidates,
     source,
 )
-from shadowspill_workloads.recipes.text.run import run_config
+from examples.training.run import run_config
 from tests.training._text_recipe import _config, _records
 
 

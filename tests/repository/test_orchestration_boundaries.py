@@ -12,12 +12,18 @@ def test_repository_clients_have_one_way_dependencies():
         "packages/workloads/src/shadowspill_workloads": (
             "benchmarks",
             "qualification",
+            "examples",
+            "reference",
+            "tools",
         ),
         "packages/engine/src/shadowspill": (
             "orchestration",
             "shadowspill_workloads",
             "benchmarks",
             "qualification",
+            "examples",
+            "reference",
+            "tools",
         ),
         "benchmarks/plan_runner/api.py": (
             "shadowspill_workloads",
