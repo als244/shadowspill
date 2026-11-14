@@ -18,10 +18,10 @@ the previous one to fill missing artifacts.
 
 Quickstart supports single-GPU training and single-node sharded DP, including
 examples with different shapes and static arguments within one update.
-The [catalog factory](../workloads/recipes/text/benchmark/README.md) supplies
+The [catalog factory](../packages/workloads/src/shadowspill_workloads/recipes/text/benchmark/README.md) supplies
 ordinary text models, precision and LoRA settings. The GLM families use this
 same runner with their own model/input/initialization helpers. The
-[EP recipe](../workloads/recipes/text/expert_parallel/README.md) declares generic
+[EP recipe](../packages/workloads/src/shadowspill_workloads/recipes/text/expert_parallel/README.md) declares generic
 provider resources and uses distributed build/profiling when its tasks communicate.
 Ordinary DP qualification does not certify its transport.
 The core APIs can be used directly without quickstart; see the
@@ -34,7 +34,7 @@ from benchmarking.quickstart import run
 
 run(
     # An importable factory supplies the model, objective, data and candidates.
-    factory="workloads.recipes.regression.benchmark:experiment",
+    factory="shadowspill_workloads.recipes.regression.benchmark:experiment",
     factory_args={"rows": 64, "width": 16, "outputs": 8},
 
     # Search each device budget with the same measured candidates and host pool.
@@ -61,8 +61,8 @@ workers reconstruct setup independently. Closures returned *by* that factory
 are fine; no callback pickle or model object is sent between workers.
 
 For full-checkpoint text training with evaluation and checkpointing, start with
-the [commented GLM LoRA script](../workloads/recipes/text/glm53_flash_lora/example.py)
-and its [recipe guide](../workloads/recipes/text/glm53_flash_lora/README.md).
+the [commented GLM LoRA script](../packages/workloads/src/shadowspill_workloads/recipes/text/glm53_flash_lora/example.py)
+and its [recipe guide](../packages/workloads/src/shadowspill_workloads/recipes/text/glm53_flash_lora/README.md).
 
 ## Spill storage
 
@@ -90,7 +90,7 @@ Start with build alone, without selecting planning budgets yet:
 
 ```bash
 python -m benchmarking.quickstart --phase build \
-  --factory workloads.recipes.regression.benchmark:experiment --output-dir runs/regression
+  --factory shadowspill_workloads.recipes.regression.benchmark:experiment --output-dir runs/regression
 python -m benchmarking.quickstart --phase profile --output-dir runs/regression
 python -m benchmarking.quickstart --phase communicate --output-dir runs/regression
 CUDA_VISIBLE_DEVICES='' python -m benchmarking.quickstart --phase plan \
@@ -155,7 +155,7 @@ build/profile pass cannot leave its old completion index eligible for planning.
 
 ## Factory inputs
 
-The [regression factory](../workloads/recipes/regression/benchmark.py) is a complete example.
+The [regression factory](../packages/workloads/src/shadowspill_workloads/recipes/regression/benchmark.py) is a complete example.
 It returns a plain mapping:
 
 | Entry | Purpose |

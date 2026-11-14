@@ -13,7 +13,7 @@ from benchmarking.stage_traces.report import verify
 from benchmarking.stage_traces.storage import materialize_example_arguments
 from shadowspill.pytorch.capture.fake import fake_device_model
 from shadowspill.pytorch.representations import materialize_meta_state
-from workloads.models.shared.glm.checkpoint import physical_state
+from shadowspill_workloads.models.shared.glm.checkpoint import physical_state
 
 
 def test_materialization_preserves_storage_views_and_copies_metadata():

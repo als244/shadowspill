@@ -6,8 +6,8 @@ from functools import partial
 import torch
 
 from shadowspill import Program, build_step
-from workloads.full_model import build_model, full_model_objective, spec
-from workloads.models.shared.training import LEARNING_RATE
+from shadowspill_workloads.full_model import build_model, full_model_objective, spec
+from shadowspill_workloads.models.shared.training import LEARNING_RATE
 
 from .matrix import ProgramRequest
 

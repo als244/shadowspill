@@ -3,9 +3,9 @@
 import pytest
 import torch
 
+from shadowspill_workloads.models.olmoe.config import Config as OLMoEConfig
+from shadowspill_workloads.models.olmoe.implementations.mlops import Model as OLMoE
 from tests.precision import low_precision_dtype
-from workloads.models.olmoe.config import Config as OLMoEConfig
-from workloads.models.olmoe.implementations.mlops import Model as OLMoE
 
 
 @pytest.mark.cuda

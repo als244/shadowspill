@@ -16,7 +16,7 @@ from typing import Any, cast
 import torch
 
 from qualification.numerical.cases import build_case
-from workloads.providers import ModelImplementation
+from shadowspill_workloads.providers import ModelImplementation
 
 from .probe import ProbeResult, probe_step
 

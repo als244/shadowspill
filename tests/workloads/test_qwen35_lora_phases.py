@@ -15,9 +15,9 @@ import torch
 from safetensors.torch import save_file
 
 from shadowspill.execution.tensors import TensorChunk
+from shadowspill_workloads.lora import configure_lora
+from shadowspill_workloads.recipes.text.qwen35_lora.initialize import Initialize
 from tests.workloads.test_checkpoints import built, huggingface_state, metadata
-from workloads.lora import configure_lora
-from workloads.recipes.text.qwen35_lora.initialize import Initialize
 
 
 @pytest.fixture
@@ -67,7 +67,10 @@ def test_bounded_initializer_preserves_base_and_adapter_distributions(checkpoint
 
 
 def test_random_public_initializer_needs_only_configuration(checkpoint, tmp_path):
-    from workloads.recipes.text.qwen35_lora.adapter import describe, initializer
+    from shadowspill_workloads.recipes.text.qwen35_lora.adapter import (
+        describe,
+        initializer,
+    )
 
     root, base = checkpoint
     (root / "model.safetensors").unlink()
@@ -125,7 +128,7 @@ def test_qwen_recipe_cold_execution_and_partial_resume(tmp_path, checkpoint):
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-m",
-        "workloads.recipes.text.train_qwen35_lora",
+        "shadowspill_workloads.recipes.text.train_qwen35_lora",
         "--data",
         str(data),
         "--checkpoint",

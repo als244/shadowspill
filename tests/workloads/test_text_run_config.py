@@ -10,9 +10,15 @@ import torch
 from safetensors.torch import save_file
 
 from shadowspill.training import config
+from shadowspill_workloads.recipes.text.experiment.hyperparameters import (
+    scheduled_arguments,
+)
+from shadowspill_workloads.recipes.text.run import (
+    expand_checkpoint,
+    load_config,
+    run_config,
+)
 from tests.workloads.test_checkpoints import huggingface_state, materialized, metadata
-from workloads.recipes.text.experiment.hyperparameters import scheduled_arguments
-from workloads.recipes.text.run import expand_checkpoint, load_config, run_config
 
 
 def test_an_unknown_key_is_refused_with_the_nearest_name(tmp_path):
@@ -53,7 +59,7 @@ def test_a_checkpoint_entry_stands_for_the_model_and_its_initializer(tmp_path):
     expanded = expand_checkpoint(raw)
     assert expanded["checkpoint"] == raw["checkpoint"]
     assert expanded["model"] == {
-        "@call": "workloads.models.catalog:build_from_checkpoint",
+        "@call": "shadowspill_workloads.models.catalog:build_from_checkpoint",
         "family": family,
         "directory": str(directory),
         "max_seq_len": 64,
@@ -61,7 +67,7 @@ def test_a_checkpoint_entry_stands_for_the_model_and_its_initializer(tmp_path):
         "lora": {"rank": 4, "alpha": 8},
     }
     assert expanded["initialize"] == {
-        "@call": "workloads.recipes.text.initialization:from_checkpoint",
+        "@call": "shadowspill_workloads.recipes.text.initialization:from_checkpoint",
         "family": family,
         "directory": str(directory),
         "max_seq_len": 64,
@@ -110,12 +116,12 @@ def test_defaults_fill_what_a_config_leaves_out(tmp_path):
     }
     expanded = load_config(raw, ["run_dir=runs/x"])
     assert expanded["data"] == {
-        "@call": "workloads.recipes.text.data.packed:PackedTokens",
+        "@call": "shadowspill_workloads.recipes.text.data.packed:PackedTokens",
         "directory": "data/x",
     }
     assert (
         expanded["objective"]
-        == "@workloads.recipes.text.objectives:next_token_prediction"
+        == "@shadowspill_workloads.recipes.text.objectives:next_token_prediction"
     )
     assert expanded["optimizer"] == "@mlops.optim:AdamW"
     assert expanded["model"]["@call"].endswith("build_from_checkpoint")
@@ -131,7 +137,7 @@ def test_defaults_fill_what_a_config_leaves_out(tmp_path):
 
 
 def test_ranks_share_the_steps_tokens_and_need_the_shadowspill_engine(tmp_path):
-    from workloads.recipes.text.experiment.group import rank_options, ranks
+    from shadowspill_workloads.recipes.text.experiment.group import rank_options, ranks
 
     options = {"ranks": 2, "max_tokens_per_step": 4096, "max_seq_len": 512}
     assert ranks(options) == 2 and ranks({}) == 1

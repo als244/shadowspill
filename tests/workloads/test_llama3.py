@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import torch
 
-from workloads.models.llama3.config import PRESETS
-from workloads.models.llama3.config import Config as Llama3Config
-from workloads.models.llama3.implementations.pytorch import Model as Llama3
+from shadowspill_workloads.models.llama3.config import PRESETS
+from shadowspill_workloads.models.llama3.config import Config as Llama3Config
+from shadowspill_workloads.models.llama3.implementations.pytorch import Model as Llama3
 
 
 def test_llama3_parameter_catalog_and_gradients() -> None:

@@ -4,7 +4,7 @@ import statistics
 
 import torch
 
-from workloads.full_model import HEAD_LOSS_METRIC
+from shadowspill_workloads.full_model import HEAD_LOSS_METRIC
 
 from .microbatches import split_microbatches
 from .reference import create

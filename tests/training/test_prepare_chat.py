@@ -10,10 +10,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from workloads.recipes.text.data.documents import IGNORE, TokenDocuments
-from workloads.recipes.text.data.packed import PackedTokens
-from workloads.recipes.text.data.prepare import write_meta
-from workloads.recipes.text.data.prepare_chat import (
+from shadowspill_workloads.recipes.text.data.documents import IGNORE, TokenDocuments
+from shadowspill_workloads.recipes.text.data.packed import PackedTokens
+from shadowspill_workloads.recipes.text.data.prepare import write_meta
+from shadowspill_workloads.recipes.text.data.prepare_chat import (
     assistant_mask,
     choose_separator,
     render,

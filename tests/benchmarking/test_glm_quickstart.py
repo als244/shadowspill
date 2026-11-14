@@ -18,7 +18,7 @@ def test_glm_training_from_saved_phases(tmp_path, family):
         pytest.skip("requires CUDA")
     assert (
         run(
-            f"workloads.recipes.text.glm.quickstart:{family}",
+            f"shadowspill_workloads.recipes.text.glm.quickstart:{family}",
             factory_args={
                 "tiny": True,
                 "sequence_length": 16,
@@ -53,7 +53,7 @@ def test_glm_training_from_saved_phases(tmp_path, family):
 def test_glm_dp_objective_is_scaled_once_and_data_differs_between_ranks(monkeypatch):
     from types import SimpleNamespace
 
-    from workloads.recipes.text.glm.quickstart import glm53_flash
+    from shadowspill_workloads.recipes.text.glm.quickstart import glm53_flash
 
     def no_live_group(*args, **kwargs):
         pytest.fail("the factory must use logical parallelism, not a live group")

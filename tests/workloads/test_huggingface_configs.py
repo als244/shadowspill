@@ -11,14 +11,15 @@ from pathlib import Path
 
 import pytest
 
-from workloads.models import catalog
+from shadowspill_workloads.models import catalog
 
 FAMILIES = sorted(
     {
         item.family
         for item in catalog.entries()
         if hasattr(
-            import_module(f"workloads.models.{item.family}.config"), "to_huggingface"
+            import_module(f"shadowspill_workloads.models.{item.family}.config"),
+            "to_huggingface",
         )
     }
 )
@@ -55,7 +56,7 @@ def test_the_round_one_families_name_their_configuration() -> None:
 
 @pytest.mark.parametrize("family", FAMILIES)
 def test_every_preset_reads_back_or_is_refused_with_the_reason(family) -> None:
-    module = import_module(f"workloads.models.{family}.config")
+    module = import_module(f"shadowspill_workloads.models.{family}.config")
     for name, config in module.PRESETS.items():
         try:
             value = json.loads(json.dumps(module.to_huggingface(config)))
@@ -73,7 +74,7 @@ def test_a_published_preset_is_the_published_configuration(family, size) -> None
         pytest.skip(f"no {path}")
     published = json.loads(path.read_text())
     published = published.get("text_config", published)
-    module = import_module(f"workloads.models.{family}.config")
+    module = import_module(f"shadowspill_workloads.models.{family}.config")
     ours = module.to_huggingface(module.PRESETS[size])
     differences = {
         key: (published.get(key), value)

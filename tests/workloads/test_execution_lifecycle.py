@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from workloads.recipes.training import configuration, execute
+from shadowspill.training.preparation import configuration, execute
 
 
 def _events(path):

@@ -11,7 +11,7 @@ import triton
 from tests.shadowspill.execution._cold import forbid_preparation
 
 forbid_preparation(
-    "tests.shadowspill.pytorch.representation_fixtures", "workloads.models"
+    "tests.shadowspill.pytorch.representation_fixtures", "shadowspill_workloads.models"
 )
 from shadowspill import Plan, Trainer  # noqa: E402
 

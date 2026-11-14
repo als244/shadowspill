@@ -145,7 +145,9 @@ def test_block_fp8_nested_recipe_regions_capture_both_variants(monkeypatch):
     from mlops.block_fp8 import BlockFP8Weight
 
     from shadowspill.pytorch.chunking.regions import region_artifact
-    from workloads.recipes.text.glm53_flash_lora.policies import build_options
+    from shadowspill_workloads.recipes.text.glm53_flash_lora.policies import (
+        build_options,
+    )
 
     monkeypatch.setenv("QUACK_ARCH", "90")
     options = build_options(

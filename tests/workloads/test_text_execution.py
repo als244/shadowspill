@@ -12,11 +12,11 @@ from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProven
 from shadowspill.pytorch.capture.gradients import accumulate_gradient_outputs
 from shadowspill.pytorch.chunking.regions import region_artifact
 from shadowspill.task.inputs import TaskInputRole
-from tests.shadowspill.pytorch.chunking.test_composition import executable
-from workloads.models.shared.execution import (
+from shadowspill_workloads.models.shared.execution import (
     TextExecutionBoundaries,
     text_execution_chunks,
 )
+from tests.shadowspill.pytorch.chunking.test_composition import executable
 
 
 @pytest.mark.parametrize("batch", [1, 2])

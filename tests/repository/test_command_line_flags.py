@@ -24,6 +24,8 @@ import pytest
 from tests.repository.files import repository_files
 
 ROOT = Path(__file__).resolve().parents[2]
+CATALOG = ROOT / "packages/workloads/src/shadowspill_workloads"
+PREPARATION = ROOT / "packages/engine/src/shadowspill/training/preparation"
 
 
 def _declared_flags(tree: ast.AST) -> set[str]:
@@ -100,23 +102,23 @@ def _readers(path: Path) -> list[Path]:
     """
 
     recipe_packages = {
-        ROOT / "workloads/recipes/text/train_llama3.py": ("llama3",),
-        ROOT / "workloads/recipes/text/qwen3/arguments.py": (
+        CATALOG / "recipes/text/train_llama3.py": ("llama3",),
+        CATALOG / "recipes/text/qwen3/arguments.py": (
             ".",
             "../phases",
-            "../../training",
+            PREPARATION,
         ),
-        ROOT / "workloads/recipes/text/qwen35_lora/arguments.py": (
+        CATALOG / "recipes/text/qwen35_lora/arguments.py": (
             ".",
             "../phases",
-            "../../training",
+            PREPARATION,
         ),
-        ROOT / "workloads/recipes/text/glm53_flash_lora/arguments.py": (
+        CATALOG / "recipes/text/glm53_flash_lora/arguments.py": (
             ".",
             "../phases",
-            "../../training",
+            PREPARATION,
         ),
-        ROOT / "workloads/recipes/distributed_training.py": ("regression",),
+        CATALOG / "recipes/distributed_training.py": ("regression",),
     }
     if path in recipe_packages:
         readers = [
@@ -142,7 +144,9 @@ def _readers(path: Path) -> list[Path]:
             "shadowspill.orchestration.profiling": (
                 "packages/engine/src/shadowspill/orchestration/profiling.py"
             ),
-            "workloads.recipes.text.catalog": "workloads/recipes/text/catalog.py",
+            "shadowspill_workloads.recipes.text.catalog": (
+                CATALOG / "recipes/text/catalog.py"
+            ),
         }.items():
             if module in imported:
                 readers.append(ROOT / relative_path)
@@ -220,7 +224,7 @@ def test_no_caller_passes_a_keyword_a_public_entry_point_does_not_accept() -> No
         "tests",
         "benchmarking",
         "reference",
-        "workloads",
+        "shadowspill_workloads",
         "training",
     )
     for path in _repository_python_files():

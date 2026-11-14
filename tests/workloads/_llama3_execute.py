@@ -8,7 +8,7 @@ from triton.runtime.autotuner import Autotuner
 
 from tests.shadowspill.execution._cold import forbid_preparation, forbidden
 
-forbid_preparation("workloads.models.llama3.implementations")
+forbid_preparation("shadowspill_workloads.models.llama3.implementations")
 Autotuner._bench = forbidden
 compiled = []
 
@@ -21,7 +21,7 @@ def listener(**event):
 triton.knobs.compilation.listener = listener
 
 from shadowspill import Trainer  # noqa: E402
-from workloads.recipes.text.llama3.execute import run  # noqa: E402
+from shadowspill_workloads.recipes.text.llama3.execute import run  # noqa: E402
 
 original_step = Trainer.step
 first_step = True

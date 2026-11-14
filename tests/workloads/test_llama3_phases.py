@@ -14,10 +14,10 @@ import pytest
 import torch
 
 from shadowspill.execution.tensors import TensorChunk
-from workloads.models.llama3.config import LLAMA_3_1_ROPE_SCALING, Config
-from workloads.models.shared.decoder import RotaryEmbedding
-from workloads.recipes.text.data.calls import Inputs
-from workloads.recipes.text.initialization import Initialize
+from shadowspill_workloads.models.llama3.config import LLAMA_3_1_ROPE_SCALING, Config
+from shadowspill_workloads.models.shared.decoder import RotaryEmbedding
+from shadowspill_workloads.recipes.text.data.calls import Inputs
+from shadowspill_workloads.recipes.text.initialization import Initialize
 
 
 @pytest.mark.parametrize("scaling", [None, LLAMA_3_1_ROPE_SCALING])
@@ -115,7 +115,7 @@ def test_recipe_runs_with_saved_plans_after_original_caches_are_deleted(tmp_path
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-m",
-        "workloads.recipes.text.train_llama3",
+        "shadowspill_workloads.recipes.text.train_llama3",
         "--data",
         str(data),
         "--run-dir",

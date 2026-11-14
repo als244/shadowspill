@@ -180,7 +180,7 @@ The shared Python training API accepts the same policy as `config["profiling"]`:
 
 ```python
 from shadowspill import ProfilingOptions
-from workloads.recipes import train
+from shadowspill_workloads.recipes import train
 
 config = {
     "run_dir": "runs/experiment",

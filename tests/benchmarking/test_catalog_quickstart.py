@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from workloads.recipes.text.benchmark.factory import experiment
+from shadowspill_workloads.recipes.text.benchmark.factory import experiment
 
 
 @pytest.mark.parametrize(
@@ -145,7 +145,7 @@ def test_catalog_training_from_saved_phases(tmp_path, lora, ranks):
         pytest.skip(f"requires {ranks} distinct CUDA devices")
     assert (
         run(
-            "workloads.recipes.text.benchmark.factory:experiment",
+            "shadowspill_workloads.recipes.text.benchmark.factory:experiment",
             factory_args={
                 "model": "llama3-tiny",
                 "sequence_length": 32,

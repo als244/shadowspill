@@ -19,11 +19,13 @@ from shadowspill import (
     measure_program,
     plan_program,
 )
+from shadowspill_workloads.models.llama3.config import Config
+from shadowspill_workloads.models.llama3.implementations.pytorch import Model
+from shadowspill_workloads.recipes.text.data.calls import Inputs
+from shadowspill_workloads.recipes.text.objectives import (
+    normalized_next_token_prediction as loss,
+)
 from tests.workloads.test_fixed_updates import corpus
-from workloads.models.llama3.config import Config
-from workloads.models.llama3.implementations.pytorch import Model
-from workloads.recipes.text.data.calls import Inputs
-from workloads.recipes.text.objectives import normalized_next_token_prediction as loss
 
 
 def records(path):

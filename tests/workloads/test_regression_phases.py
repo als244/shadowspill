@@ -11,8 +11,8 @@ import pytest
 import torch
 
 from shadowspill.execution.tensors import TensorChunk
-from workloads.recipes.regression.data import Inputs
-from workloads.recipes.regression.initialize import fill_tensor
+from shadowspill_workloads.recipes.regression.data import Inputs
+from shadowspill_workloads.recipes.regression.initialize import fill_tensor
 
 
 def test_regression_input_cursor_preserves_rank_local_examples():
@@ -51,7 +51,7 @@ class NoGPU(importlib.abc.MetaPathFinder):
         if fullname == 'torch' or fullname.startswith('shadowspill.runtime'):
             raise AssertionError(f'CPU planning imported {fullname}')
 sys.meta_path.insert(0, NoGPU())
-import workloads.recipes.regression.plan
+import shadowspill_workloads.recipes.regression.plan
 """
     child = subprocess.run(
         [sys.executable, *(["-S"] if sys.flags.no_site else []), "-c", script],
@@ -71,7 +71,7 @@ def test_distributed_regression_runs_through_saved_artifacts(tmp_path):
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-m",
-        "workloads.recipes.distributed_training",
+        "shadowspill_workloads.recipes.distributed_training",
         "--run-dir",
         str(root),
         "--ranks",

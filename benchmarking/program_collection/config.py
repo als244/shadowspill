@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from workloads.models import catalog
+from shadowspill_workloads.models import catalog
 
 from .settings import _SCHEMA, CollectionConfig, GeometryAxes, ModelSpec, ProfilingSpec
 

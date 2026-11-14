@@ -6,8 +6,8 @@ from itertools import pairwise
 import pytest
 import torch
 
+from shadowspill.checkpoint.initialization import fill_generated
 from shadowspill.execution.tensors import TensorChunk
-from workloads.models.shared.initialization import fill_generated
 
 
 @pytest.mark.parametrize("source_dtype", [torch.float32, torch.bfloat16])

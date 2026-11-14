@@ -79,8 +79,8 @@ remain unchanged.
 
 ## A model-scale example
 
-[GLMStages](../../workloads/recipes/text/glm/partition.py) implements this same
-protocol using exported module paths. The GLM [workload factory](../../workloads/recipes/text/glm/quickstart.py)
+[GLMStages](../../packages/workloads/src/shadowspill_workloads/recipes/text/glm/partition.py) implements this same
+protocol using exported module paths. The GLM [workload factory](../../packages/workloads/src/shadowspill_workloads/recipes/text/glm/quickstart.py)
 passes the policy to `build_step` through its build options when asked
 (`partition="glm_stages"`). Quickstart saves the resulting Program, profiles it
 and searches its budgets/orderings without rebuilding the partition.

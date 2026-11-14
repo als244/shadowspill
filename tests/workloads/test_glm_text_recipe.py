@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 import torch
 
-from workloads.recipes.text.diagnostics import fixed_batch_learning_report
-from workloads.recipes.text.glm.data import GLMTokenUpdates
+from shadowspill_workloads.recipes.text.diagnostics import fixed_batch_learning_report
+from shadowspill_workloads.recipes.text.glm.data import GLMTokenUpdates
 
 
 def test_glm_updates_preserve_shift_rank_ownership_and_resume(tmp_path):
@@ -80,8 +80,8 @@ def test_fixed_batch_learning_gate_rejects_flat_rising_and_nonfinite_losses():
 
 
 def test_prepared_corpus_records_checkpoint_tokenizer_identity(tmp_path):
-    from workloads.recipes.text.data.prepare import write_meta
-    from workloads.recipes.text.data.tokenizer import tokenizer_identity
+    from shadowspill_workloads.recipes.text.data.prepare import write_meta
+    from shadowspill_workloads.recipes.text.data.tokenizer import tokenizer_identity
 
     class Tokenizer:
         eos_token_id = 3

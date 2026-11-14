@@ -346,7 +346,7 @@ def test_root_readme_remains_a_minimal_entrypoint() -> None:
     assert len(readme.splitlines()) <= 60
     assert "](docs/README.md)" in readme
     assert "](docs/examples/generic-training.md)" in readme
-    assert "](workloads/recipes/README.md)" in readme
+    assert "](packages/workloads/src/shadowspill_workloads/recipes/README.md)" in readme
     assert "](docs/python/custom-models.md)" in readme
     assert "](docs/python/advanced/README.md)" in readme
     assert "```python" in readme
@@ -793,7 +793,9 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
         )
         for path in _normative_markdown_files()
         if not path.is_relative_to(ROOT / "baselines")
-        and not path.is_relative_to(ROOT / "workloads")
+        and not path.is_relative_to(
+            ROOT / "packages/workloads/src/shadowspill_workloads"
+        )
         and not path.is_relative_to(ROOT / "tests/workloads")
         and not path.is_relative_to(DOCS / "integrations")
         and path

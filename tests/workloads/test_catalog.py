@@ -7,8 +7,8 @@ from importlib import import_module
 import pytest
 import torch
 
-from workloads.full_model import spec
-from workloads.models import catalog
+from shadowspill_workloads.full_model import spec
+from shadowspill_workloads.models import catalog
 
 
 def test_names_are_family_then_size_and_unique() -> None:
@@ -21,7 +21,7 @@ def test_names_are_family_then_size_and_unique() -> None:
 
 @pytest.mark.parametrize("item", catalog.entries(), ids=lambda item: item.name)
 def test_every_entry_resolves_to_its_preset_and_implementations(item) -> None:
-    config_module = import_module(f"workloads.models.{item.family}.config")
+    config_module = import_module(f"shadowspill_workloads.models.{item.family}.config")
     assert isinstance(item.config(), config_module.Config)
     assert item.size in config_module.PRESETS
     for implementation in item.implementations:

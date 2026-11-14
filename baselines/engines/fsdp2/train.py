@@ -26,7 +26,7 @@ from baselines.common import recompute_layers, runner
 from baselines.common.annotations import checkpoint_contexts, phase
 from baselines.engines.fsdp2 import settings as engine_settings
 from baselines.engines.fsdp2.settings import configure_prefetch
-from workloads.full_model import HEAD_LOSS_METRIC
+from shadowspill_workloads.full_model import HEAD_LOSS_METRIC
 
 
 def local_tensor(value):

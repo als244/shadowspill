@@ -8,7 +8,7 @@ import subprocess
 import sys
 from typing import Any
 
-from workloads.precision import DTYPE_FIELDS, FLOAT_DTYPES, TrainingDtypes
+from shadowspill_workloads.precision import DTYPE_FIELDS, FLOAT_DTYPES, TrainingDtypes
 
 
 def add_dtype_arguments(parser: argparse.ArgumentParser) -> None:

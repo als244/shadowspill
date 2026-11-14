@@ -8,12 +8,16 @@ import pytest
 import torch
 from torch import nn
 
-from workloads.models.olmoe.config import Config as OLMoEConfig
-from workloads.models.olmoe.implementations.mlops import Model as OLMoE
-from workloads.models.qwen3moe.config import Config as Qwen3MoEConfig
-from workloads.models.qwen3moe.implementations.mlops import Model as Qwen3MoE
-from workloads.models.qwen35moe.config import Config as Qwen35MoEConfig
-from workloads.models.qwen35moe.implementations.mlops import Model as Qwen35MoE
+from shadowspill_workloads.models.olmoe.config import Config as OLMoEConfig
+from shadowspill_workloads.models.olmoe.implementations.mlops import Model as OLMoE
+from shadowspill_workloads.models.qwen3moe.config import Config as Qwen3MoEConfig
+from shadowspill_workloads.models.qwen3moe.implementations.mlops import (
+    Model as Qwen3MoE,
+)
+from shadowspill_workloads.models.qwen35moe.config import Config as Qwen35MoEConfig
+from shadowspill_workloads.models.qwen35moe.implementations.mlops import (
+    Model as Qwen35MoE,
+)
 
 
 @pytest.fixture(
@@ -183,7 +187,7 @@ def test_fp32_gradient_request_reaches_router(architecture, fake_ep, router_dtyp
 def test_parallel_routing_keeps_fp32_logits(monkeypatch):
     from mlops.expert_parallel.quack import router
 
-    from workloads.models.shared.expert_parallel import parallel_forward
+    from shadowspill_workloads.models.shared.expert_parallel import parallel_forward
 
     def route(logits, top_k, normalize):
         selected, ids = logits.topk(top_k, dim=-1)

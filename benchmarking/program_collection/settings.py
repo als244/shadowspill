@@ -9,8 +9,8 @@ import re
 from dataclasses import dataclass
 
 from shadowspill import ProfilingOptions
-from workloads.models import catalog
-from workloads.providers import ModelImplementation
+from shadowspill_workloads.models import catalog
+from shadowspill_workloads.providers import ModelImplementation
 
 _SCHEMA = "shadowspill.program_corpus_collection/v2"
 

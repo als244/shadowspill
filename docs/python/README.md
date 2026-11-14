@@ -2,7 +2,7 @@
 
 | Goal | Guide |
 | --- | --- |
-| Train a supported model | [Python `train` runner](../../workloads/recipes/README.md) |
+| Train a supported model | [Python `train` runner](../../packages/workloads/src/shadowspill_workloads/recipes/README.md) |
 | Bring a custom model or control each phase | [Custom models](custom-models.md), [phase guide](phases.md), [complete example](../examples/generic-training.md) |
 | Tune, inspect or extend the system | [Advanced guides](advanced/README.md) |
 

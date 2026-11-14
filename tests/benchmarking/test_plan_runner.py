@@ -20,7 +20,7 @@ import importlib.abc
 import sys
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if (fullname.split('.')[0] in {'torch', 'workloads', 'mlops'}
+        if (fullname.split('.')[0] in {'torch', 'shadowspill_workloads', 'mlops'}
             or fullname.startswith(('shadowspill.runtime', 'shadowspill.pytorch',
                                     'shadowspill.execution'))):
             raise AssertionError('CPU launcher imported ' + fullname)
@@ -320,7 +320,7 @@ def test_recipe_bridge_reuses_hooks_without_changing_saved_inputs(
     tmp_path, monkeypatch
 ):
     from benchmarking.plan_runner import recipe
-    from workloads.recipes.training import configuration
+    from shadowspill.training.preparation import configuration
 
     source, output = tmp_path / "source", tmp_path / "output"
     source.mkdir()

@@ -98,7 +98,7 @@ def test_a_mixture_objective_reports_the_heads_share_as_its_metric() -> None:
     import pytest
     import torch
 
-    from workloads.full_model import (
+    from shadowspill_workloads.full_model import (
         BALANCING_COEFFICIENT,
         HEAD_LOSS_METRIC,
         _with_balancing,

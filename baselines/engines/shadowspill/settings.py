@@ -21,11 +21,11 @@ SOURCE_PATHS = (
     "baselines/__init__.py",
     "baselines/common",
     "baselines/engines/shadowspill",
-    "workloads/models",
-    "workloads/lora",
-    "workloads/full_model.py",
-    "workloads/recipes/text/geometry.py",
-    "workloads/recipes/text/initialization.py",
+    "packages/workloads/src/shadowspill_workloads/models",
+    "packages/workloads/src/shadowspill_workloads/lora",
+    "packages/workloads/src/shadowspill_workloads/full_model.py",
+    "packages/workloads/src/shadowspill_workloads/recipes/text/geometry.py",
+    "packages/workloads/src/shadowspill_workloads/recipes/text/initialization.py",
     "benchmarking/quickstart/phases",
     "benchmarking/quickstart/orchestrate.py",
     "benchmarking/quickstart/launch.py",
@@ -81,7 +81,7 @@ class Settings(common.Settings):
             return (self.tokens_per_microbatch,)
         if self.tokens_per_step is None:
             raise ValueError("a case names its tokens_per_step")
-        from workloads.recipes.text.geometry import search_geometries
+        from shadowspill_workloads.recipes.text.geometry import search_geometries
 
         replica = self.tokens_per_step // world_size
         if replica % self.sequence_length or self.tokens_per_step % world_size:

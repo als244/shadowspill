@@ -26,9 +26,9 @@ SOURCE_PATHS = (
     "baselines/__init__.py",
     "baselines/common",
     "baselines/engines/deepspeed",
-    "workloads/models",
-    "workloads/lora",
-    "workloads/full_model.py",
+    "packages/workloads/src/shadowspill_workloads/models",
+    "packages/workloads/src/shadowspill_workloads/lora",
+    "packages/workloads/src/shadowspill_workloads/full_model.py",
 )
 
 #: The environment beside the launcher's that the trainer runs in.

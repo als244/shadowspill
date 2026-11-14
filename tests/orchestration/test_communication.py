@@ -67,7 +67,7 @@ def test_empty_calibration_is_explicit():
 def test_recipe_shares_probes_but_profiles_every_train_and_eval_candidate(
     tmp_path, monkeypatch
 ):
-    from workloads.recipes.training import communicate as phase
+    from shadowspill.training.preparation import communicate as phase
 
     source = forward()
     options = {

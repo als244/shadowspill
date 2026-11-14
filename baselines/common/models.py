@@ -4,7 +4,8 @@ objective every engine shares and the useful work a step performs.
 A ``ModelRequest`` names a catalog entry, the implementation that builds
 it, the training mode and, for LoRA, the adapter options ``configure_lora``
 takes; it builds the model on ``meta`` so each engine materializes it where
-its sharding wants, and it supplies the objective of ``workloads.full_model``
+its sharding wants. It supplies the objective from
+``shadowspill_workloads.full_model``
 (each microbatch's summed loss over the rank's tokens per update), so every
 engine optimizes the same quantity.
 
@@ -28,7 +29,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from workloads.models import catalog
+from shadowspill_workloads.models import catalog
 
 from .geometry import Geometry
 
@@ -59,7 +60,7 @@ class ModelRequest:
             )
         entry.config(**dict(self.config))
         if self.lora:
-            from workloads.lora import configure_lora
+            from shadowspill_workloads.lora import configure_lora
 
             allowed = set(inspect.signature(configure_lora).parameters) - {"model"}
             unknown = set(self.lora) - allowed
@@ -74,14 +75,14 @@ class ModelRequest:
 
     def checkpoint(self, directory: str, **overrides: Any) -> Any:
         """The family's reader open on a local Hugging Face checkpoint
-        (``workloads.models.<family>.checkpoint``), whose ``config`` must be
+        (``shadowspill_workloads.models.<family>.checkpoint``), whose ``config`` must be
         this request's configuration apart from the rotary capacity."""
 
         import importlib
         from dataclasses import replace
 
         module = importlib.import_module(
-            f"workloads.models.{self.entry.family}.checkpoint"
+            f"shadowspill_workloads.models.{self.entry.family}.checkpoint"
         )
         readers = [
             value
@@ -106,7 +107,7 @@ class ModelRequest:
         """The ``FullModelSpec`` of this model at the rank's geometry: the
         objective normalizes by the rank's tokens per update."""
 
-        from workloads.full_model import spec
+        from shadowspill_workloads.full_model import spec
 
         return replace(
             spec(self.model, self.implementation, **dict(self.config)),
@@ -141,7 +142,7 @@ class ModelRequest:
 
         import functools
 
-        from workloads.full_model import full_model_objective
+        from shadowspill_workloads.full_model import full_model_objective
 
         return functools.partial(full_model_objective, self.spec(geometry))
 

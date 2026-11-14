@@ -7,8 +7,8 @@ import pytest
 
 from shadowspill import ProfiledProgram, ProfilingOptions
 from shadowspill.orchestration.launch.workers import Workers
+from shadowspill.training.preparation import profile, profile_reuse
 from tests.shadowspill.offline._example import profiles, program
-from workloads.recipes.training import profile, profile_reuse
 
 
 @pytest.fixture

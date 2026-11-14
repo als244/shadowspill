@@ -30,11 +30,11 @@ def write(model, output, *, config_overrides=None, seed=0):
     from transformers import AutoConfig, AutoModelForCausalLM
 
     from baselines.common.models import ModelRequest
-    from workloads.models import catalog
+    from shadowspill_workloads.models import catalog
 
     entry = catalog.entry(model)
     config = entry.config(**dict(config_overrides or {}))
-    family = import_module(f"workloads.models.{entry.family}.config")
+    family = import_module(f"shadowspill_workloads.models.{entry.family}.config")
     value = family.to_huggingface(config)
     fields = {key: item for key, item in value.items() if key != "model_type"}
     torch.manual_seed(seed)

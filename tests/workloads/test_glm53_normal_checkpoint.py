@@ -6,11 +6,11 @@ import torch
 pytest.importorskip("mlops")
 pytest.importorskip("safetensors.torch")
 
+from shadowspill_workloads.models.glm53.checkpoint import GLMCheckpoint, source_name
+from shadowspill_workloads.models.glm53.config import Config
+from shadowspill_workloads.models.glm53.implementations.mlops import Model
+from shadowspill_workloads.models.shared.glm.checkpoint import physical_state
 from tests.workloads.test_glm53_checkpoint import _materialized, _write
-from workloads.models.glm53.checkpoint import GLMCheckpoint, source_name
-from workloads.models.glm53.config import Config
-from workloads.models.glm53.implementations.mlops import Model
-from workloads.models.shared.glm.checkpoint import physical_state
 
 
 def test_normal_checkpoint_streams_all_layers_and_preserves_fp8_bytes(tmp_path):

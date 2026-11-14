@@ -6,7 +6,7 @@ models and objectives; profiling and planning are separate. The library does
 not import `workloads`, text data utilities, model catalogs or qualification
 policies.
 
-- [Example model catalog](../workloads/MODELS.md): architectures, dimensions,
+- [Example model catalog](../packages/workloads/src/shadowspill_workloads/MODELS.md): architectures, dimensions,
   precision, trainable parameters, and expert parallelism.
 - [Generic training API](../docs/python/api/training.md): initialization,
   custom loops, schedules, evaluation, logging and checkpoints.
@@ -14,14 +14,14 @@ policies.
   nested data and explicit microbatch weighting.
 - [Benchmark quickstart](../benchmarking/quickstart.md): search, execution,
   tracing and plots for a supplied experiment.
-- [Shared Python recipes](../workloads/recipes/README.md): `Model`, `LoRA` and
+- [Shared Python recipes](../packages/workloads/src/shadowspill_workloads/recipes/README.md): `Model`, `LoRA` and
   `train` with explicit microbatch/chunk/retention candidates for Qwen35, GLM and
   Qwen3 MoE. Includes short scripts and DP/EP preparation requirements.
 - [Qwen3.5 MoE LoRA](qwen35_lora.md): bounded HF initialization, independent
   phases, batch/ordering selection, held-out evaluation and frozen-base resume.
 
 This directory holds example configs and launchers for the optional
-`workloads.recipes.text` recipe. Text packing and its token-normalized objective
+`shadowspill_workloads.recipes.text` recipe. Text packing and its token-normalized objective
 are recipe behavior, and can be replaced without changing the trainer.
 
 ## Getting started
@@ -49,14 +49,14 @@ gradients and optimizer state sharded over them, each rank taking its share
 of every step's tokens; the ranks' records sit under `rank-xxxxx/` and the
 summed figures under `aggregate/`. `nodes` spreads the ranks over several
 machines of the same hardware; machines whose GPUs differ train together
-through the [heterogeneous section](../workloads/recipes/text/heterogeneous/README.md),
+through the [heterogeneous section](../packages/workloads/src/shadowspill_workloads/recipes/text/heterogeneous/README.md),
 each building for its own card and taking its own share of every step.
 
 ## Run a supplied text recipe
 
 The JSON-configured launchers use separate build, profile, plan and execution
 workers, and a communicate worker between profile and plan when a run has
-several ranks. See the [configuration reference](../workloads/recipes/text/experiment/README.md)
+several ranks. See the [configuration reference](../packages/workloads/src/shadowspill_workloads/recipes/text/experiment/README.md)
 for all fields and saved artifacts. Each phase can also be selected with
 `--phase build`, `--phase profile`, `--phase communicate` (several ranks),
 `--phase plan` or `--phase execute`.
@@ -82,7 +82,7 @@ request is recorded in the run directory. A model preset is optional user code.
 Data ingestion is also supplied as a recipe:
 
 ```bash
-python -m workloads.recipes.text.data.prepare --help
+python -m shadowspill_workloads.recipes.text.data.prepare --help
 ```
 
 `PackedTokens` reads the prepared token directory. The recipe packs documents,
@@ -140,15 +140,15 @@ once:
                "dtype": "bfloat16", "lora": {"rank": 16, "alpha": 32}}
 ```
 
-The entry stands for the model, `workloads.models.catalog:build_from_checkpoint`,
+The entry stands for the model, `shadowspill_workloads.models.catalog:build_from_checkpoint`,
 declared at the checkpoint's configuration, and the initializer,
-`workloads.recipes.text.initialization:from_checkpoint`, which streams the
+`shadowspill_workloads.recipes.text.initialization:from_checkpoint`, which streams the
 parameters in bounded chunks and generates the rotary tables and any LoRA
 factors as for a catalog model; the two explicit entries remain available.
 
 ## Instruction data and the transformers check
 
-`python -m workloads.recipes.text.data.prepare_chat` renders a chat dataset's
+`python -m shadowspill_workloads.recipes.text.data.prepare_chat` renders a chat dataset's
 conversations through the tokenizer's chat template and writes, beside the
 token files, a mask marking the assistant's tokens; a run on that directory
 trains only those, never the prompt. `python -m training.reference <run dir>`
@@ -247,7 +247,7 @@ outside the installed generic trainer.
 ## LoRA examples
 
 The trainer uses ordinary `requires_grad` and has no LoRA-specific execution
-mode. Apply [`workloads.lora.configure_lora`](../workloads/MODELS.md#trainable-parameters-and-lora)
+mode. Apply [`shadowspill_workloads.lora.configure_lora`](../packages/workloads/src/shadowspill_workloads/MODELS.md#trainable-parameters-and-lora)
 before building the Program. The catalog's `build_on_meta`, which the supplied
 configs name, accepts a `lora` configuration dictionary (for example
 `{"rank": 32, "alpha": 32, "head": "lora"}`)

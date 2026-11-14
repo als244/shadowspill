@@ -18,7 +18,7 @@ from shadowspill import Plan, Trainer  # noqa: E402
 forbid_preparation(
     "shadowspill.planning",
     "tests.shadowspill.training._replanned_model",
-    "workloads.models",
+    "shadowspill_workloads.models",
 )
 directory, gib, kind = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 provider = {

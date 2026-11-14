@@ -7,11 +7,11 @@ import hashlib
 import torch
 
 from benchmarking.stage_traces.api import TraceWorkload
-from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
-from workloads.models.glm53_flash.config import Config
-from workloads.models.glm53_flash.implementations.mlops import Model
-from workloads.models.shared.glm.checkpoint import physical_state
-from workloads.models.shared.glm.initialization import physical_state_roles
+from shadowspill_workloads.models.glm53_flash.checkpoint import GLMCheckpoint
+from shadowspill_workloads.models.glm53_flash.config import Config
+from shadowspill_workloads.models.glm53_flash.implementations.mlops import Model
+from shadowspill_workloads.models.shared.glm.checkpoint import physical_state
+from shadowspill_workloads.models.shared.glm.initialization import physical_state_roles
 
 
 def workload(
@@ -58,7 +58,10 @@ def workload(
             % 2**63
         )
         initializers[name] = {
-            "callable": "workloads.models.shared.glm.initialization:fill_random_tensor",
+            "callable": (
+                "shadowspill_workloads.models.shared.glm.initialization"
+                ":fill_random_tensor"
+            ),
             "kwargs": {
                 "role": roles[name],
                 "tensor_seed": tensor_seed,

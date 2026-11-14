@@ -137,7 +137,7 @@ class Base(common.Settings):
         validated against and its useful work counted from."""
 
         from baselines.common.models import ModelRequest
-        from workloads.models import catalog
+        from shadowspill_workloads.models import catalog
 
         implementations = catalog.entry(self.model).implementations
         implementation = (
@@ -188,11 +188,12 @@ class Base(common.Settings):
         if self.checkpoint is not None:
             path = Path(self.checkpoint) / "config.json"
             return {**modules, "huggingface_config": json.loads(path.read_text())}
-        family = import_module(f"workloads.models.{entry.family}.config")
+        family = import_module(f"shadowspill_workloads.models.{entry.family}.config")
         convert = getattr(family, "to_huggingface", None)
         if convert is None:
             raise Unsupported(
-                f"workloads.models.{entry.family}.config has no to_huggingface,"
+                f"shadowspill_workloads.models.{entry.family}.config"
+                " has no to_huggingface,"
                 " so Megatron cannot build its model"
             )
         return {

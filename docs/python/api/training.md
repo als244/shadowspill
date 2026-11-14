@@ -1,7 +1,7 @@
 # Trainer
 
 For end-to-end training of supported models, start with the
-[Python `train(model, config)` runner](../../../workloads/recipes/README.md).
+[Python `train(model, config)` runner](../../../packages/workloads/src/shadowspill_workloads/recipes/README.md).
 It handles preparation, search and execution. This reference covers the lower
 level used to run an already selected Plan or write a custom training loop.
 

@@ -18,8 +18,8 @@ from typing import Any
 import torch
 from torch import nn
 
-from workloads.models.shared.routed_lora import FACTORS
-from workloads.recipes.text.initialization import Initialize
+from shadowspill_workloads.models.shared.routed_lora import FACTORS
+from shadowspill_workloads.recipes.text.initialization import Initialize
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,6 @@
 # Advanced guides
 
-Start with [supported training](../../../workloads/recipes/README.md) or the
+Start with [supported training](../../../packages/workloads/src/shadowspill_workloads/recipes/README.md) or the
 [custom-model guide](../custom-models.md). These pages cover optional controls,
 detailed diagnostics and extensions. Exact signatures and defaults live in the
 [Python API reference](../README.md#api-reference).
@@ -9,7 +9,7 @@ detailed diagnostics and extensions. Exact signatures and defaults live in the
 
 | Task | Guide |
 | --- | --- |
-| Select microbatches, orderings, chunk sizes and retention candidates | [Training configuration](../../../workloads/recipes/configuration.md) |
+| Select microbatches, orderings, chunk sizes and retention candidates | [Training configuration](../../../packages/workloads/src/shadowspill_workloads/recipes/configuration.md) |
 | Separate checkpoint regions from execution chunks | [Partitioning example](../../examples/custom-partitioning.md), [build policies](../api/frontend.md) |
 | Replan saved profiles across budgets and search choices | [Reusable planning](../../examples/reusable-planning.md), [planning API](../api/planning.md) |
 | Benchmark a model factory or a saved Plan | [Quickstart](../../../benchmarking/quickstart.md), [Plan runner](../../../benchmarking/plan_runner/README.md) |

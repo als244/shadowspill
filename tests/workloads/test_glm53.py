@@ -8,14 +8,14 @@ import torch
 
 pytest.importorskip("mlops")
 
-from workloads.models.glm53.config import Config, from_huggingface
-from workloads.models.glm53.implementations.mlops import Model
-from workloads.models.glm53.implementations.mlops.attention import (
+from shadowspill_workloads.models.glm53.config import Config, from_huggingface
+from shadowspill_workloads.models.glm53.implementations.mlops import Model
+from shadowspill_workloads.models.glm53.implementations.mlops.attention import (
     SparseMLA,
     positions_for,
     rotate,
 )
-from workloads.recipes.text.glm.quickstart import glm53 as experiment
+from shadowspill_workloads.recipes.text.glm.quickstart import glm53 as experiment
 
 
 def test_normal_glm_architecture_and_lora_defaults_are_distinct_from_flash():

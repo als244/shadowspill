@@ -20,19 +20,22 @@ from qualification.numerical.tolerances import (
     LOSS_RELATIVE_TOLERANCE,
     meets_tensor_tolerance,
 )
+from shadowspill.training.preparation.cli import arguments
+from shadowspill.training.preparation.configuration import configure as configure_shared
+from shadowspill_workloads.recipes.text.data.tokenizer import tokenizer_identity
+from shadowspill_workloads.recipes.text.glm53_flash_lora.arguments import parser
+from shadowspill_workloads.recipes.text.glm53_flash_lora.inputs import Inputs
+from shadowspill_workloads.recipes.text.glm53_flash_lora.model import (
+    checkpoint,
+    describe,
+)
 from tests.workloads.test_glm53_checkpoint import _write
-from workloads.recipes.text.data.tokenizer import tokenizer_identity
-from workloads.recipes.text.glm53_flash_lora.arguments import parser
-from workloads.recipes.text.glm53_flash_lora.inputs import Inputs
-from workloads.recipes.text.glm53_flash_lora.model import checkpoint, describe
-from workloads.recipes.training.cli import arguments
-from workloads.recipes.training.configuration import configure as configure_shared
 
 
 def configure(argv):
     phase, values = arguments(parser(), argv)
     return configure_shared(
-        "workloads.recipes.text.glm53_flash_lora.adapter", values, phase
+        "shadowspill_workloads.recipes.text.glm53_flash_lora.adapter", values, phase
     )
 
 
@@ -221,7 +224,7 @@ def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-m",
-        "workloads.recipes.text.train_glm53_flash_lora",
+        "shadowspill_workloads.recipes.text.train_glm53_flash_lora",
     ]
     for phase in ("build", "profile", "plan", "execute"):
         arguments = cli if phase == "build" else ["--run-dir", str(root)]

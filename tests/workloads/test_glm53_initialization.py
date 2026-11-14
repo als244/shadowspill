@@ -8,15 +8,15 @@ pytest.importorskip("mlops")
 from mlops.kernels.block_fp8 import quantize_blocks
 
 from shadowspill.execution.tensors import TensorChunk
+from shadowspill_workloads.models.glm53_flash.checkpoint import GLMCheckpoint
+from shadowspill_workloads.models.shared.glm.checkpoint import physical_state
+from shadowspill_workloads.recipes.text.glm.initialize import Initialize
+from shadowspill_workloads.recipes.text.glm.quickstart import glm53_flash as experiment
 from tests.workloads.test_glm53_checkpoint import (
     _materialized,
     _write,
     safetensors_torch,
 )
-from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
-from workloads.models.shared.glm.checkpoint import physical_state
-from workloads.recipes.text.glm.initialize import Initialize
-from workloads.recipes.text.glm.quickstart import glm53_flash as experiment
 
 
 @pytest.fixture
@@ -122,7 +122,7 @@ def test_random_seed_is_reproducible(mixed_checkpoint):
 def test_shared_recipe_random_initializer_does_not_read_payloads(
     mixed_checkpoint, monkeypatch
 ):
-    from workloads.recipes.text.glm53_flash_lora.model import checkpoint
+    from shadowspill_workloads.recipes.text.glm53_flash_lora.model import checkpoint
 
     with GLMCheckpoint(mixed_checkpoint) as source:
         reader_type = type(source.weights.source)
@@ -196,7 +196,9 @@ def test_factory_is_meta_only_and_uses_the_shared_phase_contract(family, monkeyp
         pytest.fail("factory construction must not initialize CUDA")
 
     monkeypatch.setattr(torch.cuda, "_lazy_init", no_cuda)
-    spec = getattr(import_module("workloads.recipes.text.glm.quickstart"), family)(
+    spec = getattr(
+        import_module("shadowspill_workloads.recipes.text.glm.quickstart"), family
+    )(
         device="cuda:0",
         tiny=True,
         sequence_length=8,

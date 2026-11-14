@@ -19,9 +19,9 @@ import argparse
 import json
 from pathlib import Path
 
-from workloads.recipes.text.data.prepare import tokenize, write_meta
-from workloads.recipes.text.data.prepare_chat import tokenize_chat
-from workloads.recipes.text.run import load_config
+from shadowspill_workloads.recipes.text.data.prepare import tokenize, write_meta
+from shadowspill_workloads.recipes.text.data.prepare_chat import tokenize_chat
+from shadowspill_workloads.recipes.text.run import load_config
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -6,9 +6,9 @@ from triton.runtime.autotuner import Autotuner
 
 from tests.shadowspill.execution._cold import forbid_preparation, forbidden
 
-forbid_preparation("workloads.models.qwen35moe.implementations")
+forbid_preparation("shadowspill_workloads.models.qwen35moe.implementations")
 Autotuner._bench = forbidden
 
-from workloads.recipes.training.execute import run  # noqa: E402
+from shadowspill.training.preparation.execute import run  # noqa: E402
 
 run(sys.argv[1])

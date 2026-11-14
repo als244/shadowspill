@@ -43,9 +43,11 @@ def token_loss(model, tokens, targets, *, normalizer):
 def fixture(kind):
     torch.manual_seed(720)
     if kind == "llama":
-        from workloads.models.llama3.config import Config
-        from workloads.models.llama3.implementations.mlops import Model
-        from workloads.models.llama3.implementations.pytorch import Model as Reference
+        from shadowspill_workloads.models.llama3.config import Config
+        from shadowspill_workloads.models.llama3.implementations.mlops import Model
+        from shadowspill_workloads.models.llama3.implementations.pytorch import (
+            Model as Reference,
+        )
 
         config = Config(2, 128, 4, 2, 256, 128, max_seq_len=32)
         model, reference = Model(config), Reference(config)

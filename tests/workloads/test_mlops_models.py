@@ -3,18 +3,22 @@ from __future__ import annotations
 import pytest
 import torch
 
-from workloads.models.llama3.config import Config as Llama3Config
-from workloads.models.llama3.implementations.mlops import Model as MlopsLlama3
-from workloads.models.llama3.implementations.pytorch import Model as Llama3
-from workloads.models.olmoe.config import Config as OLMoEConfig
-from workloads.models.olmoe.implementations.mlops import Model as MlopsOLMoE
-from workloads.models.olmoe.implementations.pytorch import Model as OLMoE
-from workloads.models.qwen3.config import Config as Qwen3Config
-from workloads.models.qwen3.implementations.mlops import Model as MlopsQwen3
-from workloads.models.qwen3.implementations.pytorch import Model as Qwen3
-from workloads.models.qwen35.config import Config as Qwen35Config
-from workloads.models.qwen35.implementations.mlops import Model as MlopsQwen35
-from workloads.models.qwen35.implementations.pytorch import Model as Qwen35
+from shadowspill_workloads.models.llama3.config import Config as Llama3Config
+from shadowspill_workloads.models.llama3.implementations.mlops import (
+    Model as MlopsLlama3,
+)
+from shadowspill_workloads.models.llama3.implementations.pytorch import Model as Llama3
+from shadowspill_workloads.models.olmoe.config import Config as OLMoEConfig
+from shadowspill_workloads.models.olmoe.implementations.mlops import Model as MlopsOLMoE
+from shadowspill_workloads.models.olmoe.implementations.pytorch import Model as OLMoE
+from shadowspill_workloads.models.qwen3.config import Config as Qwen3Config
+from shadowspill_workloads.models.qwen3.implementations.mlops import Model as MlopsQwen3
+from shadowspill_workloads.models.qwen3.implementations.pytorch import Model as Qwen3
+from shadowspill_workloads.models.qwen35.config import Config as Qwen35Config
+from shadowspill_workloads.models.qwen35.implementations.mlops import (
+    Model as MlopsQwen35,
+)
+from shadowspill_workloads.models.qwen35.implementations.pytorch import Model as Qwen35
 
 
 def _assert_state_dict_compatible(

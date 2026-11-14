@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from workloads.recipes import Model, train
+from shadowspill_workloads.recipes import Model, train
 
 
 @pytest.mark.cuda

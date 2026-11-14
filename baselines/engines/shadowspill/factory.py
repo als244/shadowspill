@@ -6,7 +6,7 @@ from baselines.common.runner import Tokens
 from baselines.common.training import TrainingModel
 from benchmarking.quickstart.phases.common import read
 from shadowspill import Parallelism
-from workloads.models.shared.preparation import operator_preparations
+from shadowspill_workloads.models.shared.preparation import operator_preparations
 
 from .microbatches import split_microbatches
 from .precision import build_arguments, optimizer_arguments

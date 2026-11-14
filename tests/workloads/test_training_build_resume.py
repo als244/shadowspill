@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from shadowspill.training.preparation import build, build_reuse
+from shadowspill.training.preparation.contracts import BuildSetup
 from tests.shadowspill.offline._example import program
-from workloads.recipes.training import build, build_reuse
-from workloads.recipes.training.contracts import BuildSetup
 
 
 def group():

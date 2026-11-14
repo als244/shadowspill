@@ -40,7 +40,8 @@ class Block(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] == 'torch' or any(
             fullname == key or fullname.startswith(key + '.') for key in (
                 'shadowspill.build', 'shadowspill.execution', 'shadowspill.runtime',
-                'shadowspill.profiling.measure', 'shadowspill.store', 'workloads',
+                'shadowspill.profiling.measure', 'shadowspill.store',
+                'shadowspill_workloads',
             )
         ):
             raise AssertionError('CPU sweep imported ' + fullname)

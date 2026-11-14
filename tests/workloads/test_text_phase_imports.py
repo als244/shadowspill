@@ -9,7 +9,7 @@ import pytest
 
 @pytest.mark.parametrize(
     "package",
-    ["workloads.recipes.text.llama3", "workloads.recipes.training"],
+    ["shadowspill_workloads.recipes.text.llama3", "shadowspill.training.preparation"],
     ids=["llama3", "shared"],
 )
 @pytest.mark.parametrize("phase", ["plan", "execute"])
@@ -29,7 +29,7 @@ if phase == "execute":
 importlib.import_module(f"{package}.{phase}")
 if phase == "plan":
     assert "torch" not in sys.modules
-    assert "workloads.models" not in sys.modules
+    assert "shadowspill_workloads.models" not in sys.modules
 """,
             package,
             phase,

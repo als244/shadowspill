@@ -1,7 +1,7 @@
 # Build, profile, plan and execute
 
 For a supported model's complete training workflow, use the
-[shared Python `train` runner](../../workloads/recipes/README.md). This guide is
+[shared Python `train` runner](../../packages/workloads/src/shadowspill_workloads/recipes/README.md). This guide is
 for callers who need separate phases or their own model/data integration.
 
 ShadowSpill separates preparing a workload from running it. The phase functions
@@ -88,7 +88,7 @@ chooses **which graph runs** and **where saved values live**. Selecting a save
 variant does not force GPU residency.
 
 `sweep_programs` compares supplied ProfiledPrograms and budgets; it does not
-create or profile candidates. The source-tree [recipe runner](../../workloads/recipes/README.md)
+create or profile candidates. The source-tree [recipe runner](../../packages/workloads/src/shadowspill_workloads/recipes/README.md)
 and [quickstart](../../benchmarking/quickstart.md) can construct candidate
 microbatch sizes, chunk sizes and retention policies, then search their Plans.
 The generic phase APIs accept arbitrary supported models; recipes provide

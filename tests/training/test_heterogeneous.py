@@ -8,13 +8,19 @@ import pytest
 import torch
 
 from shadowspill.training import config
+from shadowspill_workloads.recipes.text.data.documents import IGNORE
+from shadowspill_workloads.recipes.text.data.packed import PackedTokens
+from shadowspill_workloads.recipes.text.data.units import held_out
+from shadowspill_workloads.recipes.text.experiment.execute import checkpoint_directory
+from shadowspill_workloads.recipes.text.heterogeneous.data import (
+    UnitUpdates,
+    unit_ranges,
+)
+from shadowspill_workloads.recipes.text.heterogeneous.run import (
+    check_section,
+    node_config,
+)
 from tests.training._synthetic import write_dataset
-from workloads.recipes.text.data.documents import IGNORE
-from workloads.recipes.text.data.packed import PackedTokens
-from workloads.recipes.text.data.units import held_out
-from workloads.recipes.text.experiment.execute import checkpoint_directory
-from workloads.recipes.text.heterogeneous.data import UnitUpdates, unit_ranges
-from workloads.recipes.text.heterogeneous.run import check_section, node_config
 
 MAX_SEQ_LEN = 512
 NODES = [
@@ -148,7 +154,7 @@ def test_the_section_is_checked_and_each_node_gets_its_share():
 
 
 def test_nodes_walk_the_union_of_their_slots():
-    from workloads.recipes.text.heterogeneous.communicate import (
+    from shadowspill_workloads.recipes.text.heterogeneous.communicate import (
         shared_slots,
         slots,
         stand_in,
@@ -175,7 +181,7 @@ def test_nodes_walk_the_union_of_their_slots():
 
 
 def test_the_aggregate_adds_the_ranks_evaluation_shares():
-    from workloads.recipes.text.experiment.logging import sum_shares
+    from shadowspill_workloads.recipes.text.experiment.logging import sum_shares
 
     evaluation = sum_shares(
         [

@@ -133,7 +133,7 @@ def worker(directory):
         options["nsys_steps"] = 0
     if request.get("nsys") is not None:
         request["nsys"] = NsysCapture(**request["nsys"])
-    from workloads.recipes.training.configuration import adapter
+    from shadowspill.training.preparation.configuration import adapter
 
     definition = adapter(options["recipe"])
     # The adapter's model-specific initializer is entered only inside run(),

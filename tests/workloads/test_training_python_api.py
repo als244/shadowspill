@@ -8,8 +8,8 @@ from fractions import Fraction
 import pytest
 
 from shadowspill import ProfilingOptions
-from workloads.recipes import LoRA, Model, train
-from workloads.recipes.training import api as runner
+from shadowspill.training.preparation import api as runner
+from shadowspill_workloads.recipes import LoRA, Model, train
 
 
 @pytest.mark.parametrize(
@@ -106,7 +106,7 @@ def test_checkpoint_model_and_method_select_frozen_candidates(tmp_path, monkeypa
     assert saved["tail_save_counts"] == [0, 1, 4]
     assert saved["profiling"]["conditioning_max_samples"] == 7
     assert saved["profiling"]["maximum_samples"] == 11
-    from workloads.recipes.training.search import search_options
+    from shadowspill.training.preparation.search import search_options
 
     planner = search_options(saved).resolved_algorithm
     assert planner.options.tail_save_counts == (0, 1, 4)
@@ -119,7 +119,7 @@ def test_checkpoint_model_and_method_select_frozen_candidates(tmp_path, monkeypa
     with pytest.raises(ValueError, match="fresh run"):
         train(model, {"run_dir": root, "chunk_sizes": [4]}, phase="build")
     train(model, {"run_dir": root, "execution_gib": 24}, phase="plan")
-    assert [call[0][0] for call in launches] == ["workloads.recipes.training"] * 3
+    assert [call[0][0] for call in launches] == ["shadowspill.training.preparation"] * 3
     assert (
         json.loads((root / "config.json").read_text())["candidates"]
         == saved["candidates"]
@@ -210,7 +210,7 @@ def test_benchmark_configuration_uses_random_host_values_without_checkpoints(
     assert options["initialization"] == "random"
     assert options["checkpoint_every"] == options["eval_every"] == 0
     assert options["frozen_state_id"] is None
-    from workloads.recipes.text.training import frozen_state_identity
+    from shadowspill_workloads.recipes.text.training import frozen_state_identity
 
     first = frozen_state_identity(options, {"model_type": model_type})
     assert first.startswith("random-v1:")
@@ -228,7 +228,7 @@ def test_benchmark_configuration_uses_random_host_values_without_checkpoints(
 def test_budget_runs_reuse_completed_measurements_without_mutating_source(
     tmp_path, monkeypatch
 ):
-    from workloads.recipes.training.candidates import program_paths
+    from shadowspill.training.preparation.candidates import program_paths
 
     monkeypatch.setattr(runner, "run_phases", lambda *a, **k: None)
     model = Model.from_config("qwen3moe-tiny")
@@ -301,12 +301,12 @@ def test_public_imports_and_examples_do_not_import_frameworks():
 import sys, runpy
 sys.modules['torch'] = None
 sys.modules['mlops'] = None
-from workloads.recipes import Model, LoRA, train
+from shadowspill_workloads.recipes import Model, LoRA, train
 for name in ('llama3', 'olmoe', 'qwen3', 'qwen35', 'qwen3moe', 'qwen35moe'):
     assert Model.from_config(f'{name}-tiny')
-runpy.run_module('workloads.recipes.text.example')
+runpy.run_module('shadowspill_workloads.recipes.text.example')
 for name in ('qwen35_lora', 'glm53_flash_lora', 'qwen3'):
-    runpy.run_module(f'workloads.recipes.text.{name}.example')
+    runpy.run_module(f'shadowspill_workloads.recipes.text.{name}.example')
 assert sys.modules['torch'] is None and sys.modules['mlops'] is None
 """,
         ],
@@ -322,7 +322,7 @@ def test_candidate_exhaustion_is_recorded_but_contract_errors_stop(tmp_path):
 
     import torch
 
-    from workloads.recipes.training.candidates import (
+    from shadowspill.training.preparation.candidates import (
         attempt_candidate,
         available,
         failures,

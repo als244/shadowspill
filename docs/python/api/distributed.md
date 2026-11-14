@@ -245,7 +245,7 @@ differs. A rank's contribution stays `loss_sum / global_normalizer` with the
 normalizer counting the whole update over every rank, so ranks taking different
 shares of a step are weighted correctly. Backend settings that belong to one
 node, such as the interface it reaches the network through, may differ between
-workers. The [heterogeneous text recipe](../../../workloads/recipes/text/heterogeneous/README.md)
+workers. The [heterogeneous text recipe](../../../packages/workloads/src/shadowspill_workloads/recipes/text/heterogeneous/README.md)
 runs this from one config.
 
 ## Fresh execution workers
@@ -362,7 +362,7 @@ provider, repeated-replica layout or arbitrary model-owned communication path.
 The baseline controller has also passed full-training and LoRA checks
 on two H100s.
 
-The [Qwen3 recipe](../../../workloads/recipes/text/qwen3/README.md#eight-h100-budget-sweep)
+The [Qwen3 recipe](../../../packages/workloads/src/shadowspill_workloads/recipes/text/qwen3/README.md#eight-h100-budget-sweep)
 has completed seven full-model updates on eight H100s at each of 20, 40 and
 77 GiB per GPU, with both sharded DP and EP8. Those throughput runs use real
 tokenized text, random host initialization and a 96 GiB spill limit per rank;

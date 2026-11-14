@@ -22,7 +22,7 @@ from baselines.common.reference import Access
 from baselines.common.training import TrainingModel, pinned_parameters
 from baselines.engines.deepspeed import settings as engine_settings
 from baselines.engines.deepspeed.settings import deepspeed_config
-from workloads.full_model import HEAD_LOSS_METRIC
+from shadowspill_workloads.full_model import HEAD_LOSS_METRIC
 
 
 class Checkpointed(nn.Module):

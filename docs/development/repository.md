@@ -11,7 +11,7 @@ shadowspill/
 │   └── pyproject.toml    engine metadata and dependencies
 ├── src/tools/             trace analysis/videos, naming checks and sanitizer support
 ├── tests/                 fast tests mirroring product/tool boundaries
-├── workloads/             model and data clients
+├── packages/workloads/    installable optional model catalog and recipes
 ├── training/              text-recipe configs and the prepare, train,
 │                          reference and compare commands
 ├── reference/             executable reference implementations
@@ -37,11 +37,17 @@ The throughput gate is the package beside it,
 runs: the manifest and its budgets, the readings taken off the runtime, the
 phases (calibrate, plan, warm, measure), and the verdict each gate reaches.
 
-`workloads/` supplies optional model and data recipes; qualification budgets and
+`shadowspill_workloads` supplies optional model and data recipes; qualification budgets and
 acceptance rules live under `qualification/`. Build accepts ordinary user models
 and call examples. `shadowspill.training.Trainer` drives an Executor from saved
 Plans and iterable inputs, without importing recipes. Recipe-specific optimizer
-defaults live beside the recipes, not in the installed training implementation.
+defaults live beside the recipes. Generic saved-phase preparation lives in
+`shadowspill.training.preparation`, and bounded initialization/copy helpers live
+in `shadowspill.checkpoint`. The catalog installs independently from
+`packages/workloads`; training dependencies are selected with its `training` extra.
+Saved recipe configurations record exact adapter module names. A renamed or
+changed adapter requires a fresh recipe directory; module identities are never
+silently rewritten when reusing artifacts.
 
 `shadowspill.integrations` contains optional, caller-selected library adapters.
 Operator libraries own their output-axis, reduction, mutation and layout facts;
@@ -160,6 +166,7 @@ packages/engine/src/shadowspill/
 │   └── timing.py          an instant recorded on a stream, and the time between two
 ├── training/              saved-Plan training loops, schedules and checkpoints
 │   ├── diagnostics/       no-update startup calls, state preservation and reports
+│   └── preparation/       model-independent saved recipe phases and reuse
 └── pytorch/
     ├── capture/           Export/AOT capture and semantic storage contracts
     │   ├── artifacts/     graph records, geometry, identity and output schemas

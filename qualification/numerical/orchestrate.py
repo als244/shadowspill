@@ -15,7 +15,7 @@ from typing import Literal
 
 from qualification.pipeline.process import python_command
 from qualification.precision import dtype_arguments
-from workloads.numerical import ModelImplementation
+from shadowspill_workloads.numerical import ModelImplementation
 
 from .kernel_selection import selection_path
 from .references import canonical_reference_path, reference_artifact_exists

@@ -5,8 +5,8 @@ import os
 import subprocess
 import sys
 
+from shadowspill_workloads.recipes.text.run import run_config
 from tests.training._text_recipe import _config, _records
-from workloads.recipes.text.run import run_config
 
 
 def test_reference_uses_shared_bounded_initializer_and_plan_schedule_names(tmp_path):
@@ -14,8 +14,8 @@ def test_reference_uses_shared_bounded_initializer_and_plan_schedule_names(tmp_p
 
     from shadowspill.artifacts.tensors import TensorChunk
     from shadowspill.training._model import initialize_model
+    from shadowspill_workloads.recipes.text.reference.initialization import initializer
     from tests.training._synthetic import TinyModel, fill_tiny_tensor
-    from workloads.recipes.text.reference.initialization import initializer
 
     options = {"initialize": "@tests.training._synthetic:fill_tiny_tensor"}
     with torch.device("meta"):
@@ -54,7 +54,7 @@ class Block(importlib.abc.MetaPathFinder):
             if fullname == name or fullname.startswith(name + '.'):
                 raise AssertionError('reference imported ' + fullname)
 sys.meta_path.insert(0, Block())
-from workloads.recipes.text.run import run_config
+from shadowspill_workloads.recipes.text.run import run_config
 result = run_config(sys.argv[1], ['steps=2', 'checkpoint_every=0', 'eval_every=0'])
 assert result.step == 2
 """

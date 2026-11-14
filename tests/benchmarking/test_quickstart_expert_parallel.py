@@ -6,7 +6,7 @@ import torch
 from shadowspill import Resource
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.build.parallelism import model_parallelism
-from workloads.recipes.text.expert_parallel import experiment
+from shadowspill_workloads.recipes.text.expert_parallel import experiment
 
 
 def factory(**kwargs):
@@ -103,7 +103,7 @@ def test_rank_local_data_and_shared_dense_initialization():
 
 
 def test_ep_objective_normalizes_global_tokens_once(monkeypatch):
-    from workloads.recipes.text.benchmark import factory as common
+    from shadowspill_workloads.recipes.text.benchmark import factory as common
 
     setup = factory()
     parameter = torch.tensor(2.0, requires_grad=True)

@@ -6,7 +6,7 @@ import pytest
 import torch
 
 pytest.importorskip("mlops")
-from workloads.models.glm53_flash.implementations.mlops.vision import (
+from shadowspill_workloads.models.glm53_flash.implementations.mlops.vision import (
     VisionConfig,
     VisionModel,
     prepare_geometry,
@@ -147,7 +147,7 @@ def test_image_input_pytree_survives_serialization():
 
 
 def test_rotary_initialization_matches_hf_at_checkpoint_head_width():
-    from workloads.models.glm53_flash.implementations.mlops.vision import (
+    from shadowspill_workloads.models.glm53_flash.implementations.mlops.vision import (
         rotary_embeddings,
         rotary_frequencies,
     )

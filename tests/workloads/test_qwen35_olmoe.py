@@ -2,19 +2,17 @@ from __future__ import annotations
 
 import torch
 
-from workloads.models.olmoe.config import PRESETS as OLMOE_PRESETS
-from workloads.models.olmoe.config import Config as OLMoEConfig
-from workloads.models.olmoe.implementations.pytorch import Model as OLMoE
-from workloads.models.qwen35.config import PRESETS as QWEN35_PRESETS
-from workloads.models.qwen35.config import Config as Qwen35Config
-from workloads.models.qwen35.implementations.pytorch import (
+from shadowspill_workloads.models.olmoe.config import PRESETS as OLMOE_PRESETS
+from shadowspill_workloads.models.olmoe.config import Config as OLMoEConfig
+from shadowspill_workloads.models.olmoe.implementations.pytorch import Model as OLMoE
+from shadowspill_workloads.models.qwen35.config import PRESETS as QWEN35_PRESETS
+from shadowspill_workloads.models.qwen35.config import Config as Qwen35Config
+from shadowspill_workloads.models.qwen35.implementations.pytorch import (
     Model as Qwen35,
 )
-from workloads.models.qwen35.implementations.pytorch.delta_rule.operation import (
-    _delta_rule,
-)
-from workloads.models.qwen35.implementations.pytorch.delta_rule.reference import (
-    _delta_rule_reference,
+from shadowspill_workloads.models.qwen35.implementations.pytorch.delta_rule import (
+    operation,
+    reference,
 )
 
 
@@ -71,8 +69,8 @@ def test_qwen_delta_rule_bounded_operation_matches_reference_vjp() -> None:
     bounded_inputs = tuple(
         value.detach().clone().requires_grad_() for value in reference_inputs
     )
-    expected = _delta_rule_reference(*reference_inputs)
-    actual = _delta_rule(*bounded_inputs)
+    expected = reference._delta_rule_reference(*reference_inputs)
+    actual = operation._delta_rule(*bounded_inputs)
     torch.testing.assert_close(actual, expected)
     tangent = torch.randn_like(expected)
     expected_gradients = torch.autograd.grad(expected, reference_inputs, tangent)
@@ -94,7 +92,7 @@ def test_qwen_delta_rule_passes_pytorch_operation_contract_checks() -> None:
         torch.sigmoid(torch.randn(1, 3, 4)).requires_grad_(),
         (-torch.rand(1, 3, 4)).requires_grad_(),
     )
-    torch.library.opcheck(_delta_rule, arguments)
+    torch.library.opcheck(operation._delta_rule, arguments)
 
 
 def test_tiny_olmoe_auxiliary_loss_reaches_router() -> None:

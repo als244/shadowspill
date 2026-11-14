@@ -12,14 +12,7 @@ dependencies = ["blake3>=1.0,<2", "matplotlib>=3.9", "numpy>=2.0"]
 
 [project.optional-dependencies]
 pytorch = ["torch>=2.13,<2.14", "nvidia-ml-py>=13.580,<14"]
-training = [
-  "huggingface-hub>=1.0",
-  "matplotlib>=3.9",
-  "numpy>=2.0",
-  "pyarrow>=18",
-  "transformers>=5.0",
-  "wandb>=0.20",
-]
+training = ["wandb>=0.20"]
 dev = [
   "cmake>=3.25",
   "hypothesis>=6.130",

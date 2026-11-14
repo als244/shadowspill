@@ -6,15 +6,15 @@ import sys
 
 import pytest
 
-from workloads.recipes.text.glm53_flash_lora import api
-from workloads.recipes.training import api as runner
-from workloads.recipes.training.candidates import build_candidates
+from shadowspill.training.preparation import api as runner
+from shadowspill.training.preparation.candidates import build_candidates
+from shadowspill_workloads.recipes.text.glm53_flash_lora import api
 
 
 def test_cli_and_python_defaults_have_the_same_saved_configuration(tmp_path):
-    from workloads.recipes.text.glm53_flash_lora.arguments import parser
-    from workloads.recipes.training.cli import arguments
-    from workloads.recipes.training.configuration import configure
+    from shadowspill.training.preparation.cli import arguments
+    from shadowspill.training.preparation.configuration import configure
+    from shadowspill_workloads.recipes.text.glm53_flash_lora.arguments import parser
 
     config = {
         "run_dir": tmp_path / "python",
@@ -22,7 +22,7 @@ def test_cli_and_python_defaults_have_the_same_saved_configuration(tmp_path):
         "data": tmp_path / "data",
         "frozen_state_id": "fixture",
     }
-    recipe = "workloads.recipes.text.glm53_flash_lora.adapter"
+    recipe = "shadowspill_workloads.recipes.text.glm53_flash_lora.adapter"
     _, python = configure(recipe, config, "build")
     phase, explicit = arguments(
         parser(),
@@ -77,7 +77,7 @@ def test_python_configuration_preserves_candidates_and_saved_phase_overrides(
     assert saved["checkpoint"] == str(config["checkpoint"])
     assert config["run_dir"] == root  # Caller-owned Path remains a Path.
     assert launches[-1] == (
-        ("workloads.recipes.training", root, "build"),
+        ("shadowspill.training.preparation", root, "build"),
         {"ranks": 8, "preparation_ranks": 1},
     )
 
@@ -157,11 +157,12 @@ def test_commented_example_imports_without_frameworks_or_starting_workers():
 import runpy, sys
 sys.modules['torch'] = None
 sys.modules['mlops'] = None
-from workloads.recipes.training import api as runner
+from shadowspill.training.preparation import api as runner
 def refuse(*args, **kwargs):
     raise AssertionError('import started a worker')
 runner.run_phases = refuse
-example = runpy.run_module('workloads.recipes.text.glm53_flash_lora.example')
+example = runpy.run_module(
+    'shadowspill_workloads.recipes.text.glm53_flash_lora.example')
 assert example['config']['chunk_sizes'][0] == 0
 assert example['config']['spill_gib'] == 96
 assert example['config']['microbatch_sizes'] == [1]

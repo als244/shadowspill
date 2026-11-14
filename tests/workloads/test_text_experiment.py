@@ -17,11 +17,18 @@ import torch
 from shadowspill import Trainer
 from shadowspill.pytorch.guards import capture_input_signature
 from shadowspill.training import config
+from shadowspill_workloads.recipes.text.experiment import results
+from shadowspill_workloads.recipes.text.experiment.execute import (
+    checkpoint_directory,
+    resume_path,
+)
+from shadowspill_workloads.recipes.text.experiment.inputs import (
+    call_inputs,
+    candidates,
+    source,
+)
+from shadowspill_workloads.recipes.text.run import run_config
 from tests.training._text_recipe import _config, _records
-from workloads.recipes.text.experiment import results
-from workloads.recipes.text.experiment.execute import checkpoint_directory, resume_path
-from workloads.recipes.text.experiment.inputs import call_inputs, candidates, source
-from workloads.recipes.text.run import run_config
 
 
 def test_packed_normalizer_is_a_runtime_tensor():
@@ -62,7 +69,7 @@ def test_build_examples_match_actual_packed_layouts(tmp_path):
 def test_budgets_left_out_come_from_the_profiled_hardware(tmp_path):
     import math
 
-    from workloads.recipes.text.experiment import plan, profile
+    from shadowspill_workloads.recipes.text.experiment import plan, profile
 
     meminfo = tmp_path / "meminfo"
     meminfo.write_text(
@@ -200,7 +207,8 @@ def test_text_phases_preserve_packing_metrics_and_exact_cold_resume(
             *(["-S"] if sys.flags.no_site else []),
             "-c",
             "import sys; sys.modules['torch'] = None; "
-            "from workloads.recipes.text.experiment.plan import run; run(sys.argv[1])",
+            "from shadowspill_workloads.recipes.text.experiment.plan import run; "
+            "run(sys.argv[1])",
             str(whole),
         ],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
@@ -212,7 +220,7 @@ def test_text_phases_preserve_packing_metrics_and_exact_cold_resume(
 
 
 def test_the_calibration_a_candidate_plans_with_follows_the_rank_count(tmp_path):
-    from workloads.recipes.text.experiment.plan import communication_path
+    from shadowspill_workloads.recipes.text.experiment.plan import communication_path
 
     assert communication_path(tmp_path, 1, "6144_tokens", "training") == (
         tmp_path / "communication.ssp"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from workloads.recipes.text.launch import (
+from shadowspill_workloads.recipes.text.launch import (
     check_nodes,
     first_rank,
     rank_directories,
@@ -34,7 +34,7 @@ def test_nodes_are_checked_and_ranks_counted():
         check_nodes([NODES[1], NODES[1]])
     with pytest.raises(ValueError, match="ssh, repo and python"):
         check_nodes([NODES[0], {"address": "x"}])
-    from workloads.recipes.text.experiment.group import ranks
+    from shadowspill_workloads.recipes.text.experiment.group import ranks
 
     assert ranks({"nodes": NODES}) == 3
     with pytest.raises(ValueError, match="added up"):

@@ -1,6 +1,6 @@
 # Training a custom model
 
-For a model already covered by the [training runner](../../workloads/recipes/README.md),
+For a model already covered by the [training runner](../../packages/workloads/src/shadowspill_workloads/recipes/README.md),
 use `train(model, config)`. For a different PyTorch model, start from the
 [language-model phase example](../examples/generic-training.md) and replace its
 model, objective, inputs and initialization. The same compiler, profiler, planner
@@ -82,6 +82,6 @@ axis and reduction declarations. Follow [operator integration](advanced/operator
 and, for saved external kernels, [operator preparation](advanced/operator-preparation.md).
 
 To contribute another supported recipe to the convenience API, implement the
-small [adapter hooks](../../workloads/recipes/configuration.md#adapter-boundary)
+small [adapter hooks](../../packages/workloads/src/shadowspill_workloads/recipes/configuration.md#adapter-boundary)
 and expose its model source in the workload package. Keep model knowledge there;
 the shared runner owns subprocesses, artifacts, search and execution.

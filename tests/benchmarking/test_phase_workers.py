@@ -99,7 +99,7 @@ def test_distributed_quickstart_profiles_locally_then_launches_mapped_workers(tm
         pytest.skip("requires two distinct CUDA devices")
     assert (
         run(
-            "workloads.recipes.regression.benchmark:experiment",
+            "shadowspill_workloads.recipes.regression.benchmark:experiment",
             factory_args={"rows": 8, "width": 8, "outputs": 8, "ranks": 2},
             rank_map={0: 1, 1: 0},
             search_budget_gib=[3],

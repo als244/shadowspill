@@ -13,14 +13,16 @@ def _config(tmp_path):
         ],
         "run_dir": str(tmp_path / "run"),
         "model": {
-            "@call": "workloads.models.construction:build_on_meta",
+            "@call": "shadowspill_workloads.models.construction:build_on_meta",
             "model": "@tests.training._synthetic:TinyModel",
         },
-        "objective": "@workloads.recipes.text.objectives:next_token_prediction",
+        "objective": (
+            "@shadowspill_workloads.recipes.text.objectives:next_token_prediction"
+        ),
         "optimizer": "@torch.optim:AdamW",
         "optimizer_args": {"lr": 0.01},
         "data": {
-            "@call": "workloads.recipes.text.data.packed:PackedTokens",
+            "@call": "shadowspill_workloads.recipes.text.data.packed:PackedTokens",
             "directory": str(write_dataset(tmp_path / "tokens")),
         },
         "steps": 6,

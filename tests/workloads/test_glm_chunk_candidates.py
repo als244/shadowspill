@@ -4,8 +4,13 @@ from functools import partial
 
 import pytest
 
-from workloads.recipes.text.phases.candidates import build_candidates, program_paths
-from workloads.recipes.text.phases.variants import build_variants as variants
+from shadowspill_workloads.recipes.text.phases.candidates import (
+    build_candidates,
+    program_paths,
+)
+from shadowspill_workloads.recipes.text.phases.variants import (
+    build_variants as variants,
+)
 
 build_variants = partial(variants, alignment=32)
 
@@ -57,7 +62,9 @@ def test_invalid_fused_geometry_is_refused_before_build(sizes, experts, sequence
 
 
 def test_glm_policy_keeps_both_variants_and_local_expert_state_bounded():
-    from workloads.recipes.text.glm53_flash_lora.policies import build_options
+    from shadowspill_workloads.recipes.text.glm53_flash_lora.policies import (
+        build_options,
+    )
 
     for name in ("cost-input", "cost-attention", "attention-input"):
         policy = build_options(

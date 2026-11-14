@@ -6,10 +6,10 @@ import pytest
 import torch
 from torch import nn
 
-from workloads.numerical import build_case
-from workloads.precision import TrainingDtypes
-from workloads.recipes.text.optimizer import build_optimizer
-from workloads.recipes.text.precision import Precision
+from shadowspill_workloads.numerical import build_case
+from shadowspill_workloads.precision import TrainingDtypes
+from shadowspill_workloads.recipes.text.optimizer import build_optimizer
+from shadowspill_workloads.recipes.text.precision import Precision
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])

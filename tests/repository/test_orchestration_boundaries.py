@@ -9,14 +9,20 @@ from pathlib import Path
 def test_repository_clients_have_one_way_dependencies():
     root = Path(__file__).resolve().parents[2]
     rules = {
-        "workloads": ("benchmarking", "qualification"),
-        "packages/engine/src/shadowspill": (
-            "orchestration",
-            "workloads",
+        "packages/workloads/src/shadowspill_workloads": (
             "benchmarking",
             "qualification",
         ),
-        "benchmarking/plan_runner/api.py": ("workloads", "benchmarking.quickstart"),
+        "packages/engine/src/shadowspill": (
+            "orchestration",
+            "shadowspill_workloads",
+            "benchmarking",
+            "qualification",
+        ),
+        "benchmarking/plan_runner/api.py": (
+            "shadowspill_workloads",
+            "benchmarking.quickstart",
+        ),
     }
     violations = []
     for name, forbidden in rules.items():
@@ -42,7 +48,7 @@ def test_shared_imports_are_cpu_only_and_recipes_need_no_benchmark_package():
     script = """
 import importlib, importlib.abc, sys
 class Block(importlib.abc.MetaPathFinder):
-    blocked = {'torch', 'workloads', 'benchmarking', 'qualification'}
+    blocked = {'torch', 'shadowspill_workloads', 'benchmarking', 'qualification'}
     def find_spec(self, fullname, path=None, target=None):
         if fullname.split('.')[0] in self.blocked:
             raise AssertionError('unexpected dependency: ' + fullname)
@@ -52,11 +58,16 @@ for module in ('launch.processes', 'launch.rank_device', 'launch.workers',
                'monitoring.lifecycle', 'candidates', 'communication',
                'capture.nsys', 'capture.nsys_worker'):
     importlib.import_module('shadowspill.orchestration.' + module)
+for module in ('api', 'configuration', 'phases', 'candidates', 'reuse',
+               'plan', 'search', 'execute'):
+    importlib.import_module('shadowspill.training.preparation.' + module)
 block.blocked = {'benchmarking', 'qualification'}
-for module in ('workloads.recipes', 'workloads.recipes.phases',
-               'workloads.recipes.training.build', 'workloads.recipes.training.profile',
-               'workloads.recipes.training.communicate',
-               'workloads.recipes.training.execute'):
+for module in ('shadowspill_workloads.recipes',
+               'shadowspill.training.preparation.phases',
+               'shadowspill.training.preparation.build',
+               'shadowspill.training.preparation.profile',
+               'shadowspill.training.preparation.communicate',
+               'shadowspill.training.preparation.execute'):
     importlib.import_module(module)
 """
     result = subprocess.run(

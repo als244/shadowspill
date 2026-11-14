@@ -12,7 +12,7 @@ forbid_preparation()
 
 from shadowspill import Plan, Trainer  # noqa: E402
 from shadowspill.training.schedules import WarmupCosine  # noqa: E402
-from workloads.recipes.text.data.calls import Inputs  # noqa: E402
+from shadowspill_workloads.recipes.text.data.calls import Inputs  # noqa: E402
 
 root, output = map(Path, sys.argv[1:3])
 options = json.loads((root / "config.json").read_text())

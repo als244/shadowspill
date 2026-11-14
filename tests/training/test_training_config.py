@@ -91,7 +91,7 @@ def test_a_config_on_mlops_asks_it_for_weight_gradients_at_its_grad_dtype(
     if raw.get("model", {}).get("implementation") != "mlops":
         pytest.skip("the model does not run on mlops kernels")
     assert all(
-        setting.get("@call") != "workloads.providers:select_implementation"
+        setting.get("@call") != "shadowspill_workloads.providers:select_implementation"
         for setting in settings
     )
     asked = [
@@ -107,22 +107,24 @@ def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
     import torch
 
     from shadowspill.training import reset_parameters
+    from shadowspill_workloads.recipes.text.reference.engine import EagerStep
     from tests.training._synthetic import write_dataset
-    from workloads.recipes.text.reference.engine import EagerStep
 
     path = _write(
         tmp_path,
         {
             "model": {
-                "@call": "workloads.models.construction:build_on_meta",
+                "@call": "shadowspill_workloads.models.construction:build_on_meta",
                 "model": "@tests.training._synthetic:TinyModel",
                 "dtype": "bfloat16",
             },
-            "objective": "@workloads.recipes.text.objectives:next_token_prediction",
+            "objective": (
+                "@shadowspill_workloads.recipes.text.objectives:next_token_prediction"
+            ),
             "optimizer": "@mlops.optim:AdamW",
             "optimizer_args": {},
             "data": {
-                "@call": "workloads.recipes.text.data.packed:PackedTokens",
+                "@call": "shadowspill_workloads.recipes.text.data.packed:PackedTokens",
                 "directory": str(write_dataset(tmp_path / "tokens")),
             },
         },

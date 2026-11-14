@@ -23,7 +23,7 @@ def test_saved_quickstart_produces_validated_nsys_capture(tmp_path):
         pytest.skip("requires Nsight Systems and device-metric permission")
     root, captures = tmp_path / "quickstart", tmp_path / "nsys"
     run(
-        "workloads.recipes.regression.benchmark:experiment",
+        "shadowspill_workloads.recipes.regression.benchmark:experiment",
         factory_args={"rows": 8, "width": 8, "outputs": 8},
         output_dir=root,
         search_budget_gib=[2],

@@ -7,7 +7,7 @@ API boundaries and the [Python reference](../python/README.md) for details.
 
 ## Start here
 
-1. [Commented training script](../../workloads/recipes/text/example.py) — the shared
+1. [Commented training script](../../packages/workloads/src/shadowspill_workloads/recipes/text/example.py) — the shared
    runner with a real language model and next-token loss.
 2. [Training and checkpointing](generic-training.md) — build/profile, CPU planning,
    bounded initialization and a Trainer loop in a fresh worker.
@@ -17,12 +17,12 @@ API boundaries and the [Python reference](../python/README.md) for details.
    profiles and produce simulated reports without a GPU.
 5. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
    boundaries through a small policy.
-6. [Commented GLM LoRA script](../../workloads/recipes/text/glm53_flash_lora/example.py)
+6. [Commented GLM LoRA script](../../packages/workloads/src/shadowspill_workloads/recipes/text/glm53_flash_lora/example.py)
    — real checkpoint/data, chunk and retention search, pinned-host budgets,
    evaluation and checkpointing through the normal saved phases.
 
-The [Python recipes](../../workloads/recipes/README.md) cover catalog full training
-and supported checkpoint LoRA. The [model catalog](../../workloads/MODELS.md)
+The [Python recipes](../../packages/workloads/src/shadowspill_workloads/recipes/README.md) cover catalog full training
+and supported checkpoint LoRA. The [model catalog](../../packages/workloads/src/shadowspill_workloads/MODELS.md)
 lists model dimensions, precisions and available implementations.
 
 ## Process and storage requirements

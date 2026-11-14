@@ -235,7 +235,7 @@ def main() -> int:
             if isinstance(ratio, float):
                 print(f"  REGRESSION RATIO: {ratio:.2%}")
             # Reported, never gated: how close this run is to the predecessor
-            # system ShadowSpill replaces. See workloads.full_model for the
+            # system ShadowSpill replaces. See shadowspill_workloads.full_model for the
             # provenance.
             ratio = result["predecessor_throughput_ratio"]
             if isinstance(ratio, float):

@@ -2,8 +2,10 @@
 
 from dataclasses import replace
 
-from workloads.models.shared.routed_lora import FACTORS
-from workloads.recipes.text.initialization import Initialize as CatalogInitialize
+from shadowspill_workloads.models.shared.routed_lora import FACTORS
+from shadowspill_workloads.recipes.text.initialization import (
+    Initialize as CatalogInitialize,
+)
 
 
 class Initialize:

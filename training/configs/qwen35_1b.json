@@ -7,13 +7,13 @@
     }
   ],
   "model": {
-    "@call": "workloads.models.catalog:build_on_meta",
+    "@call": "shadowspill_workloads.models.catalog:build_on_meta",
     "model": "qwen35-numerical",
     "implementation": "mlops",
     "dtype": "bfloat16",
     "max_seq_len": 2048
   },
-  "objective": "@workloads.recipes.text.objectives:next_token_prediction",
+  "objective": "@shadowspill_workloads.recipes.text.objectives:next_token_prediction",
   "optimizer": "@mlops.optim:AdamW",
   "optimizer_args": {
     "betas": [
@@ -24,7 +24,7 @@
     "lr": 0.0003
   },
   "data": {
-    "@call": "workloads.recipes.text.data.packed:PackedTokens",
+    "@call": "shadowspill_workloads.recipes.text.data.packed:PackedTokens",
     "directory": "training/data/tokens/qwen35"
   },
   "steps": 1000,
@@ -49,7 +49,7 @@
   "execution_gib": 8,
   "spill_gib": 32,
   "initialize": {
-    "@call": "workloads.recipes.text.initialization:from_catalog",
+    "@call": "shadowspill_workloads.recipes.text.initialization:from_catalog",
     "model": "qwen35-numerical",
     "max_seq_len": 2048,
     "seed": 0

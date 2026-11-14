@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from workloads.models.shared import decoder, norms
-from workloads.models.shared.qwen_moe import attention
+from shadowspill_workloads.models.shared import decoder, norms
+from shadowspill_workloads.models.shared.qwen_moe import attention
 
 EPSILON = 1e-6
 

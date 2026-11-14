@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import torch
 import torch.distributed as dist
 
-from workloads.models.shared.routed_lora import FACTORS
+from shadowspill_workloads.models.shared.routed_lora import FACTORS
 
 from .training import TrainingModel, canonical_name, retie, shared_parameter_groups
 

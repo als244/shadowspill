@@ -7,10 +7,10 @@ import pytest
 import torch
 
 from shadowspill.pytorch.guards import capture_training_signatures
-from workloads.models.llama3.config import Config
-from workloads.models.llama3.implementations.pytorch import Model
-from workloads.recipes.text.data.fixed import TokenUpdates
-from workloads.recipes.text.reference.engine import EagerStep
+from shadowspill_workloads.models.llama3.config import Config
+from shadowspill_workloads.models.llama3.implementations.pytorch import Model
+from shadowspill_workloads.recipes.text.data.fixed import TokenUpdates
+from shadowspill_workloads.recipes.text.reference.engine import EagerStep
 
 
 def corpus(root, *, tokens=2000, vocabulary=32):
@@ -68,7 +68,9 @@ def test_text_example_really_updates_llama_weights_and_matches_unsplit_gradient(
     engine = EagerStep(
         model,
         {
-            "objective": "@workloads.recipes.text.objectives:next_token_prediction",
+            "objective": (
+                "@shadowspill_workloads.recipes.text.objectives:next_token_prediction"
+            ),
             "optimizer": "@torch.optim:SGD",
             "optimizer_args": {"lr": 0.01},
             "device": "cpu",

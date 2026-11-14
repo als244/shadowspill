@@ -6,7 +6,7 @@ from dataclasses import replace
 from typing import cast
 
 from qualification.performance.cases import FullModelManifest, manifest_for
-from workloads.providers import ModelImplementation
+from shadowspill_workloads.providers import ModelImplementation
 
 
 def _manifest_with_overrides(

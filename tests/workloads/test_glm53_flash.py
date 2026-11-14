@@ -6,7 +6,7 @@ from torch import nn
 from torch.nn import functional as F
 
 pytest.importorskip("mlops")
-from workloads.models.shared.glm.common import without_autocast
+from shadowspill_workloads.models.shared.glm.common import without_autocast
 
 
 @pytest.mark.parametrize("enabled", (False, True))
@@ -33,7 +33,7 @@ def test_fp32_projection_preserves_precision_and_restores_autocast(enabled):
 def test_unimplemented_checkpoint_compute_fails_before_reading_files(
     tmp_path, precision
 ):
-    from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
+    from shadowspill_workloads.models.glm53_flash.checkpoint import GLMCheckpoint
 
     with pytest.raises(ValueError, match="BF16 GEMMs only"):
         GLMCheckpoint(tmp_path / "not-downloaded", gemm_precision=precision)
@@ -41,8 +41,11 @@ def test_unimplemented_checkpoint_compute_fails_before_reading_files(
 
 @pytest.mark.parametrize("head", (False, True))
 def test_multimodal_lora_freezes_base_and_selects_only_projection_factors(head):
-    from workloads.models.glm53_flash.config import Config
-    from workloads.models.glm53_flash.implementations.mlops import Model, VisionConfig
+    from shadowspill_workloads.models.glm53_flash.config import Config
+    from shadowspill_workloads.models.glm53_flash.implementations.mlops import (
+        Model,
+        VisionConfig,
+    )
 
     config = Config.tiny(hidden_size=128, lora_rank=8, lora_alpha=8, lora_head=head)
     vision = VisionConfig(
@@ -93,9 +96,11 @@ def test_multimodal_lora_freezes_base_and_selects_only_projection_factors(head):
 
 @pytest.mark.parametrize("precision", ["fp32", "activation"])
 def test_flash_decoder_uses_mhc_semantic_interfaces(monkeypatch, precision):
-    from workloads.models.glm53_flash.config import Config
-    from workloads.models.glm53_flash.implementations.mlops import model as model_module
-    from workloads.models.shared.glm import common
+    from shadowspill_workloads.models.glm53_flash.config import Config
+    from shadowspill_workloads.models.glm53_flash.implementations.mlops import (
+        model as model_module,
+    )
+    from shadowspill_workloads.models.shared.glm import common
 
     config = Config.tiny(hc_coefficient_precision=precision)
     layer = model_module.DecoderLayer(config, 0, "cpu")

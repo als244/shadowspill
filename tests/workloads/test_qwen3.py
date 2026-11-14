@@ -9,8 +9,8 @@ from importlib import import_module
 import pytest
 import torch
 
-from workloads.models.qwen3.config import PRESETS, Config, from_huggingface
-from workloads.models.qwen3.implementations.pytorch import Model as Qwen3
+from shadowspill_workloads.models.qwen3.config import PRESETS, Config, from_huggingface
+from shadowspill_workloads.models.qwen3.implementations.pytorch import Model as Qwen3
 
 #: The fields of Qwen3-1.7B's ``config.json`` the reader reads or checks.
 QWEN3_1_7B = {
@@ -113,7 +113,7 @@ def test_logits_and_every_gradient_match_transformers(implementation, tied):
     config = Config(**{**_fields(TINY), "tied_embeddings": tied})
     reference = _transformers_model(config)
     model = import_module(
-        f"workloads.models.qwen3.implementations.{implementation}"
+        f"shadowspill_workloads.models.qwen3.implementations.{implementation}"
     ).Model(config)
     checks = _copy_reference(model, reference)
     assert len(checks) == len(list(model.parameters()))

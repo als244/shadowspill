@@ -4,7 +4,7 @@ Start with [installation](development/repository.md#setup), then choose a path.
 
 | I want to… | Start here |
 | --- | --- |
-| Train a supported model end to end | [Python training](../workloads/recipes/README.md): model, data, budgets, search and resume |
+| Train a supported model end to end | [Python training](../packages/workloads/src/shadowspill_workloads/recipes/README.md): model, data, budgets, search and resume |
 | Use a custom model or call phases directly | [Custom models](python/custom-models.md), [phase guide](python/phases.md), [complete example](examples/generic-training.md) |
 | Tune, diagnose or extend the system | [Advanced guides](python/advanced/README.md): chunking, retention, artifacts, traces and operators |
 

@@ -10,8 +10,8 @@ import torch
 from safetensors.torch import save_file
 
 from shadowspill.artifacts.tensors import TensorChunk
-from workloads.models import catalog
-from workloads.models.shared.checkpoint import copy_into
+from shadowspill.checkpoint.tensor_copy import copy_into
+from shadowspill_workloads.models import catalog
 
 READERS = sorted(catalog.READERS)
 reader = catalog.reader
@@ -276,7 +276,7 @@ def test_a_checkpoint_initializes_a_run_chunk_by_chunk(tmp_path, family):
     """A fine-tune's tensors come from the checkpoint in bounded chunks; the
     rotary tables and LoRA factors it does not hold are generated as the
     catalog generates them, the same whatever the chunking."""
-    from workloads.recipes.text.initialization import from_checkpoint
+    from shadowspill_workloads.recipes.text.initialization import from_checkpoint
 
     name = f"{family}-tiny"
     changes = PUBLISHED.get(family, {})
@@ -335,8 +335,10 @@ def test_qwen_lora_initializer_loads_base_and_initializes_only_adapters_and_buff
     tmp_path,
     monkeypatch,
 ):
-    from workloads.lora import configure_lora
-    from workloads.models.shared.checkpoint import reader as checkpoint_module
+    from shadowspill_workloads.lora import configure_lora
+    from shadowspill_workloads.models.shared.checkpoint import (
+        reader as checkpoint_module,
+    )
 
     opened = []
     original = checkpoint_module.SafeTensors

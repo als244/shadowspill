@@ -17,8 +17,8 @@ from typing import Any, Literal
 from qualification.numerical.cases import build_case
 from qualification.precision import dtype_overrides
 from shadowspill.memory import SpillPool
-from workloads.numerical import ModelImplementation, NumericalCase
-from workloads.precision import TrainingDtypes
+from shadowspill_workloads.numerical import ModelImplementation, NumericalCase
+from shadowspill_workloads.precision import TrainingDtypes
 
 #: The reference arm: the same step, fully compiled, without ShadowSpill.
 REFERENCE_EXECUTION = "torch.compile.inductor.fullgraph"

@@ -10,13 +10,15 @@ import pytest
 import torch
 from mlops.dispatch import use_implementations
 
-from workloads.lora import configure_lora
-from workloads.models.shared.routed_lora import expert_lora as reference_expert_lora
+from shadowspill_workloads.lora import configure_lora
+from shadowspill_workloads.models.shared.routed_lora import (
+    expert_lora as reference_expert_lora,
+)
 
 #: Where the mlops MoE modules take their routed-expert LoRA kernel from.
 ROUTED_KERNELS = (
-    "workloads.models.olmoe.implementations.mlops.expert_lora",
-    "workloads.models.shared.qwen_moe.experts.expert_lora",
+    "shadowspill_workloads.models.olmoe.implementations.mlops.expert_lora",
+    "shadowspill_workloads.models.shared.qwen_moe.experts.expert_lora",
 )
 
 
@@ -39,9 +41,9 @@ MODELS += [("mlops", family) for family in ("qwen3moe", "qwen35moe")]
 
 def family_classes(implementation, family):
     """The family's ``Config`` and the implementation's ``Model``."""
-    config = import_module(f"workloads.models.{family}.config").Config
+    config = import_module(f"shadowspill_workloads.models.{family}.config").Config
     model = import_module(
-        f"workloads.models.{family}.implementations.{implementation}"
+        f"shadowspill_workloads.models.{family}.implementations.{implementation}"
     ).Model
     return config, model
 
@@ -173,7 +175,7 @@ def test_whole_model_aot_capture(implementation, family):
 
 
 def test_meta_initialization_tied_head_and_full_parameter_override():
-    from workloads.models.construction import initialize
+    from shadowspill_workloads.models.construction import initialize
 
     config_type, model_type = family_classes("mlops", "qwen35")
     config = replace(
@@ -210,7 +212,7 @@ def test_shared_expert_lora_is_explicit():
 @pytest.mark.parametrize("implementation,family", MODELS)
 def test_text_recipe_materializes_mixed_precision_factors(implementation, family):
     from shadowspill.training._model import initialize_model
-    from workloads.models.construction import build_on_meta, initialize
+    from shadowspill_workloads.models.construction import build_on_meta, initialize
 
     original_dtype = torch.get_default_dtype()
     model = build_on_meta(

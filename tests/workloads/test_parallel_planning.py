@@ -9,12 +9,12 @@ import pytest
 from shadowspill import Plan, TaskProfile, apply_profiles
 from shadowspill.artifacts import TaskDefinition
 from shadowspill.errors import PlanInfeasibleError
+from shadowspill.training.preparation import api
+from shadowspill.training.preparation.phases import run_phases
+from shadowspill.training.preparation.plan import run
+from shadowspill_workloads.recipes import LoRA, Model, train
 from tests.benchmarking._profiled import measured
 from tests.shadowspill.offline._example import communication, profiled
-from workloads.recipes import LoRA, Model, train
-from workloads.recipes.phases import run_phases
-from workloads.recipes.training import api
-from workloads.recipes.training.plan import run
 
 
 def _prepare(root, *, workers, evaluation=False):
@@ -139,7 +139,7 @@ def test_spawned_program_workers_preserve_all_cases_and_minimum_selection(tmp_pa
         if workers == 1:
             run(root)
         else:
-            run_phases("workloads.recipes.training", root, "plan")
+            run_phases("shadowspill.training.preparation", root, "plan")
 
     def read(root, name):
         return json.loads((root / name).read_text())

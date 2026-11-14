@@ -6,8 +6,8 @@ from typing import Any
 import torch
 
 from shadowspill import build_step
-from workloads.models.shared.preparation import operator_preparations
-from workloads.models.shared.training import LEARNING_RATE
+from shadowspill_workloads.models.shared.preparation import operator_preparations
+from shadowspill_workloads.models.shared.training import LEARNING_RATE
 
 
 def build_case(

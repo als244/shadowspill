@@ -12,16 +12,16 @@ import pytest
 import torch
 
 from shadowspill.execution.tensors import TensorChunk
-from workloads.models.qwen3moe.config import PRESETS
-from workloads.models.shared.decoder import RotaryEmbedding
-from workloads.recipes.text.data.calls import Inputs
-from workloads.recipes.text.initialization import Initialize
-from workloads.recipes.text.qwen3.common import batch_sizes
+from shadowspill_workloads.models.qwen3moe.config import PRESETS
+from shadowspill_workloads.models.shared.decoder import RotaryEmbedding
+from shadowspill_workloads.recipes.text.data.calls import Inputs
+from shadowspill_workloads.recipes.text.initialization import Initialize
+from shadowspill_workloads.recipes.text.qwen3.common import batch_sizes
 
 
 def test_replanning_preserves_prior_profile_headroom(tmp_path, monkeypatch):
-    from workloads.recipes.text import train_qwen3_distributed as recipe
-    from workloads.recipes.training import api as runner
+    from shadowspill.training.preparation import api as runner
+    from shadowspill_workloads.recipes.text import train_qwen3_distributed as recipe
 
     calls = []
     monkeypatch.setattr(runner, "run_phases", lambda *a, **k: calls.append((a, k)))
@@ -113,7 +113,7 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-m",
-        "workloads.recipes.text.train_qwen3_distributed",
+        "shadowspill_workloads.recipes.text.train_qwen3_distributed",
     ]
     command = [
         *entrypoint,
@@ -209,7 +209,7 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
             *(["-S"] if sys.flags.no_site else []),
             "-c",
             "import sys; sys.modules['torch'] = None; "
-            "from workloads.recipes.training.plan import run; run(sys.argv[1])",
+            "from shadowspill.training.preparation.plan import run; run(sys.argv[1])",
             str(root),
         ],
         env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},

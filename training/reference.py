@@ -25,7 +25,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from workloads.recipes.text.data.documents import IGNORE, TokenDocuments
+from shadowspill_workloads.recipes.text.data.documents import IGNORE, TokenDocuments
 
 
 def load_model(directory: str, device: str, dtype: torch.dtype) -> Any:

@@ -35,7 +35,7 @@ def regression_comparison(
     *,
     device_name: str,
 ) -> RegressionComparison:
-    """Check the scope of the RTX 5090 measurements in ``workloads.full_model``.
+    """Check the scope of the catalog's full-model RTX 5090 measurements.
 
     The original measurements used 16/112 GiB pools, BF16 weights, gradients
     and moments, and no masters. Neither a new default nor a CLI override

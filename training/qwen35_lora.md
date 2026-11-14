@@ -1,12 +1,12 @@
 # Qwen3.5 MoE LoRA through saved phases
 
-The [Python recipe](../workloads/recipes/text/qwen35_lora/example.py) defaults to 32K-token
+The [Python recipe](../packages/workloads/src/shadowspill_workloads/recipes/text/qwen35_lora/example.py) defaults to 32K-token
 sequences, eight sequences per update, rank/alpha 32, BF16 compute weights and
 FP32 adapter masters, gradients and Adam moments. It loads a local Hugging Face
 base and uses prepared `train.bin`, `val.bin` and `meta.json` token files.
 
 ```python
-from workloads.recipes import LoRA, Model, train
+from shadowspill_workloads.recipes import LoRA, Model, train
 
 model = Model.from_checkpoint("/checkpoints/Qwen3.5-35B-A3B", lora=LoRA())
 train(model, {
@@ -20,7 +20,7 @@ train(model, {
 Each phase runs in a fresh process. Build constructs one training Program and
 one evaluation Program for every explicitly requested microbatch size, crossed
 with any chunk and retention candidates. Each size must divide the sequence
-count. See [search controls](../workloads/recipes/configuration.md#search-and-saved-phases).
+count. See [search controls](../packages/workloads/src/shadowspill_workloads/recipes/configuration.md#search-and-saved-phases).
 Profiling uses
 the ordinary PyTorch allocator. CPU planning compares batch sizes and depth /
 breadth orderings, including joint memory admission for training and evaluation.

@@ -11,7 +11,7 @@ from shadowspill.training.observations import (
     parameter_norms,
     parameter_scalars,
 )
-from workloads.recipes.text.olmoe_metrics import reduce_metrics
+from shadowspill_workloads.recipes.text.olmoe_metrics import reduce_metrics
 
 
 def _microbatch(tokens, ce, aux, counts):

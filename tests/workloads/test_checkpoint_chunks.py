@@ -7,19 +7,19 @@ import torch
 from mlops.sequential_moe.precision.safetensors import SafeTensors
 from safetensors.torch import save_file
 
-from tests.workloads.test_checkpoints import (
-    huggingface_state,
-    materialized,
-    reader,
-)
-from tests.workloads.test_checkpoints import metadata as huggingface_metadata
-from workloads.models.shared.checkpoint import (
+from shadowspill_workloads.models.shared.checkpoint import (
     bank,
     concatenated,
     deinterleaved,
     permuted,
     tensor,
 )
+from tests.workloads.test_checkpoints import (
+    huggingface_state,
+    materialized,
+    reader,
+)
+from tests.workloads.test_checkpoints import metadata as huggingface_metadata
 
 
 def disallow_real_assembly(monkeypatch):

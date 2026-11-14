@@ -6,11 +6,11 @@ from itertools import pairwise
 import pytest
 import torch
 
+from shadowspill_workloads.models.shared.glm.checkpoint import physical_state
 from tests.workloads.test_glm53_checkpoint import _materialized, _write
 from tests.workloads.test_glm53_initialization import (
     mixed_checkpoint as mixed_checkpoint,
 )
-from workloads.models.shared.glm.checkpoint import physical_state
 
 
 @pytest.mark.parametrize("family", ["glm53", "glm53_flash"])
@@ -18,8 +18,8 @@ from workloads.models.shared.glm.checkpoint import physical_state
 def test_chunk_loading_matches_whole_import_without_assembling_banks(
     tmp_path, monkeypatch, family, fp8
 ):
-    module = import_module(f"workloads.models.{family}.checkpoint")
-    config = import_module(f"workloads.models.{family}.config").Config.tiny(
+    module = import_module(f"shadowspill_workloads.models.{family}.checkpoint")
+    config = import_module(f"shadowspill_workloads.models.{family}.config").Config.tiny(
         hidden_size=128
     )
     _write(
@@ -54,7 +54,7 @@ def test_chunk_loading_matches_whole_import_without_assembling_banks(
 
 
 def test_copy_chunk_reads_only_the_requested_expert(tmp_path, monkeypatch):
-    from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
+    from shadowspill_workloads.models.glm53_flash.checkpoint import GLMCheckpoint
 
     _write(tmp_path, fp8_experts=True)
     with GLMCheckpoint(tmp_path) as reader:
@@ -82,7 +82,7 @@ def test_copy_chunk_reads_only_the_requested_expert(tmp_path, monkeypatch):
 
 
 def test_mixed_dense_fp8_and_bf16_checkpoint_chunks(mixed_checkpoint):
-    from workloads.models.glm53_flash.checkpoint import GLMCheckpoint
+    from shadowspill_workloads.models.glm53_flash.checkpoint import GLMCheckpoint
 
     with GLMCheckpoint(mixed_checkpoint) as reader:
         model = _materialized(

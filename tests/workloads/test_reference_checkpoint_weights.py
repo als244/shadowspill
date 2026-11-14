@@ -8,8 +8,8 @@ from torch import nn
 
 from shadowspill.training import checkpoints
 from shadowspill.training.observations import MetricSummary
-from workloads.recipes.text.reference import checkpoint
-from workloads.recipes.text.reference.engine import EagerStep
+from shadowspill_workloads.recipes.text.reference import checkpoint
+from shadowspill_workloads.recipes.text.reference.engine import EagerStep
 
 
 class Tied(nn.Module):

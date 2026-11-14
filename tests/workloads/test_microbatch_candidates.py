@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from workloads.recipes.text.phases.candidates import batch_sizes
+from shadowspill_workloads.recipes.text.phases.candidates import batch_sizes
 
 
 def test_explicit_sizes_keep_requested_order_without_building_duplicates():
@@ -31,9 +31,9 @@ def test_step_size_must_be_a_positive_integer(count):
 def test_qwen_cli_preserves_exact_candidates_and_rejects_shape_changes(
     tmp_path, monkeypatch, name
 ):
-    recipe = importlib.import_module(f"workloads.recipes.text.{name}")
+    recipe = importlib.import_module(f"shadowspill_workloads.recipes.text.{name}")
     launches = []
-    launcher = importlib.import_module("workloads.recipes.training.api")
+    launcher = importlib.import_module("shadowspill.training.preparation.api")
     monkeypatch.setattr(launcher, "run_phases", lambda *a, **k: launches.append((a, k)))
     root = tmp_path / "run"
     build = [

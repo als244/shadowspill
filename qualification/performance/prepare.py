@@ -25,7 +25,7 @@ def manifest_for_run(arguments: Namespace) -> FullModelManifest:
 
 
 def read_request(directory: Path) -> tuple[Namespace, FullModelManifest]:
-    from workloads.models import catalog
+    from shadowspill_workloads.models import catalog
 
     arguments = Namespace(**json.loads((directory / "arguments.json").read_text()))
     arguments.output = Path(arguments.output)
@@ -40,7 +40,7 @@ def read_request(directory: Path) -> tuple[Namespace, FullModelManifest]:
 
 def run(directory: Path) -> None:
     from qualification.pipeline.build import build_case as build_program
-    from workloads.full_model import build_case
+    from shadowspill_workloads.full_model import build_case
 
     arguments, manifest = read_request(directory)
     case = build_case(manifest, seed=arguments.seed)

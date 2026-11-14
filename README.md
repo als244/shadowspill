@@ -9,7 +9,7 @@ the device, spill to host or external storage, and recompute during backward.
 
 | Goal | Guide |
 | --- | --- |
-| Train a supported model | [Python training](workloads/recipes/README.md): model, data, budgets and search options |
+| Train a supported model | [Python training](packages/workloads/src/shadowspill_workloads/recipes/README.md): model, data, budgets and search options |
 | Bring a custom model or control each phase | [Custom models](docs/python/custom-models.md), [build/profile/plan/execute](docs/python/phases.md), [complete example](docs/examples/generic-training.md) |
 | Tune or extend the system | [Advanced guides](docs/python/advanced/README.md): partitioning, chunking, diagnostics and operator integration |
 
@@ -18,7 +18,7 @@ the device, spill to host or external storage, and recompute during backward.
 Use the shared Python runner for build, profiling, search and training:
 
 ```python
-from workloads.recipes import Model, train
+from shadowspill_workloads.recipes import Model, train
 
 model = Model.from_config("llama3-1b")  # Full training from random weights.
 train(model, {
@@ -35,6 +35,6 @@ train(model, {
 
 Run once from a configured checkout, without an outer `torchrun`. The runner
 measures candidates, selects the fastest predicted Plan that fits, and saves
-artifacts under `run_dir`. See the [training guide](workloads/recipes/README.md)
+artifacts under `run_dir`. See the [training guide](packages/workloads/src/shadowspill_workloads/recipes/README.md)
 for supported models, data preparation, LoRA and distributed settings, or edit
-the [commented training script](workloads/recipes/text/example.py).
+the [commented training script](packages/workloads/src/shadowspill_workloads/recipes/text/example.py).
