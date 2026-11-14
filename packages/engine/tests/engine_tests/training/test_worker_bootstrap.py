@@ -223,6 +223,7 @@ from shadowspill.training.worker.bootstrap import serve
 from shadowspill.training.worker.node import WorkerNode
 from shadowspill.training.session.controller import RunController
 from shadowspill.training.inputs.frame_reader import FrameReader
+from shadowspill.training.result_tensors import write_tensor_region
 """,
         ],
         capture_output=True,
