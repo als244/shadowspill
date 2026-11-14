@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from engine_tests.execution._spill import MemorySpill
-from shadowspill.execution.tensor_spans import spans
+from shadowspill.artifacts.tensor_spans import spans
 
 
 def test_storage_uses_resolved_plan_shard_sizes():

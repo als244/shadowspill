@@ -6,9 +6,10 @@ from typing import Any
 
 import torch
 
+from shadowspill.artifacts.tensor_spans import spans
+
 from .buffer_controls import BufferControls
 from .storage import Storage, dtype_of
-from .tensor_spans import spans
 from .tensors import TensorChunk
 
 
