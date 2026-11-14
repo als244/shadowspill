@@ -47,6 +47,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path):
                 options={"partition": "whole"},
             )
             assert model.training
+            assert programs[name].bindings["operation_mode"] == key.mode
             saved = programs[name].bindings["training_operation"]
             assert saved["objective"]["source"] == objective.source.to_dict()
             assert saved["contributes_loss"]

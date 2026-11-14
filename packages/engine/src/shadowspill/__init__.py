@@ -32,6 +32,7 @@ _PUBLIC = {
     "measure_communication": "communication.measure",
     "plan_program": "planning.plan",
     "optimizer_program": "planning.training.operations",
+    "backward_program": "planning.training.backward",
     "instantiate_examples": "planning.training.examples",
     "sweep_programs": "planning.sweep",
     "write_report": "reporting",

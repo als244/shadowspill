@@ -35,6 +35,8 @@ plans = {
         "count_repeat",
         "count_mixed",
         "count_backward",
+        "derived_backward",
+        "derived_count",
     )
 }
 primary = plans.pop("evaluation")
@@ -242,4 +244,35 @@ with Executor(primary, plans=plans) as executor:
     from engine_tests.execution._count_shared import qualify_count_family
 
     qualify_count_family(executor, plans, oracle, snapshot, fill)
+    # Backward and optimizer paths derived from one complete-step capture must
+    # match the three-example complete update, including moments and counters.
+    executor.initialize(fill, chunk_bytes=32)
+    for name, count, accumulate in (
+        ("derived_backward", 1, False),
+        ("derived_count", 2, True),
+    ):
+        executor.run(
+            plan=name,
+            args=[oracle["examples"][0]] * count,
+            accumulate_gradients=accumulate,
+        ).result()
+        actual = snapshot(executor)
+        for parameter, gradient in oracle["gradients"][0].items():
+            torch.testing.assert_close(
+                actual[f"gradient.{parameter}"].reshape(gradient.shape),
+                gradient * (3 if accumulate else 1),
+            )
+        executor.run(args=[(oracle["examples"][0][0],)]).result()
+        torch.testing.assert_close(snapshot(executor), actual, rtol=0, atol=0)
+    expected = oracle["count_updates"][0]
+    executor.run(
+        plan="optim",
+        hyperparams={
+            plans["optim"].program.bindings["gradient_scale_control"]: expected[
+                "scale"
+            ],
+        },
+    ).result()
+    for name, value in expected["state"].items():
+        torch.testing.assert_close(snapshot(executor)[name].reshape(value.shape), value)
 print("Qualified mutable shared Plans", flush=True)

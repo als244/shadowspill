@@ -108,5 +108,10 @@ def build_operation(
         "optimizer": optimizer_identity,
     }
     return replace(
-        program, bindings={**program.bindings, "training_operation": provenance}
+        program,
+        bindings={
+            **program.bindings,
+            "operation_mode": binding.contract.key.mode,
+            "training_operation": provenance,
+        },
     )

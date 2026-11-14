@@ -65,6 +65,16 @@ Admit it alongside compatible backward Plans in one Executor and invoke it with
 existing gradients. The caller controls whether a generation is ready to update;
 this low-level operation does not infer participation from gradient values.
 
+`backward_program(step_program)` derives the matching forward/backward Program
+from that same capture. It retains every fresh and additive form, the original
+model state and producer-gradient geometry, and persists gradients in spill.
+Optimizer state, controls, reductions and publications stay in the optimizer
+path. Apply the same profiles and plan normally; the resulting Plan includes
+fresh and accumulating modes. Jointly admit both derived Plans before execution.
+Saved derivation metadata distinguishes the operation kind from its original
+capture provenance. Neither derivation rebuilds the model or changes weight
+initialization.
+
 `instantiate_examples(program, template_indices)` selects or repeats saved
 physical example templates on CPU. For example, `[0, 0, 0]` repeats the first
 captured shape three times; `[1, 0, 1]` uses the second, first and second shapes.

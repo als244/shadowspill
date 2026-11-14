@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from math import prod
+from typing import Any
 
 from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.program import Program
@@ -19,6 +20,19 @@ from .communication import order_collectives
 from .identity import canonicalize_tasks
 from .optimizer import place_optimizer
 from .tasks import TrainingSequence
+
+
+def _persistent_gradients(program: Program) -> list[dict[str, Any]]:
+    """Keep the producer's gradient geometry for both derived operation paths."""
+    geometry = tensor_geometry(program)
+    return [
+        {
+            **item,
+            "shape": (prod(geometry[item["gradient_object_id"]]["shape"]),),
+            "dtype": geometry[item["gradient_object_id"]]["dtype"],
+        }
+        for item in program.bindings["gradients"]
+    ]
 
 
 def optimizer_program(step: Program) -> Program:
@@ -70,15 +84,8 @@ def optimizer_program(step: Program) -> Program:
         "example_root_sources",
     ):
         bindings.pop(key, None)
+    gradients = _persistent_gradients(step)
     geometry = tensor_geometry(step)
-    gradients = [
-        {
-            **item,
-            "shape": (prod(geometry[item["gradient_object_id"]]["shape"]),),
-            "dtype": geometry[item["gradient_object_id"]]["dtype"],
-        }
-        for item in bindings["gradients"]
-    ]
     bindings.update(
         kind="optim_step",
         num_examples=0,
@@ -87,9 +94,14 @@ def optimizer_program(step: Program) -> Program:
         fixed_inputs=[],
         public_outputs=[],
         persistent_gradients=gradients,
+        gradient_geometry={
+            item["gradient_object_id"]: geometry[item["gradient_object_id"]]
+            for item in gradients
+        },
         entrypoints=sequence.entrypoints,
         task_names=names,
         transient_outputs=sequence.transient_outputs,
+        operation_derivation={"kind": "optim_step", "source_program": step.digest},
         collective_tasks={
             key: value
             for key, value in bindings.get("collective_tasks", {}).items()
