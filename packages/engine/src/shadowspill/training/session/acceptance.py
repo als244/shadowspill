@@ -57,6 +57,7 @@ class AcceptanceOrder:
         self._records, self._state = records, state
         self._maximum = integer(max_pending, "pending requests", minimum=1)
         self._next = integer(first_sequence, "first sequence", minimum=1)
+        self._retired_before = self._next
         self._ready: dict[str, Rejection | None] = {}
         self._mutex = RLock()
 
@@ -74,6 +75,15 @@ class AcceptanceOrder:
         """An authoritative storage or ownership failure stops further live work."""
         with self._mutex:
             self._state.invalidate()
+
+    def retire_before(self, sequence: int) -> None:
+        """A durable writer fence closes only missing old submission positions."""
+        integer(sequence, "writer's next sequence", minimum=1)
+        with self._mutex:
+            if sequence > self._next + self._maximum:
+                raise ValueError("writer retirement exceeds the bounded request window")
+            self._retired_before = max(self._retired_before, sequence)
+            self.advance()
 
     def reject(
         self,
@@ -174,7 +184,13 @@ class AcceptanceOrder:
                 after = pending.identity.sequence
 
     def _advance(self) -> None:
-        while (row := self._records.at_sequence(self._next)) is not None:
+        while True:
+            row = self._records.at_sequence(self._next)
+            if row is None:
+                if self._next < self._retired_before:
+                    self._next += 1
+                    continue
+                break
             request, status = row
             request_id = request.identity.request_id
             if status.state != "uploading":

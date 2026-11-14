@@ -84,12 +84,22 @@ class RequestInputs[Data: PreparedInput]:
         self._records, self._order, self._prepare = records, order, prepare
         self.staging = OrderedStaging(execution, first_sequence=first_sequence)
         self._slots: dict[str, _Slot[Data]] = {}
+        self._registration_paused = False
+
+    def pause_registration(self, paused: bool) -> None:
+        """Writer takeover gates new metadata until old upload failures settle."""
+        if type(paused) is not bool:
+            raise TypeError("registration pause must be boolean")
+        with self._order.synchronized():
+            self._registration_paused = paused
 
     def register(self, request: ComputeRequest, *, staging_bytes: int) -> RequestStatus:
         """Register bounded metadata, using a trusted prepared pipeline byte bound."""
         with self._order.synchronized():
             if self._get(request.identity.request_id) is not None:
                 return self._submit(request)  # Checks digest; never recopy/replay.
+            if self._registration_paused:
+                raise RuntimeError("writer attachment is waiting for preceding work")
             self.reap()
             self.staging.preflight(request.identity.sequence, staging_bytes)
             status = self._submit(request)

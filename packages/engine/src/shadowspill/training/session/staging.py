@@ -142,6 +142,23 @@ class OrderedStaging:
             self._next += 1
         self._condition.notify_all()
 
+    def retire_before(self, sequence: int) -> None:
+        """After a durable writer fence, skip unsent holes, retaining live tickets."""
+        integer(sequence, "writer's next sequence", minimum=1)
+        with self._condition:
+            if sequence > self._first + self._maximum:
+                raise ValueError("writer retirement exceeds the bounded input window")
+            self._finished.update(
+                index
+                for index in range(self._first, sequence)
+                if index not in self._entries
+            )
+            while self._first in self._finished:
+                self._finished.remove(self._first)
+                self._first += 1
+            self._next = max(self._next, self._first)
+            self._grant()
+
     def _finish(self, sequence: int) -> None:
         self._entries.pop(sequence)
         self._finished.add(sequence)

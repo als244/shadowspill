@@ -89,6 +89,16 @@ silently take ownership back. The coordinator rejects fenced uploads and release
 their staging using the actual surviving training state. Claiming a writer does
 not restore workers or make a run lost to server restart executable.
 
+`training.session.writers.WriterOwnership` coordinates that durable claim with
+input cleanup. A new claim retires only missing old sequence positions, preserving
+live tickets and accepted work. It rejects the old writer's incomplete uploads
+and gates new metadata until their ordered failures settle. This prevents those
+failures from capturing a new writer's corrected requests. Attachment status is
+idempotent and may become ready while an already rejected producer still owns
+storage; the normal staging budget continues to apply until that producer exits.
+If no incomplete uploads remain, accepted work may continue after attachment is
+ready. A retried current claim does not reject that writer's own pending inputs.
+
 The record layer rebuilds a disposable SQLite query index under the configured
 node-local cache root on every open. Its journal and synchronization modes are
 disabled, its page cache is bounded, and it uses no WAL. Authoritative commits
