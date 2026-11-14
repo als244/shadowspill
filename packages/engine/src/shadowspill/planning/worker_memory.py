@@ -3,7 +3,8 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from shadowspill.artifacts._values import digest, plain
+from shadowspill.artifacts._values import digest, nonnegative_int, plain
+from shadowspill.resources.inventory import resource_inventory
 
 if TYPE_CHECKING:
     from shadowspill.artifacts.plan import Plan
@@ -116,26 +117,22 @@ def shared_fixed_overhead(plans: Sequence["Plan"]) -> int:
     """Account for maxima that need not occur in the same individual Plan.
 
     External baseline and headroom each take their worker-wide maximum. The
-    remaining fixed profile cost stays inside the arena, together with the
-    separately charged communication scratch. Communicator startup follows the
+    retained resources follow their actual sharing identities; unclassified
+    retained state is reserved for every separately bound path. Communication
+    scratch is sequential and takes its maximum. Communicator startup follows the
     same shared-calibration reservation as execution; it is not counted again
     in that remainder. Invocation paths, including continuing gradients, belong
     in ``plans`` even when there are no additional named Plans.
 
-    Legacy undecomposed fixed cost stays in the remainder. This can conservatively
-    over-reserve when combined with a decomposed profile; it never invents a
-    measured split or discounts unknown costs to make a shared worker fit.
+    Legacy undecomposed fixed costs remain additive. This can conservatively
+    over-reserve; it never invents a measured split or discounts unknown costs.
     """
     headroom = 0
-    remainder = 0
+    scratch = 0
     communicator = communicator_reservation(plans)
     for plan in plans:
         profile = plan.profiled_program
-        external = profile.metadata.get("external_device_bytes") or 0
         margin = profile.metadata.get("external_headroom_bytes") or 0
-        retained = profile.fixed_device_bytes - external - margin
-        if retained < 0:
-            raise ValueError("external baseline and headroom exceed fixed overhead")
         communication = plan._communication_memory[0]
         fixed = (
             (plan.communication_info.fixed_device_bytes or 0) if communication else 0
@@ -144,14 +141,72 @@ def shared_fixed_overhead(plans: Sequence["Plan"]) -> int:
             raise ValueError("communicator reservation exceeds communication overhead")
         communicator = max(communicator, fixed)
         headroom = max(headroom, margin)
-        remainder = max(remainder, retained + communication - fixed)
+        scratch = max(scratch, communication - fixed)
     return (
         external_baseline(plans)
         + headroom
         + communicator
-        + remainder
+        + scratch
+        + retained_reservation(plans)
         + pool_process_reservation(plans)
     )
+
+
+def retained_reservation(plans: Sequence["Plan"]) -> int:
+    """Bound the union loaded at startup, not the largest individual profile.
+
+    Identical complete resource/stream/preparation inventories can share their
+    maximum measured bytes. Partially overlapping inventories are additive, a
+    conservative bound without invented per-resource measurements. Remaining
+    retained allocations belong to each independently restored execution path.
+    """
+    resource_inventory(plan.program for plan in plans)
+    shared: dict[tuple[str, str], int] = {}
+    private = 0
+    for plan in plans:
+        program, profile = plan.program, plan.profiled_program
+        metadata = profile.metadata
+        external = metadata.get("external_device_bytes") or 0
+        margin = metadata.get("external_headroom_bytes") or 0
+        remaining = profile.fixed_device_bytes - external - margin
+        if remaining < 0:
+            raise ValueError("external baseline and headroom exceed fixed overhead")
+        for kind, field, identity in (
+            (
+                "streams",
+                "stream_workspace_bytes",
+                metadata.get("resource_streams"),
+            ),
+            (
+                "resources",
+                "provider_resource_bytes",
+                {
+                    name: {
+                        "description": description.to_dict(),
+                        "source": program.bindings["resource_sources"][name],
+                    }
+                    for name, description in program.resources.items()
+                },
+            ),
+            (
+                "preparations",
+                "prepared_operator_retained_bytes",
+                program.bindings.get("operator_preparation"),
+            ),
+        ):
+            size = metadata.get(field, 0)
+            nonnegative_int(size, field)
+            if not size:
+                continue
+            if not identity:
+                raise ValueError(f"{field} lacks its retained inventory")
+            remaining -= size
+            key = kind, digest(identity)
+            shared[key] = max(shared.get(key, 0), size)
+        if remaining < 0:
+            raise ValueError("retained components exceed fixed overhead")
+        private += remaining
+    return private + sum(shared.values())
 
 
 def shared_pool_memory(plans: Sequence["Plan"]) -> "PoolMemoryProfile | None":

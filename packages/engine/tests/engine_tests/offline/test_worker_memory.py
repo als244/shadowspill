@@ -10,6 +10,7 @@ from shadowspill.planning.worker_memory import (
     external_baseline,
     shared_fixed_overhead,
 )
+from shadowspill.resources import Resource
 
 
 def plan(
@@ -29,13 +30,18 @@ def plan(
         profiled_program=SimpleNamespace(
             fixed_device_bytes=external + headroom + retained,
             metadata=dict(
-                external_device_bytes=external, external_headroom_bytes=headroom
+                external_device_bytes=external,
+                external_headroom_bytes=headroom,
+                stream_workspace_bytes=retained,
+                resource_streams=[{"lane": 0}],
             )
             if metadata
             else {},
         ),
         program=SimpleNamespace(
-            parallelism=SimpleNamespace(world_size=2) if distributed else None
+            parallelism=SimpleNamespace(world_size=2) if distributed else None,
+            resources={},
+            bindings={},
         ),
         communication_info=info,
         _communication_memory=(
@@ -64,8 +70,8 @@ def test_one_dominating_plan_keeps_its_existing_total():
 
 def test_legacy_undecomposed_cost_is_not_discarded_or_guessed():
     legacy = plan(retained=40, metadata=False)
-    assert shared_fixed_overhead([legacy, legacy]) == 40
-    assert shared_fixed_overhead([legacy, plan(8, 2, 10)]) == 50
+    assert shared_fixed_overhead([legacy, legacy]) == 80
+    assert shared_fixed_overhead([legacy, plan(8, 2, 10)]) == 60
 
 
 def test_distinct_communicator_startup_is_summed_but_not_charged_twice():
@@ -115,3 +121,55 @@ def test_invalid_split_is_not_hidden_by_a_nonnegative_clamp():
     invalid.profiled_program.fixed_device_bytes = 9
     with pytest.raises(ValueError, match="baseline and headroom"):
         shared_fixed_overhead([invalid])
+
+
+def resource_plan(name, size):
+    value = plan(8, 2, 10 + size)
+    value.profiled_program.metadata.update(
+        stream_workspace_bytes=10, provider_resource_bytes=size
+    )
+    value.program.resources = {name: Resource("not_imported.provider:factory")}
+    value.program.bindings = {"resource_sources": {name: "a" * 64}}
+    return value
+
+
+def test_shared_worker_reserves_distinct_provider_inventories_and_deduplicates_exact():
+    first, second = resource_plan("first", 100), resource_plan("second", 200)
+    # Context8 + margin2 + shared streams10 + both simultaneously live resources.
+    assert shared_fixed_overhead([first, second, first]) == 320
+    assert shared_fixed_overhead([first, first]) == 120
+
+
+def test_conflicting_provider_descriptions_fail_during_cpu_admission():
+    first, second = resource_plan("shared", 100), resource_plan("shared", 100)
+    second.program.resources["shared"] = Resource(
+        "not_imported.provider:factory", {"capacity": 2}
+    )
+    with pytest.raises(ValueError, match="conflicting descriptions"):
+        shared_fixed_overhead([first, second])
+
+
+def test_prepared_bindings_stream_sets_and_private_retained_state_are_additive():
+    first, second = plan(8, 2, 40), plan(8, 2, 60)
+    for value, lane, size, source in ((first, 0, 20, "a"), (second, 1, 30, "b")):
+        value.profiled_program.metadata.update(
+            stream_workspace_bytes=10,
+            resource_streams=[{"lane": lane}],
+            prepared_operator_retained_bytes=size,
+        )
+        value.program.bindings["operator_preparation"] = {"source": source}
+    # Two stream inventories, two binary bindings, 10+20 private retained bytes.
+    assert shared_fixed_overhead([first, second]) == 110
+    # Each path restores functions independently; private storage is not deduped.
+    assert shared_fixed_overhead([first, first]) == 60
+
+
+def test_retained_components_require_inventory_and_fit_the_observed_total():
+    value = plan(retained=10)
+    value.profiled_program.metadata["provider_resource_bytes"] = 1
+    with pytest.raises(ValueError, match="lacks its retained inventory"):
+        shared_fixed_overhead([value])
+    value = resource_plan("provider", 100)
+    value.profiled_program.metadata["provider_resource_bytes"] = 101
+    with pytest.raises(ValueError, match="components exceed"):
+        shared_fixed_overhead([value])
