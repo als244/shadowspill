@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
 
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.device import require_compiled_device
@@ -22,8 +22,9 @@ from .bindings import BoundWorkerCall, WorkerBindings
 from .execution import WorkerExecution
 from .initialization import PreparedInitialization, initialize, prepare_initialization
 from .loop import WorkerLoop
+from .output_files import OutputSink
 from .output_frame import WorkerOutputFrame, prepare_output_frames
-from .protocol import WorkerScope, WorkerStartup
+from .protocol import WorkerCall, WorkerScope, WorkerStartup
 from .startup import await_start, report_ready
 
 if TYPE_CHECKING:
@@ -93,7 +94,7 @@ class PreparedWorker:
         self,
         runtime: InitializationRuntime,
         resolve: Callable[[ArtifactRef], Path],
-        collect: Callable[[BoundWorkerCall, Any], ArtifactRef | None],
+        outputs: OutputSink,
     ) -> Iterator["RunningWorker"]:
         # The agent must have isolated visibility before this import. Each saved
         # process-local compiler ordinal is zero, independent of physical GPU ID.
@@ -121,10 +122,18 @@ class PreparedWorker:
                         raise RuntimeError(
                             "worker spill capacity differs from admission"
                         )
+
+                    def bind(command: WorkerCall) -> BoundWorkerCall:
+                        call = self.bindings.bind(command, resolve)
+                        outputs.check(call)
+                        return call
+
                     loop = WorkerLoop(
                         self.startup.scope,
-                        lambda command: self.bindings.bind(command, resolve),
-                        WorkerExecution(executor, self.bindings, budget, collect),
+                        bind,
+                        WorkerExecution(
+                            executor, self.bindings, budget, outputs.collect
+                        ),
                         budget,
                     )
                     try:
@@ -140,14 +149,14 @@ class PreparedWorker:
         writer: BinaryIO,
         runtime: InitializationRuntime,
         resolve: Callable[[ArtifactRef], Path],
-        collect: Callable[[BoundWorkerCall, Any], ArtifactRef | None],
+        outputs: OutputSink,
     ) -> None:
         """Own the private startup/invocation streams, without an idle timeout."""
         with ExitStack() as cleanup:
             cleanup.callback(reader.close)
             cleanup.callback(writer.close)
             await_start(self.startup, reader, writer)
-            with self.open(runtime, resolve, collect) as running:
+            with self.open(runtime, resolve, outputs) as running:
                 report_ready(self.startup, writer)
                 running.loop.serve(reader, writer)
 

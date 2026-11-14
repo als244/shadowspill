@@ -262,6 +262,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         "Qualified bounded output frames from admitted Executor storage"
         in worker.stdout
     )
+    assert "Qualified pre-reserved worker output files" in worker.stdout
     if provider:
         events = [json.loads(line) for line in event_path.read_text().splitlines()]
         by_process = {}

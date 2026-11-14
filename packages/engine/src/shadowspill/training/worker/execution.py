@@ -28,7 +28,7 @@ class WorkerExecution:
         executor: "Executor",
         bindings: WorkerBindings,
         budget: BufferBudget,
-        collect: Callable[[BoundWorkerCall, Any], ArtifactRef | None],
+        collect: Callable[[BoundWorkerCall, Any, BufferBudget], ArtifactRef | None],
     ) -> None:
         self._executor, self._bindings = executor, bindings
         self._budget, self._collect = budget, collect
@@ -56,7 +56,7 @@ class WorkerExecution:
             # filesystem/transport error as publication failure.
             self._executor.synchronize()
             try:
-                result = self._collect(call, value)
+                result = self._collect(call, value, self._budget)
             except OSError as error:
                 publication_error = (str(error).strip() or type(error).__name__)[
                     :1024

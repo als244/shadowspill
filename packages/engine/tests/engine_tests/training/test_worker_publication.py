@@ -32,7 +32,7 @@ def test_output_failure_classification_requires_both_terminal_boundaries(failure
             if failure == ("before" if self.synchronizations == 1 else "after"):
                 raise RuntimeError("device synchronization failed")
 
-    def collect(call, value):
+    def collect(call, value, budget):
         events.append("copy")
         if failure == "disk":
             raise OSError("output disk full")
@@ -82,8 +82,8 @@ def test_input_lease_is_released_before_the_same_budget_is_used_for_output():
         assert budget.used == (64, 1)
         return SimpleNamespace(result=lambda: object())
 
-    def collect(call, value):
-        assert budget.used == (0, 0)
+    def collect(call, value, memory):
+        assert memory is budget and budget.used == (0, 0)
         with budget.reserve(64, timeout=0):
             events.append("output")
 

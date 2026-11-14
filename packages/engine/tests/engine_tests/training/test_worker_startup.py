@@ -13,10 +13,11 @@ import pytest
 
 from engine_tests.training.test_prepared_requests import family
 from engine_tests.training.test_worker_group import commands
-from engine_tests.training.test_worker_loop import SCOPE
+from engine_tests.training.test_worker_loop import SCOPE, call
 from shadowspill.training.definitions import InitializationRuntime
 from shadowspill.training.worker.channel import read_message, write_message
 from shadowspill.training.worker.loop import WorkerLoop
+from shadowspill.training.worker.output_files import FileOutputs
 from shadowspill.training.worker.protocol import CODEC, WorkerBoot, WorkerStartup
 from shadowspill.training.worker.runtime import PreparedWorker
 from shadowspill.training.worker.startup import (
@@ -280,7 +281,7 @@ def test_cpu_worker_description_reuses_spill_margin_and_rejects_ordinal_changes(
         PreparedWorker.resolve(prepared.bindings.prepared, SCOPE, bundle=BUNDLE)
 
 
-@pytest.mark.parametrize("failure", [None, "open", "initialize", "spill"])
+@pytest.mark.parametrize("failure", [None, "open", "initialize", "spill", "outputs"])
 def test_runtime_owns_one_executor_and_releases_it_after_failure(
     tmp_path, monkeypatch, failure
 ):
@@ -319,16 +320,31 @@ def test_runtime_owns_one_executor_and_releases_it_after_failure(
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
     prepared = prepared_worker()
     runtime = InitializationRuntime(tmp_path, lambda _: pytest.fail("artifact opened"))
+    outputs = FileOutputs(prepared.outputs, root=tmp_path)
+    if failure == "outputs":
+
+        def reject(bound):
+            events.append("check_output")
+            raise OSError("output permit missing")
+
+        monkeypatch.setattr(outputs, "check", reject)
+        monkeypatch.setattr(
+            prepared.bindings,
+            "bind",
+            lambda command, resolve: SimpleNamespace(command=command),
+        )
 
     def invoke():
-        with prepared.open(
-            runtime, lambda _: tmp_path, lambda call, value: None
-        ) as running:
+        with prepared.open(runtime, lambda _: tmp_path, outputs) as running:
             events.append("ready")
+            if failure == "outputs":
+                reply = running.loop.handle(call())
+                assert reply.status == "failed" and reply.effect == "not_started"
+                assert reply.message == "output permit missing"
             assert running.loop.valid
         assert not running.loop.valid
 
-    if failure:
+    if failure and failure != "outputs":
         with pytest.raises((OSError, RuntimeError)):
             invoke()
     else:
@@ -340,6 +356,7 @@ def test_runtime_owns_one_executor_and_releases_it_after_failure(
             "open": ["open"],
             "initialize": ["open", "initialize", "close"],
             "spill": ["open", "initialize", "close"],
+            "outputs": ["open", "initialize", "ready", "check_output", "close"],
         }[failure]
     )
 
@@ -356,7 +373,9 @@ def test_worker_requires_explicit_single_device_before_executor_import(
     runtime = InitializationRuntime(tmp_path, lambda _: pytest.fail("artifact opened"))
     with (
         pytest.raises(ValueError, match="explicitly assigned visible device"),
-        prepared.open(runtime, lambda _: tmp_path, lambda call, value: None),
+        prepared.open(
+            runtime, lambda _: tmp_path, FileOutputs(prepared.outputs, root=tmp_path)
+        ),
     ):
         pytest.fail("opened an unassigned worker")
 
@@ -407,7 +426,7 @@ def test_worker_serve_orders_readiness_and_closes_channels(
     incoming.seek(0)
 
     @contextmanager
-    def open_worker(self, runtime, resolve, collect):
+    def open_worker(self, runtime, resolve, outputs):
         events.append("open")
         try:
             if failure == "initialize":
@@ -433,7 +452,7 @@ def test_worker_serve_orders_readiness_and_closes_channels(
             outgoing,
             InitializationRuntime(tmp_path, lambda _: tmp_path),
             lambda _: tmp_path,
-            lambda call, value: None,
+            FileOutputs(prepared.outputs, root=tmp_path),
         )
 
     if failure:

@@ -3,6 +3,7 @@
 import hashlib
 import io
 import sys
+from contextlib import nullcontext
 from dataclasses import replace
 from itertools import count
 from pathlib import Path
@@ -22,6 +23,10 @@ forbid_preparation()
 
 from engine_tests.fixtures.definition_operations import records  # noqa: E402
 from shadowspill.execution.results import TrainingResult  # noqa: E402
+from shadowspill.orchestration.launch.publication import (  # noqa: E402
+    OutputFiles,
+    require_output,
+)
 from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
 from shadowspill.training.definitions import (  # noqa: E402
     InitializationRuntime,
@@ -36,6 +41,7 @@ from shadowspill.training.session.prepared import PreparedRequests  # noqa: E402
 from shadowspill.training.session.state import OperationState  # noqa: E402
 from shadowspill.training.worker.bindings import worker_call  # noqa: E402
 from shadowspill.training.worker.channel import read_message, write_message  # noqa: E402
+from shadowspill.training.worker.output_files import FileOutputs  # noqa: E402
 from shadowspill.training.worker.protocol import WorkerControl, WorkerScope  # noqa: E402
 from shadowspill.training.worker.runtime import PreparedWorker  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
@@ -91,11 +97,10 @@ class HostOutputs:
         self.value = None
 
 
-def collect(call, value):
+def collect(call, value, budget):
     frame = startup.outputs[call.command.candidate, call.plan]
-    stream = io.BytesIO()
-    assert running.staging.used == (0, 0)
-    reference = frame.write(value, stream, running.staging, "worker-output")
+    assert budget is running.staging and budget.used == (0, 0)
+    reference = FileOutputs.collect(output_sink, call, value, budget)
     logical = (
         (value.losses, value.metrics) if isinstance(value, TrainingResult) else value
     )
@@ -103,13 +108,17 @@ def collect(call, value):
     groups = (
         tuple(zip(*host, strict=True)) if isinstance(value, TrainingResult) else host
     )
-    stream.seek(0)
-    with read_payload(
-        stream,
-        reference,
-        BufferBudget(frame.frame.size.staging),
-        limits=frame.frame.size,
-    ) as decoded:
+    with (
+        require_output(output_storage.root, output_sink.spec(call)).open(
+            "rb"
+        ) as stream,
+        read_payload(
+            stream,
+            reference,
+            BufferBudget(frame.frame.size.staging),
+            limits=frame.frame.size,
+        ) as decoded,
+    ):
         for path in frame.frame.shapes:
             loss, values = groups[int(path[1])]
             tensor = loss if path[2] == "loss" else values[path[3]]
@@ -123,6 +132,18 @@ def collect(call, value):
     if fail_worker_publication:
         raise OSError("injected worker output disk failure")
     worker_outputs.append(host)
+    return reference
+
+
+class ObservedOutputs(FileOutputs):
+    def collect(self, call, value, budget):
+        return collect(call, value, budget)
+
+
+output_disk = BufferBudget(8 << 20, max_requests=100)
+output_memory = BufferBudget(8 << 20, max_requests=100)
+output_storage = OutputFiles(root=root, disk=output_disk, memory=output_memory)
+output_sink = ObservedOutputs(startup.outputs, root=output_storage.root)
 
 
 def exchange(message):
@@ -179,18 +200,27 @@ def invoke(
             worker_files.update(
                 {frame.reference.id: frame.path for frame in data.spool.frames.values()}
             )
-        ready = exchange(command)
-        assert ready.status == "ready", ready
-        fail_worker_publication = worker_publication_error
-        try:
-            completed = exchange(WorkerControl(ready.ticket, "execute"))
-        finally:
-            fail_worker_publication = False
-        assert completed.status == (
-            "failed" if worker_publication_error else "completed"
-        ), completed
-        assert completed.effect == "completed" and worker_loop.valid
-        assert running.staging.used == (0, 0)
+        bound = worker.bind(command, lambda ref: worker_files[ref.id])
+        spec = output_sink.spec(bound)
+        with output_storage.reserve(spec) if spec else nullcontext() as owner:
+            if owner:
+                owner.begin()
+            ready = exchange(command)
+            assert ready.status == "ready", ready
+            fail_worker_publication = worker_publication_error
+            try:
+                completed = exchange(WorkerControl(ready.ticket, "execute"))
+            finally:
+                fail_worker_publication = False
+            assert completed.status == (
+                "failed" if worker_publication_error else "completed"
+            ), completed
+            assert completed.effect == "completed" and worker_loop.valid
+            assert running.staging.used == (0, 0)
+            if owner:
+                owner.finished()
+                if completed.result:
+                    owner.verify(completed.result)
         return HostOutputs(
             worker_outputs.pop() if worker_outputs else None, completed.message
         )
@@ -264,6 +294,7 @@ def no_artifact(identity):
 
 
 with (
+    output_storage,
     RequestRecords(
         root / "requests",
         identity=RunIdentity("owner", "session", "run"),
@@ -272,7 +303,7 @@ with (
     startup.open(
         InitializationRuntime(root, no_artifact),
         lambda ref: worker_files[ref.id],
-        collect,
+        output_sink,
     ) as running,
 ):
     executor, worker_loop = running.executor, running.loop
@@ -345,6 +376,7 @@ with (
         state.boundary.completed_updates == 2 and not state.boundary.accumulation.open
     )
 
+assert output_disk.used == output_memory.used == (0, 0)
 print("Qualified definition-bound operations")
 print("Qualified durable request dispatcher")
 print("Qualified prepared binary request inputs")
@@ -352,3 +384,4 @@ print("Qualified saved worker commands")
 print("Qualified persistent worker invocation loop")
 print("Qualified worker publication failure with completed optimizer state")
 print("Qualified bounded output frames from admitted Executor storage")
+print("Qualified pre-reserved worker output files")
