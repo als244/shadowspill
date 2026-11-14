@@ -45,6 +45,22 @@ multi-node deployment remain separate implementation work.
 
 ## Request and worker ownership
 
+`server.records.runs.RunCatalog` records creation identity and run lifecycle under
+the same durable journal rules. It stores bounded `RunInfo` metadata and immutable
+configuration/Plan references; tensor state and update effects remain in their
+existing owners. Every lookup and paginated listing includes owner/session scope.
+An identical creation retry returns the original record, including after restart
+or close; conflicting reuse fails before another job can be enqueued.
+
+Creation stages advance through installed phases and initialization. Only the
+caller that confirmed initialized worker readiness may record a ready run. Old
+unfinished runs are enumerated in bounded pages for service startup to classify
+their request journals and mark them stopped. Catalog recovery alone performs no
+worker launch or replay. Failed/closed/stopped records remain immutable, and a
+new server cannot advance an earlier incarnation's creation. The catalog owns a
+fixed index reservation; durability/index failure requires reconciliation, and
+failed index cleanup keeps the reservation and writer lock until retry succeeds.
+
 Preparation uses the existing `training.preparation.phases.run_phases` driver,
 which accepts an explicit environment snapshot and an installed launch callback.
 `orchestration.launch.phases.NodePhases` implements the allocation-owned callback.
