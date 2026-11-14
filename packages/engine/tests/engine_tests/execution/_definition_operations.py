@@ -1,5 +1,6 @@
 """Real owned uploads through prepared inputs, durable dispatch and cold execution."""
 
+import hashlib
 import io
 import sys
 from dataclasses import replace
@@ -20,7 +21,6 @@ triton.knobs.compilation.listener = compilation_finished
 forbid_preparation()
 
 from engine_tests.fixtures.definition_operations import records  # noqa: E402
-from shadowspill import Executor  # noqa: E402
 from shadowspill.execution.results import TrainingResult  # noqa: E402
 from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
 from shadowspill.training.definitions import (  # noqa: E402
@@ -34,15 +34,10 @@ from shadowspill.training.session.dispatch import RequestDispatcher  # noqa: E40
 from shadowspill.training.session.inputs import RequestInputs  # noqa: E402
 from shadowspill.training.session.prepared import PreparedRequests  # noqa: E402
 from shadowspill.training.session.state import OperationState  # noqa: E402
-from shadowspill.training.worker.bindings import WorkerBindings, worker_call  # noqa: E402
+from shadowspill.training.worker.bindings import worker_call  # noqa: E402
 from shadowspill.training.worker.channel import read_message, write_message  # noqa: E402
-from shadowspill.training.worker.execution import WorkerExecution  # noqa: E402
-from shadowspill.training.worker.initialization import (  # noqa: E402
-    initialize,
-    prepare_initialization,
-)
-from shadowspill.training.worker.loop import WorkerLoop  # noqa: E402
 from shadowspill.training.worker.protocol import WorkerControl, WorkerScope  # noqa: E402
+from shadowspill.training.worker.runtime import PreparedWorker  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
 from shadowspill_client.protocol.requests import (  # noqa: E402
@@ -56,14 +51,17 @@ root = Path(sys.argv[1])
 registry = load_registry(PreparationJob.load(root / JOB_NAME).packages)
 family = TrainingBundle.load(root / "training.ssp").recheck(registry)
 prepared = PreparedRequests(family, cache_root=root)
-worker = WorkerBindings(family, WorkerScope("run", "worker", "execution-1", 0))
-worker_budget = BufferBudget(max(1, worker.input_bytes))
+with (root / "training.ssp").open("rb") as bundle_file:
+    bundle_digest = hashlib.file_digest(bundle_file, "sha256").hexdigest()
+startup = PreparedWorker.resolve(
+    family,
+    WorkerScope("run", "worker", "execution-1", 0),
+    bundle=ArtifactRef("plans", bundle_digest, (root / "training.ssp").stat().st_size),
+)
+worker = startup.bindings
 worker_invocations = count(1)
 worker_files = {}
 worker_outputs = []
-plans = dict(family.plans[0])
-primary_name = min(plans)
-primary = plans.pop(primary_name)
 oracle = torch.load(root / "oracle.pt", weights_only=True)
 
 
@@ -150,7 +148,7 @@ def invoke(name, operation, *, observe=None, publication_error=False, **options)
         assert ready.status == "ready", ready
         completed = exchange(WorkerControl(ready.ticket, "execute"))
         assert completed.status == "completed", completed
-        assert worker_budget.used == (0, 0)
+        assert running.staging.used == (0, 0)
         return HostOutputs(worker_outputs.pop() if worker_outputs else None)
 
     def publish(receipt, outputs):
@@ -215,42 +213,34 @@ def check_masked(value, data):
     assert sum(outputs["valid_examples"].item() for loss, outputs in value) == 0
 
 
+def no_artifact(identity):
+    raise AssertionError("random initialization opened an artifact")
+
+
 with (
     RequestRecords(
         root / "requests",
         identity=RunIdentity("owner", "session", "run"),
         cache_root=root,
     ) as journal,
-    Executor(primary, plans=plans) as executor,
+    startup.open(
+        InitializationRuntime(root, no_artifact),
+        lambda ref: worker_files[ref.id],
+        collect,
+    ) as running,
 ):
+    executor, worker_loop = running.executor, running.loop
     journal.claim_writer("writer", "worker")
     dispatcher = RequestDispatcher(journal, state, max_pending=3)
     inputs = RequestInputs(
         journal, dispatcher.order, prepared.setup.config.execution, prepared
     )
-    initialization = prepare_initialization(prepared.setup)[0]
-    initialization_budget = BufferBudget(initialization.description.peak_bytes)
-
-    def no_artifact(identity):
-        raise AssertionError("random initialization opened an artifact")
-
-    initialize(
-        executor,
-        initialization,
-        InitializationRuntime(root, no_artifact),
-        initialization_budget,
-    )
-    assert initialization_budget.used == (0, 0)
+    assert running.staging.used == (0, 0)
     initial = snapshot(executor)
     for name, expected in oracle["initial"].items():
         torch.testing.assert_close(initial[name].reshape(expected.shape), expected)
     print("Qualified bounded installed initialization")
-    worker_loop = WorkerLoop(
-        worker.scope,
-        lambda command: worker.bind(command, lambda ref: worker_files[ref.id]),
-        WorkerExecution(executor, worker, worker_budget, collect),
-        worker_budget,
-    )
+    print("Qualified admitted worker startup")
     invoke(
         "step",
         "step",

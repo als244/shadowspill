@@ -131,9 +131,34 @@ ownership with bounded stdout/stderr draining and non-reaping exit observation.
 The controller group closes private control streams before waiting on its stop
 callback, permitting orderly worker/report finalization. Explicit close escalates
 only the owned process group and removes descendants before reaping its leader;
-there is no idle timeout. Worker startup handshakes, device/resource admission,
-bounded initialization and service authentication still need to be wired around
-these primitives.
+there is no idle timeout. Agent launch, node-resource admission and service
+authentication still need to be wired around these primitives.
+
+`training.worker.runtime.PreparedWorker` describes a strictly rechecked saved
+family before execution. It pins the immutable bundle reference, initialization
+signature, launcher-to-logical rank permutation, device budget, existing spill
+capacity (including its 5% margin) and serial initialization/input staging peak.
+The CPU description imports neither Torch nor the optional workloads catalog.
+An agent must verify artifact integrity and reserve decoded-artifact/process/node
+resources separately; these byte fields describe the execution pools and staging,
+not total process RSS. Worker startup requires one explicitly assigned visible
+GPU and preserves saved compiler ordinal zero.
+
+`WorkerStartupConnection` and `start_workers` use the same private framed stream.
+Every worker first sends its CPU preflight evidence. The controller compares all
+participants before releasing any into mutable startup, then releases all starts
+before waiting on any ready response. A mismatch, premature ready, missing reply
+or initialization failure closes all private channels and stops the owned group.
+Readiness transfers each channel once to the ordinary `WorkerConnection`;
+startup cannot be replayed. The worker's `PreparedWorker.serve` opens the existing
+Executor, performs bounded installed initialization, checks actual spill capacity,
+then reports ready and enters the existing invocation loop. EOF closes that
+Executor. There is no second mutable-state engine or startup compilation.
+
+Actual agent-launched GPU processes, node-wide host/device admission, RNG stream
+registration, authenticated transports and public client readiness remain
+integration requirements. Socket startup barriers and cold-worker Executor
+composition do not qualify multi-node startup by themselves.
 
 `server.records.requests.RequestRecords` now persists owner/session/run identity,
 request metadata, acceptance, dispatch and terminal outcomes through that journal.

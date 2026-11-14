@@ -25,6 +25,55 @@ class WorkerScope(Record):
 
 
 @dataclass(frozen=True)
+class WorkerStartup(Record):
+    """CPU preflight evidence for one admitted bundle and assigned worker."""
+
+    scope: WorkerScope
+    bundle: ArtifactRef
+    initialization_sha256: str
+    logical_by_worker: Sequence[int]
+    device_bytes: int
+    spill_bytes: int
+    staging_bytes: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scope", record(WorkerScope, self.scope, "scope"))
+        object.__setattr__(self, "bundle", record(ArtifactRef, self.bundle, "bundle"))
+        if (
+            not isinstance(self.initialization_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.initialization_sha256) is None
+        ):
+            raise ValueError(
+                "initialization digest must contain 64 lowercase hex digits"
+            )
+        ranks = self.logical_by_worker
+        if (
+            not isinstance(ranks, (tuple, list))
+            or not 0 < len(ranks) <= 65536
+            or any(type(rank) is not int for rank in ranks)
+            or sorted(ranks) != list(range(len(ranks)))
+            or self.scope.rank >= len(ranks)
+        ):
+            raise ValueError("startup requires a complete logical worker permutation")
+        object.__setattr__(self, "logical_by_worker", tuple(ranks))
+        for name in ("device_bytes", "spill_bytes", "staging_bytes"):
+            integer(getattr(self, name), name, minimum=1)
+
+
+@dataclass(frozen=True)
+class WorkerBoot(Record):
+    startup: WorkerStartup
+    phase: Literal["prepared", "start", "ready"]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "startup", record(WorkerStartup, self.startup, "startup")
+        )
+        if self.phase not in ("prepared", "start", "ready"):
+            raise ValueError("unknown worker startup phase")
+
+
+@dataclass(frozen=True)
 class WorkerCall(Record):
     """A saved candidate and the sole coordinator's queue-head state decision.
 
@@ -147,6 +196,7 @@ class WorkerReply(Record):
 
 CODEC = RecordCodec(
     {
+        "worker.boot": WorkerBoot,
         "worker.call": WorkerCall,
         "worker.control": WorkerControl,
         "worker.reply": WorkerReply,
