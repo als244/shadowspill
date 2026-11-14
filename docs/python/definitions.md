@@ -62,3 +62,13 @@ captured scalar bindings. After existing `capture_optimizer` runs,
 Static options and unused tensors cannot be advertised as runtime overrides.
 The registry resolves nonsticky defaults before construction; it does not run
 optimizer steps or introduce another optimizer implementation.
+
+The phase engine also provides `artifacts.state_inventory.program_state(program,
+logical_rank=0)`. It describes captured parameters, buffers, masters, persistent
+gradients, optimizer tensors and host counters using role/name/component IDs.
+Saved geometry, parameter ownership and physical storage bindings remain distinct.
+The inventory serializes without importing Torch or the SDK. It detects layout,
+optimizer-family and alias conflicts when matching state between Programs, and
+refuses to alias different logical workers. This is the shared description for
+the upcoming operation-state and checkpoint-conversion work; it does not yet make
+additional mutable Plans executable through the current Trainer.
