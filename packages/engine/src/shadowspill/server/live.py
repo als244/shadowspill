@@ -103,6 +103,14 @@ class LiveRun:
             raise RuntimeError("run has no initialized live controller")
         return self._controller
 
+    @property
+    def finished(self) -> bool:
+        """A service reaper may retire this owner without an HTTP request."""
+        return self.closed or (
+            self._controller is not None
+            and (self._controller.closed or self._controller.failure is not None)
+        )
+
     def _active(self) -> None:
         with self._mutex:
             if self._closing or self.closed:
@@ -191,8 +199,8 @@ class LiveRun:
         if errors:
             raise BaseExceptionGroup("run workers have not confirmed exit", errors)
 
-    def stop(self) -> None:
-        """End allocation ownership, including its own interrupted startup wait."""
+    def interrupt(self) -> None:
+        """Quiesce owned workers, retaining files and records for existing borrows."""
         with self._retiring:
             with self._mutex:
                 self._closing = True
@@ -205,7 +213,15 @@ class LiveRun:
             if self._creating.locked():
                 self._stop_nodes()
                 raise RuntimeError("join run initialization before retiring its files")
-            self.close()
+            if self._controller is not None:
+                self._controller.stop(self._stop_nodes)
+            else:
+                self._stop_nodes()
+
+    def stop(self) -> None:
+        """End allocation ownership, including its own interrupted startup wait."""
+        self.interrupt()
+        self.close()
 
     def _publish_logs(self) -> None:
         if self._artifacts is None:

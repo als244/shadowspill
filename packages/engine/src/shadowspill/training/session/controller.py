@@ -89,6 +89,12 @@ class RunController[Work: CompletedWork]:
         with self._dispatcher.order.synchronized():
             return self._state.boundary
 
+    @property
+    def failure(self) -> str | None:
+        """Bounded health evidence for the service owner, without retaining errors."""
+        with self._dispatcher.order.synchronized():
+            return self._error
+
     def _usable(self) -> None:
         if self._error is not None:
             raise RuntimeError(f"live controller failed: {self._error}")

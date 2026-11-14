@@ -8,7 +8,9 @@ import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
+from time import monotonic
+from types import SimpleNamespace
 
 
 class Block(importlib.abc.MetaPathFinder):
@@ -31,6 +33,7 @@ from shadowspill.orchestration.launch.publication import require_output  # noqa:
 from shadowspill.orchestration.launch.staging import FileDelivery  # noqa: E402
 from shadowspill.server.authentication import BearerTokens  # noqa: E402
 from shadowspill.server.http import HTTP_SCRATCH_BYTES, HTTPService, RunAccess  # noqa: E402
+from shadowspill.server.jobs import RunJobs  # noqa: E402
 from shadowspill.server.live import LiveRun  # noqa: E402
 from shadowspill.server.records.requests import RunIdentity  # noqa: E402
 from shadowspill.server.results import ResultPublisher  # noqa: E402
@@ -448,6 +451,7 @@ def qualify_allocation_stop():
         HostArena(admission, 16 << 20, 2) as commands,
         HostArena(admission, 64 << 20, 3) as publication,
         HostArena(admission, 160 << 20, 8) as storage_arena,
+        HostArena(admission, 128 << 20, 1) as job_arena,
         HostArena(
             admission, execution.max_staging_bytes, execution.max_pending_requests
         ) as uploads,
@@ -456,9 +460,6 @@ def qualify_allocation_stop():
         owned_node(transfers.budget, worker) as node,
     ):
         config = artifacts.get("configuration")
-        storage.catalog.create(
-            identity, request_sha256=config.sha256, configuration=config
-        )
         live = LiveRun(
             storage,
             identity,
@@ -472,8 +473,28 @@ def qualify_allocation_stop():
             publication=publication.budget,
             disk=disk,
         )
+        owner = SimpleNamespace(
+            run=live,
+            start=live.start,
+            interrupt=live.interrupt,
+            close=live.close,
+        )
+        jobs = RunJobs(
+            storage,
+            lambda _: owner,
+            memory=job_arena.budget,
+            host_bytes=128 << 20,
+            max_runs=1,
+            reap_interval=0.01,
+        )
+        jobs.start()
         try:
-            live.start()
+            jobs.create(identity, request_sha256=config.sha256, configuration=config)
+            deadline = monotonic() + 120
+            while not next(iter(jobs._jobs.values())).live:
+                assert monotonic() < deadline, jobs.failures()
+                assert storage.catalog.get(identity).state == "preparing" or live.ready
+                Event().wait(0.01)
             controller = live.controller
             controller.attach("writer")
             with snapshot_batch(records(targets=True), publication.budget) as snapshot:
@@ -499,7 +520,24 @@ def qualify_allocation_stop():
             )
             # Allocation ownership can end with unresolved gradients. It must
             # not synthesize an optimizer update, a discard, or a valid new run.
-            live.stop()
+            with jobs.access(identity) as access:
+                assert access.live() is controller
+                try:
+                    jobs.close(timeout=1)
+                except RuntimeError as error:
+                    assert "still own" in str(error)
+                else:
+                    raise AssertionError(
+                        "borrowed live run retired before HTTP returned"
+                    )
+                deadline = monotonic() + 30
+                while not controller.closed:
+                    assert monotonic() < deadline, jobs.failures()
+                    Event().wait(0.01)
+                assert not live.closed and not node.closed
+                assert job_arena.budget.used == (128 << 20, 1)
+            jobs.close(timeout=30)
+            assert jobs.closed and job_arena.budget.used == (0, 0)
             assert controller.closed and not controller.boundary.valid
             assert controller.boundary.accumulation == result.result.accumulation
             assert controller.boundary.completed_updates == 0
@@ -510,6 +548,7 @@ def qualify_allocation_stop():
                 assert saved.get("backward")[1] == result
             assert any(ref.id.startswith("worker-logs.") for ref in artifacts.page())
         finally:
+            jobs.close(timeout=30)
             live.stop()
         node.close()
     assert admission.used.claims == 0 and disk.used == (0, 0)
@@ -520,6 +559,8 @@ def qualify_allocation_stop():
                 "last_known_accumulation": result.result.accumulation.to_dict(),
                 "live_state_valid": False,
                 "worker_exit_confirmed": True,
+                "job_host_bytes": 128 << 20,
+                "borrow_retained_until_http_return": True,
                 "all_claims_released": True,
             },
             indent=2,

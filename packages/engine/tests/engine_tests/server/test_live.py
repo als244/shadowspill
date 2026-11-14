@@ -56,7 +56,7 @@ print('service-owned CPU worker exited')
 
 
 @contextmanager
-def configured(tmp_path, monkeypatch):
+def configured(tmp_path, monkeypatch, *, register=True):
     worker = prepared_worker()
     family = worker.bindings.prepared
     payload = b"CPU fixture startup bundle, no model execution"
@@ -87,9 +87,10 @@ def configured(tmp_path, monkeypatch):
         with service.artifacts("owner") as artifacts:
             for ref, body in ((config_ref, config), (plans, payload)):
                 artifacts.put(ref, lambda _, body=body: io.BytesIO(body))
-        service.catalog.create(
-            IDENTITY, request_sha256=config_ref.sha256, configuration=config_ref
-        )
+        if register:
+            service.catalog.create(
+                IDENTITY, request_sha256=config_ref.sha256, configuration=config_ref
+            )
         node = WorkerNode(
             admission,
             {0: worker},
@@ -118,7 +119,12 @@ def configured(tmp_path, monkeypatch):
         )
         try:
             yield SimpleNamespace(
-                live=live, node=node, admission=admission, storage=service, disk=disk
+                live=live,
+                node=node,
+                admission=admission,
+                storage=service,
+                disk=disk,
+                configuration=config_ref,
             )
         finally:
             live.stop()

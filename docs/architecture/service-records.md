@@ -61,6 +61,22 @@ define the forwarding boundary.
 
 ## Request and worker ownership
 
+`server.jobs.RunJobs` bounds creation jobs and live runs in one service-owned
+table. It reserves a slot and the deployment's per-job host envelope before
+durable registration, resource-free factory construction or thread launch. Exact
+creation retries return the saved identity even at capacity or after retirement;
+historical runs consume no live slot. Disconnects leave jobs and workers running.
+There is no executor queue or idle eviction.
+
+One maintenance thread joins completed creation threads, retires orderly closed
+or failed controllers, and retries failed cleanup while retaining admission. Its
+HTTP lookup context pins the controller through the exchange. Allocation stop
+can quiesce children while a borrow remains, but cannot delete files, clear the
+live owner or release its host envelope until the borrow returns. Shutdown also
+retains an unfinished factory/creation thread. Record lookup remains available
+after physical retirement. Configured preparation factories, public creation
+routes and server/allocation constructors remain separate integration work.
+
 `server.live.LiveRun` composes the existing node startup barrier, worker request
 adapter, controller and result publisher. A registered creation receives ready
 status only after all workers initialize. Its caller reserves the decoded family
@@ -73,8 +89,8 @@ its own resource wait without closing another job's admission. Finalized worker
 logs and a session/run/rank manifest enter immutable artifact storage before node
 files are removed. Cleanup failures retain the owners, storage pins and parent
 reservations for retry. The parent service must also finish HTTP borrows before
-dropping this owner. This composition does not yet implement creation-job
-admission, public server constructors or remote node agents.
+dropping this owner. This composition does not yet implement public server
+constructors or remote node agents.
 
 Result artifact identities include session, run, request and output names inside
 the authenticated owner's namespace. Reusing run/request IDs in another session
