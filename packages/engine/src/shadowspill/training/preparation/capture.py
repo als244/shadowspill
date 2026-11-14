@@ -8,6 +8,7 @@ from dataclasses import replace
 from shadowspill.artifacts.program import Program
 from shadowspill.training.definitions.registry import Registry
 
+from .allocation_coverage import allocation_coverage
 from .operation_build import build_operation
 from .policies import materialize_build_options
 from .representative import representative_inputs
@@ -57,11 +58,18 @@ def build_template(
                 "target": target,
             },
         )
-    return replace(
+    program = replace(
         program,
         bindings={
             **program.bindings,
             "preparation_template": template.signature(),
             "profiling_scenario": template.signature()["scenario"],
+        },
+    )
+    return replace(
+        program,
+        bindings={
+            **program.bindings,
+            "allocation_coverage": allocation_coverage(template, program),
         },
     )

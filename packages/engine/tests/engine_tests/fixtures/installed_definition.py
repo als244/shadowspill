@@ -37,8 +37,13 @@ def register(registry):
     registry.add_optimizer(optimizer.definition, source=optimizer.source)
 """
     if provider:
-        source = inspect.getsource(definition_provider).replace(
-            "engine_tests.resources._provider", "external_classifier_fixture.provider"
+        source = (
+            inspect.getsource(definition_provider)
+            .replace(
+                "engine_tests.resources._provider",
+                "external_classifier_fixture.provider",
+            )
+            .replace("ss_resource_test", "ss_definition_resource_test")
         )
         (package / "model_provider.py").write_text(source)
         source = (Path(__file__).parents[1] / "resources" / "_provider.py").read_text()

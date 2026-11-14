@@ -210,6 +210,11 @@ row/region compositions inherit every child's requirements. An opaque provider
 call is not an allocation guarantee, and observed traces alone do not prove a
 bound over all admitted tensor values. These records describe evidence; they do
 not replace measured profiles or physical Plan admission.
+Prepared training captures additionally save an `allocation_coverage` record.
+CPU rechecks require the complete capture identity, all compiled forms and exact
+installed provider contracts. Unknown allocation behavior fails preparation even
+if one measured run fits. Ordinary low-level profiling remains an observed-path
+API; the stronger requirement applies to prepared training families.
 
 ```python
 from shadowspill import Profiles, TaskProfile

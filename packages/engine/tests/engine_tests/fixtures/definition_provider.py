@@ -45,4 +45,7 @@ def describe(config, context):
                 {"events": config.events, "elements": capacity * 65536},
             )
         },
+        allocation_invariants={
+            "torch.ops.ss_resource_test.scale.default": "fixture/shape-fixed-scale@1",
+        },
     )

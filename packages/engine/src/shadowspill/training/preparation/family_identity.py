@@ -4,6 +4,7 @@ from shadowspill.artifacts._values import digest, plain
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.step.ordering import StepDataOrdering
 
+from .allocation_coverage import validate_allocation_coverage
 from .templates import (
     TemplateCandidate,
     TemplateInventory,
@@ -17,6 +18,7 @@ def validate_profile(
 ) -> None:
     template = inventory.templates[key]
     validate_template(template, source.program)
+    validate_allocation_coverage(template, source.program)
     if (
         source.metadata.get("preparation_template") != key
         or plain(source.metadata.get("profiling_scenario"))

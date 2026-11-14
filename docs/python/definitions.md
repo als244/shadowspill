@@ -63,6 +63,20 @@ remain in the existing phase engine. Description never opens a provider or impor
 a factory named by a compute request; definitions own those source-pinned choices.
 Templates save and recheck the resolved construction and actual provider inventory.
 
+Opaque kernels used by prepared operations need an all-value allocation contract.
+`ModelBuild`, `ObjectiveDefinition` and `OptimizerDefinition` accept
+`allocation_invariants`, mapping exact compiled call names to versioned contract
+IDs, for example `{"torch.ops.my_provider.scale.default": "my_provider/scale@1"}`.
+The installed author guarantees identical allocation geometry, output aliases and
+retained storage for every tensor value and reachable provider state at the
+captured geometry, resources and non-tensor arguments. Tensor controls are included;
+hidden or asynchronous allocations are excluded. An operator-preparation factory
+also needs an exact `module:factory` entry covering bound-task activation/wrapping.
+These are source-pinned semantic guarantees, like padding safety; sampled peaks
+cannot supply them. Wildcards, conflicting declarations and unresolved compiler
+geometry are rejected. Value-dependent allocation needs a separate maximum-bound
+mechanism and currently cannot qualify a prepared family through this contract.
+
 Each `TensorField` describes one path in a Datum's input or loss-input tree:
 dtype, per-example shape, padding and optional default, and stacking, packing or
 shared-value semantics. Repeated symbolic dimensions explicitly declare aligned
@@ -151,7 +165,10 @@ accepts the result of `plan_family` and its original measured source profiles.
 `TrainingBundle.load(path)` decodes an inspectable CPU artifact. Before creating
 workers, call `bundle.recheck(registry)` to validate installed sources and exact
 capabilities, re-derive operation/count Programs from saved captures, replay saved
-schedules and recheck coverage and shared admission. Missing masked/optimizer or
+schedules and recheck geometry, allocation coverage and shared admission. Saved
+allocation coverage binds the complete capture and every compiled form, including
+additive gradients, to static compiler geometry and exact opaque-call contracts.
+Measured traces still supply byte sizes and physical placement. Missing masked/optimizer or
 accumulation paths are errors. Loading does not capture, profile, search, select
 replacement candidates or initialize training state. The current qualification
 covers the external classifier fixture, including a provider buffer shared across

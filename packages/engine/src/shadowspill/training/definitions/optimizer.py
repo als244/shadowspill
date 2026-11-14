@@ -11,6 +11,7 @@ from shadowspill_client import Optimizer
 from shadowspill_client._records import Value
 from shadowspill_client.protocol.controls import ControlSchema
 
+from .allocations import allocation_invariants
 from .contracts import Configuration, versioned_id
 
 if TYPE_CHECKING:
@@ -35,6 +36,7 @@ class OptimizerDefinition:
     config: Configuration = dict
     defaults: Mapping[str, Any] = field(default_factory=dict)
     configure: Callable[[Optimizer], Mapping[str, Value]] | None = None
+    allocation_invariants: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -63,6 +65,11 @@ class OptimizerDefinition:
         object.__setattr__(self, "control_bindings", MappingProxyType(bindings))
         object.__setattr__(
             self, "defaults", self.controls.resolve(defaults=self.defaults)
+        )
+        object.__setattr__(
+            self,
+            "allocation_invariants",
+            allocation_invariants(self.allocation_invariants),
         )
 
     def validate_capture(self, captured: OptimizerCapture) -> None:

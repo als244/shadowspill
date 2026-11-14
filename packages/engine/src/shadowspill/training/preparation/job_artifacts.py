@@ -8,6 +8,7 @@ from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.artifacts.program import Program
 from shadowspill.orchestration.launch.workers import Workers
 
+from .allocation_coverage import validate_allocation_coverage
 from .failures import PreparationFailure, prune_failed_templates
 from .family_identity import validate_profile
 from .family_records import PlanRejection
@@ -59,6 +60,7 @@ def reused[T](path: Path, group: Workers, load: Callable[[], T]) -> T | None:
 def program_at(root: Path, inventory: TemplateInventory, key: str) -> Program:
     program = Program.load(root / "programs" / f"{key}.ssp")
     validate_template(inventory.templates[key], program)
+    validate_allocation_coverage(inventory.templates[key], program)
     check_target(program)
     return program
 

@@ -11,6 +11,8 @@ from shadowspill.resources import Resource
 from shadowspill.training.inputs.adapters import InputLayout
 from shadowspill_client._records import Value, mapping, plain
 
+from .allocations import allocation_invariants
+
 
 @dataclass(frozen=True)
 class ModelBuildContext:
@@ -56,6 +58,7 @@ class ModelBuild:
     config: Mapping[str, Value]
     resources: Mapping[str, Resource] = field(default_factory=dict)
     operator_preparation: Sequence[OperatorPreparation] = ()
+    allocation_invariants: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         resources = dict(self.resources)
@@ -70,6 +73,11 @@ class ModelBuild:
         object.__setattr__(self, "config", mapping(self.config, "model build config"))
         object.__setattr__(self, "resources", MappingProxyType(resources))
         object.__setattr__(self, "operator_preparation", preparations)
+        object.__setattr__(
+            self,
+            "allocation_invariants",
+            allocation_invariants(self.allocation_invariants),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,4 +88,5 @@ class ModelBuild:
             "operator_preparation": [
                 item.to_dict() for item in self.operator_preparation
             ],
+            "allocation_invariants": dict(self.allocation_invariants),
         }

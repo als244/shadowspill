@@ -90,6 +90,16 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         opaque = {call for value in behaviors for call in value["opaque_calls"]}
         if provider:
             assert "torch.ops.ss_definition_resource_test.scale.default" in opaque
+        proof = program.bindings["allocation_coverage"]
+        assert proof["tasks"].keys() == program.executables.keys()
+        if provider:
+            assert any(
+                task["contracts"].get(
+                    "torch.ops.ss_definition_resource_test.scale.default"
+                )
+                == "fixture/shape-fixed-scale@1"
+                for task in proof["tasks"].values()
+            )
         profiled = ProfiledProgram.load(tmp_path / "profiled" / f"{key}.ssp")
         assert profiled.profiles.metadata["preparation_template"] == key
         assert (

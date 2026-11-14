@@ -19,6 +19,7 @@ from shadowspill.orchestration.profiling import profiling_options
 from shadowspill.task.profiling import ProfilingOptions
 from shadowspill.training.preparation.phases import settings
 
+from .allocation_coverage import validate_allocation_coverage
 from .candidates import attempt_candidate, available, program_paths
 from .profile_reuse import completed
 from .templates import TemplateInventory, validate_template
@@ -36,6 +37,7 @@ def profile_template(
     """Measure one saved form with exact resolved policy and scenario provenance."""
     template = inventory.templates[template_id]
     validate_template(template, program)
+    validate_allocation_coverage(template, program)
     profiles = measure_program(
         program,
         device=device,

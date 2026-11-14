@@ -8,6 +8,7 @@ from dataclasses import replace
 import pytest
 
 from engine_tests.offline._example import communication, options, profiled
+from engine_tests.training.test_allocation_coverage import certify, compiler_fixture
 from engine_tests.training.test_preparation_templates import inventory
 from engine_tests.training.test_setup_resolution import installed
 from shadowspill import MemoryBudgets, plan_program
@@ -48,15 +49,7 @@ def make_bundle(monkeypatch, **settings):
     sources = {
         key: replace(
             base,
-            program=replace(
-                base.program,
-                executables={"fixture": b"shared compiled fixture"},
-                bindings={
-                    "kind": template.kind,
-                    "preparation_template": template.signature(),
-                    "profiling_scenario": template.signature()["scenario"],
-                },
-            ),
+            program=certify(template, compiler_fixture(template)),
             task_profiles={
                 key: replace(p, metadata={"memory_kind": "static"})
                 for key, p in base.task_profiles.items()

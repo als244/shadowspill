@@ -13,6 +13,8 @@ from shadowspill_client.protocol.controls import ControlSchema
 from shadowspill_client.protocol.definitions import OutputSet, Participation
 from shadowspill_client.protocol.inputs import InputSchema
 
+from .allocations import allocation_invariants
+
 if TYPE_CHECKING:
     from shadowspill.parallelism import Parallelism
     from shadowspill.training.inputs.adapters import InputAdapter, InputLayout
@@ -113,6 +115,7 @@ class ObjectiveDefinition:
     reduction: Literal["sum", "custom"] = "sum"
     bind: Callable[[Any, str], Computation] | None = None
     padding_safe: bool = False
+    allocation_invariants: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -152,6 +155,11 @@ class ObjectiveDefinition:
             raise ValueError("invalid required capabilities")
         object.__setattr__(self, "requires", required)
         object.__setattr__(self, "outputs", MappingProxyType(outputs))
+        object.__setattr__(
+            self,
+            "allocation_invariants",
+            allocation_invariants(self.allocation_invariants),
+        )
 
 
 def simple_loss(

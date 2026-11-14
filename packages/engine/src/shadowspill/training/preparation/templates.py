@@ -143,6 +143,15 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
             "binding": binding.signature(),
             "build": build.to_dict(),
             "model_build": model_build.to_dict(),
+            "allocation_invariants": {
+                "model": dict(model_build.allocation_invariants),
+                "objective": dict(setup.objective.definition.allocation_invariants),
+                "optimizer": {}
+                if setup.optimizer is None
+                or output_only
+                or binding.contract.key.operation == "forward"
+                else dict(setup.optimizer.definition.allocation_invariants),
+            },
             "policy_sources": {
                 key: value.to_dict()
                 for key, value in setup.config.policy_sources.items()
