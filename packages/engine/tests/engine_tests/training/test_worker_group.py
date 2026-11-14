@@ -31,6 +31,25 @@ def commands(invocation=1, sequence=1):
     }
 
 
+def test_failed_owned_process_cleanup_can_retry_without_reusing_worker_channels():
+    attempts = []
+    connection = WorkerConnection(SCOPE, io.BytesIO(), io.BytesIO())
+
+    def stop():
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise OSError("owned child cleanup failed")
+
+    group = WorkerGroup({0: connection}, stop=stop)
+    with pytest.raises(OSError, match="cleanup failed"):
+        group.close()
+    assert not group.valid and not group.closed and not connection.valid
+    group.close()
+    assert group.closed and attempts == [True, True]
+    group.close()
+    assert attempts == [True, True]
+
+
 @contextmanager
 def workers(
     *,

@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack
-from threading import Lock
+from threading import Lock, RLock
 from types import MappingProxyType
 from typing import Self
 
@@ -43,7 +43,9 @@ class WorkerGroup:
         self.connections = MappingProxyType(dict(sorted(connections.items())))
         self._stop = stop
         self._busy = Lock()
+        self._close_lock = RLock()
         self.valid = True
+        self.closed = False
 
     def execute(
         self, call: PreparedCall, transition: Transition
@@ -134,12 +136,14 @@ class WorkerGroup:
             raise RuntimeError("worker group is invalid; never replay execution")
 
     def close(self) -> None:
-        if self.valid:
-            self.valid = False
-            with ExitStack() as cleanup:
-                cleanup.callback(self._stop)
-                for connection in self.connections.values():
-                    cleanup.callback(connection.close)
+        with self._close_lock:
+            if not self.closed:
+                self.valid = False
+                with ExitStack() as cleanup:
+                    cleanup.callback(self._stop)
+                    for connection in self.connections.values():
+                        cleanup.callback(connection.close)
+                self.closed = True
 
     def __enter__(self) -> Self:
         if not self.valid:
