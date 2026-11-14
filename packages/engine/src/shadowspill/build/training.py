@@ -117,6 +117,7 @@ def _build_training(
     target: str | torch.device,
     parallelism: Parallelism | None = None,
     master_dtype: torch.dtype | None = None,
+    runtime_gradient_scale: bool = False,
     chunking: ChunkPolicy | ChunkRegions | None = None,
     resources: Mapping[str, Resource] | None = None,
     operator_preparation: Sequence[OperatorPreparation] = (),
@@ -125,6 +126,8 @@ def _build_training(
     gradient_destination_rules = normalize_gradient_destination_rules(
         gradient_destination_rules
     )
+    if type(runtime_gradient_scale) is not bool:
+        raise TypeError("runtime_gradient_scale must be a bool")
     if graph_pair_policy is not None and not isinstance(
         graph_pair_policy, GraphPairPolicy
     ):
@@ -195,6 +198,7 @@ def _build_training(
                 gradient_dtype=grad_dtype,
                 master_dtype=master_dtype,
                 parameter_ownership=parameters if spec.world_size > 1 else (),
+                runtime_gradient_scale=runtime_gradient_scale,
             )
         )
         if update is not None:

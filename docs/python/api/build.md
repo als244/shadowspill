@@ -51,6 +51,7 @@ All arguments after `model` are keyword-only. `build_step` accepts:
 | `graph_pair_policy` | `None` | Default `GraphPairPolicy()`, or independent retention rules for save/recompute variants. |
 | `grad_dtype` | `None` | Stored gradient dtype; default follows the parameter's logical dtype. |
 | `master_dtype` | `None` | Optional separate optimizer master-weight dtype. |
+| `runtime_gradient_scale` | `False` | Capture a runtime final-scale control, defaulting to 1, at each optimizer consumer. |
 | `fuse_narrow_gradient_accumulation` | `True` | Fuse supported gradient production into its accumulation destination. |
 | `gradient_destination_rules` | `()` | Explicit provider declarations for opaque operations that can accumulate into gradient destinations. |
 | `parallelism` | `None` | Logical ranks and tensor ownership; default is local execution. |
@@ -60,7 +61,7 @@ All arguments after `model` are keyword-only. `build_step` accepts:
 | `target` | `"cuda"` | Representative device for finalizing task code. |
 
 `build_forward_backward` accepts the same options **except** `optimizer` and
-`master_dtype`. It leaves optimizer policy to the caller.
+`master_dtype` and `runtime_gradient_scale`. It leaves optimizer policy to the caller.
 
 ### Calls and microbatches
 

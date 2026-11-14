@@ -83,19 +83,42 @@ with Executor(primary, plans=plans) as executor:
         torch.testing.assert_close(output.cpu(), expected)
         torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
         del output
-    result = executor.run(plan="optim").result()
+    result = executor.run(
+        plan="optim",
+        hyperparams={
+            plans["optim"].program.bindings["gradient_scale_control"]: oracle[
+                "split_scale"
+            ]
+        },
+    ).result()
     assert not result.losses and not result.metrics
     split = snapshot(executor)
     for name, value in oracle["split"].items():
         torch.testing.assert_close(split[name].reshape(value.shape), value)
     executor.initialize(fill, chunk_bytes=32)
-    executor.run(plan="complete", args=oracle["examples"]).result()
+    executor.run(
+        plan="complete",
+        args=oracle["examples"],
+        hyperparams={
+            plans["complete"].program.bindings["gradient_scale_control"]: oracle[
+                "split_scale"
+            ]
+        },
+    ).result()
     complete = snapshot(executor)
     for name, value in oracle["split"].items():
         torch.testing.assert_close(complete[name].reshape(value.shape), value)
     executor.initialize(fill, chunk_bytes=32)
-    for index, args in enumerate(oracle["examples"]):
-        executor.run(plan=f"step{index}", args=[args]).result()
+    for index, factor in enumerate(oracle["update_scales"]):
+        number = index % len(oracle["examples"])
+        args = oracle["examples"][number]
+        name = f"step{number}"
+        controls = (
+            {}
+            if factor is None
+            else {plans[name].program.bindings["gradient_scale_control"]: factor}
+        )
+        executor.run(plan=name, args=[args], hyperparams=controls).result()
         actual = snapshot(executor)
         for name, value in oracle["updated"][index].items():
             torch.testing.assert_close(actual[name].reshape(value.shape), value)

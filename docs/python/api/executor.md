@@ -87,6 +87,14 @@ hyperparameter for that call. Omitted entries use the captured defaults;
 Python numeric optimizer settings remain specialized constants. CPU controls
 remain on the host, and device control tensors occupy planned memory.
 
+For a step built with `runtime_gradient_scale=True`, pass the saved
+`plan.program.bindings["gradient_scale_control"]` name in `hyperparams` to scale
+the final gradient at each optimizer consumer. The default is 1 on every call;
+an override is not sticky. Optimizer-only Programs retain the same control.
+Scaling follows conversion to optimizer precision and leaves stored gradients
+unchanged. A zero scale still executes the optimizer, including state/counter
+updates and weight decay; it does not imply an empty or skipped update.
+
 ## Initialization and export
 
 Initialization uses `TensorChunk` metadata and fills an Executor-owned buffer.

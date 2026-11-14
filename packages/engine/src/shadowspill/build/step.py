@@ -34,6 +34,7 @@ def build_step(
     graph_pair_policy: GraphPairPolicy | None = None,
     grad_dtype: torch.dtype | None = None,
     master_dtype: torch.dtype | None = None,
+    runtime_gradient_scale: bool = False,
     parallelism: Parallelism | None = None,
     resources: Mapping[str, Resource] | None = None,
     operator_preparation: Sequence[OperatorPreparation] = (),
@@ -64,6 +65,10 @@ def build_step(
     for grouped in-place gradient accumulation across shared uses and chunks.
     It is independent of retention and chunk selection; unmatched outputs keep
     ordinary accumulation and all selected implementations are still profiled.
+    ``runtime_gradient_scale`` adds a read-only final-scale control (default 1)
+    to each optimizer consumer, after conversion to optimizer precision. Its
+    saved name is in ``Program.bindings["gradient_scale_control"]``; Executor
+    accepts overrides through ``hyperparams`` without changing stored gradients.
     ``operator_preparation`` supplies explicit provider factories that capture
     selected binaries during existing task finalization, without replaying the
     task, and restore them before measurement/runtime admission.
@@ -83,6 +88,7 @@ def build_step(
         graph_pair_policy=graph_pair_policy,
         grad_dtype=grad_dtype,
         master_dtype=master_dtype,
+        runtime_gradient_scale=runtime_gradient_scale,
         parallelism=parallelism,
         resources=resources,
         operator_preparation=operator_preparation,

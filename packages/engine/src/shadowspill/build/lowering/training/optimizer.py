@@ -78,6 +78,11 @@ def optimizer_templates(
     ]
     return components, {
         "optimizer_type": update.captured.optimizer_type,
+        **(
+            {"gradient_scale_control": update.gradient_scale_control}
+            if update.gradient_scale_control is not None
+            else {}
+        ),
         "optimizer_zero_lr_preserves_state": update.zero_lr_preserves_state,
         "optimizer_learning_rates": update.learning_rates,
         "optimizer_bindings": bindings,

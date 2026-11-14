@@ -89,6 +89,7 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
         programs[f"step{index}"] = build_step(
             model,
             optimizer=CountedAdamW(model.parameters(), lr=0.01, foreach=False),
+            runtime_gradient_scale=True,
             objective=objective,
             example_args=args,
             partition="whole",
@@ -96,6 +97,7 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
     programs["complete"] = build_step(
         model,
         optimizer=CountedAdamW(model.parameters(), lr=0.01, foreach=False),
+        runtime_gradient_scale=True,
         objective=objective,
         example_calls=[(args, {}) for args in examples],
         partition="whole",
@@ -131,6 +133,9 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
             {name: p.grad.clone() for name, p in reference.named_parameters()}
         )
     split_optimizer = CountedAdamW(reference.parameters(), lr=0.01, foreach=False)
+    split_scale = 0.5
+    for parameter in reference.parameters():
+        parameter.grad.mul_(split_scale)
     split_optimizer.step()
     split = {name: p.detach().clone() for name, p in reference.named_parameters()} | {
         f"optimizer.{name}.{key}": value.clone()
@@ -140,9 +145,13 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
     reference.load_state_dict(initial)
     optimizer = CountedAdamW(reference.parameters(), lr=0.01, foreach=False)
     updated = []
-    for args in examples:
+    update_scales = [0.5, -0.5, 0.0, None]
+    for index, factor in enumerate(update_scales):
+        args = examples[index % len(examples)]
         optimizer.zero_grad(set_to_none=True)
         objective(reference, *args).backward()
+        for parameter in reference.parameters():
+            parameter.grad.mul_(1.0 if factor is None else factor)
         optimizer.step()
         state = {name: p.detach().clone() for name, p in reference.named_parameters()}
         state.update(
@@ -160,6 +169,8 @@ def test_mutable_operation_families_in_cold_worker(tmp_path):
             gradients=gradients,
             updated=updated,
             split=split,
+            split_scale=split_scale,
+            update_scales=update_scales,
         ),
         tmp_path / "oracle.pt",
     )

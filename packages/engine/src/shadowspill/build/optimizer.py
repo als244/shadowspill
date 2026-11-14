@@ -41,6 +41,7 @@ class BuiltOptimizer:
     initialization: dict[str, Any]
     zero_lr_preserves_state: bool
     learning_rates: tuple[str, ...]
+    gradient_scale_control: str | None = None
 
 
 def capture_update(
@@ -51,6 +52,7 @@ def capture_update(
     gradient_dtype: torch.dtype | None,
     master_dtype: torch.dtype | None = None,
     parameter_ownership: tuple[ParameterOwnership, ...] = (),
+    runtime_gradient_scale: bool = False,
 ) -> BuiltOptimizer:
     named = dict(model.named_parameters())
     trained = training_parameters_with_gradients(training.examples, named)
@@ -72,7 +74,7 @@ def capture_update(
     )
     parameters = {names[id(value)]: value for value in optimizer_parameters(copied)}
     declared = declare_optimizer_state(parameters, copied, receives_gradient=trained)
-    initialization = {
+    initialization: dict[str, Any] = {
         # Physical components do not define a generic chunkwise dequantizer.
         # The caller fills a wrapper's logical master through the same bounded
         # initializer as its payload/scales; execution never recreates the model.
@@ -109,16 +111,23 @@ def capture_update(
                 if binding.tensor.is_meta
                 else _initial_value(ValueStart(binding.tensor), binding.name)
             )
+    stage_owners = training_parameter_stage_owners(training.examples, named)
     result = capture_optimizer(
         parameters,
         copied,
         receives_gradient=trained,
-        parameter_stage_owners=training_parameter_stage_owners(
-            training.examples, named
-        ),
+        parameter_stage_owners=stage_owners,
         gradient_dtype=gradient_dtype,
         compute_copies=compute_copies,
     )
+    control = None
+    if runtime_gradient_scale:
+        from shadowspill.pytorch.optimizer.scaling import with_gradient_scale
+
+        result, control = with_gradient_scale(
+            result, parameter_stage_owners=stage_owners
+        )
+        initialization[control] = {"kind": "constant", "value": 1.0}
     return BuiltOptimizer(
         result,
         initialization,
@@ -126,6 +135,7 @@ def capture_update(
         tuple(
             f"optimizer_group.{index}.lr" for index in range(len(copied.param_groups))
         ),
+        control,
     )
 
 
