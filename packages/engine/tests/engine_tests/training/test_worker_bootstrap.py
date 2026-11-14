@@ -222,6 +222,7 @@ from shadowspill.training.worker.launch import launch_worker, start_processes
 from shadowspill.training.worker.bootstrap import serve
 from shadowspill.training.worker.node import WorkerNode
 from shadowspill.training.session.controller import RunController
+from shadowspill.training.inputs.frame_reader import FrameReader
 """,
         ],
         capture_output=True,
