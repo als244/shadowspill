@@ -85,6 +85,26 @@ integration checks cover weighted updates, selective forward outputs, accumulati
 with interposed evaluation, and all-masked outputs preserving gradients. Multi-node
 execution and durable output publication require separate service qualification.
 
+Installed `PreparationDefinition` functions provide CPU defaults and physical
+buffer geometry for each logical input partition. Register them with the same
+source-pinned registry; a model can name its default with `preparation`. The
+engine supplies `shadowspill/stacked@1` for independent fixed stacked inputs.
+Variable, shared or coupled inputs require an appropriate installed preset.
+The preset's size units belong to its input contract. Explicit candidate lists
+replace inherited lists, fixed `chunking=None` remains unchunked, and complete
+cases preserve coupled choices. A coupled-case preset requires complete case
+overrides when changing its candidate axes.
+
+The internal CPU resolver emits a portable `ResolvedPreparation` containing
+complete build cases, profiling/planning settings, source identity and each
+choice's origin. Omitted planning workers inherit the preset and then the engine
+default of zero; explicit zero selects all available logical CPUs. Existing core
+`SearchOptions` remain the search description. Expansion rejects schedules whose
+padding exceeds hard limits before repeating buffers, and reports case-limit
+errors without shrinking the request. Geometry coverage is checked separately
+for every requested batch option. This does not yet establish full setup,
+staging, device/spill or collective admission.
+
 `OptimizerDefinition` registers a factory for an ordinary capturable optimizer.
 The factory receives `(model, config, controls)`, where the build worker provides
 tensor-valued runtime controls. Each advertised control explicitly names its

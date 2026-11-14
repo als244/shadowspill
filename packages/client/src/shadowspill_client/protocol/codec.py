@@ -20,6 +20,7 @@ from ..config import (
 from .controls import ControlSchema
 from .definitions import DefinitionSource, OutputSet
 from .inputs import InputSchema
+from .preparation import ResolvedPreparation
 from .requests import ComputeRequest
 from .results import Acceptance, ComputeResult, Failure, RequestStatus
 
@@ -33,6 +34,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "config.memory": Memory,
     "config.execution": Execution,
     "config.preparation": Preparation,
+    "config.resolved_preparation": ResolvedPreparation,
     "schema.inputs": InputSchema,
     "schema.controls": ControlSchema,
     "schema.outputs": OutputSet,

@@ -19,6 +19,7 @@ from .contracts import (
     Schema,
 )
 from .optimizer import OptimizerDefinition
+from .preparation import PreparationDefinition, ResolvedPreparationDefinition
 
 if TYPE_CHECKING:
     from shadowspill.training.inputs.adapters import InputBinding, InputLayout
@@ -140,9 +141,39 @@ class Registry:
     """
 
     def __init__(self) -> None:
+        from .stacked import builtin_preparation
+
         self._models: dict[str, tuple[ModelDefinition, DefinitionSource]] = {}
         self._objectives: dict[str, tuple[ObjectiveDefinition, DefinitionSource]] = {}
         self._optimizers: dict[str, tuple[OptimizerDefinition, DefinitionSource]] = {}
+        default = builtin_preparation()
+        self._preparations = {default.definition.id: default}
+
+    def add_preparation(
+        self, definition: PreparationDefinition, *, source: DefinitionSource
+    ) -> None:
+        if not isinstance(definition, PreparationDefinition) or not isinstance(
+            source, DefinitionSource
+        ):
+            raise TypeError("register a PreparationDefinition with DefinitionSource")
+        if definition.id in self._preparations:
+            raise ValueError(f"preparation already registered: {definition.id}")
+        self._preparations[definition.id] = ResolvedPreparationDefinition(
+            definition, source
+        )
+
+    def resolve_preparation(
+        self, definition: str, *, source: DefinitionSource | None = None
+    ) -> ResolvedPreparationDefinition:
+        try:
+            prepared = self._preparations[definition]
+        except KeyError as error:
+            raise ValueError(
+                f"preparation definition is not installed: {definition}"
+            ) from error
+        if source is not None and prepared.source != source:
+            raise ValueError(f"preparation definition source changed: {definition}")
+        return prepared
 
     def add_optimizer(
         self, definition: OptimizerDefinition, *, source: DefinitionSource

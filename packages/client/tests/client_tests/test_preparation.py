@@ -1,5 +1,7 @@
 """Preparation records preserve requested choices before server resolution."""
 
+from dataclasses import replace
+
 import pytest
 
 from shadowspill_client import (
@@ -12,6 +14,8 @@ from shadowspill_client import (
     ProfilingOptions,
 )
 from shadowspill_client.protocol.codec import decode, encode
+from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.preparation import ResolvedPreparation
 
 
 def test_preparation_roundtrip_keeps_explicit_unchunked_choices_and_counts():
@@ -80,3 +84,43 @@ def test_complete_cases_express_coupled_choices_without_cross_expansion():
 def test_invalid_or_conflicting_choices_fail_before_any_preparation(factory):
     with pytest.raises((ValueError, TypeError)):
         factory()
+
+
+def test_resolved_preparation_is_portable_immutable_and_complete():
+    value = ResolvedPreparation(
+        "external/preset@1",
+        DefinitionSource("external", "1", "a" * 64),
+        [
+            BuildCase(
+                2,
+                BuildOptions(
+                    partition=Policy("external/whole@1"),
+                    chunking=None,
+                    graph_pair_policy=None,
+                ),
+            )
+        ],
+        ProfilingOptions(),
+        PlanningOptions(
+            microbatch_counts=[1, 2],
+            search={"engine_record": "opaque to SDK"},
+            workers=0,
+        ),
+        {"cases.0.microbatch_size": "explicit"},
+    )
+    assert decode(encode(value)) == value
+    with pytest.raises(TypeError):
+        value.origins["cases.0.microbatch_size"] = "preset"
+    for change in (
+        {"cases": [BuildCase(2)]},
+        {"cases": [*value.cases, *value.cases]},
+        {"origins": {"setting": "guessed"}},
+        {"planning": PlanningOptions(microbatch_counts=[1], search={})},
+    ):
+        with pytest.raises(ValueError):
+            replace(value, **change)
+
+
+def test_omitted_workers_is_distinct_from_explicit_all_cpus():
+    assert PlanningOptions().workers is None
+    assert PlanningOptions(workers=0).workers == 0

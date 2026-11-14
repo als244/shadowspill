@@ -151,7 +151,7 @@ class ProfilingOptions(Record):
 class PlanningOptions(Record):
     microbatch_counts: Sequence[int] | None = None
     search: Mapping[str, Value] | None = None
-    workers: int = 0
+    workers: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -163,7 +163,8 @@ class PlanningOptions(Record):
             # SearchOptions.to_dict() is the existing engine's portable question.
             # Its operational worker count is supplied separately here.
             object.__setattr__(self, "search", mapping(self.search, "search"))
-        integer(self.workers, "workers")
+        if self.workers is not None:
+            integer(self.workers, "workers")
 
 
 @dataclass(frozen=True)

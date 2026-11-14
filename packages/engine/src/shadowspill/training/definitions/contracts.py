@@ -40,6 +40,7 @@ class ModelDefinition:
     batching: Literal["independent", "grouped", "whole_batch"] = "independent"
     mutable_buffers: Sequence[str] = ()
     input_adapter: Callable[[Any, InputLayout], InputAdapter] | None = None
+    preparation: str | None = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -51,6 +52,8 @@ class ModelDefinition:
             raise ValueError("declare independent, grouped or whole_batch behavior")
         if self.input_adapter is not None and not callable(self.input_adapter):
             raise TypeError("input_adapter must be an installed binding function")
+        if self.preparation is not None:
+            versioned_id(self.preparation)
         for name in ("capabilities", "mutable_buffers"):
             values = tuple(getattr(self, name))
             if any(not isinstance(v, str) or not v for v in values) or len(

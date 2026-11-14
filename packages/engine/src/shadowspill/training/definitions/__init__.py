@@ -4,6 +4,7 @@ from shadowspill.training.inputs.adapters import InputAdapter, InputLayout, Inpu
 
 from .contracts import ModelDefinition, ObjectiveDefinition, simple_loss
 from .optimizer import OptimizerDefinition
+from .preparation import PreparationContext, PreparationDefinition
 from .registry import Registry, ResolvedModel, ResolvedObjective, ResolvedOptimizer
 
 __all__ = [
@@ -13,6 +14,8 @@ __all__ = [
     "ModelDefinition",
     "ObjectiveDefinition",
     "OptimizerDefinition",
+    "PreparationContext",
+    "PreparationDefinition",
     "Registry",
     "ResolvedModel",
     "ResolvedObjective",
