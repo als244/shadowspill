@@ -6,11 +6,10 @@ import pytest
 
 from shadowspill.execution.distributed.sequence import (
     check_collective_order,
-    collective_sequence,
-    first_difference,
     independent_plans,
 )
 from shadowspill.ir import MemoryActionKind
+from shadowspill.planning.collectives import collective_sequence, first_difference
 
 FETCH, EVICT = MemoryActionKind.FETCH, MemoryActionKind.EVICT
 
