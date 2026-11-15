@@ -43,7 +43,15 @@ from shadowspill_client.protocol.requests import (
 
 
 @contextmanager
-def configured(tmp_path, monkeypatch, *, change=lambda c: c, saved=False, fault=None):
+def configured(
+    tmp_path,
+    monkeypatch,
+    *,
+    change=lambda c: c,
+    saved=False,
+    fault=None,
+    limits_change=lambda limits: limits,
+):
     family = prepared_worker().bindings.prepared
     config = change(family.inventory.layouts.setup.config)
     family = replace(
@@ -121,6 +129,7 @@ def configured(tmp_path, monkeypatch, *, change=lambda c: c, saved=False, fault=
             64 << 10,
             100,
         )
+        limits = limits_change(limits)
         factory = LocalCreationFactory(
             service,
             node,

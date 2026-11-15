@@ -13,6 +13,7 @@ from ._async import CallFuture, ConnectionWork
 from ._records import Record, integer
 from .artifacts import ArtifactHandle
 from .buffers import BufferBudget
+from .captures import NsightCapture, get_nsys
 from .checkpoints import CheckpointHandle
 from .creation import TrainingFuture, create_training_client, get_training_client
 from .plans import PlansHandle, get_plans
@@ -133,6 +134,10 @@ class ServiceClient:
     def get_plans(self, run_id: str, *, name: str) -> CallFuture[PlansHandle]:
         """Retrieve named Plans in this session, including after worker close."""
         return get_plans(self, run_id, name=name)
+
+    def get_nsys(self, run_id: str, *, rank: int = 0) -> CallFuture[NsightCapture]:
+        """Inspect this run's capture, including after worker close or reconnect."""
+        return get_nsys(self, run_id, rank=rank)
 
     def _retain_handle(self, handle: TrainingClient) -> None:
         with self._handle_lock:

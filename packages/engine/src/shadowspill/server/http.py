@@ -42,6 +42,7 @@ from shadowspill_client.protocol.training import ResolvedTraining
 from .artifacts import ArtifactStore
 from .authentication import BearerTokens
 from .creation_records import CreationRecord
+from .nsight import missing_manifest, read_manifest
 from .records.artifact_index import ArtifactAlias
 from .records.requests import RequestRecords, RunIdentity, WriterFenced
 from .records.run_index import RUN_BYTES
@@ -462,6 +463,9 @@ class _Handler(BaseHTTPRequestHandler):
         if parts[4:] == ("plans",):
             self._plans(identity, query, body)
             return
+        if parts[4:] == ("nsys",):
+            self._nsys(identity, query, body)
+            return
         with self.server.runs(identity) as run:
             if run.records.identity != identity:
                 raise PermissionError("run lookup crossed authenticated scope")
@@ -535,6 +539,33 @@ class _Handler(BaseHTTPRequestHandler):
                     self._reply(status)
                     return
             raise KeyError("route")
+
+    def _nsys(
+        self, identity: RunIdentity, query: dict[str, list[str]], body: _Body
+    ) -> None:
+        if self.command != "GET" or set(query) != {"rank"} or body.length:
+            raise ProtocolError("invalid capture route")
+        rank = int(query["rank"][0])
+        jobs = self.server.jobs
+        if jobs is None:
+            raise KeyError("capture routes are unavailable")
+        info = jobs.storage.catalog.get(identity)
+        if info is None:
+            raise KeyError("capture run")
+        self._run_scope(info, identity)
+        with self.server.artifacts(identity.owner_id) as store:
+            value = read_manifest(store, identity, rank)
+            if value is None:
+                raise KeyError("rank capture")
+            if info.plans is not None and value.plans != info.plans:
+                raise ValueError("capture differs from its source Plans")
+            if value.status == "pending" and info.state not in ("preparing", "ready"):
+                # A restart may recover a terminal run but only a pending record.
+                # Report the missing finalization; never infer a usable report.
+                value = missing_manifest(
+                    value, "Run ended without a finalized capture record."
+                )
+            self._reply(value)
 
     def _plans(
         self, identity: RunIdentity, query: dict[str, list[str]], body: _Body

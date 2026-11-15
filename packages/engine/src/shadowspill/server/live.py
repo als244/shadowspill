@@ -10,6 +10,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from threading import Lock, RLock
 
+from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.training.preparation.family_records import PreparedPlans
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.session.controller import RunController
@@ -20,6 +21,7 @@ from shadowspill.training.worker.launch import WorkerProcess, start_processes
 from shadowspill.training.worker.node import WorkerNode
 from shadowspill.training.worker.requests import WorkerRequests, WorkerResults
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.protocol.captures import NsightManifest, NsightWindow
 from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.requests import ArtifactRef, identifier
 from shadowspill_client.protocol.service import ServiceError
@@ -27,6 +29,7 @@ from shadowspill_client.protocol.service import ServiceError
 from .artifacts import ArtifactStore
 from .checkpoint_restore import CheckpointResolver
 from .checkpoints import RunCheckpoints
+from .nsight import finalize_manifest, publish_manifest, read_manifest
 from .records.requests import RequestRecords, RunIdentity
 from .results import ResultPublisher
 from .storage import ServiceStorage
@@ -114,6 +117,7 @@ class LiveRun:
                         "worker initialization differs from run checkpoint"
                     )
         execution = family.inventory.layouts.setup.config.execution
+        self._nsys = NsysCapture.from_settings(execution.nsys)
         if (
             uploads.max_bytes < execution.max_staging_bytes
             or uploads.max_requests < execution.max_pending_requests
@@ -185,6 +189,13 @@ class LiveRun:
                 )
             if info.stage != "initializing":
                 self.storage.catalog.progress(self.identity, "initializing")
+            if self._nsys is not None:
+                for node in self._nodes:
+                    for rank in node.prepared:
+                        with self._publication.reserve(64 << 10, timeout=0):
+                            publish_manifest(
+                                self._artifacts, self._capture_record(rank)
+                            )
             processes: dict[int, WorkerProcess] = {}
             for node in self._nodes:
                 self._active()
@@ -326,6 +337,33 @@ class LiveRun:
 
                     self._artifacts.put(ref, source)
 
+    def _capture_record(self, rank: int) -> NsightManifest:
+        assert self._nsys is not None
+        return NsightManifest(
+            self.identity.session_id,
+            self.identity.run_id,
+            rank,
+            self.plans,
+            NsightWindow(self._nsys.start_step, self._nsys.steps),
+        )
+
+    def _publish_captures(self) -> None:
+        if self._nsys is None or self._artifacts is None:
+            return
+        for node in self._nodes:
+            if node.closed:
+                continue
+            for rank in node.prepared:
+                with self._publication.reserve(64 << 10, timeout=0):
+                    current = read_manifest(self._artifacts, self.identity, rank)
+                    if current is not None and current.status != "pending":
+                        continue  # A retirement retry must preserve its final record.
+                    finalize_manifest(
+                        self._artifacts,
+                        current or self._capture_record(rank),
+                        node.captures.get(rank),
+                    )
+
     def close(self) -> None:
         """Retire an orderly closed/idle run, or retry a prior allocation stop."""
         with self._retiring:
@@ -348,6 +386,7 @@ class LiveRun:
                 if self._publisher is not None:
                     self._publisher.close()
                 self._publish_logs()
+                self._publish_captures()
                 errors = []
                 for node in self._nodes:
                     try:

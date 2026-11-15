@@ -10,6 +10,7 @@ from uuid import uuid4
 from ._async import CallFuture
 from ._records import Value
 from .buffers import BufferBudget
+from .captures import NsightCapture
 from .checkpoints import CheckpointHandle
 from .datum import Datum
 from .plans import PlansHandle
@@ -86,6 +87,10 @@ class TrainingClient:
 
     def get_config(self) -> ResolvedTraining:
         return self._config
+
+    def nsys(self, *, rank: int = 0) -> CallFuture[NsightCapture]:
+        """Inspect a startup capture; native reports finalize after worker exit."""
+        return self._service.get_nsys(self.run_id, rank=rank)
 
     def _disconnect(self) -> None:
         self._slots.close()

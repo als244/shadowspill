@@ -8,7 +8,7 @@ import json
 import os
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Lock
@@ -16,6 +16,8 @@ from types import MappingProxyType
 from typing import cast
 from uuid import uuid4
 
+from shadowspill.orchestration.capture.files import CollectorLimits
+from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.admission import (
     NodeAdmission,
     NodeLease,
@@ -73,6 +75,7 @@ class LocalCreationLimits:
     publication_bytes: int
     log_bytes: int
     max_preparation_files: int
+    nsys: CollectorLimits = field(default_factory=CollectorLimits)
 
     def __post_init__(self) -> None:
         for name in (
@@ -86,6 +89,8 @@ class LocalCreationLimits:
             integer(getattr(self, name), name, minimum=1)
         if not isinstance(self.worker, WorkerHost):
             raise TypeError("worker host envelope requires WorkerHost")
+        if not isinstance(self.nsys, CollectorLimits):
+            raise TypeError("Nsight deployment envelope requires CollectorLimits")
 
 
 class LocalCreationFactory:
@@ -202,10 +207,13 @@ class LocalCreation:
             self._pin = factory.storage.artifacts(self.identity.owner_id)
             self._artifacts = self._pin.__enter__()
             creation = load_creation(self._artifacts, self.info)
-            # Fail before phase launch instead of ignoring a capture policy.
             execution = creation.config.execution
-            if execution.nsys is not None:
-                raise NotImplementedError("startup Nsight is not implemented yet")
+            capture = NsysCapture.from_settings(execution.nsys)
+            if capture is not None:
+                # Resolve the installed executable before phases or device admission.
+                replace(capture, executable=limits.nsys.executable).command(
+                    (), output="unused"
+                )
             registry = load_registry(factory.packages)
             setup = resolve_training(registry, config=creation.config)
             checkpoint = (
@@ -365,6 +373,8 @@ class LocalCreation:
             worker_bytes = sum(
                 limits.worker.peak_bytes(worker.startup) for worker in workers.values()
             )
+            if capture is not None:
+                worker_bytes += ranks * limits.nsys.host_bytes
             self._admit_host(
                 arena_bytes + worker_bytes, 5, wait=creation.wait_for_resources
             )
@@ -389,6 +399,7 @@ class LocalCreation:
                 environment=factory.environment,
                 log_limit_bytes=limits.log_bytes,
                 host_memory=worker_host,
+                capture_limits=None if capture is None else limits.nsys,
             )
             self.run = LiveRun(
                 factory.storage,

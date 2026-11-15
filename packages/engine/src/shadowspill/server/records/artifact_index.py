@@ -15,7 +15,7 @@ REFERENCE_BYTES = 4096
 _CODEC = RecordCodec({"artifact.reference": ArtifactRef})
 
 
-type AliasKind = Literal["checkpoint", "plans"]
+type AliasKind = Literal["checkpoint", "plans", "nsys"]
 
 
 def alias_scope(
@@ -26,7 +26,7 @@ def alias_scope(
     if len(text(name, "artifact name")) > 256:
         raise ValueError("artifact name exceeds its bound")
     name.encode("utf-8")  # SQLite text must be representable before journal commit.
-    if kind not in ("checkpoint", "plans"):
+    if kind not in ("checkpoint", "plans", "nsys"):
         raise ValueError("unknown named artifact kind")
     return session_id, run_id, name, kind
 

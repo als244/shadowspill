@@ -10,6 +10,13 @@ NSIGHT_MEDIA_TYPE = "application/x-nsys-rep"
 WINDOW_BYTES = 16 << 10
 
 
+def rank_name(rank: int) -> str:
+    integer(rank, "capture rank")
+    if rank >= 65536:
+        raise ValueError("capture rank exceeds the worker bound")
+    return f"rank-{rank}"
+
+
 @dataclass(frozen=True)
 class NsightWindow(Record):
     start_step: int
@@ -72,9 +79,7 @@ class NsightManifest(Record):
     def __post_init__(self) -> None:
         identifier(self.session_id, "capture session ID")
         identifier(self.run_id, "capture run ID")
-        integer(self.rank, "capture rank")
-        if self.rank >= 65536:
-            raise ValueError("capture rank exceeds the worker bound")
+        rank_name(self.rank)
         object.__setattr__(
             self, "plans", record(ArtifactRef, self.plans, "capture Plans")
         )

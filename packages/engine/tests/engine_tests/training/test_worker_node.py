@@ -175,9 +175,11 @@ def cpu_workers(monkeypatch):
     monkeypatch.setattr(launch_module, "worker_command", command)
 
 
-def collector_workers(monkeypatch, child=CHILD):
+def collector_workers(monkeypatch, child=CHILD, *, fault=None):
     """CPU sentinel: real child/collector exits, with fabricated capture evidence."""
-    collector = """
+    collector = (
+        f"fault = {fault!r}\n"
+        + """
 import os, subprocess, sys, time
 from pathlib import Path
 worker = sys.argv[2:]
@@ -187,18 +189,25 @@ process = subprocess.Popen(worker, pass_fds=(descriptor,))
 os.close(descriptor)
 status = process.wait()
 time.sleep(.1)  # Final report cannot exist until the worker has exited.
-Path(sys.argv[1]).write_bytes(b'CPU sentinel report')
-raise SystemExit(status)
+if fault != 'missing':
+    Path(sys.argv[1]).write_bytes(b'CPU sentinel report')
+raise SystemExit(17 if fault == 'collector' else status)
 """
-    progress = """
+    )
+    progress = (
+        f"fault = {fault!r}\n"
+        + """
 import os
 from pathlib import Path
 from shadowspill.orchestration.capture.progress import write_progress
 from shadowspill_client.protocol.captures import NsightWindow
 path = Path(sys.argv[2])
 assert path.parent == Path(os.environ['TMPDIR']).parent
-write_progress(path, NsightWindow(2, 2, 'complete', 2, 'history', 'first', 'last'))
+state = 'running' if fault == 'partial' else 'complete'
+write_progress(path, NsightWindow(2, 2, state, 1 if fault == 'partial' else 2,
+                                 'history', 'first', 'last'))
 """
+    )
 
     def command(module, arguments):
         assert module == "shadowspill.training.worker.bootstrap"

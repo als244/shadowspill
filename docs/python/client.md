@@ -208,6 +208,35 @@ repeated. Required execution or cleanup failures retain their ordinary failure
 semantics. A skipped optimizer with no Plan produces a trace issue explaining
 that no invocation ran. Tracing is opt-in and its overhead belongs to that call.
 
+Configure Nsight at creation with
+`Execution(nsys={"start_step": 2, "steps": 2, "gpu_metrics": False})`.
+The one-based window counts complete optimizer updates. For split training it
+starts at the first contributing `forward_backward` and ends after the selected
+terminal `optim_step`; evaluation between contributions stays inside the window.
+Masked calls do not advance the count. Capture does not restart after a restore
+or interrupted window. Device metrics default to enabled and require support and
+permission on the assigned GPU; `gpu_metrics_frequency` selects their rate.
+Omitting `nsys` launches ordinary workers without a collector.
+
+`capture = training.nsys(rank=0).result()` reads bounded per-rank metadata.
+`capture.record.status` is `pending`, `ready`, `failed` or `missing`; its `window`
+records selected/completed updates, history and first/last request IDs. Native
+reports finalize after worker exit, so a completed selected update can still have
+pending report status. After `training.close().result()`, query until finalization
+finishes. A ready report requires both complete worker evidence and successful
+collector exit. If `capture.report` is present,
+`capture.report.download("rank-0.nsys-rep").result()` explicitly downloads verified
+native bytes. Failed captures may retain a partial report, identified by their
+status and error. Capture publication failure does not repeat completed training.
+
+After reconnecting with the same session, use
+`service.get_nsys(run_id, rank=0).result()`. Final manifests and reports survive
+worker close and service restart. A terminal run with only a pending record is
+reported as missing finalization. These reads need no writer or live worker.
+The deployment installs Nsight and provides collector host, disk and finalization
+allowances through `ServerLimits.creation.nsys`; client settings contain no
+server paths or executable names. Captured timings include profiler overhead.
+
 Service base omission and resumable uploads or downloads remain under
 implementation. Qualification evidence and remaining hardware coverage are
 tracked separately from this API contract.

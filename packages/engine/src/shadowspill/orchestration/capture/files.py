@@ -1,4 +1,4 @@
-"""Retain native collector files until process exit and verified artifact transfer."""
+"""Retain Nsight collector files until process exit and verified artifact transfer."""
 
 from __future__ import annotations
 
@@ -203,17 +203,17 @@ class CaptureFiles:
                     size = os.fstat(stream.fileno()).st_size
                     if not 0 < size <= self._output.spec.size_bytes:
                         raise ValueError(
-                            "native report is empty or exceeds its envelope"
+                            "Nsight report is empty or exceeds its envelope"
                         )
                     digest, remaining = hashlib.sha256(), size
                     while remaining:
                         block = stream.read(min(COPY_BYTES, remaining))
                         if not block:
-                            raise ValueError("native report became truncated")
+                            raise ValueError("Nsight report became truncated")
                         digest.update(block)
                         remaining -= len(block)
                     if stream.read(1):
-                        raise ValueError("native report grew after producer exit")
+                        raise ValueError("Nsight report grew after producer exit")
                 reference = ArtifactRef(
                     self._output.spec.id, digest.hexdigest(), size, NSIGHT_MEDIA_TYPE
                 )
@@ -223,7 +223,7 @@ class CaptureFiles:
             if self._process is None or self._process.returncode != 0:
                 status, error = "failed", "Collector did not exit successfully."
             elif reference is None:
-                status, error = "missing", "Collector produced no native report."
+                status, error = "missing", "Collector produced no Nsight report."
             elif window.state != "complete" or window.history_id is None:
                 status, error = (
                     "failed",
