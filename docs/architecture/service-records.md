@@ -701,6 +701,17 @@ control descriptors as execution. `validate_checkpoint` checks these description
 against the complete rank archive before initialization; payload checksums still
 belong to immutable delivery and the streaming loader.
 
+`PlanState.logical_tensors()` binds checkpointable `StateId` entries to those
+same archive descriptors. Tied views retain separate geometry over one canonical
+archive; gradients and call-local controls are excluded from logical resume
+state. Saved parameter placement gives each view its global coordinates, while
+the existing owned-region resolver supplies its stored range, excluding padding.
+Logical intersections stream bounded descriptors even for strided views; they
+allocate no tensor data. Factored optimizer state keeps its own shape. Undefined
+encoded or sharded optimizer mappings fail explicitly, as does registered state
+without an export binding. These descriptions do not yet implement conversion,
+replica consistency checks, or publication of a converted checkpoint.
+
 New-run checkpoint initialization uses this CPU preflight before the existing
 all-worker startup release, followed by the same bounded checkpoint reader used
 for ordered restore. `LocalCreation` resolves the complete generation and checks

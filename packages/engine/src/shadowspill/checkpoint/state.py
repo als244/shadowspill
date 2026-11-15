@@ -11,6 +11,8 @@ from shadowspill.execution.tensor_layout import TensorLayout
 from shadowspill.execution.tensors import tensor_descriptors
 from shadowspill.planning.shared_state import shared_state
 
+from .logical import LogicalTensor, logical_tensors
+
 
 class CheckpointState(Protocol):
     @property
@@ -61,3 +63,7 @@ class PlanState:
                 shared_host=self._shared.host[name],
                 prefix=prefix,
             )
+
+    def logical_tensors(self) -> Iterator[LogicalTensor]:
+        """Checkpointable logical views over the same canonical export regions."""
+        return logical_tensors(self._layouts, self._shared, self.logical_rank)
