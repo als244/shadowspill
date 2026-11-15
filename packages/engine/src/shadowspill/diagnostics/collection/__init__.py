@@ -12,6 +12,7 @@ from shadowspill.runtime.plan.bridge import RuntimeBridge
 
 from .compute import compute_record, selected_intervals, stream_task
 from .evidence import (
+    TraceEvidence,
     build_allocator_trace,
     build_runtime_trace,
     resolve_trace_evidence,
@@ -19,6 +20,10 @@ from .evidence import (
 )
 from .summary import build_step_summary
 from .transfers import transfer_lanes
+
+
+class DiagnosticAssemblyError(RuntimeError):
+    """The invocation drained, but its optional diagnostic view could not form."""
 
 
 def collect_step_diagnostics(
@@ -29,6 +34,22 @@ def collect_step_diagnostics(
 
     validate_completed_timing(timing)
     evidence = resolve_trace_evidence(timing, bridge)
+    # Execution synchronization, terminal transfers and trace shutdown above
+    # must succeed. Only the following optional view assembly may fail without
+    # changing the already confirmed execution effect.
+    try:
+        return _assemble(timing, bridge, evidence)
+    except Exception as error:
+        message = (str(error).strip() or type(error).__name__)[:1024].rstrip()
+    # Do not retain the original traceback, which can own all trace buffers.
+    raise DiagnosticAssemblyError(message)
+
+
+def _assemble(
+    timing: ArmedExecutionTiming,
+    bridge: RuntimeBridge,
+    evidence: TraceEvidence,
+) -> StepDiagnostics:
     simulation = timing.simulation
     if simulation is None:
         raise RuntimeError("execution trace omitted selected simulator evidence")

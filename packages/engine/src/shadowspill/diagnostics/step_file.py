@@ -16,7 +16,7 @@ from collections import namedtuple
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import numpy as np
 
@@ -103,6 +103,19 @@ def write_step_diagnostics(path: Path, diagnostics: StepDiagnostics) -> Path:
     """Write `diagnostics` to `path` and its events beside it, each file whole
     or not at all, and return where the events went."""
 
+    events = events_path(path)
+    atomic_write(events, lambda output: write_step_events(output, diagnostics))
+    atomic_json(path, diagnostics.as_dict(events=False))
+    return events
+
+
+def write_step_events(output: BinaryIO, diagnostics: StepDiagnostics) -> None:
+    """Stream the existing column archive, including to a non-seekable sink.
+
+    File owners supply admission and byte bounds. This is the same event format
+    used beside ordinary step files; it does not expand packed events into Python
+    objects or create a second full serialized snapshot.
+    """
     arrays: dict[str, np.ndarray] = {
         "meta": np.frombuffer(json.dumps({"schema": _SCHEMA}).encode(), dtype=np.uint8)
     }
@@ -113,10 +126,7 @@ def write_step_diagnostics(path: Path, diagnostics: StepDiagnostics) -> Path:
     for group, records in ledgers.items():
         for name, dtype in _COLUMNS[group]:
             arrays[f"{group}.{name}"] = _column(records, name, dtype)
-    events = events_path(path)
-    atomic_write(events, lambda output: np.savez(output, allow_pickle=False, **arrays))
-    atomic_json(path, diagnostics.as_dict(events=False))
-    return events
+    np.savez(output, allow_pickle=False, **arrays)
 
 
 def read_step_events(path: Path) -> StepEvents:
@@ -171,4 +181,5 @@ __all__ = [
     "events_path",
     "read_step_events",
     "write_step_diagnostics",
+    "write_step_events",
 ]

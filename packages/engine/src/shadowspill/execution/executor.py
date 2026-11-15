@@ -310,7 +310,7 @@ class Executor:
                 finish,
                 on_resolved=lambda result: None,
                 on_failure=self._failed,
-                diagnostics=None if trace is None else lambda: trace.result,
+                diagnostics=None if trace is None else lambda: trace.diagnostics,
             )
             return self._pending
         except BaseException as error:

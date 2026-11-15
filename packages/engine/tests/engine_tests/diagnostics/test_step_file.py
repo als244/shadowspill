@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -18,6 +19,7 @@ from shadowspill.diagnostics.step_file import (
     events_path,
     read_step_events,
     write_step_diagnostics,
+    write_step_events,
 )
 from shadowspill.runtime.telemetry import (
     AllocationCategory,
@@ -169,3 +171,18 @@ def test_an_event_kind_nothing_names_is_refused(tmp_path: Path) -> None:
     _rewritten(events_path(path), unknown)
     with pytest.raises(ValueError, match="unknown event kind"):
         read_step_events(path)
+
+
+def test_event_archive_streams_without_seek_and_reuses_existing_reader(tmp_path):
+    class Pipe(io.BytesIO):
+        def seek(self, *args):
+            raise io.UnsupportedOperation("non-seekable output")
+
+        def tell(self):
+            raise io.UnsupportedOperation("non-seekable output")
+
+    stream = Pipe()
+    write_step_events(stream, _with_events())
+    path = tmp_path / "trace.json"
+    events_path(path).write_bytes(stream.getvalue())
+    assert read_step_events(path) == StepEvents(_RUNTIME_EVENTS, _ALLOCATION_EVENTS)

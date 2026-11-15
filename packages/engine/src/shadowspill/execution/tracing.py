@@ -4,6 +4,7 @@ import time
 
 import torch
 
+from shadowspill.diagnostics.collection import DiagnosticAssemblyError
 from shadowspill.diagnostics.step import StepDiagnostics
 from shadowspill.execution.recording.spec import (
     TracedInvocation,
@@ -20,6 +21,7 @@ class InvocationTrace:
     def __init__(self, path: ExecutionPath):
         plan = path.plan
         self.result: StepDiagnostics | None = None
+        self._error: str | None = None
         self.timing = ExecutionTiming(
             path.bridge,
             tuple(task.entry.task_id for task in path.tasks),
@@ -69,9 +71,19 @@ class InvocationTrace:
     def finish(self) -> None:
         try:
             self.timing.mark_cycle_end()
-            self.result = self.timing.collect_step_diagnostics()
+            try:
+                self.result = self.timing.collect_step_diagnostics()
+            except DiagnosticAssemblyError as error:
+                self._error = str(error)
         finally:
             self.timing.release()
+
+    @property
+    def diagnostics(self) -> StepDiagnostics | None:
+        """Optional view errors are observed separately from invocation completion."""
+        if self._error is not None:
+            raise DiagnosticAssemblyError(self._error)
+        return self.result
 
     def cancel(self) -> None:
         try:
