@@ -1,15 +1,22 @@
 """The existing regression model through public, framework-free definitions."""
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
 from hashlib import sha256
 from importlib.metadata import version
 from pathlib import Path
 
-from shadowspill.training.definitions import ModelDefinition, ObjectiveDefinition
+from shadowspill.training.definitions import (
+    ModelDefinition,
+    ModelInitialization,
+    ObjectiveDefinition,
+)
 from shadowspill_client.protocol.definitions import (
     DefinitionSource,
     OutputSet,
     Participation,
+    TensorOutput,
 )
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 
@@ -23,6 +30,29 @@ def create(config):
     from shadowspill_workloads.recipes.regression.model import Regression
 
     return Regression()
+
+
+def initialization(config, context):
+    if context.weights.kind != "random":
+        raise ValueError("regression requires explicit random weights or a checkpoint")
+
+    @contextmanager
+    def open_loader(runtime):
+        from shadowspill_workloads.recipes.regression.initialize import fill_tensor
+
+        yield partial(fill_tensor, seed=context.weights.seed)
+
+    # The largest logical tensor is 512 FP32 values. Include the destination,
+    # full deterministic sampler block and bounded generator/loader state.
+    return ModelInitialization(peak_bytes=64 << 10, chunk_bytes=4096, open=open_loader)
+
+
+def predictions(model, inputs, loss_inputs, loss_params):
+    return {"prediction": model(**inputs)}
+
+
+def bind(config, outputs):
+    return weighted_squared_error if outputs == "metrics" else predictions
 
 
 def weighted_squared_error(model, inputs, loss_inputs, loss_params):
@@ -44,7 +74,11 @@ def register(registry):
     root = Path(__file__).resolve().parents[1]
     digest = sha256()
     # Explicit source closure, including the existing model, pins editable installs.
-    for relative in ("definitions/regression.py", "recipes/regression/model.py"):
+    for relative in (
+        "definitions/regression.py",
+        "recipes/regression/model.py",
+        "recipes/regression/initialize.py",
+    ):
         digest.update(relative.encode())
         digest.update((root / relative).read_bytes())
     source = DefinitionSource(
@@ -63,6 +97,7 @@ def register(registry):
             ),
             capabilities=("regression",),
             mutable_buffers=("updates",),
+            initialization=initialization,
         ),
         source=source,
     )
@@ -83,12 +118,17 @@ def register(registry):
             requires=("regression",),
             participation=Participation(("valid",)),
             padding_safe=True,
+            bind=bind,
             outputs={
                 "metrics": OutputSet(
                     model_inputs=(("value",),),
                     loss_inputs=(("targets",), ("valid",), ("weights",)),
                     metrics={"loss_sum": "sum", "valid_examples": "sum"},
-                )
+                ),
+                "predictions": OutputSet(
+                    model_inputs=(("value",),),
+                    tensors={"prediction": TensorOutput("float32", (8,), "datum")},
+                ),
             },
         ),
         source=source,

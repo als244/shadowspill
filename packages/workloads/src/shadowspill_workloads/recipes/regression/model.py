@@ -11,7 +11,8 @@ class Regression(nn.Module):
         self.register_buffer("updates", torch.tensor(0, dtype=torch.int64))
 
     def forward(self, value):
-        self.updates.add_(1)
+        if self.training:
+            self.updates.add_(1)
         return self.network(value)
 
 

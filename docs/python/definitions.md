@@ -256,6 +256,16 @@ master-weight or gradient-accumulation storage. Unsupported groups and precision
 options fail during description. For the existing FP32 regression recipe, specify
 `precision={"opt_state_dtype": "float32"}` to preserve its optimizer settings.
 
+The supplied `shadowspill/regression@1` definition accepts explicit
+`Weights.random(seed=...)` initialization and compatible checkpoints. Seed zero
+reproduces the original regression recipe's initialization, independently of
+worker ownership and loader chunk sizes. Its `predictions` output needs only
+`Datum.inputs["value"]` (16 FP32 values), and evaluation leaves the model's
+training counter unchanged. `shadowspill/weighted_squared_error@1` takes eight
+FP32 targets per Datum, optional scalar `weights` and boolean `valid`, and returns
+the weighted squared-error sum. To reproduce the original global mean, supply
+`weights=1 / (8 * number_of_global_examples)`; the engine adds no normalization.
+
 The phase engine also provides `artifacts.state_inventory.program_state(program,
 logical_rank=0)`. It describes captured parameters, buffers, masters, persistent
 gradients, optimizer tensors and host counters using role/name/component IDs.
