@@ -1,6 +1,7 @@
 """Admit installed initializers before opening sources or touching mutable state."""
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -9,6 +10,7 @@ from shadowspill.training.definitions.initialization import (
     InitializationContext,
     InitializationRuntime,
     ModelInitialization,
+    TensorInitializer,
 )
 from shadowspill.training.preparation.setup import ResolvedSetup
 from shadowspill_client.buffers import BufferBudget
@@ -71,8 +73,18 @@ def initialize(
     description = prepared.description
     with (
         budget.reserve(description.peak_bytes, timeout=0),
-        description.open(runtime) as fill,
+        open_initialization(prepared, runtime) as fill,
     ):
+        executor.initialize(fill, chunk_bytes=description.chunk_bytes)
+
+
+@contextmanager
+def open_initialization(
+    prepared: PreparedInitialization, runtime: InitializationRuntime
+) -> Iterator[TensorInitializer]:
+    """Borrow the existing validated loader under the caller's host reservation."""
+    description = prepared.description
+    with description.open(runtime) as fill:
         if not callable(fill):
             raise TypeError("initialization context must yield a tensor filler")
 
@@ -88,4 +100,4 @@ def initialize(
                 raise ValueError("initializer received an incompatible owned CPU chunk")
             fill(request, destination)
 
-        executor.initialize(fill_chunk, chunk_bytes=description.chunk_bytes)
+        yield fill_chunk

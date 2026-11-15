@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from shadowspill.artifacts.program import Program
@@ -33,15 +33,21 @@ def _retained_aliases(program: Program) -> set[str]:
 
 
 def omitted_parameters(executor: CheckpointState) -> set[str]:
-    program = executor.plan.program
+    return omitted_from_programs(
+        executor.plan.program, (plan.program for plan in executor.plans.values())
+    )
+
+
+def omitted_from_programs(
+    program: Program, additional: Iterable[Program] = ()
+) -> set[str]:
+    """Use the same unchanged-storage proof before constructing an Executor."""
     aliases = {item.object_id: item.alias_group_id for item in program.objects}
     retained = _retained_aliases(program)
-    for plan in executor.plans.values():
-        shared = shared_model_aliases(program, plan.program)
+    for other in additional:
+        shared = shared_model_aliases(program, other)
         retained.update(
-            shared[alias]
-            for alias in _retained_aliases(plan.program)
-            if alias in shared
+            shared[alias] for alias in _retained_aliases(other) if alias in shared
         )
     return {
         registration_name(item)
