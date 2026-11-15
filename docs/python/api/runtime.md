@@ -292,5 +292,7 @@ their own, which would extend the lifetime of what is being investigated;
 `InvocationResult` is the handle returned by Executor. `result()` / `wait()`
 waits once and returns caller-owned outputs, preserving completion errors for
 later reads. `resolved` reports completion and `diagnostics` exposes the optional
-runtime trace. See [execution](training.md).
-
+runtime trace. An optional diagnostic assembly failure is raised when reading
+`diagnostics`, after successful invocation completion; `result()` still returns
+the completed outputs. Synchronization and required cleanup errors remain
+invocation failures. See [execution](training.md).

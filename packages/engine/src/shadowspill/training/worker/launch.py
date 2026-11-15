@@ -47,7 +47,8 @@ def launch_worker(
     startup = launch.startup
     if (
         lease.request.devices.get(device_id, 0) < startup.device_bytes
-        or lease.request.host_bytes < startup.spill_bytes + startup.staging_bytes
+        or lease.request.host_bytes
+        < startup.spill_bytes + startup.staging_bytes + startup.diagnostics_bytes
     ):
         raise ValueError("worker pools/staging exceed the existing node claim")
     world = len(startup.logical_by_worker)

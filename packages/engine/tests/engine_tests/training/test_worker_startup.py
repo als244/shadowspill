@@ -14,6 +14,7 @@ import pytest
 from engine_tests.training.test_prepared_requests import family
 from engine_tests.training.test_worker_group import commands
 from engine_tests.training.test_worker_loop import SCOPE, call
+from shadowspill.ir import ResourceKind, ResourceSpec, TaskSpec
 from shadowspill.training.definitions import InitializationRuntime
 from shadowspill.training.worker.channel import read_message, write_message
 from shadowspill.training.worker.loop import WorkerLoop
@@ -264,6 +265,22 @@ def prepared_worker():
     for plans in prepared.plans.values():
         for plan in plans.values():
             plan.program.bindings["compiled_device_index"] = 0
+            # Synthetic trace geometry, matching the existing sentinel Plan.
+            # Real trace sizing and codec behavior have separate saved-Plan tests.
+            task = TaskSpec(
+                "task",
+                ResourceSpec("compute", ResourceKind.COMPUTE),
+                "result",
+                requires_entrypoint=False,
+            )
+            plan.program.tasks = (task,)
+            plan.program.parallelism = None
+            plan.selections = ()
+            plan._costed_program = SimpleNamespace(
+                selected_tasks=lambda _, task=task: (task,), objects=()
+            )
+            plan.schedule = SimpleNamespace(actions=())
+            plan._accumulation_plan = None
             plan.memory_budgets = SimpleNamespace(
                 execution_bytes=2 << 30, spill_bytes=200
             )
@@ -441,7 +458,9 @@ def test_worker_serve_orders_readiness_and_closes_channels(
     incoming.seek(0)
 
     @contextmanager
-    def open_worker(self, runtime, resolve, outputs, *, checkpoint_stream=None):
+    def open_worker(
+        self, runtime, resolve, outputs, *, checkpoint_stream=None, traces=None
+    ):
         events.append("open")
         try:
             if failure == "initialize":

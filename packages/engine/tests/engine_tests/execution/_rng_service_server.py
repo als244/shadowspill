@@ -26,7 +26,21 @@ class Block(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, Block())
 
 from shadowspill.server import Allocation, Server, ServerLimits  # noqa: E402
+from shadowspill.server.artifacts import ArtifactStore  # noqa: E402
 from shadowspill.server.authentication import BearerTokens  # noqa: E402
+
+trace_failures = []
+produce = ArtifactStore.put
+
+
+def fail_first_trace(self, reference, source):
+    if reference.id.startswith("trace.") and not trace_failures:
+        trace_failures.append(reference.id)
+        raise OSError("injected optional trace storage failure")
+    return produce(self, reference, source)
+
+
+ArtifactStore.put = fail_first_trace
 
 root = Path(sys.argv[1])
 options = json.loads((root / "setup.json").read_text())
@@ -104,6 +118,7 @@ with Server(
     node = service._node
 assert node.used.claims == 0
 assert not any(name in sys.modules for name in ("torch", "triton", "pynvml"))
+assert len(trace_failures) == 1
 receipt.update(
     all_server_claims_released=True,
     controller_framework_free=True,
@@ -111,6 +126,7 @@ receipt.update(
     oracle="independent NumPy forward/loss/SGD derivatives",
     rtol=2e-4,
     atol=2e-5,
+    optional_trace_failures_injected=len(trace_failures),
 )
 (root / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
 print(

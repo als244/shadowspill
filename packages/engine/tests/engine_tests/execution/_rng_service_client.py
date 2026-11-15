@@ -1,6 +1,7 @@
 """NumPy-only public-client training, independent gradients and stochastic replay."""
 
 import importlib.abc
+import io
 import json
 import socket
 import sys
@@ -9,6 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
 from time import monotonic
+from zipfile import ZipFile
 
 import numpy as np
 
@@ -129,6 +131,44 @@ def closed(client, training):
         Event().wait(0.02)
 
 
+def check_trace(result, run, *, expected, accumulated=False):
+    assert not result.artifact_issues, result.artifact_issues
+    if not expected:
+        assert not result.traces
+        return
+    assert len(result.traces) == 1
+    with TemporaryDirectory(prefix="shadowspill-trace-output-") as directory:
+        path = result.traces[0].download(Path(directory) / "trace.zip").result(30)
+        with ZipFile(path) as archive:
+            assert set(archive.namelist()) == {
+                "manifest.json",
+                "step.json",
+                "step.events.npz",
+            }
+            manifest = json.loads(archive.read("manifest.json"))
+            assert manifest["request"] == result.identity.to_dict()
+            assert manifest["operation"] == result.operation
+            assert manifest["plans"] == run.plans.reference.to_dict()
+            assert manifest["rank"] == 0 and manifest["history_id"] == result.history_id
+            assert manifest["completed_updates_before"] == result.completed_updates - (
+                result.operation in ("step", "optim_step")
+                and result.outcome != "skipped"
+            )
+            assert manifest["accumulate_gradients"] == accumulated
+            diagnostic = json.loads(archive.read("step.json"))
+            assert diagnostic["tasks"] and diagnostic["timelines"]["compute"]
+            assert diagnostic["summary"]["trace_complete"]
+            assert not diagnostic["runtime"]["event_overflow"]
+            assert not diagnostic["allocator"]["overflow"]
+            with np.load(
+                io.BytesIO(archive.read("step.events.npz")), allow_pickle=False
+            ) as events:
+                assert len(events["runtime.sequence"]) >= 2
+                for name in ("runtime", "allocator"):
+                    sequence = events[name + ".sequence"]
+                    np.testing.assert_array_equal(sequence, np.arange(len(sequence)))
+
+
 def qualify(client, config, initial, memory):
     training = client.create_training_client(config=config, name="stochastic").result(
         180
@@ -136,14 +176,25 @@ def qualify(client, config, initial, memory):
     plans = training.plans
     oracle = Oracle(initial)
     first = training.step(
-        records(), optim={"lr": 0.03}, grad_scale=0.5, loss_params={"temperature": 2.0}
+        records(),
+        optim={"lr": 0.03},
+        grad_scale=0.5,
+        loss_params={"temperature": 2.0},
+        runtime_trace=True,
     ).result(120)
+    # The server fixture fails this optional artifact publication after the real
+    # device update. Loss, model state and the update counter must still succeed.
+    assert not first.traces and first.completed_updates == 1 and first.state_valid
+    assert len(first.artifact_issues) == 1
+    assert first.artifact_issues[0].code == "runtime_trace_publication"
     oracle.check(outputs(first, memory), first, temperature=2.0, backward=True)
     oracle.update(0.03, 0.5)
-    evaluated = training.forward(records(targets=False), outputs="predictions").result(
-        120
-    )
+    evaluated = training.forward(
+        records(targets=False), outputs="predictions", runtime_trace=True
+    ).result(120)
     oracle.check(outputs(evaluated, memory), evaluated)
+    check_trace(evaluated, training, expected=True)
+    retained_trace = evaluated.traces[0]
     checkpoint = training.save_checkpoint(name="base", metadata={"cursor": 3}).result(
         120
     )
@@ -157,11 +208,16 @@ def qualify(client, config, initial, memory):
 
         def evaluate(masked=False):
             result = (
-                run.forward_backward(records(masked=True))
+                run.forward_backward(records(masked=True), runtime_trace=interpose)
                 if masked
-                else run.forward(records(targets=False), outputs="predictions")
+                else run.forward(
+                    records(targets=False),
+                    outputs="predictions",
+                    runtime_trace=interpose,
+                )
             ).result(120)
             reference.check(outputs(result, memory), result)
+            check_trace(result, run, expected=interpose)
             if masked:
                 assert result.record.outcome == "skipped"
 
@@ -170,8 +226,11 @@ def qualify(client, config, initial, memory):
         if split:
             for index, temperature in enumerate((0.5, 1.0)):
                 result = run.forward_backward(
-                    records(), loss_params={"temperature": temperature}
+                    records(),
+                    loss_params={"temperature": temperature},
+                    runtime_trace=interpose,
                 ).result(120)
+                check_trace(result, run, expected=interpose, accumulated=index > 0)
                 observed.append(
                     reference.check(
                         outputs(result, memory),
@@ -183,7 +242,10 @@ def qualify(client, config, initial, memory):
                 if interpose and index == 0:
                     evaluate()
                     evaluate(masked=True)
-            final = run.optim_step(optim={"lr": 0.02}, grad_scale=-0.5).result(120)
+            final = run.optim_step(
+                optim={"lr": 0.02}, grad_scale=-0.5, runtime_trace=interpose
+            ).result(120)
+            check_trace(final, run, expected=interpose)
             reference.update(0.02, -0.5)
         else:
             result = run.step(
@@ -191,7 +253,9 @@ def qualify(client, config, initial, memory):
                 optim={"lr": 0.04},
                 grad_scale=1.25,
                 loss_params={"temperature": 1.5},
+                runtime_trace=interpose,
             ).result(120)
+            check_trace(result, run, expected=interpose)
             observed.append(
                 reference.check(
                     outputs(result, memory), result, temperature=1.5, backward=True
@@ -212,6 +276,8 @@ def qualify(client, config, initial, memory):
         for before, after in zip(native_samples[split], replay, strict=True):
             np.testing.assert_array_equal(before, after)
     closed(client, training)
+    with TemporaryDirectory(prefix="shadowspill-trace-closed-") as directory:
+        retained_trace.download(Path(directory) / "trace.zip").result(30)
     receipts.append(
         {
             "run_id": training.run_id,
@@ -219,6 +285,15 @@ def qualify(client, config, initial, memory):
             "step_and_split_oracle": True,
             "evaluation_isolation": True,
             "native_replay_exact": True,
+            "runtime_traces": [
+                "step",
+                "forward_backward",
+                "optim_step",
+                "forward",
+                "masked",
+            ],
+            "trace_failure_preserves_update": True,
+            "trace_download_after_close": True,
         }
     )
 
@@ -282,6 +357,13 @@ def qualify(client, config, initial, memory):
                 "evaluation_isolation": True,
                 "replay_exact": True,
                 "saved_seed_preserved": True,
+                "runtime_traces": [
+                    "step",
+                    "forward_backward",
+                    "optim_step",
+                    "forward",
+                    "masked",
+                ],
             }
         )
     return receipts

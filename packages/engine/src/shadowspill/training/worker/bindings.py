@@ -64,6 +64,8 @@ def worker_call(
             call.restore.manifest.info,
             call.restore.manifest.ranks[scope.rank],
         ),
+        history_id=transition.before.history_id,
+        completed_updates=transition.before.completed_updates,
     )
     # This must succeed before dispatch; receivers enforce the same envelope.
     CODEC.encode(result)

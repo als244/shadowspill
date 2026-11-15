@@ -70,9 +70,10 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
         events.append("bundle")
         return "family"
 
-    def serve(reader, writer, runtime, resolve, outputs):
+    def serve(reader, writer, runtime, resolve, outputs, *, traces):
         assert reader is writer is incoming
         assert runtime.cache_root == outputs.root == tmp_path
+        assert traces.root == tmp_path and traces.bundle == expected.bundle
         with pytest.raises(ValueError, match="ungranted"):
             runtime.artifact("unknown")
         events.append("serve")
@@ -93,6 +94,7 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
                 )
             ),
             outputs={},
+            traces={},
             serve=serve,
         )
 

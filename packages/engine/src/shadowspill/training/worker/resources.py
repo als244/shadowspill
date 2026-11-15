@@ -21,7 +21,9 @@ class WorkerHost:
     while that family remains resident;
     it is not the compressed file size. Neither value is inferred from idle RSS.
     The deployment must qualify these allowances for its installed definitions.
-    Agent/controller arenas and retained files are separately owned reservations.
+    Trace rings, owned copies and report scratch are included separately in the
+    startup's diagnostics allowance. Agent/controller arenas and retained files
+    are separately owned reservations.
     """
 
     process_bytes: int
@@ -40,6 +42,7 @@ class WorkerHost:
         return (
             startup.spill_bytes
             + startup.staging_bytes
+            + startup.diagnostics_bytes
             + self.process_bytes
             + self.artifact_bytes
             + 8 * MAX_METADATA_BYTES

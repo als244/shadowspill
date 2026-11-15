@@ -29,6 +29,7 @@ from .output_files import OutputSink
 from .output_frame import WorkerOutputFrame, prepare_output_frames
 from .protocol import WorkerCall, WorkerScope, WorkerStartup
 from .startup import await_start, report_ready
+from .trace_files import TraceBudget, TraceFiles, family_trace_budgets
 
 if TYPE_CHECKING:
     from shadowspill.execution.executor import Executor
@@ -47,6 +48,7 @@ class PreparedWorker:
     initialization: PreparedInitialization | None
     startup: WorkerStartup
     outputs: Mapping[tuple[str, str], WorkerOutputFrame]
+    traces: Mapping[tuple[str, bool], TraceBudget]
     restore: RankRestore | None = None
 
     @property
@@ -96,6 +98,7 @@ class PreparedWorker:
                 "checkpoint initialization needs two staging chunks"
             )
         outputs = prepare_output_frames(prepared, scope.rank)
+        traces = family_trace_budgets(plans)
         staging = max(
             initial_bytes,
             bindings.input_bytes,
@@ -123,8 +126,9 @@ class PreparedWorker:
             primary.memory_budgets.execution_bytes,
             spill.capacity,
             staging,
+            max(trace.host_bytes for trace in traces.values()),
         )
-        return cls(bindings, initial, description, outputs, restore)
+        return cls(bindings, initial, description, outputs, traces, restore)
 
     @contextmanager
     def open(
@@ -134,6 +138,7 @@ class PreparedWorker:
         outputs: OutputSink,
         *,
         checkpoint_stream: BinaryIO | None = None,
+        traces: TraceFiles | None = None,
     ) -> Iterator["RunningWorker"]:
         # The agent must have isolated visibility before this import. Each saved
         # process-local compiler ordinal is zero, independent of physical GPU ID.
@@ -157,6 +162,7 @@ class PreparedWorker:
                 primary, plans=plans, rank_map=rank_map, reject_overbudget=True
             ) as executor:
                 budget = BufferBudget(self.startup.staging_bytes)
+                diagnostics = BufferBudget(self.startup.diagnostics_bytes)
                 try:
                     randomness = WorkerRandomness(
                         executor.device, self.startup.scope.rank
@@ -187,6 +193,8 @@ class PreparedWorker:
                         outputs.collect,
                         restore=reader,
                         randomness=randomness,
+                        traces=traces,
+                        diagnostics=diagnostics,
                         checkpoints=None
                         if checkpoint_stream is None
                         else WorkerCheckpointWriter(
@@ -202,6 +210,8 @@ class PreparedWorker:
                     def bind(command: WorkerCall) -> BoundWorkerCall:
                         call = execution.prepare(self.bindings.bind(command, resolve))
                         outputs.check(call)
+                        if traces is not None:
+                            traces.check(call)
                         return call
 
                     loop = WorkerLoop(
@@ -216,6 +226,7 @@ class PreparedWorker:
                         loop.invalidate()
                 finally:
                     budget.close()
+                    diagnostics.close()
 
     def serve(
         self,
@@ -224,6 +235,8 @@ class PreparedWorker:
         runtime: InitializationRuntime,
         resolve: Callable[[ArtifactRef], Path],
         outputs: OutputSink,
+        *,
+        traces: TraceFiles | None = None,
     ) -> None:
         """Own the private startup/invocation streams, without an idle timeout."""
         with ExitStack() as cleanup:
@@ -246,7 +259,7 @@ class PreparedWorker:
                 )
             await_start(self.startup, reader, writer)
             with self.open(
-                runtime, resolve, outputs, checkpoint_stream=writer
+                runtime, resolve, outputs, checkpoint_stream=writer, traces=traces
             ) as running:
                 report_ready(self.startup, writer)
                 running.loop.serve(reader, writer)

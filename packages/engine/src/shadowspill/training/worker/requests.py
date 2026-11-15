@@ -29,6 +29,7 @@ from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.checkpoints import CheckpointInfo
 from shadowspill_client.protocol.codec import MAX_METADATA_BYTES
 from shadowspill_client.protocol.requests import ArtifactRef
+from shadowspill_client.protocol.results import ArtifactIssue
 
 from .checkpoint_records import RankSave, RankSaved, checkpoint_id
 from .checkpoint_storage import CheckpointFiles, CheckpointStorage
@@ -37,6 +38,7 @@ from .output_files import FileOutputs
 from .output_frame import WorkerOutputFrame
 from .protocol import WorkerCall, WorkerReply
 from .runtime import PreparedWorker
+from .trace_files import TraceFiles
 
 
 @dataclass(frozen=True)
@@ -324,6 +326,12 @@ class WorkerRequests:
                 result._files[rank] = node.outputs.reserve(spec)
                 assert bound.plan is not None and command.candidate is not None
                 result.frames[rank] = worker.outputs[command.candidate, bound.plan]
+            if command.request.runtime_trace:
+                trace = TraceFiles(
+                    worker.traces, bundle=worker.startup.bundle, root=node.outputs.root
+                ).spec(bound)
+                if trace is not None:
+                    result._traces[rank] = node.outputs.reserve(trace)
 
     def close(self) -> None:
         # Wake any blocked group I/O before waiting for the request owner. A
@@ -357,27 +365,28 @@ class WorkerResults:
         self._deliveries: list[FileDelivery] = []
         self._grants: list[FileGrant] = []
         self._files: dict[int, OutputFile] = {}
+        self._traces: dict[int, OutputFile] = {}
         self.frames: dict[int, WorkerOutputFrame] = {}
         self.replies: Mapping[int, WorkerReply] = {}
         self.checkpoint: CheckpointFiles | None = None
         self.publication_error: str | None = None
         self._active = self.ready = self.closed = False
-        self._producing: set[int] = set()
+        self._producing: set[OutputFile] = set()
         self._lock = RLock()
 
     def _begin(self) -> None:
         with self._lock:
             self._active = True
-            for rank, file in self._files.items():
+            for file in (*self._files.values(), *self._traces.values()):
                 file.begin()
-                self._producing.add(rank)
+                self._producing.add(file)
 
     def _finished(self) -> None:
         with self._lock:
             if self._active:
-                for rank in tuple(self._producing):
-                    self._files[rank].finished()
-                    self._producing.remove(rank)
+                for file in tuple(self._producing):
+                    file.finished()
+                    self._producing.remove(file)
                 self._active = False
 
     def verify(self) -> None:
@@ -406,6 +415,46 @@ class WorkerResults:
                     if reply.result is None:
                         raise ValueError("worker omitted its prepared output reference")
                     file.verify(reply.result)
+
+    @contextmanager
+    def open_trace(self, rank: int, reference: ArtifactRef) -> Iterator[BinaryIO]:
+        """Verify optional evidence only after execution completion is recorded."""
+        with self._lock:
+            if self.closed or not self.ready:
+                raise ValueError("trace has no completed owner")
+            file = self._traces[rank]
+            file.verify(reference)
+            borrowed = file.open(reference)
+            stream = borrowed.__enter__()
+        try:
+            yield stream
+        finally:
+            borrowed.__exit__(None, None, None)
+
+    def traces(self) -> Mapping[int, ArtifactRef | ArtifactIssue]:
+        with self._lock:
+            if self.closed or not self.ready:
+                raise ValueError("trace has no completed owner")
+            outcomes: dict[int, ArtifactRef | ArtifactIssue] = {}
+            for rank, reply in self.replies.items():
+                file = self._traces.get(rank)
+                if reply.trace_issue is not None:
+                    outcomes[rank] = reply.trace_issue
+                elif reply.trace is not None:
+                    if file is None:
+                        outcomes[rank] = ArtifactIssue(
+                            "runtime_trace_unreserved",
+                            "Worker returned an unreserved trace.",
+                        )
+                    else:
+                        outcomes[rank] = reply.trace
+                elif file is not None:
+                    outcomes[rank] = ArtifactIssue(
+                        "runtime_trace_missing",
+                        "Worker omitted its trace evidence.",
+                        file.spec.id,
+                    )
+            return MappingProxyType(outcomes)
 
     @contextmanager
     def open(self, rank: int) -> Iterator[BinaryIO]:
@@ -441,6 +490,9 @@ class WorkerResults:
             for rank in tuple(self._files):
                 self._files[rank].close()
                 del self._files[rank]
+            for rank in tuple(self._traces):
+                self._traces[rank].close()
+                del self._traces[rank]
             self.frames.clear()
             self.replies = {}
             self._metadata.close()

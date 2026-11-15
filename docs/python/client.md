@@ -178,6 +178,18 @@ from the saved seed, restore identity and logical stream, recorded in
 `manifest.info.conversion.randomness`. Physical GPU identity does not affect seeds.
 Custom model-owned generators still require explicit registered state support.
 
+Pass `runtime_trace=True` to a compute call to record that invocation. Its
+`result.traces` contains downloadable ZIP handles, one per participating worker.
+Each archive contains a request/Plan/rank/update association in `manifest.json`,
+the existing `step.json` diagnostic view, and its `step.events.npz` event columns.
+The artifacts remain downloadable after the training client closes.
+
+Optional trace assembly or publication failures appear in
+`result.artifact_issues`; a confirmed update still succeeds and must not be
+repeated. Required execution or cleanup failures retain their ordinary failure
+semantics. A skipped optimizer with no Plan produces a trace issue explaining
+that no invocation ran. Tracing is opt-in and its overhead belongs to that call.
+
 Service base omission and resumable uploads or downloads remain under
 implementation. Qualification evidence and remaining hardware coverage are
 tracked separately from this API contract.

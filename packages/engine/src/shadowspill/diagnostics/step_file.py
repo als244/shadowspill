@@ -16,7 +16,7 @@ from collections import namedtuple
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import IO, Any
 
 import numpy as np
 
@@ -109,7 +109,7 @@ def write_step_diagnostics(path: Path, diagnostics: StepDiagnostics) -> Path:
     return events
 
 
-def write_step_events(output: BinaryIO, diagnostics: StepDiagnostics) -> None:
+def write_step_events(output: IO[bytes], diagnostics: StepDiagnostics) -> None:
     """Stream the existing column archive, including to a non-seekable sink.
 
     File owners supply admission and byte bounds. This is the same event format

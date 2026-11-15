@@ -25,13 +25,14 @@ def startup(rank):
         device_bytes=100,
         spill_bytes=200,
         staging_bytes=300,
+        diagnostics_bytes=400,
     )
 
 
 def test_two_physical_replicas_add_all_host_demands_with_one_serial_staging_each():
     one, two = startup(0), startup(1)
     allowance = WorkerHost(1000, 2000)
-    expected = 200 + 300 + 1000 + 2000 + 8 * MAX_METADATA_BYTES + (128 << 10)
+    expected = 200 + 300 + 400 + 1000 + 2000 + 8 * MAX_METADATA_BYTES + (128 << 10)
     assert allowance.peak_bytes(one) == expected
     request = worker_request({"gpu-a": (one, allowance), "gpu-b": (two, allowance)})
     assert dict(request.devices) == {"gpu-a": 100, "gpu-b": 100}

@@ -13,6 +13,7 @@ from .channel import read_message, write_message
 from .checkpoint_records import RankSaved, checkpoint_id
 from .protocol import (
     CODEC,
+    WorkerArtifacts,
     WorkerCall,
     WorkerControl,
     WorkerOutputError,
@@ -42,7 +43,9 @@ class WorkerLoop:
         self,
         scope: WorkerScope,
         bind: Callable[[WorkerCall], BoundWorkerCall],
-        execute: Callable[[BoundWorkerCall], ArtifactRef | RankSaved | None],
+        execute: Callable[
+            [BoundWorkerCall], ArtifactRef | WorkerArtifacts | RankSaved | None
+        ],
         budget: BufferBudget,
     ) -> None:
         self.scope, self._bind, self._execute = scope, bind, execute
@@ -127,6 +130,7 @@ class WorkerLoop:
         try:
             value = self._execute(bound)
             saved = None
+            trace = trace_issue = None
             result: ArtifactRef | None
             if isinstance(value, RankSaved):
                 saved = value
@@ -140,13 +144,26 @@ class WorkerLoop:
             else:
                 if bound.checkpoint is not None:
                     raise ValueError("worker omitted its checkpoint completion")
-                result = value
+                if isinstance(value, WorkerArtifacts):
+                    result, trace, trace_issue = (
+                        value.result,
+                        value.trace,
+                        value.trace_issue,
+                    )
+                else:
+                    result = value
             if bound.command.request.operation == "close":
                 # serve writes this final receipt before leaving its normal
                 # installed-worker cleanup scope. No further call can execute.
                 self.invalidate()
             return WorkerReply(
-                identity, "completed", "completed", result=result, saved=saved
+                identity,
+                "completed",
+                "completed",
+                result=result,
+                saved=saved,
+                trace=trace,
+                trace_issue=trace_issue,
             )
         except WorkerOutputError as error:
             return WorkerReply(identity, "failed", "completed", message=_message(error))

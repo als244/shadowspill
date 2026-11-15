@@ -15,6 +15,7 @@ from shadowspill_client.protocol.requests import (
     OperationRequest,
     identifier,
 )
+from shadowspill_client.protocol.results import ArtifactIssue
 
 from .checkpoint_records import RankRestore, RankSave, RankSaved
 from .conversion_records import (
@@ -59,6 +60,7 @@ class WorkerStartup(Record):
     device_bytes: int
     spill_bytes: int
     staging_bytes: int
+    diagnostics_bytes: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scope", record(WorkerScope, self.scope, "scope"))
@@ -82,6 +84,7 @@ class WorkerStartup(Record):
         object.__setattr__(self, "logical_by_worker", tuple(ranks))
         for name in ("device_bytes", "spill_bytes", "staging_bytes"):
             integer(getattr(self, name), name, minimum=1)
+        integer(self.diagnostics_bytes, "worker diagnostics bytes")
 
 
 @dataclass(frozen=True)
@@ -159,6 +162,8 @@ class WorkerCall(Record):
     frames: Sequence[ArtifactRef] = ()
     checkpoint: CheckpointInfo | None = None
     restore: RankRestore | None = None
+    history_id: str | None = None
+    completed_updates: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scope", record(WorkerScope, self.scope, "scope"))
@@ -166,6 +171,11 @@ class WorkerCall(Record):
             self, "request", record(OperationRequest, self.request, "request")
         )
         integer(self.invocation, "worker invocation", minimum=1)
+        integer(self.completed_updates, "completed updates before invocation")
+        if self.history_id is not None:
+            identifier(self.history_id, "history ID")
+        if self.request.runtime_trace and self.history_id is None:
+            raise ValueError("traced calls require their coordinator history")
         if self.restore is not None:
             object.__setattr__(
                 self, "restore", record(RankRestore, self.restore, "restore")
@@ -277,6 +287,8 @@ class WorkerReply(Record):
     message: str | None = None
     checkpoint: RankSave | None = None
     saved: RankSaved | None = None
+    trace: ArtifactRef | None = None
+    trace_issue: ArtifactIssue | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "ticket", record(WorkerTicket, self.ticket, "ticket"))
@@ -314,6 +326,29 @@ class WorkerReply(Record):
                 or self.result.sha256 != self.saved.sha256
             ):
                 raise ValueError("saved checkpoint requires its completed artifact")
+        if self.trace is not None:
+            object.__setattr__(self, "trace", record(ArtifactRef, self.trace, "trace"))
+        if self.trace_issue is not None:
+            issue = record(ArtifactIssue, self.trace_issue, "trace issue")
+            object.__setattr__(self, "trace_issue", issue)
+            if len(issue.code) > 64 or len(issue.message) > 1024:
+                raise ValueError("worker trace issue exceeds its bound")
+        if self.trace is not None or self.trace_issue is not None:
+            if self.status != "completed" or self.saved is not None:
+                raise ValueError(
+                    "only completed compute returns optional trace evidence"
+                )
+            if self.trace is not None and self.trace_issue is not None:
+                raise ValueError("trace evidence cannot be both ready and failed")
+
+
+@dataclass(frozen=True)
+class WorkerArtifacts:
+    """Completed device work, required output and optional trace publication."""
+
+    result: ArtifactRef | None
+    trace: ArtifactRef | None = None
+    trace_issue: ArtifactIssue | None = None
 
 
 CODEC = RecordCodec(

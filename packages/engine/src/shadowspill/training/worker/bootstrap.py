@@ -14,6 +14,7 @@ from .channel import read_message
 from .output_files import FileOutputs
 from .protocol import WorkerLaunch
 from .runtime import PreparedWorker
+from .trace_files import TraceFiles
 
 
 def serve(stream: BinaryIO, *, files: Path, outputs: Path, cache: Path) -> None:
@@ -58,6 +59,9 @@ def serve(stream: BinaryIO, *, files: Path, outputs: Path, cache: Path) -> None:
         InitializationRuntime(cache, artifact),
         lambda reference: resolve_file(files, reference),
         FileOutputs(prepared.outputs, root=outputs),
+        traces=TraceFiles(
+            prepared.traces, bundle=prepared.startup.bundle, root=outputs
+        ),
     )
 
 

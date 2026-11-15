@@ -1,7 +1,9 @@
 """Real uploads and durable outcomes with synthetic fixed-ABI worker outputs."""
 
+import hashlib
 import io
 from contextlib import contextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -17,7 +19,8 @@ from shadowspill.training.inputs.frames import InputFrame
 from shadowspill.training.result_frames import ResultFrames
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload_io import read_payload
-from shadowspill_client.protocol.requests import OperationRequest
+from shadowspill_client.protocol.requests import ArtifactRef, OperationRequest
+from shadowspill_client.protocol.results import ArtifactIssue
 
 
 class Work:
@@ -71,6 +74,88 @@ class Work:
 
     def close(self):
         self.closed = True
+
+
+@pytest.mark.parametrize("failure", [None, "worker", "checksum", "publication"])
+def test_optional_trace_failure_keeps_successful_update_and_durable_result(
+    tmp_path, monkeypatch, failure
+):
+    memory, disk = BufferBudget(16 << 20, 10), BufferBudget(16 << 20, 10)
+    payload = b"owned trace archive"
+    reference = ArtifactRef(
+        "trace", hashlib.sha256(payload).hexdigest(), len(payload), "application/zip"
+    )
+    with (
+        store(tmp_path) as journal,
+        artifact_store(tmp_path, memory=memory) as artifacts,
+        ResultPublisher(
+            artifacts, session_id="session", root=tmp_path, memory=memory, disk=disk
+        ) as publisher,
+    ):
+        prepared, state, dispatcher, inputs = queue(journal, tmp_path)
+        command, wire = upload(outputs="metrics")
+        command = replace(command, runtime_trace=True)
+        prepared.register(inputs, command)
+        inputs.receive("a", io.BytesIO(wire))
+        call = inputs.take("a")
+        work, executed = Work(call), []
+
+        def outcomes():
+            assert work.verified and journal.execution("a") is not None
+            return {
+                0: ArtifactIssue(
+                    "runtime_trace_failed", "optional worker failure", reference.id
+                )
+                if failure == "worker"
+                else reference
+            }
+
+        @contextmanager
+        def open_trace(rank, ref):
+            assert not work.closed and rank == 0 and ref == reference
+            with io.BytesIO(
+                b"x" * len(payload) if failure == "checksum" else payload
+            ) as stream:
+                yield stream
+
+        work.traces, work.open_trace = outcomes, open_trace
+        if failure == "publication":
+
+            def failed(*_):
+                raise OSError("trace storage unavailable")
+
+            monkeypatch.setattr(artifacts, "put", failed)
+
+        def execute(_):
+            executed.append(1)
+            return work
+
+        def publish(receipt, value):
+            return publisher(call, receipt, value)
+
+        status = dispatcher.run("a", execute, publish, participates=True)
+        assert status.state == "completed" and status.result.state_valid
+        assert status.result.completed_updates == state.boundary.completed_updates == 1
+        assert status.result.loss is not None
+        assert work.closed and executed == [1]
+        if failure:
+            assert not status.result.traces
+            assert status.result.artifact_issues[0].artifact_id == reference.id
+            assert artifacts.get(reference.id) is None
+        else:
+            assert (
+                status.result.traces == (reference,)
+                and not status.result.artifact_issues
+            )
+            with artifacts.open(reference) as stream:
+                assert stream.read() == payload
+        # Response recovery returns the durable result without another update or
+        # another attempt to publish the optional artifact.
+        assert dispatcher.run("a", execute, publish, participates=True) == status
+        assert executed == [1]
+        inputs.finish("a")
+        inputs.staging.close()
+    assert memory.used == disk.used == (0, 0)
 
 
 def test_discard_publishes_confirmed_state_without_tensor_scratch(tmp_path):

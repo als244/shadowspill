@@ -14,7 +14,11 @@ from shadowspill.training.worker.requests import WorkerResults
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload import MEDIA_TYPE
 from shadowspill_client.protocol.requests import ArtifactRef, identifier
-from shadowspill_client.protocol.results import ExecutionReceipt, OperationResult
+from shadowspill_client.protocol.results import (
+    ArtifactIssue,
+    ExecutionReceipt,
+    OperationResult,
+)
 
 from .artifacts import ArtifactStore
 
@@ -96,6 +100,9 @@ class ResultPublisher:
                     finally:
                         owner.close()
                         self._owners.remove(owner)
+            traces, issues = (
+                self._traces(work) if call.request.runtime_trace else ((), ())
+            )
             return OperationResult(
                 call.request.identity,
                 call.request.operation,
@@ -112,9 +119,30 @@ class ResultPublisher:
                 state_valid=receipt.state_valid,
                 checkpoint=checkpoint,
                 metadata=metadata,
+                traces=traces,
+                artifact_issues=issues,
             )
         finally:
             self._busy.release()
+
+    def _traces(
+        self, work: WorkerResults
+    ) -> tuple[tuple[ArtifactRef, ...], tuple[ArtifactIssue, ...]]:
+        references, issues = [], []
+        for rank, outcome in work.traces().items():
+            if isinstance(outcome, ArtifactIssue):
+                issues.append(outcome)
+                continue
+            try:
+                references.append(
+                    self.artifacts.put(outcome, partial(work.open_trace, rank))
+                )
+            except Exception as error:
+                message = (str(error).strip() or type(error).__name__)[:1024].rstrip()
+                issues.append(
+                    ArtifactIssue("runtime_trace_publication", message, outcome.id)
+                )
+        return tuple(references), tuple(issues)
 
     def _publish(
         self, call: PreparedCall, owner: ResultFrames

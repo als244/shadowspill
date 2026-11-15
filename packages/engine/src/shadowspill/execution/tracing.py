@@ -12,20 +12,21 @@ from shadowspill.execution.recording.spec import (
     alias_accesses,
 )
 from shadowspill.execution.recording.timing import ExecutionTiming
-from shadowspill.runtime.plan.tracing import trace_capacities
+from shadowspill.runtime.plan.tracing import TraceCapacities, trace_capacities
 
 from .paths import ExecutionPath
 
 
 class InvocationTrace:
-    def __init__(self, path: ExecutionPath):
+    def __init__(self, path: ExecutionPath, capacity: TraceCapacities | None = None):
         plan = path.plan
         self.result: StepDiagnostics | None = None
         self._error: str | None = None
         self.timing = ExecutionTiming(
             path.bridge,
             tuple(task.entry.task_id for task in path.tasks),
-            trace_capacities(
+            capacity
+            or trace_capacities(
                 ((task.task, task.memory_envelope) for task in path.tasks),
                 plan.schedule.actions,
             ),

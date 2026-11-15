@@ -17,6 +17,7 @@ from shadowspill.pytorch.invocation import InvocationResult, ReusableCompletionE
 from shadowspill.pytorch.numerics import validate_numerical_settings
 from shadowspill.runtime.plan.annotations import TaskBoundaryAnnotations
 from shadowspill.runtime.plan.objects import PlanObjects
+from shadowspill.runtime.plan.tracing import TraceCapacities
 
 from .dispatch import dispatch
 from .distributed.checks import check_external_budget, check_invocation, coordinated
@@ -220,6 +221,7 @@ class Executor:
         collect_parameter_norms: bool | None = None,
         profiler_annotations: bool = False,
         runtime_trace: bool = False,
+        trace_capacity: TraceCapacities | None = None,
     ) -> InvocationResult[Any]:
         self.synchronize()
         observe = (
@@ -237,6 +239,16 @@ class Executor:
                 raise TypeError("profiler_annotations must be a bool")
             if type(runtime_trace) is not bool:
                 raise TypeError("runtime_trace must be a bool")
+            if trace_capacity is not None and (
+                not runtime_trace
+                or not isinstance(trace_capacity, TraceCapacities)
+                or type(trace_capacity.events) is not int
+                or type(trace_capacity.allocation_events) is not int
+                or min(trace_capacity.events, trace_capacity.allocation_events) < 1
+            ):
+                raise ValueError(
+                    "explicit trace capacity requires a positive traced call"
+                )
             if type(observe) is not bool:
                 raise TypeError("collect_parameter_norms must be a bool or None")
             if observe and (self._observations is None or plan is not None):
@@ -265,7 +277,7 @@ class Executor:
         annotations = (
             TaskBoundaryAnnotations(path.bridge) if profiler_annotations else None
         )
-        trace = InvocationTrace(path) if runtime_trace else None
+        trace = InvocationTrace(path, trace_capacity) if runtime_trace else None
         try:
             if trace is not None:
                 trace.start()
