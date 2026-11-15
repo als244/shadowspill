@@ -326,9 +326,16 @@ def test_capacity_is_reserved_before_starting_a_thread_or_reading_headers(tmp_pa
             while not ctx.memory.used[1]:
                 assert monotonic() < deadline
                 Event().wait(0.005)
-            with pytest.raises(RemoteError) as error:
-                ctx.client.request("GET", "/v1/info")
-            assert error.value.status == 503 and error.value.code == "backpressure"
+            # Capacity refusal precedes reading headers. Read that response on
+            # an otherwise idle socket, avoiding a race between client writes
+            # and the deliberate early close (which can produce BrokenPipe).
+            with socket.create_connection(
+                ("127.0.0.1", ctx.service.server_port), timeout=5
+            ) as refused:
+                with http.client.HTTPResponse(refused) as response:
+                    response.begin()
+                    assert response.status == 503
+                    assert decode(response.read()).code == "backpressure"
             assert ctx.memory.used == (HTTP_SCRATCH_BYTES, 1)
         assert not ctx.entered
 
