@@ -166,6 +166,15 @@ journal positions remain increasing and histories stay distinct. Page limits are
 1–128 records and the existing metadata byte/node bounds can shorten a page.
 Inputs and tensor outputs are not downloaded or logged by this query.
 
+`training.metrics.export_jsonl("metrics.jsonl").result()` streams a fixed snapshot
+to a new local file. The first line is a portable `MetricSnapshot` record naming
+the run and journal range; subsequent lines are `MetricRecord` values. Use
+`shadowspill_client.protocol.codec.decode` to read each line. Optional `after`,
+`through` and `limit` have the same meanings as the query. Export keeps one bounded
+page in memory, preserves existing files and removes its incomplete destination
+on failure. Later results do not change the chosen snapshot; another explicit
+export can start after its `through` boundary.
+
 For large files, use `artifact.download(local_path, resume=True).result()` from
 the first attempt. An interrupted transfer retains bounded progress metadata and
 partial bytes in `<local_path>.shadowspill-download`. After reconnecting, attach

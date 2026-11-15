@@ -9,7 +9,9 @@ from engine_tests.server.test_http import OTHER_TOKEN, ROOT, TOKEN, endpoint
 from engine_tests.server.test_request_records import request, result, store
 from engine_tests.server.test_service_client import address
 from shadowspill_client import ServiceClient
-from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, encode
+from shadowspill_client.metrics import MetricQueries
+from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, decode, encode
+from shadowspill_client.protocol.metrics import MetricRecord, MetricSnapshot
 from shadowspill_client.protocol.results import ExecutionReceipt, Failure
 from shadowspill_client.transport.http import RemoteError
 
@@ -184,3 +186,83 @@ def test_public_query_needs_no_workers_and_preserves_cursor_through_service_reco
                 with pytest.raises(RemoteError, match="invalid_request"):
                     http.client.request("GET", ROOT + "/metrics?" + query)
         assert service._memory.used == service._work.pending.used == (0, 0)
+
+
+def test_jsonl_export_pins_its_range_while_later_results_arrive(tmp_path, monkeypatch):
+    with (
+        store(tmp_path) as records,
+        endpoint(
+            tmp_path, run=SimpleNamespace(journal=records, controller=None)
+        ) as http,
+        ServiceClient(
+            address(http.client), token=TOKEN, session_id="session"
+        ) as service,
+    ):
+        for i in range(3):
+            finish(records, request(f"first-{i}", i + 1), loss=i + 0.25)
+        expected = records.metrics()
+        original = service._request
+        calls = []
+
+        def read(method, route, kind, value=None):
+            result = original(method, route, kind, value)
+            calls.append(route)
+            if len(calls) == 1:
+                finish(records, request("late", 4), loss=9)
+            return result
+
+        monkeypatch.setattr(service, "_request", read)
+        metrics = MetricQueries(service, "session", "run")
+        target = metrics.export_jsonl(tmp_path / "metrics.jsonl", limit=1).result(5)
+        rows = [decode(line) for line in target.read_bytes().splitlines()]
+        assert rows[0] == MetricSnapshot("session", "run", 0, expected.through)
+        assert tuple(rows[1:]) == expected.records
+        assert all(isinstance(row, MetricRecord) for row in rows[1:])
+        assert len(calls) == 3 and all("/metrics?" in path for path in calls)
+        assert all(f"through={expected.through}" in path for path in calls[1:])
+        with pytest.raises(FileExistsError):
+            metrics.export_jsonl(target).result(5)
+        assert len(calls) == 3 and target.is_file()
+        later = metrics.query(after=expected.through).result(5)
+        assert [row.identity.request_id for row in later.records] == ["late"]
+        empty = metrics.export_jsonl(
+            tmp_path / "empty.jsonl", after=later.through
+        ).result(5)
+        assert len(empty.read_bytes().splitlines()) == 1
+    assert service._memory.used == service._work.pending.used == (0, 0)
+
+
+def test_failed_jsonl_export_removes_its_partial_file_and_preserves_results(
+    tmp_path, monkeypatch
+):
+    with (
+        store(tmp_path) as records,
+        endpoint(
+            tmp_path, run=SimpleNamespace(journal=records, controller=None)
+        ) as http,
+        ServiceClient(
+            address(http.client), token=TOKEN, session_id="session"
+        ) as service,
+    ):
+        for i in range(3):
+            finish(records, request(f"row-{i}", i + 1))
+        original, calls = service._request, []
+
+        def fail(method, route, kind, value=None):
+            calls.append(route)
+            if len(calls) == 2:
+                raise OSError("inspection disconnected")
+            return original(method, route, kind, value)
+
+        metrics = MetricQueries(service, "session", "run")
+        destination, keep = tmp_path / "partial.jsonl", tmp_path / "keep"
+        keep.write_text("unrelated")
+        before = records.metrics()
+        with monkeypatch.context() as patch:
+            patch.setattr(service, "_request", fail)
+            with pytest.raises(OSError, match="disconnected"):
+                metrics.export_jsonl(destination, limit=1).result(5)
+        assert not destination.exists() and keep.read_text() == "unrelated"
+        assert records.metrics() == before
+        assert metrics.export_jsonl(destination, limit=1).result(5) == destination
+    assert service._memory.used == service._work.pending.used == (0, 0)

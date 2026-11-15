@@ -76,13 +76,11 @@ class MetricRecord(Record):
 
 
 @dataclass(frozen=True)
-class MetricPage(Record):
+class MetricSnapshot(Record):
     session_id: str
     run_id: str
     after: int
     through: int
-    records: Sequence[MetricRecord]
-    next_cursor: int | None = None
 
     def __post_init__(self) -> None:
         identifier(self.session_id, "metric session")
@@ -91,6 +89,15 @@ class MetricPage(Record):
         metric_cursor(self.through, "metric snapshot")
         if self.after > self.through:
             raise ValueError("metric start exceeds its snapshot")
+
+
+@dataclass(frozen=True)
+class MetricPage(MetricSnapshot):
+    records: Sequence[MetricRecord]
+    next_cursor: int | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
         if not isinstance(self.records, (tuple, list)) or len(self.records) > 128:
             raise ValueError("metric page requires at most 128 records")
         rows = tuple(record(MetricRecord, row, "metric record") for row in self.records)
