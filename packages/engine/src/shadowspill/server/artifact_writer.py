@@ -78,7 +78,10 @@ class ProducedArtifacts:
                         "artifact encoder must return its immutable reference"
                     )
                 spec.check(reference)
-                if writer.remaining or writer.digest.hexdigest() != reference.sha256:
+                if (
+                    spec.size_bytes - writer.remaining != reference.size_bytes
+                    or writer.digest.hexdigest() != reference.sha256
+                ):
                     raise ValueError("artifact encoder bytes differ from its reference")
                 references.append(reference)
         return tuple(references)

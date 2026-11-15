@@ -342,6 +342,12 @@ class ArtifactStore:
                     self._index.insert(reference)
                 if alias is not None:
                     self._index.set_alias(alias)
+                # A bounded report may use less than its admitted maximum.
+                # Reclaim unused persistent capacity only after durable commit;
+                # the producer retains its whole temporary quota until cleanup.
+                self._bytes -= pending.size_bytes - sum(
+                    reference.size_bytes for reference in references
+                )
                 pending.committed = True
             except BaseException:
                 # A visible record may be durable even when acknowledgement

@@ -179,3 +179,60 @@ def test_recovery_removes_only_an_unpublished_production_directory(tmp_path):
     with store(tmp_path) as recovered:
         assert not abandoned.exists()
         assert recovered.get("output") == reference()
+
+
+def test_variable_report_reserves_maximum_then_commits_and_recovers_actual_size(
+    tmp_path,
+):
+    bounded = replace(spec(reference()), size_bytes=100, exact_size=False)
+    with store(tmp_path, max_bytes=100) as artifacts:
+        with artifacts.stage_group(
+            (bounded,), lambda _, writer: encode(writer)
+        ) as staged:
+            assert artifacts.used == (100, 1)
+            assert artifacts._disk.used == (100, 1)
+            with pytest.raises(ValueError, match="capacity"):
+                artifacts.produce(OutputSpec("other", 1, "other"), encode)
+            assert staged.commit() == (reference(),)
+            assert artifacts.used == (6, 1)
+            assert artifacts._disk.used == (100, 1)
+        assert artifacts._disk.used == (0, 0)
+        with artifacts.open(reference()) as stream:
+            assert stream.read() == b"result"
+    with store(tmp_path, max_bytes=6) as reopened:
+        assert reopened.used == (6, 1)
+        assert reopened.get("output") == reference()
+
+
+@pytest.mark.parametrize("reported_size", [5, 7])
+def test_variable_report_requires_exact_written_size(tmp_path, reported_size):
+    bounded = replace(spec(reference()), size_bytes=100, exact_size=False)
+
+    def write(writer):
+        encode(writer)
+        return replace(reference(), size_bytes=reported_size)
+
+    with store(tmp_path) as artifacts:
+        with pytest.raises(ValueError, match="bytes differ"):
+            artifacts.produce(bounded, write)
+        assert artifacts.used == (0, 0) and artifacts.get("output") is None
+
+
+def test_uncertain_variable_report_keeps_capacity_until_recovery(tmp_path, monkeypatch):
+    artifacts = store(tmp_path, max_bytes=100)
+    append = artifacts._journal.append
+
+    def failed_reply(rows):
+        append(rows)
+        raise OSError("commit reply lost")
+
+    monkeypatch.setattr(artifacts._journal, "append", failed_reply)
+    with pytest.raises(OSError):
+        artifacts.produce(
+            replace(spec(reference()), size_bytes=100, exact_size=False), encode
+        )
+    assert artifacts.used == (100, 1)
+    artifacts.close()
+    with store(tmp_path, max_bytes=6) as recovered:
+        assert recovered.used == (6, 1)
+        assert recovered.get("output") == reference()

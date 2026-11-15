@@ -290,3 +290,43 @@ def test_zero_byte_result_and_large_chunk_rejection(storage):
         OutputWriter(io.BytesIO(), COPY_BYTES + 1).write(
             memoryview(bytes(COPY_BYTES + 1))
         )
+
+
+@pytest.mark.parametrize("payload", [b"", b"partial report", b"x" * 100])
+def test_variable_output_retains_full_reservation_and_verifies_actual_bytes(
+    storage, payload
+):
+    files, disk, _ = storage
+    exact, reference, _ = output(payload)
+    spec = replace(exact, size_bytes=100, exact_size=False)
+    with files.reserve(spec) as owner:
+        admitted = disk.used
+        assert admitted[0] > 100
+        # Changing the bound or its interpretation never matches the permit.
+        with pytest.raises(ValueError, match="reservation"):
+            require_output(files.root, replace(spec, exact_size=True))
+        owner.begin()
+        assert produce(files, owner, reference, payload) == reference
+        owner.finished()
+        owner.verify(reference)
+        with owner.open(reference) as stream:
+            assert stream.read() == payload
+        assert disk.used == admitted
+
+
+@pytest.mark.parametrize("fault", ["over_bound", "short_reference", "long_reference"])
+def test_variable_output_rejects_overflow_and_misreported_actual_size(storage, fault):
+    files, _, _ = storage
+    _, reference, payload = output(b"12345")
+    spec = OutputSpec(reference.id, 6, reference.media_type, exact_size=False)
+    if fault == "over_bound":
+        payload = b"1234567"
+    else:
+        reference = replace(
+            reference, size_bytes=4 if fault == "short_reference" else 6
+        )
+    with files.reserve(spec) as owner:
+        owner.begin()
+        with pytest.raises(ValueError):
+            produce(files, owner, reference, payload)
+        owner.finished()

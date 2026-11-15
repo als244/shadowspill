@@ -25,11 +25,18 @@ PERMIT_BYTES = 4096
 
 @dataclass(frozen=True)
 class OutputSpec(Record):
-    """Exact opaque output envelope, known before its producer starts."""
+    """Admitted opaque output envelope, known before its producer starts.
+
+    Tensor/checkpoint encoders require the exact default size. Optional reports
+    may finish below a reserved maximum; their returned reference still names
+    the exact written bytes. Both modes retain the full reservation through
+    producer completion and cleanup.
+    """
 
     id: str
     size_bytes: int
     media_type: str
+    exact_size: bool = True
 
     def __post_init__(self) -> None:
         identifier(self.id, "output ID")
@@ -37,11 +44,14 @@ class OutputSpec(Record):
         text(self.media_type, "output media type")
         if len(self.media_type.encode()) > 256:
             raise ValueError("output media type exceeds its bound")
+        if type(self.exact_size) is not bool:
+            raise TypeError("output exact-size flag must be boolean")
 
     def check(self, reference: ArtifactRef) -> None:
         if (
             reference.id != self.id
-            or reference.size_bytes != self.size_bytes
+            or reference.size_bytes > self.size_bytes
+            or (self.exact_size and reference.size_bytes != self.size_bytes)
             or reference.media_type != self.media_type
         ):
             raise ValueError("output reference differs from its reservation")
@@ -113,8 +123,8 @@ def write_output(
         writer = OutputWriter(stream, spec.size_bytes)
         reference = write(writer)
         spec.check(reference)
-        if writer.remaining:
-            raise ValueError("output producer ended before its declared size")
+        if spec.size_bytes - writer.remaining != reference.size_bytes:
+            raise ValueError("output producer bytes differ from its declared size")
         os.fsync(stream.fileno())
     return reference
 
