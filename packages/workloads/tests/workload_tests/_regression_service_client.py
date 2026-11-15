@@ -8,6 +8,8 @@ import sys
 import tarfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
+from time import monotonic
 
 import numpy as np
 
@@ -182,6 +184,23 @@ def check(training, oracle, memory, *, counter=None):
     return actual
 
 
+def closed(client, training):
+    training.close().result(120)
+    # The request closes operation state; allocation retirement also joins worker
+    # processes and publishes exit logs. Observe that separate durable run state
+    # before asking this one-slot deployment to admit its next run. No mutation
+    # is retried, and a transport failure is still surfaced to the caller.
+    deadline = monotonic() + 30
+    while True:
+        info = client._transport.request(
+            "GET", f"/v1/runs/regression/{training.run_id}"
+        ).value
+        if info.state == "closed":
+            return
+        assert info.state == "ready" and monotonic() < deadline, info
+        Event().wait(0.02)
+
+
 def qualify(client, initial, dtype, memory):
     # Setup is separate from the loop; describe never constructs a model/worker.
     preview = client.describe_training(
@@ -270,7 +289,7 @@ def qualify(client, initial, dtype, memory):
         check(training, oracle, memory)
         observations.append(result.record.to_dict())
     final = weights(training)
-    training.close().result(120)
+    closed(client, training)
     resumed = client.create_training_client(
         plans=plans, checkpoint=checkpoint, wait_for_resources=True
     ).result(240)
@@ -282,7 +301,7 @@ def qualify(client, initial, dtype, memory):
     for name in oracle.weights:
         np.testing.assert_allclose(actual[name], final[name], rtol=2e-5, atol=1e-6)
     observations.append(result.record.to_dict())
-    resumed.close().result(120)
+    closed(client, resumed)
     return {
         "runs": [training.run_id, resumed.run_id],
         "observations": observations,
