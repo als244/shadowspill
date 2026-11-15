@@ -722,6 +722,15 @@ scratch limit. An ordinary floating-point weight cast requires an explicit
 transformation; optimizer state is copied without reinterpretation. This layer
 does not choose identities, prove target ties or commit a checkpoint generation.
 
+`checkpoint.staging.stage_tensors` supplies private target files with bounded
+shared payload scratch. It admits payload bytes plus one on-disk written flag per
+element before allocating. Repeated writes through tied or overlapping views
+must agree bit for bit; conflicts invalidate the entire staging owner. Required
+logical views are checked before sealing, while unreferenced storage holes stay
+zero. Sealed targets export through the encoder's existing borrowed tensor
+interface (`CheckpointExport`). All temporary files are removed on exit, and
+final archives and metadata still need separate publication reservations.
+
 New-run checkpoint initialization uses this CPU preflight before the existing
 all-worker startup release, followed by the same bounded checkpoint reader used
 for ordered restore. `LocalCreation` resolves the complete generation and checks

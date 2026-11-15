@@ -1,4 +1,4 @@
-"""Atomic checkpoint archives streamed from Executor-owned host storage."""
+"""Atomic checkpoint archives streamed from borrowed bounded host storage."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from .tensors import byte_view, geometry, region_bytes
 from .weights import WeightRepresentation, WeightSelection, select_weights
 
 if TYPE_CHECKING:
-    from shadowspill.execution import Executor
+    from .state import CheckpointExport, CheckpointState
 
 
 def _entry(chunk: TensorChunk, index: int) -> dict[str, Any]:
@@ -111,7 +111,7 @@ class _Writer:
 
 
 def save_checkpoint(
-    executor: Executor,
+    executor: CheckpointExport,
     path: str | os.PathLike[str],
     *,
     metadata: Mapping[str, Any] | None = None,
@@ -168,7 +168,7 @@ def save_checkpoint(
 
 
 def write_checkpoint(
-    executor: Executor,
+    executor: CheckpointExport,
     stream: WriteSink,
     *,
     metadata: Mapping[str, Any] | None = None,
@@ -217,7 +217,7 @@ def write_checkpoint(
 
 
 def _settings(
-    executor: Executor,
+    executor: CheckpointState,
     metadata: Mapping[str, Any] | None,
     frozen_state_id: str | None,
     weights: WeightRepresentation,
@@ -236,7 +236,7 @@ def _settings(
 
 
 def _manifest(
-    executor: Executor,
+    executor: CheckpointState,
     tensors: list[dict[str, Any]],
     saved_metadata: dict[str, Any],
     omitted: set[str],
@@ -276,7 +276,7 @@ class _Size:
 
 
 def checkpoint_size(
-    executor: Executor,
+    executor: CheckpointState,
     *,
     metadata: Mapping[str, Any] | None = None,
     frozen_state_id: str | None = None,

@@ -1,8 +1,10 @@
 """Inspect checkpoint compatibility against saved Plans before opening workers."""
 
-from collections.abc import Iterator, Mapping
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator, Mapping
 from types import MappingProxyType
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.tensors import TensorChunk
@@ -12,6 +14,9 @@ from shadowspill.execution.tensors import tensor_descriptors
 from shadowspill.planning.shared_state import shared_state
 
 from .logical import LogicalTensor, logical_tensors
+
+if TYPE_CHECKING:
+    import torch
 
 
 class CheckpointState(Protocol):
@@ -25,6 +30,17 @@ class CheckpointState(Protocol):
     def logical_rank(self) -> int: ...
 
     def tensor_chunks(self) -> Iterator[TensorChunk]: ...
+
+
+class CheckpointExport(CheckpointState, Protocol):
+    """The encoder's existing borrowed tensor interface, without an Executor."""
+
+    def export_tensors(
+        self,
+        callback: Callable[[TensorChunk, torch.Tensor], None],
+        *,
+        chunk_bytes: int,
+    ) -> None: ...
 
 
 class PlanState:
