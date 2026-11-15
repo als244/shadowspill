@@ -1,6 +1,6 @@
 """Bounded CPU controls and per-invocation tensor hyperparameters."""
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from math import prod
 from typing import Any
 
@@ -11,6 +11,35 @@ from shadowspill.artifacts.tensor_spans import spans
 from .buffer_controls import BufferControls
 from .storage import Storage, dtype_of
 from .tensors import TensorChunk
+
+
+def control_descriptors(
+    bindings: Iterable[Mapping[str, Any]],
+    *,
+    shared_host: Iterable[str] = (),
+    prefix: str = "",
+) -> Iterator[TensorChunk]:
+    """Describe owned CPU controls without allocating their values."""
+    shared = set(shared_host)
+    for binding in bindings:
+        name = binding["name"]
+        if binding["object_id"] is not None or name in shared:
+            continue
+        shape, stride = tuple(binding["shape"]), tuple(binding["stride"])
+        count = (
+            0
+            if 0 in shape
+            else 1 + sum((n - 1) * step for n, step in zip(shape, stride, strict=True))
+        )
+        if count:
+            yield TensorChunk(
+                prefix + name if binding["role"] == "hyperparameter" else name,
+                shape,
+                dtype_of(binding),
+                0,
+                count,
+                stride,
+            )
 
 
 class Controls:
@@ -110,16 +139,11 @@ class Controls:
         self, *, skip_shared: bool = False, prefix: str = ""
     ) -> Iterator[TensorChunk]:
         """One chunk spanning each control, as ``export`` describes it."""
-        for name, value in self.host.items():
-            if skip_shared and name in self.shared_host:
-                continue
-            for request, _ in self._chunks(
-                self._name(name, prefix),
-                value,
-                max(1, value.untyped_storage().nbytes()),
-            ):
-                yield request
-                break
+        yield from control_descriptors(
+            self.bindings.values(),
+            shared_host=self.shared_host if skip_shared else (),
+            prefix=prefix,
+        )
 
     def _name(self, name: str, prefix: str) -> str:
         return (

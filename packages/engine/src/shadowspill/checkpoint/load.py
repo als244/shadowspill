@@ -26,8 +26,10 @@ from .weights import select_weights
 if TYPE_CHECKING:
     from shadowspill.execution import Executor
 
+    from .state import CheckpointState
 
-def _manifest(archive: tarfile.TarFile, executor: Executor) -> dict[str, Any]:
+
+def _manifest(archive: tarfile.TarFile, executor: CheckpointState) -> dict[str, Any]:
     manifest = read_manifest(archive)
     if (
         manifest.get("format") != "shadowspill.checkpoint"
@@ -67,7 +69,7 @@ def _manifest(archive: tarfile.TarFile, executor: Executor) -> dict[str, Any]:
 
 
 def checkpoint_metadata(
-    executor: Executor, path: str | os.PathLike[str]
+    executor: CheckpointState, path: str | os.PathLike[str]
 ) -> dict[str, Any]:
     """Read loop compatibility information before restoring any tensors."""
     with open_checkpoint(path) as archive:
@@ -302,7 +304,7 @@ def load_checkpoint(
 
 
 def validate_checkpoint(
-    executor: Executor,
+    executor: CheckpointState,
     path: str | os.PathLike[str],
     *,
     frozen_state_id: str | None = None,

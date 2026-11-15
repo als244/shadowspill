@@ -10,13 +10,13 @@ from shadowspill.artifacts._values import digest
 from .tensors import geometry
 
 if TYPE_CHECKING:
-    from shadowspill.execution import Executor
+    from .state import CheckpointState
 
 #: What the manifest records about a tensor beyond its geometry.
 ARCHIVE_KEYS = frozenset({"member", "bytes", "blake3"})
 
 
-def inventory(executor: Executor) -> dict[str, dict[str, Any]]:
+def inventory(executor: CheckpointState) -> dict[str, dict[str, Any]]:
     """Every persistent tensor the executor owns, by name: its geometry and the
     region this rank owns, as the manifest records a tensor."""
     result: dict[str, dict[str, Any]] = {}
@@ -27,7 +27,7 @@ def inventory(executor: Executor) -> dict[str, dict[str, Any]]:
     return result
 
 
-def state_identity(executor: Executor) -> str:
+def state_identity(executor: CheckpointState) -> str:
     """The digest of the inventory: the same for every Program that trains the
     same state, whatever its kernels, microbatch geometry or budgets."""
     return digest(inventory(executor))

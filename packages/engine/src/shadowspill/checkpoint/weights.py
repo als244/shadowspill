@@ -10,7 +10,8 @@ from shadowspill.artifacts.tensors import registration_name
 
 if TYPE_CHECKING:
     from shadowspill.artifacts.tensors import TensorChunk
-    from shadowspill.execution import Executor
+
+    from .state import CheckpointState
 
 type WeightRepresentation = Literal["master", "compute"]
 
@@ -44,7 +45,7 @@ def _covers_storage(chunk: TensorChunk) -> bool:
     return elements == chunk.storage_elements
 
 
-def select_weights(executor: Executor, weights: object) -> WeightSelection:
+def select_weights(executor: CheckpointState, weights: object) -> WeightSelection:
     """Omit a copy when owned state can reconstruct it locally or collectively.
 
     Encoded tensor components and incompatible layouts retain their physical

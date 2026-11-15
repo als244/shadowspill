@@ -136,6 +136,7 @@ def host_storage(program, rank):
         values.setdefault(alias, torch.full((capacity,), -9, dtype=dtype))
     state.initial = set(values)
     state.spill = MemorySpill(values)
+    state.spill_sizes = state.spill.sizes
     return state, values
 
 

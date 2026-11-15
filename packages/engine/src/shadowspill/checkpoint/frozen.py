@@ -9,7 +9,7 @@ from shadowspill.artifacts.program import Program
 from shadowspill.artifacts.tensors import registration_name, shared_model_aliases
 
 if TYPE_CHECKING:
-    from shadowspill.execution import Executor
+    from .state import CheckpointState
 
 
 def validate_identity(identity: str | None) -> None:
@@ -32,7 +32,7 @@ def _retained_aliases(program: Program) -> set[str]:
     return retained
 
 
-def omitted_parameters(executor: Executor) -> set[str]:
+def omitted_parameters(executor: CheckpointState) -> set[str]:
     program = executor.plan.program
     aliases = {item.object_id: item.alias_group_id for item in program.objects}
     retained = _retained_aliases(program)
@@ -51,7 +51,7 @@ def omitted_parameters(executor: Executor) -> set[str]:
 
 
 def validate_restore(
-    executor: Executor, manifest: Mapping[str, Any], identity: str | None
+    executor: CheckpointState, manifest: Mapping[str, Any], identity: str | None
 ) -> set[str]:
     validate_identity(identity)
     if manifest.get("frozen_state_id") != identity:

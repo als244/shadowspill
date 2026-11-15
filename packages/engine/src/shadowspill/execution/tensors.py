@@ -13,13 +13,14 @@ from shadowspill.artifacts.tensors import registration_name
 
 from .initialization import fill_default
 from .storage import dtype_of
+from .tensor_layout import TensorLayout
 
 if TYPE_CHECKING:
     from .storage import Storage
 
 
 def tensor_entries(
-    state: Storage,
+    state: TensorLayout,
 ) -> Iterator[tuple[str, str, Mapping[str, Any] | None]]:
     bindings = state.plan.program.bindings
     for item in bindings["registrations"]:
@@ -129,7 +130,7 @@ class OwnedTensor(NamedTuple):
 
 
 def owned_tensors(
-    state: Storage, *, skip_shared: bool = False
+    state: TensorLayout, *, skip_shared: bool = False
 ) -> Iterator[OwnedTensor]:
     """Each persistent tensor of ``state`` once, by its first name, with the
     region this rank owns; a shared alias is left out when asked."""
@@ -145,7 +146,7 @@ def owned_tensors(
             raise ValueError(f"missing tensor geometry for {name}")
         geometry = state.geometry[object_id]
         dtype = dtype_of(geometry)
-        capacity = state.spill.sizes[alias] // dtype.itemsize
+        capacity = state.spill_sizes[alias] // dtype.itemsize
         region = state.regions.get(object_id)
         if region is not None and capacity != region.capacity:
             raise ValueError(f"spill lease does not match the declared shard: {name}")
@@ -165,7 +166,7 @@ def owned_tensors(
 
 
 def tensor_descriptors(
-    state: Storage, *, prefix: str = "", skip_shared: bool = False
+    state: TensorLayout, *, prefix: str = "", skip_shared: bool = False
 ) -> Iterator[TensorChunk]:
     """One chunk spanning each persistent tensor's owned region, named as
     ``visit_tensors`` names it: how a checkpoint describes a tensor, read

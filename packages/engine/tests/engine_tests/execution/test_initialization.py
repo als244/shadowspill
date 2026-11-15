@@ -28,6 +28,7 @@ def storage(bindings, geometry, values):
         sizes={
             name: value.numel() * value.element_size() for name, value in values.items()
         },
+        spill_sizes=MemorySpill(values).sizes,
         spill=MemorySpill(values),
     )
 

@@ -8,15 +8,13 @@ from typing import Any, cast
 import torch
 
 from shadowspill.artifacts.plan import Plan
-from shadowspill.artifacts.state_inventory import program_state
-from shadowspill.artifacts.tensors import tensor_geometry
 from shadowspill.ir import MemoryLocation
 from shadowspill.parallelism.views import owned_view_offsets
 from shadowspill.runtime.plan.bridge import RuntimeBridge
 
 from .host_values import HostValues
 from .spill import SpillStorage
-from .tensor_regions import tensor_regions
+from .tensor_layout import TensorLayout
 from .views import StorageViews
 
 
@@ -24,7 +22,7 @@ def dtype_of(geometry: Mapping[str, Any]) -> torch.dtype:
     return cast(torch.dtype, getattr(torch, geometry["dtype"].removeprefix("torch.")))
 
 
-class Storage:
+class Storage(TensorLayout):
     def __init__(
         self,
         plan: Plan,
@@ -37,16 +35,6 @@ class Storage:
         logical_rank: int | None = None,
         transfer_descriptors: Mapping[str, int] | None = None,
     ):
-        self.plan, self.bridge, self.device = plan, bridge, device
-        self.spill = SpillStorage(
-            bridge,
-            {
-                a.alias_group_id: a.size_bytes
-                if a.spill_size_bytes is None
-                else a.spill_size_bytes
-                for a in plan._costed_program.alias_groups
-            },
-        )
         if logical_rank is None:
             if (
                 plan.program.parallelism is not None
@@ -56,17 +44,11 @@ class Storage:
                     "distributed storage requires an explicit logical_rank"
                 )
             logical_rank = 0
-        self.owned_offsets = owned_view_offsets(plan.program, logical_rank)
-        self.regions = tensor_regions(plan.program, logical_rank)
-        self.persistent_objects = frozenset(
-            binding.object_id
-            for binding in program_state(plan.program, logical_rank).bindings
-            if binding.object_id is not None
-        )
-        self.aliases = {o.object_id: o.alias_group_id for o in plan.program.objects}
-        self.sizes = {a.alias_group_id: a.size_bytes for a in plan.program.alias_groups}
         sources = dict(shared_sources or {})
-        self.shared_aliases = frozenset(sources)
+        super().__init__(plan, logical_rank=logical_rank, shared_aliases=sources)
+        self.bridge, self.device = bridge, device
+        self.spill = SpillStorage(bridge, self.spill_sizes)
+        self.owned_offsets = owned_view_offsets(plan.program, logical_rank)
         self.owners: StorageViews = StorageViews(
             {alias: (source.owners, key) for alias, (source, key) in sources.items()}
         )
@@ -79,7 +61,6 @@ class Storage:
             bridge.objects.borrow(borrowed)
         self.outputs: dict[str, torch.Tensor] = {}
         self.host_values = HostValues(plan)
-        self.geometry = tensor_geometry(plan.program)
         self.initial = {
             r.alias_group_id for r in plan.schedule.initial_residency
         } | set(extra_initial)

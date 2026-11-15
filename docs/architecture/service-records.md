@@ -693,3 +693,9 @@ rank files serially and writes the local manifest last. Download failure leaves
 the server outcome unchanged. HTTP/CPU subprocess tests cover save/close ordering,
 immutable metadata, post-worker downloads and a failed transfer followed by an
 explicit retry. Setup remains in the ServiceClient creation/server factory modules.
+Checkpoint preflight can also use `checkpoint.state.PlanState` to inspect a saved
+Plan family without opening an Executor or allocating tensor values. It uses
+the same persistent tensor layouts, owned regions, shared-state owners and host
+control descriptors as execution. `validate_checkpoint` checks these descriptions
+against the complete rank archive before initialization; payload checksums still
+belong to immutable delivery and the streaming loader.
