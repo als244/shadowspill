@@ -210,7 +210,9 @@ def test_captured_policy_reads_changed_controls_without_recapture():
         [x, fields, {"clip": torch.tensor(0.2), "beta": torch.tensor(0.1)}],
     )
     graph = capture.exported.exported_program.module()
-    for clip, beta in ((0.2, 0.0), (0.17, 0.2), (0.6, 0.03)):
+    # Stay away from nondifferentiable clipping boundaries: rounding the model
+    # to FP32 can move a ratio infinitesimally across an exact decimal threshold.
+    for clip, beta in ((0.2, 0.0), (0.17, 0.2), (0.63, 0.03)):
         (loss,) = graph(
             x, fields, {"clip": torch.tensor(clip), "beta": torch.tensor(beta)}
         )
