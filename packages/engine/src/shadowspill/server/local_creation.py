@@ -202,12 +202,10 @@ class LocalCreation:
             self._pin = factory.storage.artifacts(self.identity.owner_id)
             self._artifacts = self._pin.__enter__()
             creation = load_creation(self._artifacts, self.info)
-            # Fail before phase launch instead of ignoring a trace/idle policy.
+            # Fail before phase launch instead of ignoring a capture policy.
             execution = creation.config.execution
-            if execution.nsys is not None or execution.idle_timeout_seconds is not None:
-                raise NotImplementedError(
-                    "startup Nsight and optional idle expiry are not implemented yet"
-                )
+            if execution.nsys is not None:
+                raise NotImplementedError("startup Nsight is not implemented yet")
             registry = load_registry(factory.packages)
             setup = resolve_training(registry, config=creation.config)
             checkpoint = (

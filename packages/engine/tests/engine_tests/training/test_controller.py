@@ -50,9 +50,31 @@ class Workers:
 
 
 @contextmanager
-def configured(tmp_path, *, blocked=False, fail_publication=False):
+def configured(tmp_path, *, blocked=False, fail_publication=False, idle_timeout=None):
     with store(tmp_path) as journal:
-        prepared = PreparedRequests(family(), cache_root=tmp_path)
+        plans = family()
+        if idle_timeout is not None:
+            layouts = plans.inventory.layouts
+            config = layouts.setup.config
+            plans = replace(
+                plans,
+                inventory=replace(
+                    plans.inventory,
+                    layouts=replace(
+                        layouts,
+                        setup=replace(
+                            layouts.setup,
+                            config=replace(
+                                config,
+                                execution=replace(
+                                    config.execution, idle_timeout_seconds=idle_timeout
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        prepared = PreparedRequests(plans, cache_root=tmp_path)
         execution = prepared.setup.config.execution
         budget = BufferBudget(
             execution.max_staging_bytes, execution.max_pending_requests

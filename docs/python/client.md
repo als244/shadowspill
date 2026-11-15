@@ -77,6 +77,14 @@ A wait timeout does not cancel work or retry a mutation. `cancel()` returns fals
 `close()` or leaving the context ends connection work and releases the owned SSH
 forward; it does not stop accepted server work or close a training run.
 
+`Execution(idle_timeout_seconds=...)` optionally releases idle workers. The default
+is `None`, with no idle expiry. The timer runs only while the request queue and
+input staging are empty, after worker initialization and after work finishes.
+Inspection, duplicate queries and writer reattachment do not extend that timer.
+Expiry records `idle_timeout` on the stopped run and preserves saved results and
+artifacts. It does not save a checkpoint or apply pending gradients; resume from
+a saved checkpoint in a new run.
+
 Creation accepts raw setup keywords directly, or `config=preview.config`.
 `plans=training.plans` with the same configuration skips preparation; weights
 still come from the explicit initializer. To resume, supply

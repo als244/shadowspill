@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import suppress
-from threading import Condition, Event, RLock, Thread
+from threading import TIMEOUT_MAX, Condition, Event, RLock, Thread
 from time import monotonic
 from typing import Protocol, Self
 
@@ -84,6 +84,9 @@ class RunController[Work: CompletedWork]:
         self._wake, self._changed, self._closing_lock = Event(), Condition(), RLock()
         self._active = self._closing = self._stopping = self.closed = False
         self._error: str | None = None
+        self._idle_timeout = execution.idle_timeout_seconds
+        self._idle_since: float | None = monotonic()
+        self._expired = False
         self._thread = Thread(
             target=self._run, name="shadowspill-controller", daemon=True
         )
@@ -99,6 +102,12 @@ class RunController[Work: CompletedWork]:
         """Bounded health evidence for the service owner, without retaining errors."""
         with self._dispatcher.order.synchronized():
             return self._error
+
+    @property
+    def expired(self) -> bool:
+        """Explicit idle policy ended ownership at a quiescent request boundary."""
+        with self._dispatcher.order.synchronized():
+            return self._expired
 
     def _usable(self) -> None:
         if self._error is not None:
@@ -129,7 +138,9 @@ class RunController[Work: CompletedWork]:
                 if self._records.get(request.identity.request_id) is not None:
                     return self._records.submit(request)  # Exact digest, never replay.
                 self._usable()
-                return self._prepared.register(self.inputs, request)
+                result = self._prepared.register(self.inputs, request)
+                self._idle_since = None
+                return result
         finally:
             self._notify()
 
@@ -208,25 +219,40 @@ class RunController[Work: CompletedWork]:
         self._changed.wait(remaining)
 
     def _run(self) -> None:
-        while True:
-            self._wake.wait()
-            self._wake.clear()
+        try:
             while True:
-                with self._dispatcher.order.synchronized():
-                    if self._closing or self.closed:
-                        return
-                try:
-                    if not self._one():
-                        if self.closed:
-                            return
-                        break
-                except BaseException as error:
-                    self._failed(error)
-                    return
-                finally:
+                self._wake.wait(self._idle_wait())
+                self._wake.clear()
+                while True:
                     with self._dispatcher.order.synchronized():
-                        self._active = False
-                    self._notify(dispatch=False)
+                        if self._closing or self.closed:
+                            return
+                    try:
+                        if not self._one():
+                            if self.closed:
+                                return
+                            break
+                    finally:
+                        with self._dispatcher.order.synchronized():
+                            self._active = False
+                        self._notify(dispatch=False)
+        except BaseException as error:
+            self._failed(error)
+            self._notify(dispatch=False)
+
+    def _idle_wait(self) -> float | None:
+        with self._dispatcher.order.synchronized():
+            if self._idle_timeout is None:
+                return None
+            if self._records.pending(limit=1) or self.inputs.staging.used != (0, 0):
+                self._idle_since = None
+                return None
+            now = monotonic()
+            if self._idle_since is None:
+                self._idle_since = now
+            return min(
+                TIMEOUT_MAX, max(0, self._idle_timeout - (now - self._idle_since))
+            )
 
     def _one(self) -> bool:
         with self._dispatcher.order.synchronized():
@@ -236,11 +262,27 @@ class RunController[Work: CompletedWork]:
             retired = self._state.boundary.closed
             if not retired:
                 pending = self._records.pending(limit=1)
-                if not pending or pending[0].state != "accepted":
+                if (
+                    not pending
+                    and self.inputs.staging.used == (0, 0)
+                    and self._idle_timeout is not None
+                    and self._idle_since is not None
+                    and monotonic() - self._idle_since >= self._idle_timeout
+                ):
+                    # Expiry is allocation loss, not an implicit optimizer or
+                    # discard request. Preserve the last known counters and
+                    # accumulation while invalidating its lost live state.
+                    self._state.invalidate()
+                    self._state.complete(self._state.begin("close", "idle-expiry"))
+                    self.inputs.pause_registration(True)
+                    self._expired, retired = True, True
+                elif not pending or pending[0].state != "accepted":
                     self._active = False
                     return False
-                request_id = pending[0].identity.request_id
-                call = self.inputs.take(request_id)
+                else:
+                    self._idle_since = None
+                    request_id = pending[0].identity.request_id
+                    call = self.inputs.take(request_id)
         if retired:
             self._retire_closed()
             return False

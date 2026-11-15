@@ -237,7 +237,6 @@ def test_factory_owns_preparation_and_persistent_child_without_a_recipe_loop(
             c, model=replace(c.model, initialize=Weights.artifact("missing"))
         ),
         lambda c: replace(c, execution=replace(c.execution, nsys={"steps": [1]})),
-        lambda c: replace(c, execution=replace(c.execution, idle_timeout_seconds=1)),
     ],
 )
 def test_unavailable_startup_choices_fail_before_any_phase(

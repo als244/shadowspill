@@ -70,10 +70,11 @@ class RunJobs:
     covers this registry and its maintenance thread. Historical runs live only in
     storage. Exact creation retries consult that history without taking a new slot.
 
-    No idle eviction and no unbounded executor queue. Disconnects do not stop
+    No default idle eviction and no unbounded executor queue. Disconnects do not stop
     preparation or training. Finished/failed owners are reaped without polling
     from a client, while failed cleanup remains counted and retryable. Stop/close
-    is allocation lifetime, never a training-request cancellation route.
+    is allocation lifetime, never a training-request cancellation route. A
+    configured idle policy belongs to the sole request controller.
     """
 
     def __init__(

@@ -357,7 +357,15 @@ class LiveRun:
                 if errors:
                     raise BaseExceptionGroup("run files still require cleanup", errors)
                 if self.ready:
-                    if self._stopped:
+                    if self._controller is not None and self._controller.expired:
+                        self.storage.catalog.stop(
+                            self.identity,
+                            ServiceError(
+                                "idle_timeout",
+                                "Configured idle timeout released workers.",
+                            ),
+                        )
+                    elif self._stopped:
                         self.storage.catalog.stop(
                             self.identity,
                             ServiceError(
