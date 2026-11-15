@@ -1,11 +1,12 @@
 """Worker-only capture boundaries, shared by recipes and Plan benchmarks."""
 
-from collections.abc import Callable
 from contextlib import nullcontext
 from typing import Any, cast
 
 import torch
 import torch.distributed as dist
+
+from ._nsys_runtime import capture_boundary
 
 
 class NsightTrainerMixin:
@@ -31,21 +32,12 @@ class NsightTrainerMixin:
         self.nsys_steps = nsys_steps
         cast(Any, super()).__init__(*args, **kwargs)
 
-    @staticmethod
-    def _capture_boundary(action: Callable[[], object]) -> None:
-        distributed = dist.is_initialized()
-        if distributed:
-            dist.barrier()
-        action()
-        if distributed:
-            dist.barrier()
-
     def step(self, **inputs: Any) -> Any:
         number = self.step_count + 1
         last = self.nsys_start_step + self.nsys_steps - 1
         captured = self.nsys_steps > 0 and self.nsys_start_step <= number <= last
         if captured and number == self.nsys_start_step:
-            self._capture_boundary(torch.cuda.profiler.start)
+            capture_boundary(torch.cuda.profiler.start)
         rank = dist.get_rank() if dist.is_initialized() else 0
         label = f"train/step={number}/rank={rank}"
         if captured:
@@ -55,5 +47,5 @@ class NsightTrainerMixin:
         # Trainer.step synchronizes execution before returning. Wait for every
         # worker before ending capture, including the final worker's GPU work.
         if captured and number == last:
-            self._capture_boundary(torch.cuda.profiler.stop)
+            capture_boundary(torch.cuda.profiler.stop)
         return result
