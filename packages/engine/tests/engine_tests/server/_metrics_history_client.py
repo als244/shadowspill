@@ -95,6 +95,21 @@ with ServiceClient(
         "rng-session", options["run_id"], 0, first.through
     )
     assert lines[1:] == rows and all(isinstance(row, MetricRecord) for row in lines[1:])
+    reports = {}
+    if options.get("reports"):
+        for format in ("html", "json"):
+            handle = training.report(format=format, through=first.through).result(30)
+            path = handle.download(destination.with_name("report." + format)).result(30)
+            if format == "json":
+                document = json.loads(path.read_bytes())
+                assert document["records"] == [row.to_dict() for row in rows]
+                assert document["plans"] == training.plans.reference.to_dict()
+            else:
+                assert "Training results" in path.read_text()
+            reports[format] = {
+                "path": str(path),
+                "reference": handle.reference.to_dict(),
+            }
 assert service._memory.used == service._work.pending.used == (0, 0)
 with ServiceClient(
     **connection, token=options["token"], session_id="rng-session"
@@ -119,6 +134,17 @@ with ServiceClient(
             again.get_metrics(options["run_id"], after=first.through).result(30).records
             == ()
         )
+    if reports:
+        training = again.get_training_client(options["run_id"], read_only=True).result(
+            30
+        )
+        for format, saved in reports.items():
+            assert (
+                training.report(format=format, through=first.through)
+                .result(30)
+                .reference.to_dict()
+                == saved["reference"]
+            )
 assert again._memory.used == again._work.pending.used == (0, 0)
 assert not any(
     name in sys.modules
@@ -136,6 +162,7 @@ print(
             "jsonl_roundtrip": True,
             "client_claims_released": True,
             "caller_metrics_verified": annotation is not None,
+            "reports": reports,
         }
     )
 )

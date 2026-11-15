@@ -61,6 +61,7 @@ for run in previous["runs"]:
                     "token": token,
                     "ssh_host": "chicago",
                     "annotate": os.environ.get("SHADOWSPILL_METRICS_ANNOTATE") == "1",
+                    "reports": os.environ.get("SHADOWSPILL_METRICS_REPORTS") == "1",
                 }
             ),
             capture_output=True,

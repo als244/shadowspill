@@ -35,6 +35,7 @@ from shadowspill_client.protocol.metrics import MetricAnnotation
 from shadowspill_client.protocol.payload_io import BufferReader
 from shadowspill_client.protocol.plans import SavedPlans
 from shadowspill_client.protocol.preview import TrainingPreview
+from shadowspill_client.protocol.reports import ReportSettings
 from shadowspill_client.protocol.requests import OperationRequest, identifier
 from shadowspill_client.protocol.results import RequestStatus
 from shadowspill_client.protocol.runs import RunInfo, RunPage
@@ -525,6 +526,26 @@ class _Handler(BaseHTTPRequestHandler):
             if run.records.identity != identity:
                 raise PermissionError("run lookup crossed authenticated scope")
             route = parts[4:]
+            if route == ("report",) and self.command == "POST" and not query:
+                if self.headers.get("Content-Type") != CONTROL_MEDIA_TYPE:
+                    raise ProtocolError("report has no control media type")
+                settings = body.record()
+                if not isinstance(settings, ReportSettings):
+                    raise ProtocolError("report requires bounded settings")
+                from .reports import generate_report
+
+                plans = None
+                if self.server.jobs is not None:
+                    info = self.server.jobs.storage.catalog.get(identity)
+                    if info is None:
+                        raise KeyError("report run")
+                    self._run_scope(info, identity)
+                    plans = info.plans
+                with self.server.artifacts(owner) as store:
+                    self._reply(
+                        generate_report(run.records, store, settings, plans=plans)
+                    )
+                return
             if route == ("metrics",) and self.command == "GET":
                 if set(query) - {"after", "through", "limit"}:
                     raise ProtocolError("unknown metric query field")

@@ -30,6 +30,7 @@ from .protocol.requests import (
 from .protocol.results import RequestStatus
 from .protocol.runs import RunInfo
 from .protocol.training import ResolvedTraining
+from .reports import ReportHandle, report
 from .results import OperationFuture, TrainingRequestError, TrainingResult
 from .weights import WeightsHandle
 
@@ -110,6 +111,27 @@ class TrainingClient:
     def nsys(self, *, rank: int = 0) -> CallFuture[NsightCapture]:
         """Inspect a startup capture; native reports finalize after worker exit."""
         return self._service.get_nsys(self.run_id, rank=rank)
+
+    def report(
+        self,
+        *,
+        format: Literal["html", "json"] = "html",
+        after: int = 0,
+        through: int | None = None,
+        max_records: int = 10000,
+        max_bytes: int = 64 << 20,
+    ) -> CallFuture[ReportHandle]:
+        """Render a bounded snapshot of recorded results without rerunning training."""
+        return report(
+            self._service,
+            self.session_id,
+            self.run_id,
+            format=format,
+            after=after,
+            through=through,
+            max_records=max_records,
+            max_bytes=max_bytes,
+        )
 
     def _disconnect(self) -> None:
         self._slots.close()

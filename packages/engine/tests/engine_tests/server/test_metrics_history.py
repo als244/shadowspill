@@ -38,3 +38,5 @@ def test_real_full_and_frozen_training_metrics_survive_remote_restart(tmp_path, 
     )
     if os.environ.get("SHADOWSPILL_METRICS_ANNOTATE") == "1":
         assert all(row["caller_metrics_verified"] for row in receipt["runs"])
+    if os.environ.get("SHADOWSPILL_METRICS_REPORTS") == "1":
+        assert all(set(row["reports"]) == {"html", "json"} for row in receipt["runs"])

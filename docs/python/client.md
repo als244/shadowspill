@@ -195,6 +195,20 @@ operation works after worker close or restart, including through a read-only
 training handle, and requires the authenticated run owner. It does not submit a
 training operation, change counters or contact a tracker.
 
+`summary = training.report(format="html").result()` creates a stored summary of
+the retained loss, metrics, request outcomes and history/update identities.
+`summary.download("training.html").result()` explicitly downloads it; `format="json"`
+produces a structured version. Both include the fixed snapshot and saved Plan
+reference and preserve caller annotations separately from engine measurements.
+Report creation works after worker close or service restart and never executes a
+model. Its `after` and `through` arguments use the metric query boundaries.
+
+Reports default to limits of 10,000 records and 64 MiB. The byte ceiling is admitted
+against available artifact storage before rendering. Exceeding either limit fails
+without publishing a partial report; choose an explicit smaller range or increase
+`max_records` (up to 100,000) and `max_bytes` (up to 1 GiB). Repeating identical
+settings for the same fixed snapshot retrieves the same immutable artifact.
+
 For large files, use `artifact.download(local_path, resume=True).result()` from
 the first attempt. An interrupted transfer retains bounded progress metadata and
 partial bytes in `<local_path>.shadowspill-download`. After reconnecting, attach

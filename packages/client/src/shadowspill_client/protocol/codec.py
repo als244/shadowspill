@@ -29,6 +29,7 @@ from .metrics import MetricAnnotation, MetricPage, MetricRecord, MetricSnapshot
 from .plans import PlanSummaryPage, SavedPlans
 from .preparation import ResolvedPreparation
 from .preview import TrainingPreview
+from .reports import ReportDocument, ReportSettings
 from .requests import OperationRequest, WriterLease
 from .results import (
     Acceptance,
@@ -82,6 +83,8 @@ _KINDS: Mapping[str, type[Record]] = {
     "metrics.record": MetricRecord,
     "metrics.snapshot": MetricSnapshot,
     "metrics.annotation": MetricAnnotation,
+    "report.settings": ReportSettings,
+    "report.document": ReportDocument,
     "checkpoint.frozen_base": FrozenBase,
     "nsys.manifest": NsightManifest,
     "artifact.upload": ArtifactUpload,

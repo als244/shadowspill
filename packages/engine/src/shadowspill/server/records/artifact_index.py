@@ -17,7 +17,7 @@ _CODEC = RecordCodec({"artifact.reference": ArtifactRef})
 _UPLOAD_CODEC = RecordCodec({"upload.status": UploadStatus})
 
 
-type AliasKind = Literal["checkpoint", "plans", "nsys"]
+type AliasKind = Literal["checkpoint", "plans", "nsys", "report"]
 
 
 def alias_scope(
@@ -28,7 +28,7 @@ def alias_scope(
     if len(text(name, "artifact name")) > 256:
         raise ValueError("artifact name exceeds its bound")
     name.encode("utf-8")  # SQLite text must be representable before journal commit.
-    if kind not in ("checkpoint", "plans", "nsys"):
+    if kind not in ("checkpoint", "plans", "nsys", "report"):
         raise ValueError("unknown named artifact kind")
     return session_id, run_id, name, kind
 
