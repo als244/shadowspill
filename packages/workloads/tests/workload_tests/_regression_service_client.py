@@ -140,7 +140,7 @@ def prediction(training, memory):
             return np.stack([rows[str(i)].array() for i in range(len(INPUTS))])
 
 
-def weights(training, master_dtype=None):
+def weights(training):
     handle = training.export_weights().result(120)
     with TemporaryDirectory(prefix="shadowspill-regression-weights-") as directory:
         root = handle.download(Path(directory) / "weights").result(60)
@@ -156,12 +156,11 @@ def weights(training, master_dtype=None):
                 for row in manifest["tensors"]
             }
             result = {}
-            master_names = set()
             for row in manifest["model_tensors"]:
                 view, identity = row["view"], row["tensor"]["identity"]
-                if identity["role"] == "master":
-                    master_names.add(identity["name"])
-                    assert row["tensor"]["geometry"]["dtype"] == "torch.float32"
+                # This model computes in FP32. Requesting FP32 optimizer masters
+                # reuses those parameters; it must not allocate redundant copies.
+                assert identity["role"] in ("parameter", "buffer")
                 assert view["shape"] == view["local_shape"] and not any(view["origin"])
                 source = manifest["derived_tensors"].get(row["archive"], row["archive"])
                 value = tensors[source]
@@ -173,14 +172,11 @@ def weights(training, master_dtype=None):
                     * value.itemsize,
                     strides=tuple(stride * value.itemsize for stride in view["stride"]),
                 ).copy()
-            assert master_names == (
-                result.keys() - {"updates"} if master_dtype is not None else set()
-            )
             return result
 
 
 def check(training, oracle, memory, *, counter=None):
-    actual = weights(training, oracle.master_dtype)
+    actual = weights(training)
     assert actual.keys() == oracle.weights.keys() | {"updates"}
     for name, expected in oracle.weights.items():
         np.testing.assert_allclose(actual[name], expected, rtol=3e-4, atol=3e-6)
@@ -300,7 +296,7 @@ def qualify(client, initial, dtype, memory, master_dtype=None):
         oracle.update(oracle.forward_backward()[2], optim)
         check(training, oracle, memory)
         observations.append(result.record.to_dict())
-    final = weights(training, master_dtype)
+    final = weights(training)
     closed(client, training)
     resumed = client.create_training_client(
         plans=plans, checkpoint=checkpoint, wait_for_resources=True
