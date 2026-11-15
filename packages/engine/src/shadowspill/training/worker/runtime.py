@@ -142,6 +142,8 @@ class PreparedWorker:
             raise ValueError("worker requires one explicitly assigned visible device")
         from shadowspill.execution.executor import Executor
 
+        from .randomness import WorkerRandomness
+
         rank_map = dict(enumerate(self.startup.logical_by_worker))
         with workers(
             len(rank_map),
@@ -156,16 +158,21 @@ class PreparedWorker:
             ) as executor:
                 budget = BufferBudget(self.startup.staging_bytes)
                 try:
+                    randomness = WorkerRandomness(
+                        executor.device, self.startup.scope.rank
+                    )
                     reader = WorkerCheckpointReader(
                         executor,
                         budget,
                         resolve,
                         chunk_bytes=min(self.chunk_bytes, budget.max_bytes // 2),
                         world_size=len(rank_map),
+                        randomness=randomness,
                     )
                     if self.restore is None:
                         assert self.initialization is not None
                         initialize(executor, self.initialization, runtime, budget)
+                        randomness.initialize(self.bindings.setup.config.execution.seed)
                     else:
                         reader.load(self.restore, reader.prepare_source(self.restore))
                     if executor.spill_capacity_bytes != self.startup.spill_bytes:
@@ -179,6 +186,7 @@ class PreparedWorker:
                         budget,
                         outputs.collect,
                         restore=reader,
+                        randomness=randomness,
                         checkpoints=None
                         if checkpoint_stream is None
                         else WorkerCheckpointWriter(
@@ -187,6 +195,7 @@ class PreparedWorker:
                             checkpoint_stream,
                             plans=self.startup.bundle,
                             chunk_bytes=self.chunk_bytes,
+                            randomness=randomness,
                         ),
                     )
 
@@ -233,6 +242,7 @@ class PreparedWorker:
                     self.restore,
                     chunk_bytes=self.chunk_bytes,
                     world_size=len(self.startup.logical_by_worker),
+                    require_randomness=True,
                 )
             await_start(self.startup, reader, writer)
             with self.open(

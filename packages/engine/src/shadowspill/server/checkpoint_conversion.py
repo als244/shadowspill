@@ -55,6 +55,21 @@ def _description(
             "configuration": request.configuration.to_dict(),
         }
     )
+    if conversion.randomness is not None:
+        if (
+            conversion.randomness.get("version") != 1
+            or conversion.randomness.get("restore_id") != identity
+            or any(
+                rank.randomness is None
+                or rank.randomness.get("root_seed")
+                != conversion.randomness.get("root_seed")
+                for rank in value.ranks
+            )
+        ):
+            raise ValueError("RNG conversion differs from its stable restore identity")
+        expected = replace(expected, randomness=conversion.randomness)
+    elif any(rank.randomness is not None for rank in value.ranks):
+        raise ValueError("converted random streams require mapping provenance")
     if value.info != replace(
         request.source.info,
         request_id="conversion-" + identity,

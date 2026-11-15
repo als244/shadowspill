@@ -17,7 +17,8 @@ class WorkerHost:
     ``process_bytes`` covers Python, framework/compiled runtime, thread stacks,
     imported definitions and other resident process overhead. ``artifact_bytes``
     covers the peak of loading, decoding and rechecking the saved bundle, plus
-    checkpoint descriptors/manifest encoding while that family remains resident;
+    checkpoint descriptors/manifest encoding and bounded default RNG snapshots
+    while that family remains resident;
     it is not the compressed file size. Neither value is inferred from idle RSS.
     The deployment must qualify these allowances for its installed definitions.
     Agent/controller arenas and retained files are separately owned reservations.

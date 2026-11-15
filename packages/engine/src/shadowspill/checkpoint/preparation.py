@@ -4,11 +4,19 @@ from collections.abc import Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
+
+import torch
 
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.plan import Plan
 from shadowspill.training.preparation.bundle import TrainingBundle
-from shadowspill.training.worker.checkpoint_records import RankSave, RankSaved
+from shadowspill.training.worker.checkpoint_reader import rank_randomness
+from shadowspill.training.worker.checkpoint_records import (
+    RankRestore,
+    RankSave,
+    RankSaved,
+)
 from shadowspill.training.worker.conversion_records import (
     ConversionPrepared,
     ConversionRequest,
@@ -21,6 +29,14 @@ from .compatibility import describe_family, require_compatible
 from .conversion import conversion_tensors, convert_state
 from .defaults import TemporaryDefaults
 from .identity import state_identity
+from .load import validate_checkpoint
+from .random_streams import (
+    RandomState,
+    default_streams,
+    map_random_streams,
+    read_snapshot,
+    snapshot,
+)
 from .save import checkpoint_size, write_checkpoint
 from .staging import staging_bytes
 from .state import PlanState
@@ -47,6 +63,7 @@ class PreparedConversion:
     defaults: TemporaryDefaults
     scratch_bytes: int
     staging_bytes: int
+    source_metadata: tuple[Mapping[str, Any], ...]
 
 
 def prepare(request: ConversionRequest) -> PreparedConversion:
@@ -83,6 +100,53 @@ def prepare(request: ConversionRequest) -> PreparedConversion:
             "configuration": request.configuration.to_dict(),
         }
     )
+    metadata: list[Mapping[str, Any]] = []
+    saved_states: list[RandomState] = []
+    seeds: set[int] = set()
+    for state, rank in zip(sources, request.source.ranks, strict=True):
+        with verified_file(
+            rank.archive, Path(request.files[rank.archive.id])
+        ) as stream:
+            manifest = validate_checkpoint(
+                state,
+                stream,
+                frozen_state_id=saved.frozen_state_id,
+                max_manifest_bytes=host_bytes // (256 * len(sources)),
+            )
+        randomness = rank_randomness(
+            manifest["metadata"], RankRestore(request.checkpoint, saved, rank)
+        )
+        metadata.append(manifest["metadata"])
+        if randomness is not None:
+            seed, streams = read_snapshot(randomness)
+            seeds.add(seed)
+            saved_states.extend(streams)
+    target_randomness: dict[int, Mapping[str, Any]] = {}
+    if any("randomness" in row for row in metadata):
+        if len(seeds) != 1 or any("randomness" not in row for row in metadata):
+            raise ValueError("checkpoint ranks disagree on saved RNG seed or ownership")
+        target_streams = [
+            stream
+            for state in targets
+            for stream in default_streams(
+                state.logical_rank, torch.__version__, accelerator=True
+            )
+        ]
+        mapped = map_random_streams(
+            saved_states,
+            target_streams,
+            root_seed=seeds.pop(),
+            restore_id=identity,
+            initializers={stream.representation for stream in target_streams},
+        )
+        provenance = replace(provenance, randomness=mapped.provenance())
+        target_randomness = {
+            state.logical_rank: snapshot(
+                mapped.root_seed,
+                [row for row in mapped.states if row.stream.rank == state.logical_rank],
+            )
+            for state in targets
+        }
     info = replace(
         saved,
         request_id="conversion-" + identity,
@@ -94,10 +158,22 @@ def prepare(request: ConversionRequest) -> PreparedConversion:
     ranks = tuple(
         RankSave(
             state.logical_rank,
-            checkpoint_size(state, metadata=info.rank_metadata(), weights=info.weights),
+            checkpoint_size(
+                state,
+                metadata={
+                    **info.rank_metadata(),
+                    **(
+                        {"randomness": target_randomness[state.logical_rank]}
+                        if target_randomness
+                        else {}
+                    ),
+                },
+                weights=info.weights,
+            ),
             state_identity(state),
             state.plan.program.digest,
             {name: plan.program.digest for name, plan in state.plans.items()},
+            target_randomness.get(state.logical_rank),
         )
         for state in targets
     )
@@ -113,6 +189,7 @@ def prepare(request: ConversionRequest) -> PreparedConversion:
         defaults,
         scratch_bytes,
         staged,
+        tuple(metadata),
     )
 
 
@@ -138,13 +215,14 @@ def materialize(prepared: PreparedConversion) -> ConversionWritten:
                 initialize_temporary=prepared.defaults,
                 frozen_state_id=info.frozen_state_id,
                 max_source_manifest_bytes=request.host_bytes // (256 * len(sources)),
+                expected_metadata=prepared.source_metadata,
             )
         )
         if (
             converted.weights != info.weights
             or converted.frozen_state_id != info.frozen_state_id
             or mapping(converted.source_metadata, "source metadata")
-            != mapping(request.source.info.rank_metadata(), "saved boundary")
+            != mapping(prepared.source_metadata[0], "saved boundary")
         ):
             raise ValueError("checkpoint rank metadata differs from its generation")
         completed = []
@@ -154,7 +232,7 @@ def materialize(prepared: PreparedConversion) -> ConversionWritten:
                 manifest = write_checkpoint(
                     converted.ranks[rank.rank],
                     stream,
-                    metadata=info.rank_metadata(),
+                    metadata=rank.metadata(info),
                     chunk_bytes=prepared.scratch_bytes // 2,
                     weights=info.weights,
                     frozen_state_id=info.frozen_state_id,

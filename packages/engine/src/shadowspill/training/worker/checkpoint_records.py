@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from shadowspill.checkpoint.random_streams import read_snapshot
 from shadowspill_client._records import Record, Value, integer, mapping, record
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
@@ -45,6 +46,7 @@ class RankSave(Record):
     state_sha256: str
     program: str
     additional_programs: Mapping[str, str]
+    randomness: Mapping[str, Value] | None = None
 
     def __post_init__(self) -> None:
         integer(self.size_bytes, "rank archive bytes", minimum=1)
@@ -56,6 +58,17 @@ class RankSave(Record):
         if any(not isinstance(key, str) or not key for key in programs):
             raise ValueError("additional checkpoint Programs require names")
         object.__setattr__(self, "additional_programs", MappingProxyType(programs))
+        if self.randomness is not None:
+            read_snapshot(self.randomness)
+            object.__setattr__(
+                self, "randomness", mapping(self.randomness, "random state")
+            )
+
+    def metadata(self, info: CheckpointInfo) -> dict[str, Any]:
+        value = info.rank_metadata()
+        if self.randomness is not None:
+            value["randomness"] = self.randomness
+        return value
 
     def reference(self, artifact_id: str, sha256: str) -> CheckpointRank:
         return CheckpointRank(
@@ -86,7 +99,7 @@ class RankSave(Record):
             "byteorder": info.byteorder,
             "weights": info.weights,
             "frozen_state_id": info.frozen_state_id,
-            "metadata": info.rank_metadata(),
+            "metadata": self.metadata(info),
         }
 
 

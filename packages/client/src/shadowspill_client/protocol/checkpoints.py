@@ -20,6 +20,7 @@ class CheckpointConversion(Record):
     source_plans: ArtifactRef
     logical_state_sha256: str
     version: Literal[1] = 1
+    randomness: Mapping[str, Value] | None = None
 
     def __post_init__(self) -> None:
         for name in ("source", "source_plans"):
@@ -35,6 +36,10 @@ class CheckpointConversion(Record):
             or re.fullmatch(r"[0-9a-f]{64}", self.logical_state_sha256) is None
         ):
             raise ValueError("conversion requires a logical state SHA-256 identity")
+        if self.randomness is not None:
+            object.__setattr__(
+                self, "randomness", mapping(self.randomness, "RNG conversion")
+            )
 
 
 @dataclass(frozen=True)

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shadowspill_client._records import mapping
 from shadowspill_client.buffers import BufferBudget
@@ -19,6 +19,32 @@ if TYPE_CHECKING:
     from shadowspill.checkpoint.state import CheckpointState
     from shadowspill.execution import Executor
 
+    from .randomness import WorkerRandomness
+
+
+def rank_randomness(
+    metadata: Mapping[str, Any], source: RankRestore, *, required: bool = False
+) -> Mapping[str, Any] | None:
+    """Check generation metadata and the bounded, rank-owned RNG attachment."""
+    from shadowspill.checkpoint.random_streams import read_snapshot
+
+    boundary = dict(metadata)
+    randomness = boundary.pop("randomness", None)
+    if mapping(boundary, "rank metadata") != mapping(
+        source.info.rank_metadata(), "checkpoint metadata"
+    ):
+        raise ValueError("rank archive differs from its checkpoint generation")
+    if randomness is None:
+        if required:
+            raise ValueError("checkpoint has no declared worker RNG state")
+        return None
+    if not isinstance(randomness, Mapping):
+        raise ValueError("checkpoint RNG attachment requires a snapshot")
+    _, states = read_snapshot(randomness)
+    if not states or any(state.stream.rank != source.rank.rank for state in states):
+        raise ValueError("checkpoint RNG state belongs to another logical rank")
+    return randomness
+
 
 def validate_rank(
     state: CheckpointState,
@@ -27,7 +53,8 @@ def validate_rank(
     *,
     chunk_bytes: int,
     world_size: int,
-) -> None:
+    require_randomness: bool = False,
+) -> Mapping[str, Any] | None:
     """The same complete preflight for saved descriptions and live workers."""
     from shadowspill.checkpoint.load import validate_checkpoint
 
@@ -42,10 +69,9 @@ def validate_rank(
     if (
         manifest["state"] != source.rank.state_sha256
         or manifest["weights"] != info.weights
-        or mapping(manifest["metadata"], "rank metadata")
-        != mapping(info.rank_metadata(), "checkpoint metadata")
     ):
         raise ValueError("rank archive differs from its checkpoint generation")
+    return rank_randomness(manifest["metadata"], source, required=require_randomness)
 
 
 class WorkerCheckpointReader:
@@ -59,11 +85,13 @@ class WorkerCheckpointReader:
         *,
         chunk_bytes: int,
         world_size: int,
+        randomness: WorkerRandomness | None = None,
     ) -> None:
         if type(chunk_bytes) is not int or not 0 < 2 * chunk_bytes <= budget.max_bytes:
             raise ValueError("restore chunk exceeds admitted worker staging")
         self.executor, self.budget, self.resolve = executor, budget, resolve
         self.chunk_bytes, self.world_size = chunk_bytes, world_size
+        self.randomness = randomness
 
     def prepare(self, call: BoundWorkerCall) -> BoundWorkerCall:
         source = call.command.restore
@@ -74,13 +102,17 @@ class WorkerCheckpointReader:
     def prepare_source(self, source: RankRestore) -> Path:
         path = self.resolve(source.rank.archive)
         with self.budget.reserve(2 * self.chunk_bytes, timeout=0):
-            validate_rank(
+            randomness = validate_rank(
                 self.executor,
                 path,
                 source,
                 chunk_bytes=self.chunk_bytes,
                 world_size=self.world_size,
+                require_randomness=self.randomness is not None,
             )
+            if self.randomness is not None:
+                assert randomness is not None
+                self.randomness.prepare(randomness)
         return path
 
     def __call__(self, call: BoundWorkerCall) -> None:
@@ -98,7 +130,9 @@ class WorkerCheckpointReader:
                 self.executor, path, chunk_bytes=self.chunk_bytes
             )
             self.executor.synchronize()
-            if mapping(metadata, "restored metadata") != mapping(
-                source.info.rank_metadata(), "checkpoint metadata"
-            ):
-                raise ValueError("checkpoint metadata changed after staging")
+            randomness = rank_randomness(
+                metadata, source, required=self.randomness is not None
+            )
+            if self.randomness is not None:
+                assert randomness is not None
+                self.randomness.restore(randomness)

@@ -795,3 +795,26 @@ check: definition/source, state configuration, groups and precision must match.
 Per-call defaults and objective provenance do not reinterpret tensor state. A
 mismatch fails before acceptance or startup; the prepared restore reservation
 covers both the global manifest and the bounded source configuration graph.
+
+`WorkerRandomness` uses the existing small metadata codec for default Python,
+NumPy, Torch CPU and the worker's assigned device generator. Native rank metadata
+contains a bounded `randomness` attachment with logical stream identities and the
+saved root seed. The writer captures this at admission and rechecks it before
+streaming. Restore validates every generator in an independent instance before
+changing model state. Production workers require declared RNG state; they never
+silently reseed a checkpoint that lacks it. Evaluation, including the all-masked
+read-only path, advances its own saved streams and restores training streams on
+both normal and exceptional exits. This does not register arbitrary model-owned
+generator objects automatically.
+
+Conversion preflights each source's immutable rank metadata before admitting the
+exact target archive sizes. The generic tensor converter accepts rank-specific
+metadata only against that complete, exact preflight; its ordinary boundary
+agreement check remains unchanged. The logical RNG mapper preserves matching
+representations and derives newly required streams with versioned SHA-256 seeds.
+`CheckpointConversion.randomness` records source/target maps, saved root seed,
+stable restore identity and derived seeds. This is bounded CPU preparation; device
+initialization happens only in the assigned worker. CPU tests cover native next
+stochastic updates through both APIs, independent evaluation, 2↔4 stream mapping,
+and rejection without state mutation or target publication. Stochastic GPU
+qualification remains pending.

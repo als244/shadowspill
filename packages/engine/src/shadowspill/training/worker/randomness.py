@@ -14,11 +14,10 @@ from typing import Any
 import numpy as np
 import torch
 
-from shadowspill.artifacts.state import StateId
 from shadowspill.checkpoint import metadata_values
 from shadowspill.checkpoint.random_streams import (
     RandomState,
-    RandomStream,
+    default_streams,
     map_random_streams,
     read_snapshot,
     snapshot,
@@ -39,21 +38,8 @@ class WorkerRandomness:
         if device.type not in ("cpu", "cuda"):
             raise ValueError("default worker RNG supports CPU or CUDA")
         self.device = device
-        representations = {
-            "python": "python.random@3",
-            "numpy": "numpy.MT19937@1",
-            "torch": "torch.cpu@" + torch.__version__,
-        }
-        if device.type == "cuda":
-            representations["accelerator"] = "torch.cuda@" + torch.__version__
-        self.streams = tuple(
-            RandomStream(
-                StateId("rng", "worker.default", (str(logical_rank), purpose, name)),
-                representation,
-                logical_rank,
-            )
-            for purpose in ("training", "evaluation")
-            for name, representation in representations.items()
+        self.streams = default_streams(
+            logical_rank, torch.__version__, accelerator=device.type == "cuda"
         )
         self.root_seed: int | None = None
         self._evaluation: dict[str, Any] | None = None

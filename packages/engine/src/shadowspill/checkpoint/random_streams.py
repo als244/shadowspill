@@ -18,6 +18,28 @@ MAX_STREAMS = 65536
 MAX_SNAPSHOT_BYTES = 1 << 20
 
 
+def default_streams(
+    logical_rank: int, torch_version: str, *, accelerator: bool
+) -> tuple["RandomStream", ...]:
+    """Declare worker defaults without importing a framework or opening a device."""
+    representations = {
+        "python": "python.random@3",
+        "numpy": "numpy.MT19937@1",
+        "torch": "torch.cpu@" + torch_version,
+    }
+    if accelerator:
+        representations["accelerator"] = "torch.cuda@" + torch_version
+    return tuple(
+        RandomStream(
+            StateId("rng", "worker.default", (str(logical_rank), purpose, name)),
+            representation,
+            logical_rank,
+        )
+        for purpose in ("training", "evaluation")
+        for name, representation in representations.items()
+    )
+
+
 def _name(value: str, name: str) -> None:
     if (
         not isinstance(value, str)
@@ -114,7 +136,7 @@ class RandomState:
 
 
 def snapshot(root_seed: int, states: Sequence[RandomState]) -> dict[str, Any]:
-    """Bound one worker's native-checkpoint metadata before encoding/publication."""
+    """Bound one worker's checkpoint metadata before encoding/publication."""
     nonnegative_int(root_seed, "saved root seed")
     if (
         not isinstance(states, (list, tuple))

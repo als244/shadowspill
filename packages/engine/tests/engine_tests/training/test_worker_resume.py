@@ -16,6 +16,11 @@ from engine_tests.offline.test_state_inventory import training
 from engine_tests.training.test_worker_startup import prepared_worker
 from shadowspill.checkpoint import save_checkpoint
 from shadowspill.checkpoint.identity import state_identity
+from shadowspill.checkpoint.random_streams import (
+    RandomState,
+    default_streams,
+    snapshot,
+)
 from shadowspill.checkpoint.state import PlanState
 from shadowspill.training.definitions import InitializationRuntime
 from shadowspill.training.worker.channel import read_message, write_message
@@ -59,7 +64,23 @@ def source(tmp_path, *, corrupt=False):
         sys.byteorder,
     )
     path = tmp_path / "rank.ssp"
-    save_checkpoint(executor, path, metadata=info.rank_metadata(), chunk_bytes=16)
+    save_checkpoint(
+        executor,
+        path,
+        metadata={
+            **info.rank_metadata(),
+            "randomness": snapshot(
+                0,
+                [
+                    RandomState(stream, seed=1)
+                    for stream in default_streams(
+                        0, torch.__version__, accelerator=True
+                    )
+                ],
+            ),
+        },
+        chunk_bytes=16,
+    )
     ref = ArtifactRef(
         "rank",
         hashlib.sha256(path.read_bytes()).hexdigest(),

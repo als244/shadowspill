@@ -77,7 +77,7 @@ def workers(info):
     return executors, ranks
 
 
-def stream_rank(executor, info, destination, *, fault=None):
+def stream_rank(executor, info, destination, *, fault=None, metadata=None):
     """A bounded actual socket transfer; completion is separate from stream EOF."""
     send, receive = socket.socketpair()
     send.settimeout(5)
@@ -98,7 +98,7 @@ def stream_rank(executor, info, destination, *, fault=None):
             manifest = write_checkpoint(
                 executor,
                 sink,
-                metadata=info.rank_metadata(),
+                metadata=info.rank_metadata() if metadata is None else metadata,
                 chunk_bytes=16,
                 weights=info.weights,
                 frozen_state_id=info.frozen_state_id,

@@ -9,7 +9,7 @@ import tarfile
 from collections.abc import Callable
 from dataclasses import replace
 from io import BufferedReader
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 import torch
 
@@ -19,7 +19,7 @@ from shadowspill.parallelism import GroupRef
 from .archive import ContentHash, read_manifest
 from .frozen import validate_restore
 from .identity import ARCHIVE_KEYS, describe_difference, inventory, state_identity
-from .inspection import open_checkpoint
+from .inspection import MANIFEST_LIMIT, open_checkpoint
 from .tensors import byte_view, geometry, region_bytes
 from .weights import select_weights
 
@@ -305,9 +305,10 @@ def load_checkpoint(
 
 def validate_checkpoint(
     executor: CheckpointState,
-    path: str | os.PathLike[str],
+    path: str | os.PathLike[str] | BinaryIO,
     *,
     frozen_state_id: str | None = None,
+    max_manifest_bytes: int = MANIFEST_LIMIT,
 ) -> dict[str, Any]:
     """Return the validated rank manifest, without reading tensor payloads.
 
@@ -315,7 +316,7 @@ def validate_checkpoint(
     Load still verifies each tensor while reading; corruption or transfer failure
     after release invalidates state. This does not authorize unvalidated uploads.
     """
-    with open_checkpoint(path) as archive:
+    with open_checkpoint(path, max_manifest_bytes=max_manifest_bytes) as archive:
         manifest = _manifest(archive, executor)
         omitted = validate_restore(executor, manifest, frozen_state_id)
         chunks = {chunk.name: chunk for chunk in executor.tensor_chunks()}

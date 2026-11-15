@@ -59,10 +59,18 @@ def test_conversion_provenance_roundtrips_and_is_included_in_rank_boundary():
         ArtifactRef("source", "e" * 64, 100, CHECKPOINT_MEDIA_TYPE),
         value.info.plans,
         "f" * 64,
+        randomness={
+            "version": 1,
+            "root_seed": 7,
+            "restore_id": "conversion",
+            "source_streams": [],
+            "target_streams": [],
+        },
     )
     converted = replace(value, info=replace(value.info, conversion=conversion))
     assert decode(encode(converted)) == converted
     assert converted.info.rank_metadata()["checkpoint"] == converted.info.to_dict()
+    assert conversion.randomness["source_streams"] == ()
     for changes in ({"version": 2}, {"version": True}, {"logical_state_sha256": "bad"}):
         with pytest.raises(ValueError):
             replace(conversion, **changes)

@@ -17,6 +17,8 @@ from .checkpoint_records import RankSave, RankSaved
 if TYPE_CHECKING:
     from shadowspill.execution.executor import Executor
 
+    from .randomness import WorkerRandomness
+
 
 class WorkerCheckpointWriter:
     """Borrow initialized state; never build, initialize, publish or advance it.
@@ -34,11 +36,13 @@ class WorkerCheckpointWriter:
         *,
         plans: ArtifactRef,
         chunk_bytes: int,
+        randomness: WorkerRandomness | None = None,
     ) -> None:
         if type(chunk_bytes) is not int or not 0 < chunk_bytes <= budget.max_bytes:
             raise ValueError("checkpoint chunk exceeds admitted worker staging")
         self.executor, self.budget, self.stream = executor, budget, stream
         self.plans, self.chunk_bytes = plans, chunk_bytes
+        self.randomness = randomness
 
     def _describe(self, info: CheckpointInfo) -> RankSave:
         from shadowspill.checkpoint import checkpoint_size
@@ -48,14 +52,17 @@ class WorkerCheckpointWriter:
             raise ValueError("checkpoint provenance differs from the ready worker")
         if info.frozen_state_id is not None:
             raise ValueError("worker has no declared frozen-base checkpoint identity")
+        randomness = None if self.randomness is None else self.randomness.capture()
+        metadata = info.rank_metadata()
+        if randomness is not None:
+            metadata["randomness"] = randomness
         return RankSave(
             self.executor.logical_rank,
-            checkpoint_size(
-                self.executor, metadata=info.rank_metadata(), weights=info.weights
-            ),
+            checkpoint_size(self.executor, metadata=metadata, weights=info.weights),
             state_identity(self.executor),
             self.executor.plan.program.digest,
             {name: plan.program.digest for name, plan in self.executor.plans.items()},
+            randomness,
         )
 
     def prepare(self, call: BoundWorkerCall) -> BoundWorkerCall:
@@ -78,7 +85,7 @@ class WorkerCheckpointWriter:
                 manifest = write_checkpoint(
                     self.executor,
                     sink,
-                    metadata=info.rank_metadata(),
+                    metadata=admitted.metadata(info),
                     chunk_bytes=self.chunk_bytes,
                     weights=info.weights,
                 )

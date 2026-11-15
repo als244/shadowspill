@@ -299,10 +299,12 @@ def test_runtime_owns_one_executor_and_releases_it_after_failure(
 
     from shadowspill.artifacts.tensors import TensorChunk
     from shadowspill.execution import executor as execution_module
+    from shadowspill.pytorch._rng import preserve_rng
 
     events = []
 
     class Executor:
+        device = torch.device("cpu")
         logical_rank = 0
         spill_capacity_bytes = 104 if failure == "spill" else 105
 
@@ -345,7 +347,10 @@ def test_runtime_owns_one_executor_and_releases_it_after_failure(
         )
 
     def invoke():
-        with prepared.open(runtime, lambda _: tmp_path, outputs) as running:
+        with (
+            preserve_rng(torch.device("cpu")),
+            prepared.open(runtime, lambda _: tmp_path, outputs) as running,
+        ):
             events.append("ready")
             if failure == "outputs":
                 reply = running.loop.handle(call())

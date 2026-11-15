@@ -13,6 +13,7 @@ from typing import Any, BinaryIO
 
 import torch
 
+from shadowspill.artifacts._values import freeze
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.tensors import TensorChunk
 
@@ -125,6 +126,7 @@ def convert_state(
     frozen_state_id: str | None = None,
     initialize_temporary: InitializeTemporary | None = None,
     max_source_manifest_bytes: int = MANIFEST_LIMIT,
+    expected_metadata: Sequence[Mapping[str, Any]] | None = None,
 ) -> Iterator[ConvertedState]:
     """Prepare unpublished state; the owner uses the existing rank/global writers.
 
@@ -139,8 +141,15 @@ def convert_state(
     gradients). It never receives weights, moments, counters or registered state.
     Missing temporary preparation fails explicitly instead of copying private
     state from unrelated operation Plans or opening a fresh model initializer.
+
+    Rank-specific attachments require exact preflighted ``expected_metadata``
+    for every source. Without it, all ranks must retain identical metadata.
     """
     sources, targets = tuple(sources), tuple(targets)
+    if expected_metadata is not None and len(expected_metadata) != len(sources):
+        raise ValueError("conversion requires metadata for every source rank")
+    if expected_metadata is not None:
+        expected_metadata = freeze(expected_metadata)
     source_family = describe_family([state for state, _ in sources])
     target_family = describe_family(targets)
     require_compatible(source_family, target_family)
@@ -163,9 +172,14 @@ def convert_state(
         ]
         first = readers[0].manifest
         if any(
-            reader.manifest["metadata"] != first["metadata"]
+            reader.manifest["metadata"]
+            != (
+                first["metadata"]
+                if expected_metadata is None
+                else expected_metadata[rank]
+            )
             or reader.manifest["weights"] != first["weights"]
-            for reader in readers
+            for rank, reader in enumerate(readers)
         ):
             raise ValueError(
                 "checkpoint ranks disagree on source boundary or weight selection"

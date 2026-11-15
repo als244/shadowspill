@@ -169,6 +169,15 @@ The run keeps the selected source in `parent_checkpoint` and records the actual
 startup artifact in `initial_checkpoint`. Converted manifests record their source
 checkpoint, source Plans, logical state identity and conversion version. Conversion
 preserves optimizer state and weight selection, and rejects incompatible state.
-Service base omission, RNG integration and resumable uploads or downloads remain
-under implementation. Distributed conversion and training still require hardware
-qualification.
+Worker checkpoints also retain Python, NumPy and Torch default generator state.
+Fresh runs initialize those streams from `Execution.seed`; restores use the saved
+seed and state. Evaluation and fully masked read-only calls advance separate
+evaluation streams, leaving training randomness unchanged. Compatible conversion
+preserves each matching logical stream. New streams use versioned seed derivation
+from the saved seed, restore identity and logical stream, recorded in
+`manifest.info.conversion.randomness`. Physical GPU identity does not affect seeds.
+Custom model-owned generators still require explicit registered state support.
+
+Service base omission and resumable uploads or downloads remain under
+implementation. Stochastic GPU replay, distributed conversion and training still
+require hardware qualification.

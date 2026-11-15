@@ -25,10 +25,19 @@ from engine_tests.offline._example import communication, options, profiled
 from engine_tests.server.test_artifacts import reference, store
 from engine_tests.server.test_checkpoint_restore import configuration
 from engine_tests.server.test_checkpoints import stream_rank
+from engine_tests.training.test_worker_randomness import draw
 from shadowspill import MemoryBudgets, plan_program
 from shadowspill.checkpoint import checkpoint_size, load_checkpoint
+from shadowspill.checkpoint.archive import read_manifest
 from shadowspill.checkpoint.identity import state_identity
+from shadowspill.checkpoint.inspection import open_checkpoint
 from shadowspill.checkpoint.preparation import plan_states
+from shadowspill.checkpoint.random_streams import (
+    RandomState,
+    default_streams,
+    read_snapshot,
+    snapshot,
+)
 from shadowspill.orchestration.launch.admission import (
     NodeAdmission,
     NodeCapacity,
@@ -36,12 +45,14 @@ from shadowspill.orchestration.launch.admission import (
 )
 from shadowspill.orchestration.launch.log_files import LogFiles
 from shadowspill.orchestration.launch.processes import worker_command
+from shadowspill.pytorch._rng import preserve_rng
 from shadowspill.server import checkpoint_conversion as module
 from shadowspill.server.checkpoint_restore import CheckpointResolver
 from shadowspill.server.checkpoints import publish_checkpoint
 from shadowspill.training.preparation.bundle import TrainingBundle
 from shadowspill.training.worker.checkpoint_records import RankSave
 from shadowspill.training.worker.conversion_records import ConversionCommand
+from shadowspill.training.worker.randomness import WorkerRandomness
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.checkpoints import CheckpointInfo
 from shadowspill_client.protocol.codec import encode
@@ -98,6 +109,7 @@ def configured(
     weights="master",
     master=True,
     missing_default=False,
+    randomness=False,
 ):
     config = configuration()
     source = bundle(config, source_count, 0, master)
@@ -132,13 +144,51 @@ def configured(
         executors = [
             HostRank(state, initialize=True) for state in plan_states(source.plans)
         ]
+        random_states = {}
+        if randomness:
+            with preserve_rng(torch.device("cpu")):
+                for rank in range(source_count):
+                    owner = WorkerRandomness(torch.device("cpu"), rank)
+                    seed = 132 if randomness == "seed" and rank == 1 else 131
+                    owner.initialize(seed)
+                    draw()
+                    with owner.evaluation():
+                        draw()
+                    _, states = read_snapshot(owner.capture())
+                    accelerators = [
+                        RandomState(stream, seed=rank + 23)
+                        for stream in default_streams(
+                            rank, torch.__version__, accelerator=True
+                        )
+                        if stream.identity.component_path[-1] == "accelerator"
+                    ]
+                    random_states[rank] = snapshot(seed, [*states, *accelerators])
+                    if rank == 1:
+                        if randomness == "missing":
+                            random_states.pop(rank)
+                        elif randomness == "rank":
+                            random_states[rank]["streams"][0]["stream"]["rank"] = 0
+                        elif randomness == "empty":
+                            random_states[rank]["streams"] = []
+
+        def metadata(rank):
+            return {
+                **info.rank_metadata(),
+                **(
+                    {"randomness": random_states[rank]} if rank in random_states else {}
+                ),
+            }
+
         ranks = [
             RankSave(
                 state.logical_rank,
-                checkpoint_size(state, metadata=info.rank_metadata(), weights=weights),
+                checkpoint_size(
+                    state, metadata=metadata(state.logical_rank), weights=weights
+                ),
                 state_identity(state),
                 state.plan.program.digest,
                 {},
+                random_states.get(state.logical_rank),
             )
             for state in executors
         ]
@@ -146,7 +196,9 @@ def configured(
             artifacts,
             info,
             ranks,
-            lambda rank, sink: stream_rank(executors[rank.rank], info, sink),
+            lambda rank, sink: stream_rank(
+                executors[rank.rank], info, sink, metadata=metadata(rank.rank)
+            ),
         )
         resolved = CheckpointResolver(
             artifacts, session_id="session", world_size=None, configuration=config
@@ -320,3 +372,91 @@ def test_live_restore_still_rejects_worker_count_changes(tmp_path):
         )
         with pytest.raises(ValueError, match="ownership requires"):
             resolver.resolve(source.reference)
+
+
+@pytest.mark.parametrize("counts", [(2, 4), (4, 2)])
+def test_rng_conversion_preserves_mapped_draws_and_records_new_rank_seeds(
+    tmp_path, counts
+):
+    with configured(
+        tmp_path, source_count=counts[0], target_count=counts[1], randomness=True
+    ) as (artifacts, source, target, kwargs):
+        sources = []
+        for rank in source.manifest.ranks:
+            with (
+                artifacts.open(rank.archive) as stream,
+                open_checkpoint(stream) as archive,
+            ):
+                sources.append(read_manifest(archive)["metadata"]["randomness"])
+        converted = execute(artifacts, source, kwargs)
+        conversion = converted.manifest.info.conversion.randomness
+        assert conversion["version"] == 1 and conversion["root_seed"] == 131
+        assert len(conversion["source_streams"]) == 8 * counts[0]
+        assert len(conversion["target_streams"]) == 8 * counts[1]
+        assert conversion[
+            "restore_id"
+        ] == converted.manifest.info.request_id.removeprefix("conversion-")
+
+        def cpu_snapshot(value):
+            seed, streams = read_snapshot(value)
+            return snapshot(
+                seed,
+                [
+                    state
+                    for state in streams
+                    if state.stream.identity.component_path[-1] != "accelerator"
+                ],
+            )
+
+        with preserve_rng(torch.device("cpu")):
+            for state, rank in zip(
+                plan_states(target), converted.manifest.ranks, strict=True
+            ):
+                path = tmp_path / f"converted-rng-{rank.rank}.ssp"
+                with artifacts.open(rank.archive) as stream:
+                    path.write_bytes(stream.read())
+                metadata = load_checkpoint(HostRank(state), path, chunk_bytes=17)
+                seed, streams = read_snapshot(metadata["randomness"])
+                assert seed == 131
+                actions = [
+                    row
+                    for row in conversion["target_streams"]
+                    if row["rank"] == rank.rank
+                ]
+                if rank.rank < counts[0]:
+                    assert set(streams) == set(read_snapshot(sources[rank.rank])[1])
+                    assert {row["action"] for row in actions} == {"preserve"}
+                    owner = WorkerRandomness(torch.device("cpu"), rank.rank)
+                    owner.restore(cpu_snapshot(sources[rank.rank]))
+                    expected = draw()
+                    with owner.evaluation():
+                        evaluated = draw()
+                    owner.restore(cpu_snapshot(metadata["randomness"]))
+                    assert draw() == expected
+                    with owner.evaluation():
+                        assert draw() == evaluated
+                else:
+                    assert {row["action"] for row in actions} == {"derive"}
+                    assert all(
+                        row.seed is not None and row.payload is None for row in streams
+                    )
+                    assert {row.seed for row in streams} == {
+                        row["seed"] for row in actions
+                    }
+        before = artifacts.used
+        assert execute(artifacts, source, kwargs) == converted
+        assert artifacts.used == before
+
+
+@pytest.mark.parametrize("fault", ["seed", "missing", "rank", "empty"])
+def test_invalid_rank_rng_generation_fails_before_any_target_publication(
+    tmp_path, fault
+):
+    with configured(tmp_path, randomness=fault) as (artifacts, source, _, kwargs):
+        before = artifacts.used
+        with pytest.raises((ValueError, RuntimeError), match="RNG"):
+            execute(artifacts, source, kwargs)
+        assert (
+            artifacts.used == before
+            and artifacts.get(source.reference.id) == source.reference
+        )

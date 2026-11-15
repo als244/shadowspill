@@ -16,6 +16,8 @@ from .protocol import WorkerOutputError
 if TYPE_CHECKING:
     from shadowspill.execution.executor import Executor
 
+    from .randomness import WorkerRandomness
+
 
 class WorkerExecution:
     """Borrow the worker's sole Executor; do not allocate or reset model state.
@@ -35,11 +37,13 @@ class WorkerExecution:
         *,
         checkpoints: WorkerCheckpointWriter | None = None,
         restore: WorkerCheckpointReader | None = None,
+        randomness: "WorkerRandomness | None" = None,
     ) -> None:
         self._executor, self._bindings = executor, bindings
         self._budget, self._collect = budget, collect
         self._checkpoints = checkpoints
         self._restore = restore
+        self._randomness = randomness
 
     def prepare(self, call: BoundWorkerCall) -> BoundWorkerCall:
         if call.command.request.operation == "restore":
@@ -72,6 +76,17 @@ class WorkerExecution:
             return None
         if call.plan is None:
             return None
+        evaluation = self._randomness is not None and (
+            call.command.request.operation == "forward" or call.command.skipped
+        )
+        with (
+            self._randomness.evaluation()
+            if evaluation and self._randomness is not None
+            else nullcontext()
+        ):
+            return self._run(call)
+
+    def _run(self, call: BoundWorkerCall) -> ArtifactRef | None:
         value = None
         try:
             with call.input_loader(self._budget) or nullcontext(None) as loader:
