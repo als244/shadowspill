@@ -18,6 +18,7 @@ from ..config import (
     Optimizer,
     Preparation,
 )
+from .checkpoints import CheckpointManifest
 from .controls import ControlSchema
 from .creation import TrainingCreation
 from .definitions import DefinitionSource, OutputSet
@@ -70,6 +71,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "training.setup": TrainingSetup,
     "training.preview": TrainingPreview,
     "plans.summary": PlanSummaryPage,
+    "checkpoint.manifest": CheckpointManifest,
 }
 
 

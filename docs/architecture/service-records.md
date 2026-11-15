@@ -139,6 +139,18 @@ disables the writer until recovery establishes the committed result. This storag
 primitive accepts up to 128 files per group and does not validate checkpoint state
 or dispatch workers; those remain the checkpoint coordinator's responsibility.
 
+`server.checkpoints.publish_checkpoint` validates a complete admitted rank set and
+the existing writer's completion manifests, then publishes the rank archives and
+portable `CheckpointManifest` through that group. Provenance includes the completed
+update, history/request IDs, fixed configuration and Plans, weight selection,
+frozen-base identity, and explicit caller metadata. Configuration and Plans must
+already exist in the authenticated owner's storage. Global metadata bytes are
+admitted exactly before starting any rank. This entry point accepts trusted
+installed writers; uploaded files need separate validation. Its socket tests cover
+multiple rank archives, a missing completion, mismatched identities and preserved
+aliases. Ordered worker-command integration, public checkpoint methods, logical
+cross-layout conversion and RNG restoration remain unfinished.
+
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
 and host-key verification to OpenSSH. Existing masters receive only forward and
