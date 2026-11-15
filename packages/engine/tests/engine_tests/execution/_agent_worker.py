@@ -674,6 +674,16 @@ def qualify_public_server():
                 info = storage.catalog.get(identity)
                 assert info.state == "closed"
                 checkpoint_ref = ArtifactRef.from_dict(result["checkpoint"])
+                resumed_identity = RunIdentity(
+                    "owner", "factory-session", result["new_run_id"]
+                )
+                resumed_info = storage.catalog.get(resumed_identity)
+                assert resumed_info.state == "closed"
+                assert resumed_info.parent_checkpoint == checkpoint_ref
+                assert resumed_info.initial_completed_updates == 1
+                assert resumed_info.initial_history_id == result["new_run_history_id"]
+                assert resumed_info.configuration == info.configuration
+                assert result["new_run_resume_update_oracle"]
                 assert (
                     artifacts.resolve_alias(
                         "factory-session", result["run_id"], "step-1"

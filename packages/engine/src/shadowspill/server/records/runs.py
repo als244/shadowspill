@@ -48,6 +48,8 @@ def _transition(before: RunInfo, after: RunInfo) -> None:
         if after.state not in ("stopped", "closed") or (
             after.plans != before.plans
             or after.initial_history_id != before.initial_history_id
+            or after.parent_checkpoint != before.parent_checkpoint
+            or after.initial_completed_updates != before.initial_completed_updates
         ):
             raise ValueError(
                 "ready runs can only stop or close with the original provenance"
@@ -205,10 +207,18 @@ class RunCatalog:
             return self._update(before, replace(before, stage=stage))
 
     def ready(
-        self, identity: RunIdentity, *, plans: ArtifactRef, initial_history_id: str
+        self,
+        identity: RunIdentity,
+        *,
+        plans: ArtifactRef,
+        initial_history_id: str,
+        parent_checkpoint: ArtifactRef | None = None,
+        initial_completed_updates: int = 0,
     ) -> RunInfo:
         """The caller must have confirmed all workers' actual initialized readiness."""
         reference_bytes(plans)
+        if parent_checkpoint is not None:
+            reference_bytes(parent_checkpoint)
         with self._mutex:
             before = self._require(identity, live=True)
             return self._update(
@@ -219,6 +229,8 @@ class RunCatalog:
                     stage=None,
                     plans=plans,
                     initial_history_id=initial_history_id,
+                    parent_checkpoint=parent_checkpoint,
+                    initial_completed_updates=initial_completed_updates,
                 ),
             )
 

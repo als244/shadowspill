@@ -28,13 +28,24 @@ def serve(stream: BinaryIO, *, files: Path, outputs: Path, cache: Path) -> None:
         launch.startup.scope,
         bundle=launch.startup.bundle,
         rank_map=dict(enumerate(launch.startup.logical_by_worker)),
+        restore=launch.restore,
     )
     if prepared.startup != launch.startup:
         raise ProtocolError("worker preflight differs from the admitted startup")
     weights = {ref.id: verify_file(files, ref) for ref in launch.weights}
-    initial = prepared.initialization.context.weights
-    if set(weights) != ({initial.reference} if initial.kind == "artifact" else set()):
+    initial = (
+        None
+        if prepared.initialization is None
+        else prepared.initialization.context.weights
+    )
+    if set(weights) != (
+        {initial.reference}
+        if initial is not None and initial.kind == "artifact"
+        else set()
+    ):
         raise ValueError("worker weight grants differ from its initialization")
+    if launch.restore is not None:
+        verify_file(files, launch.restore.rank.archive)
 
     def artifact(identity: str) -> Path:
         if identity not in weights:

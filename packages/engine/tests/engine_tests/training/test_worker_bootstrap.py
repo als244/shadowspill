@@ -79,7 +79,7 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
 
     def prepared(family, scope, **options):
         assert family == "family" and scope == SCOPE
-        assert options == {"bundle": BUNDLE, "rank_map": {0: 0}}
+        assert options == {"bundle": BUNDLE, "rank_map": {0: 0}, "restore": None}
         events.append("preflight")
         return SimpleNamespace(
             startup=replace(expected, staging_bytes=1)

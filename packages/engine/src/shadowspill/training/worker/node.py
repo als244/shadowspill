@@ -75,7 +75,7 @@ class WorkerNode:
                 "prepared worker identities differ from assigned logical ranks"
             )
         self._launches = {
-            rank: WorkerLaunch(worker.startup, packages, weights)
+            rank: WorkerLaunch(worker.startup, packages, weights, worker.restore)
             for rank, worker in sorted(prepared.items())
         }
         for launch in self._launches.values():
@@ -166,6 +166,11 @@ class WorkerNode:
             root = Path(self._directory.name)
             first = next(iter(self._launches.values()))
             references = [first.startup.bundle, *first.weights]
+            references.extend(
+                launch.restore.rank.archive
+                for launch in self._launches.values()
+                if launch.restore is not None
+            )
             self._delivery = FileDelivery(
                 references, root=root, disk=self._disk, memory=self._memory
             )

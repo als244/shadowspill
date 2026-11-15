@@ -7,8 +7,9 @@ require the engine, PyTorch, Triton or the supplied workloads.
 `ServiceClient` supports authenticated connections, CPU setup previews, creation,
 reattachment and explicit artifact downloads. `TrainingClient` submits live
 operations. `shadowspill.server.Server` owns startup and the assigned resources.
-Checkpoint saves and explicit directory downloads are supported. Restore/resume,
-resumable transfers and named Plan saves are still being implemented.
+Checkpoint save, ordered restore, new-run resume and explicit directory downloads
+are supported for matching state ownership. Layout conversion, resumable transfers
+and named Plan saves are still being implemented.
 Existing phase and Trainer APIs remain available during migration.
 
 Start the service on Chicago or another machine with an existing GPU allocation:
@@ -77,7 +78,15 @@ forward; it does not stop accepted server work or close a training run.
 
 Creation accepts raw setup keywords directly, or `config=preview.config`.
 `plans=training.plans` with the same configuration skips preparation; weights
-still come from the explicit initializer. The creation future exposes its
+still come from the explicit initializer. To resume, supply
+`service.create_training_client(plans=training.plans, checkpoint=checkpoint)`.
+The client reads the saved configuration as bounded metadata; it does not download
+or decode executable Plans. The server validates every rank before initialization
+and loads the checkpoint directly, without opening the old fresh-weight source.
+The new run starts at the saved update count with a new history and a durable
+parent-checkpoint reference. Setup defaults remain the saved configuration's
+defaults; per-call overrides in the checkpoint do not replace them.
+The creation future exposes its
 `session_id` and `run_id` before readiness. Reconnect using the same session ID
 and `service.get_training_client(run_id).result()`. Writable reattachment fences
 the earlier writer; `read_only=True` permits inspection without takeover.
@@ -152,7 +161,7 @@ Directory download verifies each immutable rank file, streams serially and write
 A failed download leaves the committed server checkpoint available and does not
 repeat training or saving. Plans and frozen-base dependencies are separate
 artifacts; downloading the checkpoint does not implicitly copy them. The current
-service save includes frozen tensors. Restore currently requires compatible native
-state ownership and ready workers. New-run resume, service
-base omission, cross-layout conversion, RNG integration and resumable uploads or
+service save includes frozen tensors. Restore and new-run resume currently require
+compatible native state ownership. Service base omission, cross-layout conversion,
+RNG integration and resumable uploads or
 downloads remain under implementation.

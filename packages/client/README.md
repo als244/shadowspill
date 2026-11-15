@@ -73,5 +73,8 @@ server persistence completes. `handle.manifest()` inspects its metadata and
 after worker exit. The client performs no build, planning, model initialization
 or worker launch. `training.load_checkpoint(id_or_name)` restores through the same
 ordered stream, returns saved caller metadata and starts a new history segment.
-Native state ownership must match. New-run resume, layout conversion and resumable
-transfers are still in development.
+`service.create_training_client(plans=training.plans, checkpoint=handle)` starts
+a new run from the saved update, with new history and parent-checkpoint lineage.
+Setup and bounded archive validation remain separate from runtime submissions;
+the checkpoint replaces fresh-weight initialization. State ownership must match.
+Layout conversion and resumable transfers are still in development.

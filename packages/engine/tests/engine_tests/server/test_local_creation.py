@@ -46,6 +46,16 @@ from shadowspill_client.protocol.requests import (
 def configured(tmp_path, monkeypatch, *, change=lambda c: c, saved=False, fault=None):
     family = prepared_worker().bindings.prepared
     config = change(family.inventory.layouts.setup.config)
+    family = replace(
+        family,
+        inventory=replace(
+            family.inventory,
+            layouts=replace(
+                family.inventory.layouts,
+                setup=replace(family.inventory.layouts.setup, config=config),
+            ),
+        ),
+    )
     node = NodeAdmission(
         NodeCapacity("local", (AssignedDevice("gpu", "0", 4 << 30),), 16 << 30)
     )
@@ -244,7 +254,7 @@ def test_checkpoint_is_not_silently_replaced_with_fresh_weights(tmp_path, monkey
     with configured(tmp_path, monkeypatch) as ctx:
         submit(ctx, checkpoint=ArtifactRef("checkpoint", "a" * 64, 100))
         until(lambda: ctx.jobs.used == (0, 0))
-        assert "checkpoint startup" in ctx.service.catalog.get(IDENTITY).error.message
+        assert "checkpoint is not" in ctx.service.catalog.get(IDENTITY).error.message
         assert not ctx.phases
 
 

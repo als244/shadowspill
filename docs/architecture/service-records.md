@@ -217,7 +217,7 @@ FileGrants checksum and retain each rank archive through worker completion.
 Every worker validates its complete native inventory and generation metadata
 before any execute command is broadcast. Loading delegates to the native loader,
 reserving space for its destination and optional cast chunk. Compatible native
-ownership is required; cross-layout conversion and new-run resume remain pending.
+ownership is required; cross-layout conversion remains pending.
 Preflight rejection preserves all workers. A partial load or missing completion
 invalidates the group; it cannot be replayed on that incarnation. Confirmed restore
 commits its saved update count and new history before result publication.
@@ -693,9 +693,22 @@ rank files serially and writes the local manifest last. Download failure leaves
 the server outcome unchanged. HTTP/CPU subprocess tests cover save/close ordering,
 immutable metadata, post-worker downloads and a failed transfer followed by an
 explicit retry. Setup remains in the ServiceClient creation/server factory modules.
+
 Checkpoint preflight can also use `checkpoint.state.PlanState` to inspect a saved
 Plan family without opening an Executor or allocating tensor values. It uses
 the same persistent tensor layouts, owned regions, shared-state owners and host
 control descriptors as execution. `validate_checkpoint` checks these descriptions
 against the complete rank archive before initialization; payload checksums still
 belong to immutable delivery and the streaming loader.
+
+New-run checkpoint initialization uses this CPU preflight before the existing
+all-worker startup release, followed by the same bounded checkpoint reader used
+for ordered restore. `LocalCreation` resolves the complete generation and checks
+optimizer semantics; `PreparedWorker` selects either fresh weights or checkpoint
+initialization. Old initializer provenance inside saved Plans does not require
+granting or opening those weight artifacts. `LiveRun` starts `OperationState` at
+the saved update and publishes parent lineage only after every worker is ready.
+`RunInfo.parent_checkpoint` and `initial_completed_updates` are durable creation
+provenance and remain fixed across later operations, restore segments and close.
+Changing ownership or an optimizer's state interpretation still requires a
+supported conversion; setup may change defaults without reinterpreting state.

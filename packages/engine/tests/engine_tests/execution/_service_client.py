@@ -206,6 +206,44 @@ def qualify(client, config, memory, oracle):
             readonly.requests.get(restore.request_id).result(10).record
             == restored.record
         )
+        # New-run initialization belongs to creation. Only the two immutable
+        # artifacts cross the public API; no setup/defaults are reconstructed by
+        # the demo and no fresh initializer is needed by the service.
+        resumed = client.create_training_client(
+            plans=saved, checkpoint=checkpoint, name="resume-" + mode
+        ).result(180)
+        assert resumed.get_config() == config and resumed.run_id != training.run_id
+        resumed_info = ready(
+            client._transport, "/v1/runs/factory-session/" + resumed.run_id
+        )
+        assert resumed_info.parent_checkpoint == checkpoint.reference
+        assert resumed_info.initial_completed_updates == 1
+        assert resumed_info.initial_history_id not in (
+            result.history_id,
+            restored.history_id,
+        )
+        first = resumed.forward(records(False), outputs="predictions").result(120)
+        assert (
+            first.completed_updates == 1
+            and first.history_id == resumed_info.initial_history_id
+        )
+        updated = split_update(resumed)
+        assert updated.completed_updates == 2 and updated.history_id == first.history_id
+        final = resumed.forward(records(False), outputs="predictions").result(120)
+        resumed.close().result(30)
+        for value, expected in ((first, "after_step"), (final, "after_split")):
+            handle = value.outputs["prediction"]
+            with TemporaryDirectory(prefix="shadowspill-demo-resumed-") as directory:
+                path = handle.download(Path(directory) / "prediction.ssp").result(30)
+                with (
+                    path.open("rb") as stream,
+                    read_payload(stream, handle.reference, memory) as decoded,
+                ):
+                    rows = decoded.datums[0].inputs
+                    actual = np.stack([rows[str(index)].array() for index in range(3)])
+                    np.testing.assert_allclose(
+                        actual, oracle[expected], rtol=1e-4, atol=1e-5
+                    )
         receipts.append(
             {
                 "mode": mode,
@@ -227,6 +265,9 @@ def qualify(client, config, memory, oracle):
                 "restored_updates": restored.completed_updates,
                 "restored_history_id": restored.history_id,
                 "post_restore_update_oracle": True,
+                "new_run_id": resumed.run_id,
+                "new_run_history_id": first.history_id,
+                "new_run_resume_update_oracle": True,
             }
         )
     return receipts

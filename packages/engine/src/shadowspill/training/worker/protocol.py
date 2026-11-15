@@ -102,6 +102,7 @@ class WorkerLaunch(Record):
     startup: WorkerStartup
     packages: Sequence[str]
     weights: Sequence[ArtifactRef] = ()
+    restore: RankRestore | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -119,6 +120,18 @@ class WorkerLaunch(Record):
         ):
             raise ValueError("worker initialization artifact IDs must be distinct")
         object.__setattr__(self, "weights", weights)
+        if self.restore is not None:
+            object.__setattr__(
+                self, "restore", record(RankRestore, self.restore, "restore")
+            )
+            if (
+                weights
+                or self.restore.rank.rank != self.startup.scope.rank
+                or self.restore.info.world_size != len(self.startup.logical_by_worker)
+            ):
+                raise ValueError(
+                    "checkpoint startup requires its rank and no fresh weights"
+                )
 
 
 @dataclass(frozen=True)

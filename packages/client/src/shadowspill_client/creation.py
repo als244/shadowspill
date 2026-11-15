@@ -9,8 +9,9 @@ from uuid import uuid4
 
 from ._async import CallFuture
 from .artifacts import ArtifactHandle
-from .protocol.codec import MAX_METADATA_BYTES, decode, encode
+from .protocol.codec import MAX_METADATA_BYTES, decode, digest, encode
 from .protocol.creation import TrainingCreation
+from .protocol.plans import PlanSummaryPage, summary_id
 from .protocol.preview import TrainingPreview
 from .protocol.requests import ArtifactRef, WriterLease, identifier
 from .protocol.runs import RunInfo
@@ -120,7 +121,6 @@ def create_training_client(
     labels: Mapping[str, str] | None = None,
     **setup: Any,
 ) -> TrainingFuture:
-    settings = service._setup(config, setup)
     plan_ref = plans.reference if isinstance(plans, ArtifactHandle) else plans
     checkpoint_ref = (
         checkpoint.reference if isinstance(checkpoint, ArtifactHandle) else checkpoint
@@ -134,16 +134,39 @@ def create_training_client(
     for value in (plan_ref, checkpoint_ref):
         if value is not None and not isinstance(value, ArtifactRef):
             raise TypeError("saved Plans/checkpoint require server artifact references")
+    settings = (
+        None
+        if config is None
+        and not setup
+        and plan_ref is not None
+        and checkpoint_ref is not None
+        else service._setup(config, setup)
+    )
     future = TrainingFuture(service.session_id, uuid4().hex)
 
     def create() -> TrainingClient:
-        resolved = (
-            service._request(
+        if settings is None:
+            assert plan_ref is not None
+            page = service._request(
+                "GET", "/v1/artifacts/" + summary_id(plan_ref, 0), PlanSummaryPage
+            )
+            if page.plans != plan_ref or page.page != 0:
+                raise ValueError(
+                    "saved configuration summary belongs to different Plans"
+                )
+            resolved = service._request(
+                "GET",
+                "/v1/artifacts/configuration." + page.configuration_sha256,
+                ResolvedTraining,
+            )
+            if digest(resolved) != page.configuration_sha256:
+                raise ValueError("saved configuration differs from its Plans summary")
+        elif isinstance(settings, TrainingSetup):
+            resolved = service._request(
                 "POST", "/v1/training/describe", TrainingPreview, settings
             ).config
-            if isinstance(settings, TrainingSetup)
-            else settings
-        )
+        else:
+            resolved = settings
         creation = TrainingCreation(
             resolved,
             plans=plan_ref,

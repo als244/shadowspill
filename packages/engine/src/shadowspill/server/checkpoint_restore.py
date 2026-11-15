@@ -2,6 +2,7 @@
 
 import hashlib
 import sys
+from dataclasses import replace
 
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill_client.protocol.checkpoints import (
@@ -9,9 +10,47 @@ from shadowspill_client.protocol.checkpoints import (
     CheckpointManifest,
 )
 from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, decode
-from shadowspill_client.protocol.requests import OperationRequest, identifier
+from shadowspill_client.protocol.requests import (
+    ArtifactRef,
+    OperationRequest,
+    identifier,
+)
+from shadowspill_client.protocol.training import ResolvedTraining
 
 from .artifacts import ArtifactStore
+
+
+def validate_resume_optimizer(
+    artifacts: ArtifactStore, source: ResolvedCheckpoint, target: ResolvedTraining
+) -> None:
+    """New setup may change defaults/objective, but cannot reinterpret saved state."""
+    reference = source.manifest.info.configuration
+    if reference.size_bytes > MAX_METADATA_BYTES:
+        raise ValueError("checkpoint configuration exceeds its metadata bound")
+    with artifacts.open(reference) as stream:
+        body = stream.read(reference.size_bytes + 1)
+    if (
+        len(body) != reference.size_bytes
+        or hashlib.sha256(body).hexdigest() != reference.sha256
+    ):
+        raise ValueError(
+            "checkpoint configuration differs from its immutable reference"
+        )
+    saved = decode(body)
+    if not isinstance(saved, ResolvedTraining):
+        raise ValueError("checkpoint configuration is not resolved training settings")
+    old, new = saved.optimizer, target.optimizer
+    if (
+        (old is None) != (new is None)
+        or saved.definition_sources.get("optimizer")
+        != target.definition_sources.get("optimizer")
+        or (
+            old is not None
+            and new is not None
+            and replace(old, defaults=new.defaults) != new
+        )
+    ):
+        raise ValueError("checkpoint optimizer semantics require explicit conversion")
 
 
 class CheckpointResolver:
@@ -40,6 +79,12 @@ class CheckpointResolver:
             )
         if reference is None:
             raise ValueError("checkpoint ID or run-local name does not exist")
+        return self.resolve(reference)
+
+    def resolve(self, reference: ArtifactRef) -> ResolvedCheckpoint:
+        """Creation supplies an immutable reference, without a run-local alias."""
+        if self.artifacts.get(reference.id) != reference:
+            raise ValueError("checkpoint is not in this owner's artifact storage")
         if (
             reference.media_type != CHECKPOINT_MEDIA_TYPE
             or reference.size_bytes > MAX_METADATA_BYTES

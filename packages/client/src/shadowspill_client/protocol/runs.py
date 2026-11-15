@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
 
-from .._records import Record, record, text
+from .._records import Record, integer, record, text
+from .checkpoints import CHECKPOINT_MEDIA_TYPE
 from .requests import ArtifactRef, identifier
 from .service import ServiceError
 
@@ -53,6 +54,8 @@ class RunInfo(Record):
     plans: ArtifactRef | None = None
     initial_history_id: str | None = None
     error: ServiceError | None = None
+    parent_checkpoint: ArtifactRef | None = None
+    initial_completed_updates: int = 0
 
     def __post_init__(self) -> None:
         for name in ("owner_id", "session_id", "run_id", "server_incarnation"):
@@ -71,6 +74,20 @@ class RunInfo(Record):
             object.__setattr__(self, "plans", record(ArtifactRef, self.plans, "plans"))
         if self.initial_history_id is not None:
             identifier(self.initial_history_id, "history ID")
+        integer(self.initial_completed_updates, "initial completed updates")
+        if self.parent_checkpoint is not None:
+            object.__setattr__(
+                self,
+                "parent_checkpoint",
+                record(ArtifactRef, self.parent_checkpoint, "parent checkpoint"),
+            )
+            if (
+                self.parent_checkpoint.media_type != CHECKPOINT_MEDIA_TYPE
+                or self.initial_history_id is None
+            ):
+                raise ValueError("checkpoint lineage requires initialized run history")
+        elif self.initial_completed_updates:
+            raise ValueError("fresh initialization starts at zero completed updates")
         if self.error is not None:
             object.__setattr__(self, "error", record(ServiceError, self.error, "error"))
         if self.state not in ("preparing", "ready", "failed", "stopped", "closed"):

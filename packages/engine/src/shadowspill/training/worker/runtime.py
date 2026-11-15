@@ -19,7 +19,8 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .bindings import BoundWorkerCall, WorkerBindings
-from .checkpoint_reader import WorkerCheckpointReader
+from .checkpoint_reader import WorkerCheckpointReader, validate_rank
+from .checkpoint_records import RankRestore
 from .checkpoint_writer import WorkerCheckpointWriter
 from .execution import WorkerExecution
 from .initialization import PreparedInitialization, initialize, prepare_initialization
@@ -43,9 +44,19 @@ class PreparedWorker:
     """
 
     bindings: WorkerBindings
-    initialization: PreparedInitialization
+    initialization: PreparedInitialization | None
     startup: WorkerStartup
     outputs: Mapping[tuple[str, str], WorkerOutputFrame]
+    restore: RankRestore | None = None
+
+    @property
+    def chunk_bytes(self) -> int:
+        return min(
+            64 << 20,
+            self.startup.staging_bytes // 2
+            if self.initialization is None
+            else self.initialization.description.chunk_bytes,
+        )
 
     @classmethod
     def resolve(
@@ -55,6 +66,7 @@ class PreparedWorker:
         *,
         bundle: ArtifactRef,
         rank_map: Mapping[int, int] | None = None,
+        restore: RankRestore | None = None,
     ) -> "PreparedWorker":
         bindings = WorkerBindings(prepared, scope)
         assignment = RankAssignment.resolve(
@@ -64,10 +76,28 @@ class PreparedWorker:
         for plan in plans.values():
             require_compiled_device(plan.program, 0)
         primary = plans[bindings.primary]
-        initial = prepare_initialization(bindings.setup)[scope.rank]
+        if restore is not None and (
+            restore.rank.rank != scope.rank
+            or restore.info.world_size != len(assignment.logical_by_worker)
+        ):
+            raise ValueError("checkpoint initialization differs from worker assignment")
+        initial = (
+            prepare_initialization(bindings.setup)[scope.rank]
+            if restore is None
+            else None
+        )
+        initial_bytes = (
+            initial.description.peak_bytes
+            if initial is not None
+            else min(128 << 20, bindings.setup.config.execution.max_staging_bytes)
+        )
+        if restore is not None and initial_bytes < 2:
+            raise StagingLimitError(
+                "checkpoint initialization needs two staging chunks"
+            )
         outputs = prepare_output_frames(prepared, scope.rank)
         staging = max(
-            initial.description.peak_bytes,
+            initial_bytes,
             bindings.input_bytes,
             *(frame.frame.write_bytes for frame in outputs.values()),
         )
@@ -80,16 +110,21 @@ class PreparedWorker:
             primary.memory_budgets.spill_bytes,
             None,
         )
+        if initial is None:
+            assert restore is not None
+            signature = {"checkpoint": restore.to_dict(), "staging_bytes": staging}
+        else:
+            signature = initial.signature()
         description = WorkerStartup(
             scope,
             bundle,
-            digest(initial.signature()),
+            digest(signature),
             assignment.logical_by_worker,
             primary.memory_budgets.execution_bytes,
             spill.capacity,
             staging,
         )
-        return cls(bindings, initial, description, outputs)
+        return cls(bindings, initial, description, outputs, restore)
 
     @contextmanager
     def open(
@@ -121,7 +156,18 @@ class PreparedWorker:
             ) as executor:
                 budget = BufferBudget(self.startup.staging_bytes)
                 try:
-                    initialize(executor, self.initialization, runtime, budget)
+                    reader = WorkerCheckpointReader(
+                        executor,
+                        budget,
+                        resolve,
+                        chunk_bytes=min(self.chunk_bytes, budget.max_bytes // 2),
+                        world_size=len(rank_map),
+                    )
+                    if self.restore is None:
+                        assert self.initialization is not None
+                        initialize(executor, self.initialization, runtime, budget)
+                    else:
+                        reader.load(self.restore, reader.prepare_source(self.restore))
                     if executor.spill_capacity_bytes != self.startup.spill_bytes:
                         raise RuntimeError(
                             "worker spill capacity differs from admission"
@@ -132,17 +178,7 @@ class PreparedWorker:
                         self.bindings,
                         budget,
                         outputs.collect,
-                        restore=WorkerCheckpointReader(
-                            executor,
-                            budget,
-                            resolve,
-                            chunk_bytes=min(
-                                64 << 20,
-                                self.initialization.description.chunk_bytes,
-                                budget.max_bytes // 2,
-                            ),
-                            world_size=len(rank_map),
-                        ),
+                        restore=reader,
                         checkpoints=None
                         if checkpoint_stream is None
                         else WorkerCheckpointWriter(
@@ -150,9 +186,7 @@ class PreparedWorker:
                             budget,
                             checkpoint_stream,
                             plans=self.startup.bundle,
-                            chunk_bytes=min(
-                                64 << 20, self.initialization.description.chunk_bytes
-                            ),
+                            chunk_bytes=self.chunk_bytes,
                         ),
                     )
 
@@ -186,6 +220,20 @@ class PreparedWorker:
         with ExitStack() as cleanup:
             cleanup.callback(reader.close)
             cleanup.callback(writer.close)
+            if self.restore is not None:
+                from shadowspill.checkpoint.state import PlanState
+
+                plans = dict(self.bindings.prepared.plans[self.startup.scope.rank])
+                primary = plans.pop(self.bindings.primary)
+                # Every worker completes this CPU check before any receives the
+                # existing startup release into collective initialization.
+                validate_rank(
+                    PlanState(primary, plans, logical_rank=self.startup.scope.rank),
+                    resolve(self.restore.rank.archive),
+                    self.restore,
+                    chunk_bytes=self.chunk_bytes,
+                    world_size=len(self.startup.logical_by_worker),
+                )
             await_start(self.startup, reader, writer)
             with self.open(
                 runtime, resolve, outputs, checkpoint_stream=writer

@@ -26,6 +26,7 @@ from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.bundle import TrainingBundle
 from shadowspill.training.preparation.job import BUNDLE_NAME, prepare_job
 from shadowspill.training.preparation.setup import resolve_training
+from shadowspill.training.worker.checkpoint_records import RankRestore
 from shadowspill.training.worker.initialization import prepare_initialization
 from shadowspill.training.worker.node import WorkerNode
 from shadowspill.training.worker.protocol import WorkerScope
@@ -40,6 +41,7 @@ from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.protocol.training import ResolvedTraining
 
 from .artifacts import ArtifactStore
+from .checkpoint_restore import CheckpointResolver, validate_resume_optimizer
 from .creation_records import load_creation
 from .live import LiveRun
 from .plan_summaries import publish_summary
@@ -192,12 +194,7 @@ class LocalCreation:
             self._pin = factory.storage.artifacts(self.identity.owner_id)
             self._artifacts = self._pin.__enter__()
             creation = load_creation(self._artifacts, self.info)
-            # These capabilities are separate agenda stages. Fail before phase
-            # launch instead of ignoring a requested restore/trace/idle policy.
-            if creation.checkpoint is not None:
-                raise NotImplementedError(
-                    "global checkpoint startup is not implemented yet"
-                )
+            # Fail before phase launch instead of ignoring a trace/idle policy.
             execution = creation.config.execution
             if execution.nsys is not None or execution.idle_timeout_seconds is not None:
                 raise NotImplementedError(
@@ -205,12 +202,28 @@ class LocalCreation:
                 )
             registry = load_registry(factory.packages)
             setup = resolve_training(registry, config=creation.config)
-            # Missing weights fail before spending GPU time.
-            prepare_initialization(setup)
+            checkpoint = (
+                None
+                if creation.checkpoint is None
+                else CheckpointResolver(
+                    self._artifacts,
+                    session_id=self.identity.session_id,
+                    world_size=setup.context.parallelism.world_size,
+                ).resolve(creation.checkpoint)
+            )
+            # A complete checkpoint is the initializer. Historical fresh-weight
+            # provenance in saved Plans never requires opening that old source.
+            if checkpoint is None:
+                prepare_initialization(setup)
+            else:
+                validate_resume_optimizer(self._artifacts, checkpoint, setup.config)
             weights = []
             initial = creation.config.model.initialize
-            assert initial is not None
-            if initial.kind == "artifact":
+            if (
+                checkpoint is None
+                and initial is not None
+                and initial.kind == "artifact"
+            ):
                 assert initial.reference is not None
                 ref = self._artifacts.get(initial.reference)
                 if ref is None:
@@ -325,6 +338,13 @@ class LocalCreation:
                         rank,
                     ),
                     bundle=plans,
+                    restore=None
+                    if checkpoint is None
+                    else RankRestore(
+                        checkpoint.reference,
+                        checkpoint.manifest.info,
+                        checkpoint.manifest.ranks[rank],
+                    ),
                 )
                 for rank in sorted(family.plans)
             }
@@ -363,6 +383,7 @@ class LocalCreation:
                 [self._node],
                 plans=plans,
                 history_id="history-" + uuid4().hex,
+                checkpoint=checkpoint,
                 root=root,
                 metadata=metadata,
                 uploads=uploads,

@@ -11,6 +11,7 @@ from pathlib import Path
 from threading import Lock, RLock
 
 from shadowspill.training.preparation.family_records import PreparedPlans
+from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.session.controller import RunController
 from shadowspill.training.session.prepared import PreparedRequests
 from shadowspill.training.session.state import OperationState
@@ -59,8 +60,15 @@ class LiveRun:
         uploads: BufferBudget,
         publication: BufferBudget,
         disk: BufferBudget,
+        checkpoint: ResolvedCheckpoint | None = None,
     ) -> None:
         self.history_id = identifier(history_id, "initial history ID")
+        if (
+            checkpoint is not None
+            and self.history_id == checkpoint.manifest.info.history_id
+        ):
+            raise ValueError("resumed run requires a new history identity")
+        self._checkpoint = checkpoint
         ranks = [rank for node in nodes for rank in node.prepared]
         if (
             not nodes
@@ -78,6 +86,18 @@ class LiveRun:
                     or worker.bindings.prepared is not family
                 ):
                     raise ValueError("worker startup differs from this prepared run")
+                if (worker.restore is None) != (checkpoint is None) or (
+                    worker.restore is not None
+                    and checkpoint is not None
+                    and (
+                        worker.restore.checkpoint != checkpoint.reference
+                        or worker.restore.info != checkpoint.manifest.info
+                        or worker.restore.rank != checkpoint.manifest.ranks[scope.rank]
+                    )
+                ):
+                    raise ValueError(
+                        "worker initialization differs from run checkpoint"
+                    )
         execution = family.inventory.layouts.setup.config.execution
         if (
             uploads.max_bytes < execution.max_staging_bytes
@@ -196,12 +216,23 @@ class LiveRun:
                 self._publisher,
                 server_incarnation=self.storage.incarnation,
                 budget=self._uploads,
-                state=OperationState(history_id=self.history_id),
+                state=OperationState(
+                    history_id=self.history_id,
+                    completed_updates=0
+                    if self._checkpoint is None
+                    else self._checkpoint.manifest.info.completed_updates,
+                ),
             )
             with self._mutex:
                 self._active()
                 self.storage.catalog.ready(
-                    self.identity, plans=self.plans, initial_history_id=self.history_id
+                    self.identity,
+                    plans=self.plans,
+                    initial_history_id=self.history_id,
+                    parent_checkpoint=None
+                    if self._checkpoint is None
+                    else self._checkpoint.reference,
+                    initial_completed_updates=self._controller.boundary.completed_updates,
                 )
                 self.ready = True
         finally:
