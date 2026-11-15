@@ -43,6 +43,10 @@ class TensorField(Record):
     across model/loss trees. Matching numeric dimensions alone do not. A packed
     field names its packing axis; stack adds an example axis, and shared requires
     equal values within a physical batch. Defaults are broadcast only as declared.
+    ``validity`` names an identically aligned boolean field. When the operation
+    selects that mask, only active values require numeric validation; inactive
+    values become this field's padding before conversion. Without the mask in
+    the operation's input closure, every supplied position must be valid.
     """
 
     path: Sequence[str]
@@ -56,6 +60,7 @@ class TensorField(Record):
     finite: bool = True
     minimum: float | None = None
     maximum: float | None = None
+    validity: Sequence[str] | None = None
 
     def __post_init__(self) -> None:
         # A path can repeat a component (e.g. encoder.encoder.value).
@@ -115,6 +120,17 @@ class TensorField(Record):
             and self.minimum > self.maximum
         ):
             raise ValueError("minimum exceeds maximum")
+        if self.validity is not None:
+            if not isinstance(self.validity, (tuple, list)) or not self.validity:
+                raise ValueError("validity must name a boolean field in the same tree")
+            object.__setattr__(
+                self, "validity", tuple(text(p, "validity path") for p in self.validity)
+            )
+            assert isinstance(self.padding, (bool, int, float))
+            if (self.minimum is not None and self.padding < self.minimum) or (
+                self.maximum is not None and self.padding > self.maximum
+            ):
+                raise ValueError("masked field padding must satisfy its numeric bounds")
 
 
 @dataclass(frozen=True)
@@ -169,6 +185,22 @@ class InputSchema(Record):
         )
         names([item.name for item in capacities], "capacities")
         by_path = {tuple(item.path): item for item in fields}
+        for declared in fields:
+            if declared.validity is None:
+                continue
+            mask = by_path.get(tuple(declared.validity))
+            if (
+                mask is None
+                or mask.dtype != "bool"
+                or mask.validity is not None
+                or mask.shape != declared.shape
+                or mask.batching != declared.batching
+                or mask.pack_axis != declared.pack_axis
+            ):
+                raise ValueError(
+                    "validity requires an unmasked boolean field "
+                    "with identical alignment"
+                )
         for item in capacities:
             if item.reduction != "count":
                 field = by_path.get(tuple(item.path))

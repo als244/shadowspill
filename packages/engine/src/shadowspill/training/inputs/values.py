@@ -29,9 +29,24 @@ def numeric_values(tensor: TensorPayload) -> Iterator[NDArray[Any]]:
         )
 
 
-def validate_values(tensor: TensorPayload, field: TensorField, label: str) -> None:
+def validate_values(
+    tensor: TensorPayload,
+    field: TensorField,
+    label: str,
+    *,
+    validity: ValidatedTensor | None = None,
+) -> None:
     target = storage_dtype(field.dtype)
+    if validity is not None and (
+        validity.dtype != "bool" or validity.shape != tensor.shape
+    ):
+        raise ValueError("validity shape/dtype differs from the validated tensor")
+    masks = None if validity is None else validity.encoded_blocks()
     for block in numeric_values(tensor):
+        if masks is not None:
+            block = block[next(masks)]
+            if not block.size:
+                continue
         if field.finite and not np.isfinite(block).all():
             raise ValueError(f"{label}: values must be finite")
         if field.minimum is not None and (block < field.minimum).any():
@@ -74,6 +89,8 @@ class ValidatedTensor:
     shape: tuple[int, ...]
     source: TensorPayload | None = None
     default: bool | int | float | None = None
+    validity: ValidatedTensor | None = None
+    padding: bool | int | float = 0
 
     @property
     def elements(self) -> int:
@@ -89,7 +106,20 @@ class ValidatedTensor:
         )
 
     def encoded_blocks(self) -> Iterator[NDArray[Any]]:
-        if self.source is None:
+        if self.validity is not None:
+            blocks = (
+                numeric_values(self.source)
+                if self.source is not None
+                else (
+                    np.full(len(mask), self.default)
+                    for mask in self.validity.encoded_blocks()
+                )
+            )
+            for block, mask in zip(blocks, self.validity.encoded_blocks(), strict=True):
+                # Neutralize before casting: inactive NaN/overflowing numeric
+                # values never reach integer or low-precision conversion.
+                yield _convert(np.where(mask, block, self.padding), self.dtype)
+        elif self.source is None:
             size = min(self.elements, CHUNK_ELEMENTS)
             converted = _convert(np.full(size, self.default), self.dtype)
             for offset in range(0, self.elements, CHUNK_ELEMENTS):
@@ -124,6 +154,12 @@ class ValidatedTensor:
             self.dtype
         ):
             raise ValueError("packed destination differs from validated shape/dtype")
+        if self.validity is not None:
+            offset = 0
+            for block in self.encoded_blocks():
+                destination.flat[offset : offset + len(block)] = block
+                offset += len(block)
+            return
         blocks: Iterable[NDArray[Any]]
         if self.source is None:
             blocks = (np.asarray([self.default]),)

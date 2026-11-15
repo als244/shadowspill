@@ -42,7 +42,11 @@ def _flatten(
 def combined_schema(model: InputSchema, objective: InputSchema) -> InputSchema:
     return InputSchema(
         fields=[
-            replace(field, path=(tree, *field.path))
+            replace(
+                field,
+                path=(tree, *field.path),
+                validity=None if field.validity is None else (tree, *field.validity),
+            )
             for tree, schema in (("inputs", model), ("loss_inputs", objective))
             for field in schema.fields
         ],
@@ -134,7 +138,6 @@ def validate_batch(
                         f"Datum {index} {path}: dimension {actual} "
                         f"differs from {declared}"
                     )
-            validate_values(tensor, field, f"Datum {index} {path}")
         values = {}
         for path, field in definitions.items():
             supplied = provided.get(path)
@@ -157,15 +160,43 @@ def validate_batch(
                     dimensions[d] if isinstance(d, str) else d for d in field.shape
                 )
                 assert isinstance(field.default, (bool, int, float))
-                scalar = np.asarray(field.default)
-                validate_values(
-                    TensorPayload(scalar.dtype.name, (), scalar.tobytes()),
-                    field,
-                    f"default {path}",
-                )
                 values[path] = ValidatedTensor(
                     field.dtype, shape, default=field.default
                 )
+        # Validate masks before consumers, independently of field declaration
+        # order. A mask applies only when the operation selects it: a target-only
+        # forward must validate every target, even if unused loss masks arrive.
+        for masked in (False, True):
+            for path, value in values.items():
+                field = definitions[path]
+                if (field.validity is not None) != masked:
+                    continue
+                validity = (
+                    values[tuple(field.validity)]
+                    if field.validity is not None and tuple(field.validity) in selected
+                    else None
+                )
+                label = f"Datum {index} {path}"
+                if value.source is not None:
+                    validate_values(value.source, field, label, validity=validity)
+                elif validity is None or validity.count_valid():
+                    scalar = np.asarray(value.default)
+                    validate_values(
+                        TensorPayload(scalar.dtype.name, (), scalar.tobytes()),
+                        field,
+                        label,
+                    )
+                if validity is not None:
+                    assert isinstance(field.padding, (bool, int, float))
+                    padding = np.asarray(field.padding)
+                    validate_values(
+                        TensorPayload(padding.dtype.name, (), padding.tobytes()),
+                        replace(field, finite=True),
+                        f"{label} padding",
+                    )
+                    values[path] = replace(
+                        value, validity=validity, padding=field.padding
+                    )
         all_values.append(MappingProxyType(values))
         all_dimensions.append(MappingProxyType(dimensions))
     totals = {}

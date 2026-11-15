@@ -143,7 +143,13 @@ class ResolvedModel:
         from shadowspill.training.inputs.adapters import InputAdapter, InputBinding
 
         declared = {
-            ("inputs", *field.path): replace(field, path=("inputs", *field.path))
+            ("inputs", *field.path): replace(
+                field,
+                path=("inputs", *field.path),
+                validity=None
+                if field.validity is None
+                else ("inputs", *field.validity),
+            )
             for field in self.inputs.fields
         }
         supplied = {
@@ -520,9 +526,15 @@ class Registry:
                     )
         if objective.participation.path:
             field = loss_fields.get(tuple(objective.participation.path))
-            if field is None or field.dtype != "bool" or field.padding is not False:
+            if (
+                field is None
+                or field.dtype != "bool"
+                or field.padding is not False
+                or field.validity is not None
+            ):
                 raise ValueError(
-                    "participation requires a boolean loss field with False padding"
+                    "participation requires an unmasked boolean loss field "
+                    "with False padding"
                 )
         resolved_defaults = objective.controls.resolve(defaults=defaults)
         return ResolvedObjective(

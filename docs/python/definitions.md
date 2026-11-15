@@ -150,6 +150,16 @@ filling an admitted packed buffer. CPU validation handles generic image geometry
 and token fields through the same implementation, without importing a model stack.
 Packing still must check scheduled padding against the cap separately.
 
+A field may name an identically aligned boolean `validity` field in the same
+tree. When that mask belongs to the selected operation's input closure, numeric
+checks apply to active positions; inactive values are replaced with the declared
+safe padding before dtype conversion. This permits masked sentinel targets and
+NaNs in unused auxiliary positions without propagating them into loss arithmetic.
+Validation and conversion use bounded chunks. If the operation does not select
+the mask, every position is checked normally: submitting an unused training mask
+cannot hide an invalid target from a logprob-only forward. Shape checks always
+apply, and invalid values at active positions reject the complete call.
+
 `Participation` identifies a boolean validity field with false padding, or
 declares that each real example contributes. It does not inspect weights,
 advantages, observed gradients or gradient scaling. `ControlSchema` validates
