@@ -7,7 +7,16 @@ hooks. They support CPU inspection and operation binding through the existing
 capture/build path. Service execution and full preparation remain under construction.
 
 A model definition describes an ordinary factory, validated configuration and
-input schema. An objective receives `(model, inputs, loss_inputs, loss_params)`
+input schema. An optional `capture_context(config)` context manager scopes
+provider precision or dispatch settings around construction and capture in the
+build worker. It receives the resolved `ModelBuild.config` and must restore those
+settings on exit, including failure. CPU description and training execution never
+enter it; source and configuration are pinned with the capture. For example, an
+MLOps model can use `weight_gradients_at(torch.float32)` without leaking that
+setting into another model's capture. Gradient storage still uses
+`ModelBuild.grad_dtype`; provider arithmetic and stored gradients are distinct.
+
+An objective receives `(model, inputs, loss_inputs, loss_params)`
 and returns the existing `ObjectiveResult`, a scalar loss or `(loss, metrics)`.
 The objective owns its reduction. `simple_loss` adapts an ordinary
 `loss(predictions, targets)` function without changing its reduction.

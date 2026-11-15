@@ -1,5 +1,6 @@
 """Definition precision reaches the existing real gradient/optimizer captures."""
 
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 
 import pytest
@@ -29,11 +30,12 @@ def create(config):
     return Classifier()
 
 
-def prepared(master, grad="float32"):
+def prepared(master, grad="float32", capture_context=None):
     model = replace(
         definitions()[0].definition,
         create=create,
         build=lambda config, context: ModelBuild(asdict(config), grad_dtype=grad),
+        capture_context=capture_context,
     )
     registry = installed(model=model)
     adamw.register(registry)
@@ -133,3 +135,47 @@ def test_precision_changes_capture_identity_and_invalid_choices_fail_on_cpu():
             ModelBuild({}, grad_dtype=dtype)
         with pytest.raises(ValueError, match="floating dtype"):
             replace(definitions()[2].definition, master_dtype=dtype)
+
+
+@pytest.mark.parametrize("fail_in", ["create", "capture"])
+def test_provider_context_is_worker_only_and_restored_after_failure(
+    monkeypatch, fail_in
+):
+    from mlops.dispatch import weight_gradient_dtype, weight_gradients_at
+
+    opened = []
+
+    @contextmanager
+    def context(config):
+        opened.append(config.num_classes)
+        with weight_gradients_at(torch.float32):
+            yield
+
+    registry, setup, inventory = prepared("float32", capture_context=context)
+    assert opened == []  # Description and inventory never enter the provider.
+    template = next(t for t in inventory.templates.values() if t.kind == "step")
+    factory = setup.model.definition.create
+
+    def checked_create(config):
+        assert weight_gradient_dtype() == torch.float32
+        if fail_in == "create":
+            raise RuntimeError("intentional constructor failure")
+        return factory(config)
+
+    def checked_capture(*args, **kwargs):
+        assert weight_gradient_dtype() == torch.float32
+        raise RuntimeError("intentional capture failure")
+
+    monkeypatch.setattr(
+        type(setup.model),
+        "create",
+        lambda self, **kw: checked_create(
+            self.definition.config(**dict(kw["build"].config))
+        ),
+    )
+    monkeypatch.setattr("shadowspill.build_step", checked_capture)
+    with weight_gradients_at(torch.float64):
+        with pytest.raises(RuntimeError, match="intentional"):
+            build_template(registry, inventory, template.id)
+        assert weight_gradient_dtype() == torch.float64
+    assert opened == [3]

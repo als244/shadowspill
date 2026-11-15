@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -128,6 +129,18 @@ class ResolvedModel:
         _, normalized = _configuration(self.definition.config, description.config)
         validate_resources(description.resources, context.parallelism)
         return replace(description, config=normalized)
+
+    def capture_context(self, build: ModelBuild) -> AbstractContextManager[Any]:
+        """Open provider precision/dispatch settings only in a capture worker.
+
+        The installed factory owns restoration, including failed captures. Its
+        typed configuration and source are already part of the saved identity.
+        Description, worker execution and client runtime never enter this hook.
+        """
+        if self.definition.capture_context is None:
+            return nullcontext()
+        configured, _ = _configuration(self.definition.config, build.config)
+        return self.definition.capture_context(configured)
 
     def default_parallelism(self, schema: InputSchema) -> Parallelism:
         if self.definition.default_parallelism is None:

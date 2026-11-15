@@ -38,11 +38,14 @@ def build_template(
     )
     if template.model_build.grad_dtype is not None:
         options["grad_dtype"] = getattr(torch, template.model_build.grad_dtype)
-    with representative_inputs(
-        template.binding.inputs,
-        template.representative,
-        max_bytes=setup.config.execution.max_staging_bytes,
-    ) as example:
+    with (
+        setup.model.capture_context(template.model_build),
+        representative_inputs(
+            template.binding.inputs,
+            template.representative,
+            max_bytes=setup.config.execution.max_staging_bytes,
+        ) as example,
+    ):
         with torch.device("meta"):
             model = setup.model.create(build=template.model_build)
         program = build_operation(

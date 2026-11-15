@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
@@ -65,6 +66,7 @@ class ModelDefinition:
     configure: Callable[[Model], Mapping[str, Value]] | None = None
     default_parallelism: Callable[[Any, InputSchema], Parallelism] | None = None
     build: Callable[[Any, ModelBuildContext], ModelBuild] | None = None
+    capture_context: Callable[[Any], AbstractContextManager[Any]] | None = None
     input_groups: Callable[[Any, ValidatedBatch], Sequence[Sequence[int]]] | None = None
     initialization: (
         Callable[[Any, InitializationContext], ModelInitialization] | None
@@ -95,6 +97,8 @@ class ModelDefinition:
             raise TypeError("default_parallelism must be an installed CPU function")
         if self.build is not None and not callable(self.build):
             raise TypeError("build must be an installed CPU description function")
+        if self.capture_context is not None and not callable(self.capture_context):
+            raise TypeError("capture_context must be an installed context factory")
         if self.initialization is not None and not callable(self.initialization):
             raise TypeError(
                 "initialization must be an installed CPU description function"
