@@ -709,8 +709,8 @@ the existing owned-region resolver supplies its stored range, excluding padding.
 Logical intersections stream bounded descriptors even for strided views; they
 allocate no tensor data. Factored optimizer state keeps its own shape. Undefined
 encoded or sharded optimizer mappings fail explicitly, as does registered state
-without an export binding. These descriptions do not yet implement conversion,
-publication of a converted checkpoint.
+without an export binding. Pairwise mappings alone do not establish complete
+checkpoint compatibility.
 
 The offline `checkpoint.reading.read_rank` context reuses the same parser,
 geometry validation and payload checksums before exposing bounded random reads
@@ -730,6 +730,24 @@ logical views are checked before sealing, while unreferenced storage holes stay
 zero. Sealed targets export through the encoder's existing borrowed tensor
 interface (`CheckpointExport`). All temporary files are removed on exit, and
 final archives and metadata still need separate publication reservations.
+
+`checkpoint.conversion.convert_state` now binds these pieces into a CPU
+materializer. Global preflight checks state roles, shapes, dtypes, trainability,
+optimizer interpretation, alias membership and tied-view relationships. Ordinary
+axis permutations retain their logical relationship across physical layouts;
+undefined overlaps or changed relative views need explicit conversion mappings.
+The materializer preserves the source weight-selection policy and accepts a
+target-preparation callback only for noncheckpoint temporary values. It verifies
+all source handles before yielding sealed `ConvertedRank` exporters, which use
+the same rank encoder and all-rank publisher. The encoder also checks that an
+export supplies every described stored representation before publication.
+
+CPU qualification covers converted generations, master/compute/no-master state,
+1↔4 and 2↔4 layouts, the next Adam update and failure before global commit.
+Automatic conversion in service creation still needs target temporary preparation,
+conversion provenance and resource/progress wiring. The existing creation path
+continues to require directly compatible checkpoints; engine/GPU training after
+conversion and the broader release matrix remain unqualified.
 
 New-run checkpoint initialization uses this CPU preflight before the existing
 all-worker startup release, followed by the same bounded checkpoint reader used

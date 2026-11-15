@@ -200,6 +200,7 @@ def write_checkpoint(
     try:
         executor.export_tensors(write, chunk_bytes=chunk_bytes)
         writer.close()
+        _validate_export(executor, writer.entries, omitted, selection)
     except BaseException:
         writer.abort()
         raise
@@ -214,6 +215,37 @@ def write_checkpoint(
     )
     finish(target, encoded(manifest))
     return manifest
+
+
+def _validate_export(
+    state: CheckpointState,
+    entries: list[dict[str, Any]],
+    omitted: set[str],
+    selection: WeightSelection,
+) -> None:
+    """A borrowed exporter cannot silently omit required saved representations."""
+    exported = {entry["name"]: entry for entry in entries}
+    expected = set()
+    for chunk in state.tensor_chunks():
+        if (
+            chunk.name in omitted
+            or chunk.name in selection.derived
+            or chunk.name in selection.gathered
+            or not region_bytes(chunk)
+        ):
+            continue
+        expected.add(chunk.name)
+        entry = exported.get(chunk.name)
+        if (
+            entry is None
+            or entry["bytes"] != region_bytes(chunk)
+            or any(entry.get(key) != value for key, value in geometry(chunk).items())
+        ):
+            raise ValueError(
+                f"checkpoint export differs from its description: {chunk.name}"
+            )
+    if expected != exported.keys():
+        raise ValueError("checkpoint export contains undescribed state")
 
 
 def _settings(
