@@ -10,6 +10,7 @@ from uuid import uuid4
 from ._async import CallFuture
 from .buffers import BufferBudget
 from .datum import Datum
+from .plans import PlansHandle
 from .protocol.controls import Scalar
 from .protocol.payload import MEDIA_TYPE, snapshot_batch
 from .protocol.requests import (
@@ -62,7 +63,7 @@ class TrainingClient:
         self._service, self._config, self._writer = service, config, writer
         self.session_id, self.run_id = info.session_id, info.run_id
         self.read_only = writer is None
-        self.plans = None if info.plans is None else service.artifact(info.plans)
+        self.plans = None if info.plans is None else PlansHandle(info.plans, service)
         self.requests = RequestQueries(self)
         self._route = f"/v1/runs/{self.session_id}/{self.run_id}"
         self._submission, self._upload, self._state = Lock(), Condition(), Lock()

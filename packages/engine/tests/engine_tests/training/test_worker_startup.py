@@ -264,7 +264,14 @@ def prepared_worker():
             plan.memory_budgets = SimpleNamespace(
                 execution_bytes=2 << 30, spill_bytes=200
             )
-    prepared = replace(prepared, memory={0: SimpleNamespace(spill_bytes=100)})
+    prepared = replace(
+        prepared,
+        memory={
+            0: SimpleNamespace(
+                spill_bytes=100, fixed_slice_bytes=128, execution_bytes=256
+            )
+        },
+    )
     return PreparedWorker.resolve(prepared, SCOPE, bundle=BUNDLE)
 
 

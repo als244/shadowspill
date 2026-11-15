@@ -28,6 +28,7 @@ import numpy as np  # noqa: E402
 
 from shadowspill_client import SSH, Datum, ServiceClient  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
+from shadowspill_client.protocol.codec import digest  # noqa: E402
 from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
 from shadowspill_client.protocol.training import ResolvedTraining  # noqa: E402
 
@@ -66,6 +67,30 @@ def qualify(client, config, memory, oracle):
         assert training.run_id == pending.run_id and training.get_config() == config
         saved = training.plans
         assert saved is not None
+        summary, index = [], 0
+        while True:
+            page = saved.summary(page=index).result(10)
+            assert page.plans == saved.reference
+            assert page.configuration_sha256 == digest(config)
+            summary.append(page)
+            if page.next_page is None:
+                break
+            index = page.next_page
+        rows = [row for page in summary for row in page.rows]
+        planned = [row for row in rows if row.kind == "worker_plan"]
+        assert len(planned) == page.plan_count and page.plan_count > 0
+        assert all(row.values["simulated"] for row in planned)
+        assert all(row.values["duration_seconds"] >= 0 for row in planned)
+        assert {row.kind for row in rows} == {
+            "configuration",
+            "batch",
+            "build_case",
+            "representative",
+            "candidate",
+            "worker_plan",
+            "coverage",
+            "shared_memory",
+        }
         step = training.step(
             records(True),
             optim={"lr": 0.03},
@@ -98,12 +123,16 @@ def qualify(client, config, memory, oracle):
             10
         )
         assert readonly.requests.get(step.request_id).result(10).record == result.record
+        assert readonly.plans.summary().result(10) == summary[0]
         receipts.append(
             {
                 "mode": mode,
                 "run_id": training.run_id,
                 "completed_updates": closed.completed_updates,
                 "plans": saved.reference.to_dict(),
+                "summary_pages": len(summary),
+                "summary_rows": len(rows),
+                "summary_plan_count": page.plan_count,
             }
         )
     return receipts

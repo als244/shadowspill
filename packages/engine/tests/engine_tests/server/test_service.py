@@ -9,6 +9,7 @@ from contextlib import contextmanager
 import pytest
 
 from engine_tests.server.test_http import TOKEN
+from engine_tests.server.test_jobs import until
 from engine_tests.server.test_local_creation import configured
 from engine_tests.training.test_setup_resolution import arguments
 from shadowspill.orchestration.launch.admission import (
@@ -70,7 +71,11 @@ def test_public_server_creates_workers_and_recovers_read_only_records_after_reop
                 .config.model.definition
             )
             training = service.create_training_client(config=ctx.config).result(10)
+            until(lambda: server._jobs.used == (1, 0))
             assert server._jobs.used == (1, 0) and nodes[0].used.devices
+            summary = training.plans.summary().result(5)
+            assert summary.plans == training.plans.reference
+            assert summary.candidate_count and summary.plan_count
             # Preview has its own bounded CPU envelope while this run is live.
             assert (
                 service.describe_training(config=ctx.config).result(5).config
@@ -88,6 +93,7 @@ def test_public_server_creates_workers_and_recovers_read_only_records_after_reop
             reopened.start(port=0)
             with connect(reopened, session_id=session_id) as service:
                 readonly = service.get_training_client(run_id, read_only=True).result(5)
+                assert readonly.plans.summary().result(5) == summary
                 assert (
                     readonly.requests.get(closed.identity.request_id).result(5).record
                     == closed.record

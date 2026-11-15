@@ -42,6 +42,7 @@ from shadowspill_client.protocol.training import ResolvedTraining
 from .artifacts import ArtifactStore
 from .creation_records import load_creation
 from .live import LiveRun
+from .plan_summaries import publish_summary
 from .records.requests import RunIdentity
 from .storage import ServiceStorage
 
@@ -313,6 +314,7 @@ class LocalCreation:
                     )
             self._active()
             family = bundle.recheck(registry)
+            publish_summary(self._artifacts, plans, family)
             workers = {
                 rank: PreparedWorker.resolve(
                     family,

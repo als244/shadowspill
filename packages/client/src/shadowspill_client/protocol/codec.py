@@ -22,6 +22,7 @@ from .controls import ControlSchema
 from .creation import TrainingCreation
 from .definitions import DefinitionSource, OutputSet
 from .inputs import InputSchema
+from .plans import PlanSummaryPage
 from .preparation import ResolvedPreparation
 from .preview import TrainingPreview
 from .requests import OperationRequest, WriterLease
@@ -68,6 +69,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "training.creation": TrainingCreation,
     "training.setup": TrainingSetup,
     "training.preview": TrainingPreview,
+    "plans.summary": PlanSummaryPage,
 }
 
 

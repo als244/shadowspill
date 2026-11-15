@@ -7,7 +7,7 @@ require the engine, PyTorch, Triton or the supplied workloads.
 `ServiceClient` supports authenticated connections, CPU setup previews, creation,
 reattachment and explicit artifact downloads. `TrainingClient` submits live
 operations. `shadowspill.server.Server` owns startup and the assigned resources.
-Checkpoint methods and richer Plan inspection are still being implemented.
+Checkpoint methods and named Plan saves are still being implemented.
 Existing phase and Trainer APIs remain available during migration.
 
 Start the service on Chicago or another machine with an existing GPU allocation:
@@ -95,6 +95,17 @@ reattach. `training.requests.status(id).result()` queries lifecycle state;
 are handles in `result.outputs`; their `.download(path).result()` is explicit.
 The durable outcome remains in `result.record`. A `TrainingRequestError` preserves
 the server's failure record, including known execution effects and accumulation.
+
+`training.plans.summary().result()` reads saved metadata, including the selected
+operation/batch candidates and rank Plans, chunk/policy choices, representative
+inputs, coverage, memory and simulated timings. Each page contains at most 32
+rows and fits the same bounded metadata format. Continue explicitly with
+`.summary(page=result.next_page).result()` until `next_page` is `None`. Rows have
+a `kind` and immutable `values`. These reads do not load the full bundle, run the
+planner or issue a training operation; they remain available after worker close
+and server restart. `.plans.download(path).result()` explicitly exports the full
+bundle. Simulated durations are estimates for the recorded representative inputs,
+separate from observed training latency.
 
 An immutable artifact reference can be attached to the current connection with
 `service.artifact(reference)`. Its `.download(local_path).result()` streams and

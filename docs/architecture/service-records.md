@@ -103,6 +103,15 @@ JSON sorts object keys. This preserves direct resolver operation/default order.
 An authenticated stale writer now receives the specific `writer_fenced` code;
 credential or owner failures retain the generic access-denied response.
 
+Creation publishes bounded immutable Plan-summary pages after the bundle's exact
+recheck and before worker startup. The pages describe the selected candidate/rank
+Plans using existing simulation summaries, preparation settings, representative
+inputs and coverage certificates. Page IDs bind the complete bundle reference;
+the existing owner-scoped artifact endpoint serves them as control metadata.
+Reading does not import the planner, decode the full archive, require live workers
+or claim a writer. Each page respects the shared byte/JSON bounds and a 32-row
+limit; full bundle downloads remain a separate explicit transfer.
+
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
 and host-key verification to OpenSSH. Existing masters receive only forward and

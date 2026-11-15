@@ -86,6 +86,7 @@ def family(inv=None):
                 for member in worker.members():
                     plans.setdefault(rank, {})[member] = SimpleNamespace(
                         timeline=SimpleNamespace(makespan_ns=100 + index),
+                        summary={"duration_seconds": (100 + index) * 1e-9},
                         program=SimpleNamespace(
                             bindings={"gradient_scale_control": "scale"}
                         ),
