@@ -50,6 +50,7 @@ def test_manifest_roundtrip_and_owned_metadata():
     assert updated.metadata["cursor"] == (5, 6)
     ordinary = updated.to_dict()
     ordinary.pop("conversion")
+    ordinary.pop("frozen_base")
     assert updated.rank_metadata()["checkpoint"] == ordinary
 
 
@@ -69,7 +70,9 @@ def test_conversion_provenance_roundtrips_and_is_included_in_rank_boundary():
     )
     converted = replace(value, info=replace(value.info, conversion=conversion))
     assert decode(encode(converted)) == converted
-    assert converted.info.rank_metadata()["checkpoint"] == converted.info.to_dict()
+    metadata = converted.info.to_dict()
+    metadata.pop("frozen_base")
+    assert converted.info.rank_metadata()["checkpoint"] == metadata
     assert conversion.randomness["source_streams"] == ()
     for changes in ({"version": 2}, {"version": True}, {"logical_state_sha256": "bad"}):
         with pytest.raises(ValueError):

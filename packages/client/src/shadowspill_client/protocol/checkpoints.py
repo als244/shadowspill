@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from .._records import Record, Value, integer, mapping, record, text
+from .frozen import FrozenBase
 from .requests import ArtifactRef, identifier
 
 CHECKPOINT_MEDIA_TYPE = "application/vnd.shadowspill.checkpoint+json"
@@ -64,6 +65,7 @@ class CheckpointInfo(Record):
     frozen_state_id: str | None = None
     metadata: Mapping[str, Value] = field(default_factory=dict)
     conversion: CheckpointConversion | None = None
+    frozen_base: FrozenBase | None = None
 
     def __post_init__(self) -> None:
         for name in ("session_id", "run_id", "history_id", "request_id"):
@@ -89,6 +91,12 @@ class CheckpointInfo(Record):
                 "conversion",
                 record(CheckpointConversion, self.conversion, "conversion"),
             )
+        if self.frozen_base is not None:
+            object.__setattr__(
+                self, "frozen_base", record(FrozenBase, self.frozen_base, "frozen base")
+            )
+            if self.frozen_state_id != self.frozen_base.identity:
+                raise ValueError("frozen state identity differs from its exact base")
 
     def rank_metadata(self) -> dict[str, object]:
         """The same provenance travels inside each ordinary rank archive."""
@@ -96,6 +104,8 @@ class CheckpointInfo(Record):
         if self.conversion is None:
             # Ordinary generations retain the existing rank metadata format.
             value.pop("conversion")
+        if self.frozen_base is None:
+            value.pop("frozen_base")
         return {"checkpoint": value}
 
 

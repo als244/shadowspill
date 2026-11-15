@@ -23,6 +23,7 @@ from .checkpoints import CheckpointManifest
 from .controls import ControlSchema
 from .creation import TrainingCreation
 from .definitions import DefinitionSource, OutputSet
+from .frozen import FrozenBase
 from .inputs import InputSchema
 from .plans import PlanSummaryPage, SavedPlans
 from .preparation import ResolvedPreparation
@@ -75,6 +76,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "plans.summary": PlanSummaryPage,
     "plans.saved": SavedPlans,
     "checkpoint.manifest": CheckpointManifest,
+    "checkpoint.frozen_base": FrozenBase,
     "nsys.manifest": NsightManifest,
     "artifact.upload": ArtifactUpload,
     "upload.status": UploadStatus,
