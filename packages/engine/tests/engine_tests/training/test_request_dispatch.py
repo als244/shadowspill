@@ -277,10 +277,10 @@ def test_authoritative_failure_stops_dispatch_and_releases_host_owners(
     work, calls = HostWork(), []
     update, executed = records._index.update, records._index.executed
 
-    def fail_status(status):
+    def fail_status(status, *, position):
         if status.state == ("running" if boundary == "dispatch" else "completed"):
             raise OSError("index unavailable after authoritative commit")
-        update(status)
+        update(status, position=position)
 
     def fail_receipt(receipt):
         if boundary == "receipt":
