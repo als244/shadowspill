@@ -131,6 +131,21 @@ complete-model host snapshots. Format, geometry and checksum checks precede
 successful initialization. Application scheduler/RNG state belongs in the
 caller's JSON metadata; it is not discovered implicitly.
 
+`checkpoint.write_weights(executor, stream, weights="master")` uses the same
+bounded archive writer for inference model state. `checkpoint.weights_size(...)`
+returns its exact size without reading tensors. The archive records logical
+parameter/buffer views, tied storage, owned shard coordinates and authoritative
+weight selection. Optimizer state, gradients, RNG and execution temporaries are
+excluded before storage reads. Keep the Executor quiescent while describing and
+writing it; the caller owns stream publication and the complete rank set.
+
+A verified `frozen_state_id` permits omission only of parameters proven unchanged
+across all admitted Plans. Persistent buffers and modified frozen weights remain
+in the export. Without that identity, all model state is retained. The distinct
+`shadowspill.weights` format cannot be used for optimizer resume. Model encodings
+without declared logical geometry require an installed format adapter; ownership
+is never guessed from tensor names or element counts.
+
 ## Output and storage views
 
 Returned views of input or parameter storage become owned snapshots during build.

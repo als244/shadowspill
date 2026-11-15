@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.artifacts.state import StateRole
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.execution.controls import control_descriptors
 from shadowspill.execution.tensor_layout import TensorLayout
@@ -81,9 +82,13 @@ class PlanState:
                 prefix=prefix,
             )
 
-    def logical_tensors(self) -> Iterator[LogicalTensor]:
+    def logical_tensors(
+        self, *, roles: Collection[StateRole] | None = None
+    ) -> Iterator[LogicalTensor]:
         """Checkpointable logical views over the same canonical export regions."""
-        return logical_tensors(self._layouts, self._shared, self.logical_rank)
+        return logical_tensors(
+            self._layouts, self._shared, self.logical_rank, roles=roles
+        )
 
     def temporary_initializers(
         self,

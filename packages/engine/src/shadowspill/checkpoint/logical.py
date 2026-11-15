@@ -1,11 +1,11 @@
 """Bind logical state identities to the existing owned checkpoint descriptors."""
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
 from math import prod
 from typing import Any
 
-from shadowspill.artifacts.state import StateId, StateTensor
+from shadowspill.artifacts.state import StateId, StateRole, StateTensor
 from shadowspill.artifacts.state_inventory import program_state
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.execution.controls import control_descriptors
@@ -33,7 +33,11 @@ class LogicalTensor:
 
 
 def logical_tensors(
-    layouts: Mapping[str, TensorLayout], shared: SharedState, logical_rank: int
+    layouts: Mapping[str, TensorLayout],
+    shared: SharedState,
+    logical_rank: int,
+    *,
+    roles: Collection[StateRole] | None = None,
 ) -> Iterator[LogicalTensor]:
     """Use execution's canonical owners, views and storage regions without I/O.
 
@@ -63,6 +67,8 @@ def logical_tensors(
         bindings = {binding.identity: binding for binding in inventory.bindings}
         for tensor in inventory.tensors:
             if not tensor.checkpoint or tensor.identity in visited:
+                continue
+            if roles is not None and tensor.identity.role not in roles:
                 continue
             visited.add(tensor.identity)
             binding = bindings[tensor.identity]

@@ -148,8 +148,10 @@ class HostRank:
     def tensor_chunks(self):
         return self.state.tensor_chunks()
 
-    def export_tensors(self, callback, *, chunk_bytes):
+    def export_tensors(self, callback, *, chunk_bytes, names=None):
         for chunk in self.tensor_chunks():
+            if names is not None and chunk.name not in names:
+                continue
             value = self.values[chunk.name]
             step = chunk_bytes // chunk.dtype.itemsize
             for start in range(0, value.numel(), step):
