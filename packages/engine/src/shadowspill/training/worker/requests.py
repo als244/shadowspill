@@ -288,10 +288,17 @@ class WorkerRequests:
                 if references.setdefault(ref.id, ref) != ref:
                     raise ValueError("checkpoint rank ID has conflicting references")
         for node, references in grouped.items():
-            if not references:
+            missing = []
+            for reference in references.values():
+                retained = node.grants.retain(reference)
+                if retained is None:
+                    missing.append(reference)
+                else:
+                    result._grants.append(retained)
+            if not missing:
                 continue
             delivery = FileDelivery(
-                tuple(references.values()),
+                missing,
                 root=node.root,
                 disk=node.disk,
                 memory=node.memory,
@@ -305,9 +312,7 @@ class WorkerRequests:
                 return self._checkpoints.open(ref)
 
             delivery.receive(open_source)
-            result._grants.append(
-                node.grants.lend(delivery, tuple(references.values()))
-            )
+            result._grants.append(node.grants.lend(delivery, missing))
         for rank, command in commands.items():
             node, worker = self.nodes[rank], self.prepared[rank]
             bound = worker.bindings.bind(

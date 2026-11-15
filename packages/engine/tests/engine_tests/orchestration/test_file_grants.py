@@ -101,6 +101,27 @@ def test_identical_ref_from_another_delivery_cannot_transfer_disk_ownership(
             assert resolve_file(grants.root, ref).read_bytes() == payload
 
 
+def test_retained_grant_outlives_startup_without_another_delivery(tmp_path, delivered):
+    delivery, ref, disk, memory, payload = delivered
+    with FileGrants(root=tmp_path, memory=memory) as grants:
+        assert grants.retain(ref) is None
+        startup = grants.lend(delivery, [ref])
+        for changed in (replace(ref, id="other"), replace(ref, sha256="0" * 64)):
+            assert grants.retain(changed) is None
+        request = grants.retain(ref)
+        assert request is not None
+        startup.close()
+        assert disk.used[0] == len(payload)
+        assert resolve_file(grants.root, ref).read_bytes() == payload
+        with pytest.raises(RuntimeError, match="consumers"):
+            delivery.close()
+        request.close()
+        assert grants.retain(ref) is None
+        assert not list(grants.root.iterdir())
+    with pytest.raises(RuntimeError, match="closed"):
+        grants.retain(ref)
+
+
 @pytest.mark.parametrize("failure", ["reference", "duplicate", "link", "space"])
 def test_partial_grants_are_removed_and_borrowed_quotas_retained_correctly(
     tmp_path, delivered, monkeypatch, failure

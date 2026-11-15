@@ -143,6 +143,21 @@ class FileGrants:
                 raise
             return owner
 
+    def retain(self, reference: ArtifactRef) -> FileGrant | None:
+        """Borrow an existing exact grant without copying or transferring ownership.
+
+        Startup artifacts can be used again by later requests. Retain the same
+        verified delivery under the grant lock so its last prior consumer cannot
+        retire the file between lookup and the new borrow.
+        """
+        if not isinstance(reference, ArtifactRef):
+            raise TypeError("file grants require validated artifact references")
+        with self._lock:
+            if self.closed:
+                raise RuntimeError("file grants are closed")
+            entry = self._entries.get(_key(reference))
+            return None if entry is None else self.lend(entry[0], [reference])
+
     def _release(self, owner: FileGrant) -> None:
         with self._lock:
             for key in tuple(owner._keys):

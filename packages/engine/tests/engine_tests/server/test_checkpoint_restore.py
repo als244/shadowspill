@@ -19,6 +19,8 @@ from engine_tests.training.test_prepared_requests import family
 from engine_tests.training.test_worker_checkpoints import dispatch, running, save_call
 from shadowspill.checkpoint import checkpoint_size, load_checkpoint
 from shadowspill.checkpoint.identity import state_identity
+from shadowspill.orchestration.launch.file_grants import resolve_file
+from shadowspill.orchestration.launch.staging import FileDelivery
 from shadowspill.server.checkpoint_restore import CheckpointResolver
 from shadowspill.server.checkpoints import publish_checkpoint
 from shadowspill.training.session.acceptance import AcceptanceOrder
@@ -258,6 +260,50 @@ def test_public_missing_checkpoint_rejects_before_worker_work(tmp_path):
         assert records.get(pending.request_id)[1].acceptance is None
         assert controller.boundary.valid and not list(tmp_path.glob("executions-*"))
         assert training.close().result(10).completed_updates == 0
+
+
+def test_public_restore_reuses_startup_grant_without_copying_or_retiring_it(
+    tmp_path, monkeypatch
+):
+    with connected(tmp_path, completed_updates=12) as (
+        training,
+        _,
+        http,
+        _,
+        controller,
+        workers,
+    ):
+        source, expected = generation(http.artifacts, count=1)
+        with http.artifacts.open(source) as stream:
+            manifest = decode(stream.read())
+        reference = manifest.ranks[0].archive
+        node = workers.nodes[0]
+        with FileDelivery(
+            [reference], root=node.root, disk=node.disk, memory=node.memory
+        ) as delivery:
+            delivery.receive(http.artifacts.open)
+            with node.grants.lend(delivery, [reference]):
+                before = node.disk.used
+
+                def copied_again(*args):
+                    pytest.fail("startup checkpoint was copied into another delivery")
+
+                monkeypatch.setattr(workers._checkpoints, "open", copied_again)
+                histories = set()
+                for _ in range(2):
+                    restored = training.load_checkpoint(source.id).result(10)
+                    assert restored.completed_updates == 3
+                    histories.add(restored.history_id)
+                    assert controller.boundary.valid
+                    assert resolve_file(node.grants.root, reference).is_file()
+                    assert len(node.grants._owners) == 1 and node.disk.used == before
+                assert len(histories) == 2
+                saved = training.save_checkpoint().result(10)
+                compare_saved(http.artifacts, saved.reference, expected, tmp_path)
+                with pytest.raises(RuntimeError, match="consumers"):
+                    delivery.close()
+        assert not node.grants._owners
+        assert training.close().result(10).completed_updates == 3
 
 
 @pytest.mark.parametrize(

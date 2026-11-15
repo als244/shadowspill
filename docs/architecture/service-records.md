@@ -214,6 +214,10 @@ the original request and deduplication digest retain the submitted name. The
 resolver verifies manifest bytes, complete rank membership, byte order and owner
 access to configuration, Plans and rank archives. Existing FileDelivery and
 FileGrants checksum and retain each rank archive through worker completion.
+If an exact archive is already granted from startup, the request borrows that
+same verified delivery. It neither copies the file nor transfers its disk quota;
+each consumer keeps its own grant until completion. This allows repeated loads
+of the initial checkpoint without retiring files still owned by startup.
 Every worker validates its complete native inventory and generation metadata
 before any execute command is broadcast. Loading delegates to the native loader,
 reserving space for its destination and optional cast chunk. Compatible native
