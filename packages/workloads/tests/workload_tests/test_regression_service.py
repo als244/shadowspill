@@ -119,7 +119,7 @@ def test_supplied_regression_public_step_split_and_adamw_resume(
     server = subprocess.run(
         [
             sys.executable,
-            str(Path(__file__).with_name("_regression_service_server.py")),
+            str(Path(__file__).with_name("_catalog_service_server.py")),
             str(tmp_path),
         ],
         capture_output=True,
