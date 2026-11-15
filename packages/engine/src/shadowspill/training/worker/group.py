@@ -11,7 +11,7 @@ from typing import Self
 from shadowspill.training.session.dispatch import ExecutionNotStarted
 from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.session.state import Transition
-from shadowspill_client.protocol.checkpoints import CheckpointInfo
+from shadowspill_client.protocol.checkpoints import SaveInfo
 
 from .bindings import worker_call
 from .connection import WorkerConnection
@@ -61,7 +61,7 @@ class WorkerGroup:
         call: PreparedCall,
         transition: Transition,
         *,
-        checkpoint: CheckpointInfo | None = None,
+        checkpoint: SaveInfo | None = None,
     ) -> Mapping[int, WorkerCall]:
         """Resolve the next invocation before agents reserve/deliver its files."""
         self._available()

@@ -28,7 +28,7 @@ from shadowspill.training.worker.checkpoint_records import (
     RankSaved,
     checkpoint_id,
 )
-from shadowspill_client.protocol.checkpoints import CheckpointInfo, CheckpointManifest
+from shadowspill_client.protocol.checkpoints import CheckpointManifest, SaveInfo
 from shadowspill_client.protocol.codec import decode
 
 
@@ -39,7 +39,7 @@ def boundary(artifacts, *, count=2, request="save", weights="master"):
     )
     artifacts.put(config, lambda _: io.BytesIO(b"configuration"))
     artifacts.put(plans, lambda _: io.BytesIO(b"plans"))
-    return CheckpointInfo(
+    return SaveInfo(
         "session",
         "run",
         "history",

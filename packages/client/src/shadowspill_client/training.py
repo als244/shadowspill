@@ -14,7 +14,7 @@ from .captures import NsightCapture
 from .checkpoints import CheckpointHandle
 from .datum import Datum
 from .plans import PlansHandle
-from .protocol.checkpoint_settings import CheckpointSave
+from .protocol.checkpoint_settings import SaveSettings
 from .protocol.controls import Scalar
 from .protocol.payload import MEDIA_TYPE, snapshot_batch
 from .protocol.requests import (
@@ -137,7 +137,7 @@ class TrainingClient:
         outputs: str | None = None,
         mode: Literal["evaluation", "training"] | None = None,
         runtime_trace: bool = False,
-        save: CheckpointSave | None = None,
+        save: SaveSettings | None = None,
         restore: str | None = None,
     ) -> OperationFuture[TrainingResult]:
         self._service._work.check()
@@ -359,7 +359,7 @@ class TrainingClient:
         weights: Literal["master", "compute"] = "master",
     ) -> OperationFuture[CheckpointHandle]:
         """Save on the server at this ordered boundary; tensor download is explicit."""
-        settings = CheckpointSave(name, {} if metadata is None else metadata, weights)
+        settings = SaveSettings(name, {} if metadata is None else metadata, weights)
 
         def checkpoint(result: TrainingResult) -> CheckpointHandle:
             if result.checkpoint is None:

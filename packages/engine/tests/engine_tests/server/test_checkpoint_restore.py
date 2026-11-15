@@ -30,7 +30,7 @@ from shadowspill.training.session.dispatch import RequestDispatcher
 from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.session.state import OperationState
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.checkpoints import CheckpointInfo
+from shadowspill_client.protocol.checkpoints import SaveInfo
 from shadowspill_client.protocol.codec import decode, digest, encode
 from shadowspill_client.protocol.requests import OperationRequest
 from shadowspill_client.results import TrainingRequestError
@@ -48,7 +48,7 @@ def generation(
         body = encode(config)
         config_ref = reference(body, "configuration." + digest(config))
         artifacts.put(config_ref, lambda _: io.BytesIO(body))
-    info = CheckpointInfo(
+    info = SaveInfo(
         "session",
         "run",
         "saved-history",

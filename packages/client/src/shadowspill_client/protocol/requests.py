@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from .._records import Record, integer, mapping, names, number, record, text
-from .checkpoint_settings import CheckpointSave
+from .checkpoint_settings import SaveSettings
 from .controls import Scalar
 
 type ComputeOperation = Literal["step", "forward_backward", "optim_step", "forward"]
@@ -106,7 +106,7 @@ class OperationRequest(Record):
     mode: Literal["evaluation", "training"] | None = None
     runtime_trace: bool = False
     dependencies: Sequence[str] = ()
-    save: CheckpointSave | None = None
+    save: SaveSettings | None = None
     restore: str | None = None
 
     def __post_init__(self) -> None:
@@ -116,7 +116,7 @@ class OperationRequest(Record):
         if self.operation not in OPERATIONS:
             raise ValueError("unknown operation")
         if self.save is not None:
-            object.__setattr__(self, "save", record(CheckpointSave, self.save, "save"))
+            object.__setattr__(self, "save", record(SaveSettings, self.save, "save"))
         if (self.operation == "save") != (self.save is not None):
             raise ValueError("only save commands require checkpoint save settings")
         if self.restore is not None:

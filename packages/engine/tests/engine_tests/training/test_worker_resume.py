@@ -32,8 +32,8 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
     RANK_MEDIA_TYPE,
-    CheckpointInfo,
-    CheckpointRank,
+    SavedRank,
+    SaveInfo,
 )
 from shadowspill_client.protocol.requests import ArtifactRef
 
@@ -52,7 +52,7 @@ def source(tmp_path, *, corrupt=False):
     }
     if corrupt:
         executor.values["linear.weight"] = torch.ones(1)
-    info = CheckpointInfo(
+    info = SaveInfo(
         "source-session",
         "source-run",
         "source-history",
@@ -90,7 +90,7 @@ def source(tmp_path, *, corrupt=False):
     restore = RankRestore(
         ArtifactRef("checkpoint", "b" * 64, 123, CHECKPOINT_MEDIA_TYPE),
         info,
-        CheckpointRank(0, ref, state_identity(executor)),
+        SavedRank(0, ref, state_identity(executor)),
     )
     worker = replace(
         worker,

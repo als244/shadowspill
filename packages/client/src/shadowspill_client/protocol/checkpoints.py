@@ -44,7 +44,7 @@ class CheckpointConversion(Record):
 
 
 @dataclass(frozen=True)
-class CheckpointInfo(Record):
+class SaveInfo(Record):
     """The completed boundary and fixed setup shared by every saved rank.
 
     Caller metadata is explicit JSON. Configuration retains setup defaults;
@@ -110,7 +110,7 @@ class CheckpointInfo(Record):
 
 
 @dataclass(frozen=True)
-class CheckpointRank(Record):
+class SavedRank(Record):
     rank: int
     archive: ArtifactRef
     state_sha256: str
@@ -131,16 +131,16 @@ class CheckpointRank(Record):
 
 @dataclass(frozen=True)
 class CheckpointManifest(Record):
-    info: CheckpointInfo
-    ranks: Sequence[CheckpointRank]
+    info: SaveInfo
+    ranks: Sequence[SavedRank]
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self, "info", record(CheckpointInfo, self.info, "checkpoint")
+            self, "info", record(SaveInfo, self.info, "checkpoint")
         )
         if not isinstance(self.ranks, (tuple, list)) or not self.ranks:
             raise ValueError("checkpoint requires its complete rank set")
-        ranks = tuple(record(CheckpointRank, rank, "rank") for rank in self.ranks)
+        ranks = tuple(record(SavedRank, rank, "rank") for rank in self.ranks)
         if len(ranks) != self.info.world_size or any(
             rank.rank != index for index, rank in enumerate(ranks)
         ):

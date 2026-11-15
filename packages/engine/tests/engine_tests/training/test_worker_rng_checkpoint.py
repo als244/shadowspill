@@ -24,7 +24,7 @@ from shadowspill.training.worker.protocol import WorkerCall
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
-    CheckpointInfo,
+    SaveInfo,
 )
 from shadowspill_client.protocol.requests import ArtifactRef
 
@@ -88,7 +88,7 @@ def invoke(execution, operation, *, masked=False, plan=True):
 
 def save(tmp_path, executor, streams, budget):
     plans = ArtifactRef("plans", "b" * 64, 1)
-    info = CheckpointInfo(
+    info = SaveInfo(
         "session",
         "run",
         "history",

@@ -8,7 +8,7 @@ from shadowspill.orchestration.launch.publication import OutputWriter
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.session.state import Transition
-from shadowspill_client.protocol.checkpoints import CheckpointInfo
+from shadowspill_client.protocol.checkpoints import SaveInfo
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .checkpoint_records import RankSave, RankSaved
@@ -30,11 +30,11 @@ class CheckpointStorage(Protocol):
 
     def describe(
         self, call: PreparedCall, transition: Transition
-    ) -> CheckpointInfo: ...
+    ) -> SaveInfo: ...
 
     def stage(
         self,
-        info: CheckpointInfo,
+        info: SaveInfo,
         ranks: Sequence[RankSave],
         write: Callable[[RankSave, OutputWriter], RankSaved],
         *,

@@ -8,7 +8,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, BinaryIO
 
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.checkpoints import RANK_MEDIA_TYPE, CheckpointInfo
+from shadowspill_client.protocol.checkpoints import RANK_MEDIA_TYPE, SaveInfo
 from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
 
@@ -48,7 +48,7 @@ class WorkerCheckpointWriter:
         self.randomness = randomness
         self.frozen_base = frozen_base
 
-    def _describe(self, info: CheckpointInfo) -> RankSave:
+    def _describe(self, info: SaveInfo) -> RankSave:
         from shadowspill.checkpoint import checkpoint_size
         from shadowspill.checkpoint.identity import state_identity
 

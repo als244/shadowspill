@@ -8,7 +8,7 @@ from .._records import Record, Value, mapping, text
 
 
 @dataclass(frozen=True)
-class CheckpointSave(Record):
+class SaveSettings(Record):
     name: str | None = None
     metadata: Mapping[str, Value] = field(default_factory=dict)
     weights: Literal["master", "compute"] = "master"

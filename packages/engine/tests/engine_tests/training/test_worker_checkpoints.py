@@ -30,7 +30,7 @@ from shadowspill.training.worker.group import WorkerGroup
 from shadowspill.training.worker.protocol import WorkerScope
 from shadowspill.training.worker.requests import NodeFiles, WorkerRequests
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.checkpoint_settings import CheckpointSave
+from shadowspill_client.protocol.checkpoint_settings import SaveSettings
 from shadowspill_client.protocol.checkpoints import CheckpointManifest
 from shadowspill_client.protocol.codec import decode, encode
 from shadowspill_client.protocol.requests import OperationRequest
@@ -139,7 +139,7 @@ def save_call(sequence=1):
     command = OperationRequest(
         replace(request().identity, request_id=f"save-{sequence}", sequence=sequence),
         "save",
-        save=CheckpointSave(name="latest", metadata={"cursor": [2, 7]}),
+        save=SaveSettings(name="latest", metadata={"cursor": [2, 7]}),
     )
     return PreparedCall(
         command, None, None, CallControls(), None, BufferBudget(1), ranks=(0, 1)
@@ -314,14 +314,14 @@ def test_completion_envelope_is_checked_before_worker_release():
     from shadowspill.training.worker.checkpoint_records import RankSave
     from shadowspill.training.worker.loop import WorkerLoop
     from shadowspill.training.worker.protocol import CODEC, WorkerCall
-    from shadowspill_client.protocol.checkpoints import CheckpointInfo
+    from shadowspill_client.protocol.checkpoints import SaveInfo
     from shadowspill_client.protocol.requests import ArtifactRef
 
     call = save_call()
     command = replace(
-        call.request, save=CheckpointSave(metadata={"large": "x" * 450_000})
+        call.request, save=SaveSettings(metadata={"large": "x" * 450_000})
     )
-    info = CheckpointInfo(
+    info = SaveInfo(
         "session",
         "run",
         "history",

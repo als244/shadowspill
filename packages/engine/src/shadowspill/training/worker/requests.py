@@ -26,7 +26,7 @@ from shadowspill.training.session.dispatch import ExecutionNotStarted
 from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.session.state import Transition
 from shadowspill_client.buffers import BufferBudget, BufferLease
-from shadowspill_client.protocol.checkpoints import CheckpointInfo
+from shadowspill_client.protocol.checkpoints import SaveInfo
 from shadowspill_client.protocol.codec import MAX_METADATA_BYTES
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.results import ArtifactIssue
@@ -201,7 +201,7 @@ class WorkerRequests:
         self,
         result: WorkerResults,
         commands: Mapping[int, WorkerCall],
-        info: CheckpointInfo,
+        info: SaveInfo,
     ) -> Mapping[int, WorkerReply]:
         assert self._checkpoints is not None
         with self.group.staged(commands) as invocation:

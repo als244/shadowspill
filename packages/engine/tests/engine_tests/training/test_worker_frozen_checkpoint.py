@@ -24,10 +24,10 @@ from shadowspill.training.worker.checkpoint_writer import WorkerCheckpointWriter
 from shadowspill.training.worker.protocol import WorkerCall
 from shadowspill_client import Weights
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.checkpoint_settings import CheckpointSave
+from shadowspill_client.protocol.checkpoint_settings import SaveSettings
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
-    CheckpointInfo,
+    SaveInfo,
 )
 from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
@@ -100,7 +100,7 @@ def fixture(tmp_path, *, artifact=False, capacity=256, peak=128, fail=False):
 
 def info(base, *, request="save"):
     plans = ArtifactRef("plans", "b" * 64, 1)
-    return CheckpointInfo(
+    return SaveInfo(
         "session",
         "run",
         "history",
@@ -129,7 +129,7 @@ def save(tmp_path, reader, boundary, files):
     request = replace(
         request,
         identity=replace(request.identity, request_id=boundary.request_id),
-        save=CheckpointSave(metadata=boundary.metadata, weights=boundary.weights),
+        save=SaveSettings(metadata=boundary.metadata, weights=boundary.weights),
     )
     command = WorkerCall(SCOPE, 1, request, None, False, False, checkpoint=boundary)
     bound = writer.prepare(BoundWorkerCall(command, None, CallControls(), {}, ()))

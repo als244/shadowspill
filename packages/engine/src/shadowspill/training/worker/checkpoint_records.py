@@ -11,8 +11,8 @@ from shadowspill_client._records import Record, Value, integer, mapping, record
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
     RANK_MEDIA_TYPE,
-    CheckpointInfo,
-    CheckpointRank,
+    SavedRank,
+    SaveInfo,
 )
 from shadowspill_client.protocol.requests import ArtifactRef
 
@@ -20,14 +20,14 @@ from shadowspill_client.protocol.requests import ArtifactRef
 @dataclass(frozen=True)
 class RankRestore(Record):
     checkpoint: ArtifactRef
-    info: CheckpointInfo
-    rank: CheckpointRank
+    info: SaveInfo
+    rank: SavedRank
 
     def __post_init__(self) -> None:
         for name, kind in (
             ("checkpoint", ArtifactRef),
-            ("info", CheckpointInfo),
-            ("rank", CheckpointRank),
+            ("info", SaveInfo),
+            ("rank", SavedRank),
         ):
             object.__setattr__(self, name, record(kind, getattr(self, name), name))
         if (
@@ -64,20 +64,20 @@ class RankSave(Record):
                 self, "randomness", mapping(self.randomness, "random state")
             )
 
-    def metadata(self, info: CheckpointInfo) -> dict[str, Any]:
+    def metadata(self, info: SaveInfo) -> dict[str, Any]:
         value = info.rank_metadata()
         if self.randomness is not None:
             value["randomness"] = self.randomness
         return value
 
-    def reference(self, artifact_id: str, sha256: str) -> CheckpointRank:
-        return CheckpointRank(
+    def reference(self, artifact_id: str, sha256: str) -> SavedRank:
+        return SavedRank(
             self.rank,
             ArtifactRef(artifact_id, sha256, self.size_bytes, RANK_MEDIA_TYPE),
             self.state_sha256,
         )
 
-    def confirm(self, info: CheckpointInfo, manifest: Mapping[str, Any]) -> None:
+    def confirm(self, info: SaveInfo, manifest: Mapping[str, Any]) -> None:
         expected = mapping(self.confirmation(info), "checkpoint confirmation")
         actual = mapping(
             {key: manifest.get(key) for key in expected}, "rank completion"
@@ -87,7 +87,7 @@ class RankSave(Record):
                 f"rank {self.rank} checkpoint completion differs from admission"
             )
 
-    def confirmation(self, info: CheckpointInfo) -> dict[str, Any]:
+    def confirmation(self, info: SaveInfo) -> dict[str, Any]:
         """Bounded completion fields; the full tensor manifest stays in the archive."""
         return {
             "format": "shadowspill.checkpoint",
@@ -115,6 +115,6 @@ class RankSaved(Record):
         object.__setattr__(self, "manifest", mapping(self.manifest, "rank completion"))
 
 
-def checkpoint_id(info: CheckpointInfo) -> str:
+def checkpoint_id(info: SaveInfo) -> str:
     key = "\0".join((info.session_id, info.run_id, info.request_id))
     return "checkpoint." + hashlib.sha256(key.encode()).hexdigest()

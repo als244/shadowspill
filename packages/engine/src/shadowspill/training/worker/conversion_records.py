@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from shadowspill_client._records import Record, integer, record, text
-from shadowspill_client.protocol.checkpoints import CheckpointInfo, CheckpointManifest
+from shadowspill_client.protocol.checkpoints import CheckpointManifest, SaveInfo
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .checkpoint_records import RankSave, RankSaved
@@ -50,14 +50,14 @@ class ConversionRequest(Record):
 
 @dataclass(frozen=True)
 class ConversionPrepared(Record):
-    info: CheckpointInfo
+    info: SaveInfo
     ranks: Sequence[RankSave]
     temporary_bytes: int
     files: int
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self, "info", record(CheckpointInfo, self.info, "checkpoint")
+            self, "info", record(SaveInfo, self.info, "checkpoint")
         )
         ranks = tuple(record(RankSave, row, "rank") for row in self.ranks)
         if tuple(row.rank for row in ranks) != tuple(range(self.info.world_size)):

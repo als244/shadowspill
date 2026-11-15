@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from shadowspill_client._records import Record, integer, names, record, text
-from shadowspill_client.protocol.checkpoints import CheckpointInfo
+from shadowspill_client.protocol.checkpoints import SaveInfo
 from shadowspill_client.protocol.codec import RecordCodec
 from shadowspill_client.protocol.requests import (
     STATE_OPERATIONS,
@@ -160,7 +160,7 @@ class WorkerCall(Record):
     skipped: bool
     accumulate_gradients: bool
     frames: Sequence[ArtifactRef] = ()
-    checkpoint: CheckpointInfo | None = None
+    checkpoint: SaveInfo | None = None
     restore: RankRestore | None = None
     history_id: str | None = None
     completed_updates: int = 0
@@ -188,7 +188,7 @@ class WorkerCall(Record):
             object.__setattr__(
                 self,
                 "checkpoint",
-                record(CheckpointInfo, self.checkpoint, "checkpoint"),
+                record(SaveInfo, self.checkpoint, "checkpoint"),
             )
         if (self.request.operation == "save") != (self.checkpoint is not None):
             raise ValueError(

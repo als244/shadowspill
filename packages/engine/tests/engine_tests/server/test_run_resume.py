@@ -24,7 +24,7 @@ from shadowspill.server.records.requests import RunIdentity
 from shadowspill.training.worker import runtime
 from shadowspill_client import ServiceClient, Weights
 from shadowspill_client.creation import CreationError
-from shadowspill_client.protocol.checkpoints import CheckpointConversion, CheckpointInfo
+from shadowspill_client.protocol.checkpoints import CheckpointConversion, SaveInfo
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.plans import summary_id
 
@@ -37,7 +37,7 @@ def checkpoint(ctx):
         if plans is None:
             plans = reference(b"source-plans", "source-plans")
             artifacts.put(plans, lambda _: io.BytesIO(b"source-plans"))
-        info = CheckpointInfo(
+        info = SaveInfo(
             "previous-session",
             "source-run",
             "source-history",

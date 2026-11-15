@@ -26,9 +26,9 @@ from shadowspill.training.worker.checkpoint_records import (
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
     RANK_MEDIA_TYPE,
-    CheckpointInfo,
     CheckpointManifest,
-    CheckpointRank,
+    SavedRank,
+    SaveInfo,
 )
 from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.frozen import FrozenBase
@@ -67,7 +67,7 @@ class RunCheckpoints:
     def open(self, reference: ArtifactRef) -> AbstractContextManager[BinaryIO]:
         return self.artifacts.open(reference)
 
-    def describe(self, call: PreparedCall, transition: Transition) -> CheckpointInfo:
+    def describe(self, call: PreparedCall, transition: Transition) -> SaveInfo:
         request, settings = call.request, call.request.save
         if (
             settings is None
@@ -78,7 +78,7 @@ class RunCheckpoints:
             or transition.before.accumulation.open
         ):
             raise ValueError("checkpoint requires a valid completed-update boundary")
-        return CheckpointInfo(
+        return SaveInfo(
             self.session_id,
             request.identity.run_id,
             transition.before.history_id,
@@ -98,7 +98,7 @@ class RunCheckpoints:
 
     def stage(
         self,
-        info: CheckpointInfo,
+        info: SaveInfo,
         ranks: Sequence[RankSave],
         write: Callable[[RankSave, OutputWriter], RankSaved],
         *,
@@ -109,7 +109,7 @@ class RunCheckpoints:
 
 def publish_checkpoint(
     artifacts: ArtifactStore,
-    info: CheckpointInfo,
+    info: SaveInfo,
     ranks: Sequence[RankSave],
     write: Callable[[RankSave, OutputWriter], RankSaved],
     *,
@@ -127,7 +127,7 @@ def publish_checkpoint(
 
 def stage_checkpoint(
     artifacts: ArtifactStore,
-    info: CheckpointInfo,
+    info: SaveInfo,
     ranks: Sequence[RankSave],
     write: Callable[[RankSave, OutputWriter], RankSaved],
     *,
@@ -167,7 +167,7 @@ def stage_checkpoint(
     by_id = {
         row.archive.id: rank for row, rank in zip(placeholders, ranks, strict=True)
     }
-    completed: list[CheckpointRank] = []
+    completed: list[SavedRank] = []
 
     def produce(spec: OutputSpec, writer: OutputWriter) -> ArtifactRef:
         if spec.id != artifact_id:

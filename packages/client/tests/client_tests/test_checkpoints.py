@@ -8,9 +8,9 @@ from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
     RANK_MEDIA_TYPE,
     CheckpointConversion,
-    CheckpointInfo,
     CheckpointManifest,
-    CheckpointRank,
+    SavedRank,
+    SaveInfo,
 )
 from shadowspill_client.protocol.codec import ProtocolError, decode, encode
 from shadowspill_client.protocol.requests import ArtifactRef
@@ -18,7 +18,7 @@ from shadowspill_client.protocol.requests import ArtifactRef
 
 def manifest():
     return CheckpointManifest(
-        CheckpointInfo(
+        SaveInfo(
             "session",
             "run",
             "history",
@@ -31,7 +31,7 @@ def manifest():
             metadata={"cursor": [3, 4]},
         ),
         [
-            CheckpointRank(
+            SavedRank(
                 rank,
                 ArtifactRef(f"rank{rank}", "c" * 64, 10, RANK_MEDIA_TYPE),
                 "d" * 64,
@@ -126,13 +126,13 @@ def test_metadata_keeps_common_wire_bounds():
 
 
 def test_save_settings_are_owned_and_have_an_intentional_result_reference():
-    from shadowspill_client.protocol.checkpoint_settings import CheckpointSave
+    from shadowspill_client.protocol.checkpoint_settings import SaveSettings
     from shadowspill_client.protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
     from shadowspill_client.protocol.requests import OperationRequest, RequestIdentity
     from shadowspill_client.protocol.results import OperationResult
 
     metadata = {"cursor": [1, 2]}
-    settings = CheckpointSave(name="latest", metadata=metadata, weights="compute")
+    settings = SaveSettings(name="latest", metadata=metadata, weights="compute")
     metadata["cursor"].append(3)
     identity = RequestIdentity("save", "run", 1, "writer", 1, "server")
     request = OperationRequest(identity, "save", save=settings)

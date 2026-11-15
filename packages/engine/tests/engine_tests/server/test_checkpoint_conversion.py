@@ -54,7 +54,7 @@ from shadowspill.training.worker.checkpoint_records import RankSave
 from shadowspill.training.worker.conversion_records import ConversionCommand
 from shadowspill.training.worker.randomness import WorkerRandomness
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.checkpoints import CheckpointInfo
+from shadowspill_client.protocol.checkpoints import SaveInfo
 from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
@@ -137,7 +137,7 @@ def configured(
             if frozen
             else None
         )
-        info = CheckpointInfo(
+        info = SaveInfo(
             "session",
             "source-run",
             "saved-history",
