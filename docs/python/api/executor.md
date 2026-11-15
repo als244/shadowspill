@@ -105,6 +105,11 @@ streams the same named storage in bounded views. Callbacks must consume/fill eac
 view before returning and must not retain it. Checkpoint file formats belong to
 helpers above this interface, not the allocator or task dispatcher.
 
+`export_tensors(write_chunk, names={...})` selects exact canonical names from
+`tensor_chunks()`. Unknown names fail before tensor I/O. Unselected spill storage
+and host controls are not read; an empty set exports nothing. Omitting `names`
+keeps the complete state export. Selection does not apply to initialization.
+
 Worker shard descriptions preserve offsets into the original tensor storage.
 Load/export callbacks see only valid owned elements; padded tail elements are
 zeroed internally. Master initialization converts directly from the corresponding

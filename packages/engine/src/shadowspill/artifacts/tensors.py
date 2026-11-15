@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -69,6 +69,23 @@ class TensorChunk:
     storage_offset: int = 0
     region_offset: int = 0
     region_elements: int | None = None
+
+
+def export_selection(
+    chunks: Iterable[TensorChunk], names: Collection[str] | None
+) -> frozenset[str] | None:
+    """Validate exact canonical export names before any tensor data is read."""
+    if names is None:
+        return None
+    if isinstance(names, str | bytes) or any(
+        not isinstance(name, str) for name in names
+    ):
+        raise TypeError("export names require a collection of tensor names")
+    selected = frozenset(names)
+    missing = selected - {chunk.name for chunk in chunks}
+    if missing:
+        raise ValueError(f"unknown export tensors: {sorted(missing)[:5]}")
+    return selected
 
 
 def tensor_geometry(program: Program) -> dict[str, Mapping[str, Any]]:

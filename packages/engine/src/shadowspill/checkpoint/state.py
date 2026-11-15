@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -40,6 +40,7 @@ class CheckpointExport(CheckpointState, Protocol):
         callback: Callable[[TensorChunk, torch.Tensor], None],
         *,
         chunk_bytes: int,
+        names: Collection[str] | None = None,
     ) -> None: ...
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import torch
@@ -184,11 +184,16 @@ def visit_tensors(
     restore: bool = False,
     prefix: str = "",
     skip_shared: bool = False,
+    names: Collection[str] | None = None,
 ) -> None:
     if chunk_bytes <= 0:
         raise ValueError("chunk_bytes must be positive")
+    if initialize and names is not None:
+        raise ValueError("tensor selection applies only to export, not initialization")
     named = {name: object_id for name, object_id, _ in tensor_entries(state)}
     for tensor in owned_tensors(state, skip_shared=skip_shared):
+        if names is not None and tensor.chunk(0, prefix).name not in names:
+            continue
         if initialize and tensor.alias not in state.initial:
             continue
         if initialize and tensor.length < tensor.capacity:

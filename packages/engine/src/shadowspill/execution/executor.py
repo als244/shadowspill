@@ -1,6 +1,6 @@
 """Admitted saved Plans, one worker, one outstanding asynchronous invocation."""
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import replace
 from types import MappingProxyType
@@ -10,6 +10,7 @@ import torch
 
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.state_inventory import program_state
+from shadowspill.artifacts.tensors import export_selection
 from shadowspill.communication.binding.ranks import RankAssignment
 from shadowspill.memory import SpillPool
 from shadowspill.parallelism import GroupRef
@@ -170,14 +171,22 @@ class Executor:
         write_chunk: Callable[[TensorChunk, torch.Tensor], None],
         *,
         chunk_bytes: int = 64 << 20,
+        names: Collection[str] | None = None,
     ) -> None:
         self.synchronize()
         if not self._initialized:
             raise RuntimeError("initialize persistent tensors before exporting them")
+        selected = export_selection(self.tensor_chunks(), names)
         visit_tensors(
-            self._paths[0].storage, write_chunk, chunk_bytes, initialize=False
+            self._paths[0].storage,
+            write_chunk,
+            chunk_bytes,
+            initialize=False,
+            names=selected,
         )
-        self._paths[0].controls.export(write_chunk, chunk_bytes=chunk_bytes)
+        self._paths[0].controls.export(
+            write_chunk, chunk_bytes=chunk_bytes, names=selected
+        )
         for name, path in self._named_paths.items():
             visit_tensors(
                 path.storage,
@@ -186,12 +195,14 @@ class Executor:
                 initialize=False,
                 skip_shared=True,
                 prefix=f"plans.{name}.",
+                names=selected,
             )
             path.controls.export(
                 write_chunk,
                 chunk_bytes=chunk_bytes,
                 skip_shared=True,
                 prefix=f"plans.{name}.",
+                names=selected,
             )
 
     def tensor_chunks(self) -> Iterator[TensorChunk]:

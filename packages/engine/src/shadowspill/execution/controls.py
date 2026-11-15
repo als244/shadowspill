@@ -1,6 +1,6 @@
 """Bounded CPU controls and per-invocation tensor hyperparameters."""
 
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from math import prod
 from typing import Any
 
@@ -126,9 +126,12 @@ class Controls:
         chunk_bytes: int = 64 << 20,
         skip_shared: bool = False,
         prefix: str = "",
+        names: Collection[str] | None = None,
     ) -> None:
         for name, value in self.host.items():
             if skip_shared and name in self.shared_host:
+                continue
+            if names is not None and self._name(name, prefix) not in names:
                 continue
             for request, chunk in self._chunks(
                 self._name(name, prefix), value, chunk_bytes

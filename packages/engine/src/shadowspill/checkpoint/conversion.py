@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
@@ -15,7 +15,7 @@ import torch
 
 from shadowspill.artifacts._values import freeze
 from shadowspill.artifacts.plan import Plan
-from shadowspill.artifacts.tensors import TensorChunk
+from shadowspill.artifacts.tensors import TensorChunk, export_selection
 
 from .compatibility import RankedTensor, describe_family, require_compatible
 from .frozen import omitted_parameters
@@ -53,10 +53,17 @@ class ConvertedRank:
         return self.state.tensor_chunks()
 
     def export_tensors(
-        self, callback: Callable[[TensorChunk, torch.Tensor], None], *, chunk_bytes: int
+        self,
+        callback: Callable[[TensorChunk, torch.Tensor], None],
+        *,
+        chunk_bytes: int,
+        names: Collection[str] | None = None,
     ) -> None:
         with self.lock:
-            self.staging.export(self.logical_rank, callback, chunk_bytes=chunk_bytes)
+            selected = export_selection(self.tensor_chunks(), names)
+            self.staging.export(
+                self.logical_rank, callback, chunk_bytes=chunk_bytes, names=selected
+            )
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -183,6 +183,7 @@ class TensorStaging:
         callback: Callable[[TensorChunk, torch.Tensor], None],
         *,
         chunk_bytes: int,
+        names: Collection[str] | None = None,
     ) -> None:
         """Feed the ordinary checkpoint encoder, borrowing the same staging buffer."""
         self._check()
@@ -191,7 +192,7 @@ class TensorStaging:
         if type(chunk_bytes) is not int or chunk_bytes < 1:
             raise ValueError("checkpoint export chunk_bytes must be a positive integer")
         for (owner, name), chunk in self.chunks.items():
-            if owner != rank:
+            if owner != rank or (names is not None and name not in names):
                 continue
             width = chunk.dtype.itemsize
             step = min(self._values.numel(), chunk_bytes) // width
