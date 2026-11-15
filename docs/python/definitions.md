@@ -45,6 +45,34 @@ uses the same registry and its existing model. Importing either description
 requires no Torch import; model construction is explicit. Text and media catalog
 definitions will migrate as their preparation paths become available.
 
+The workloads entry point also installs `shadowspill/cross_entropy@1` and
+`shadowspill/clipped_policy@1`. A compatible model declares the `target_logprobs`
+capability, a bounded integer `tokens` field with one symbolic position dimension,
+and a `target_logprobs(targets=..., **inputs)` method returning aligned target
+logprobs. The model owns its fused or chunked head; the objective never asks it
+to return all vocabulary logits. Other model inputs pass through their declared
+schema and adapter. Vocabulary range, alignment and packing mode are derived at
+setup, without callers repeating architecture settings.
+
+Cross entropy takes aligned `target_tokens`, optional boolean `loss_mask`
+(default true), and optional signed `weights` (default one). Clipped policy
+requires `target_tokens`, boolean `response_mask`, `old_logprobs` and `advantages`,
+with the same optional weights. Its call-local `clip_ratio` defaults to 0.2 and
+must lie in `[0, 1)`. Preparing `config={"reference_penalty": "k3"}` additionally
+requires `reference_logprobs` and enables nonnegative `reference_beta` (default
+zero). Without that prepared term, reference fields and controls are rejected.
+These are FP32 weighted sums, with no implicit division. A zero weight or
+advantage still counts as a valid token.
+
+Both objectives provide `metrics` (`loss_sum`, `valid_tokens`) and `logprobs`
+output sets. Training with `logprobs` also reports those metrics, with zero tensor
+outputs at masked positions. `forward(..., outputs="logprobs")` needs only model
+inputs and aligned targets; it returns every target logprob without requiring
+rollout fields or loss controls. Forward requests for `metrics` evaluate the
+declared loss and therefore require its fields. Omitted controls always revert
+to setup defaults. Formula, packed-input and CPU capture checks cover these
+definitions; supplied text-model service qualification is still in progress.
+
 `resolve_model` and `resolve_objective` validate configuration and return immutable
 portable settings, input schemas and provenance. Configuration factories return
 dataclasses or mappings. The resolved model's `create()` is a separate preparation
