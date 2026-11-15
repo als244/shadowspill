@@ -744,7 +744,13 @@ export supplies every described stored representation before publication.
 
 CPU qualification covers converted generations, master/compute/no-master state,
 1↔4 and 2↔4 layouts, the next Adam update and failure before global commit.
-Automatic conversion in service creation still needs target temporary preparation,
+`checkpoint.defaults.TemporaryDefaults` resolves target-private controls, fixed
+inputs and lifted constants from saved Plan declarations and clears gradients.
+Checkpointable weights, optimizer state, counters and registered buffers cannot
+use this initializer. Strided constants fill borrowed subregions without a full
+tensor copy; missing or external defaults fail during preflight.
+
+Automatic conversion in service creation still needs resource admission,
 conversion provenance and resource/progress wiring. The existing creation path
 continues to require directly compatible checkpoints; engine/GPU training after
 conversion and the broader release matrix remain unqualified.

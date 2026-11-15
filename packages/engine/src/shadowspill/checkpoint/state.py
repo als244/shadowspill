@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.execution.controls import control_descriptors
 from shadowspill.execution.tensor_layout import TensorLayout
-from shadowspill.execution.tensors import tensor_descriptors
+from shadowspill.execution.tensors import owned_tensors, tensor_descriptors
 from shadowspill.planning.shared_state import shared_state
 
 from .logical import LogicalTensor, logical_tensors
@@ -83,3 +83,32 @@ class PlanState:
     def logical_tensors(self) -> Iterator[LogicalTensor]:
         """Checkpointable logical views over the same canonical export regions."""
         return logical_tensors(self._layouts, self._shared, self.logical_rank)
+
+    def temporary_initializers(
+        self,
+    ) -> Iterator[tuple[TensorChunk, Mapping[str, Any] | None]]:
+        """Describe target-only defaults; checkpointable state is never returned."""
+        protected = {
+            item.archive.name
+            for item in self.logical_tensors()
+            if item.archive is not None
+        }
+        for name, layout in self._layouts.items():
+            prefix = f"plans.{name}." if name else ""
+            for tensor in owned_tensors(layout, skip_shared=bool(name)):
+                chunk = tensor.chunk(0, prefix)
+                if chunk.name not in protected:
+                    yield (
+                        chunk,
+                        (
+                            {"kind": "constant", "value": 0}
+                            if tensor.name.startswith("gradient.")
+                            else tensor.initializer
+                        ),
+                    )
+            for binding in layout.plan.program.bindings.get("optimizer_bindings", ()):
+                for chunk in control_descriptors(
+                    (binding,), shared_host=self._shared.host[name], prefix=prefix
+                ):
+                    if chunk.name not in protected:
+                        yield chunk, binding.get("initialization")
