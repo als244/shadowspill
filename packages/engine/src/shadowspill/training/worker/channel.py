@@ -1,6 +1,7 @@
 """Bounded private control framing over inherited pipes or authenticated streams."""
 
 import struct
+from collections.abc import Buffer
 from typing import BinaryIO
 
 from shadowspill_client._records import Record
@@ -40,13 +41,21 @@ def read_message(stream: BinaryIO) -> Record | None:
     return CODEC.decode(payload)
 
 
+def _write(stream: BinaryIO, data: Buffer) -> None:
+    with memoryview(data).cast("B") as view:
+        offset = 0
+        while offset < len(view):
+            with view[offset : offset + _CHUNK] as part:
+                written = stream.write(part)
+            if type(written) is not int or not 0 < written <= min(
+                len(view) - offset, _CHUNK
+            ):
+                raise ProtocolError("worker channel made no valid write progress")
+            offset += written
+
+
 def write_message(stream: BinaryIO, value: Record) -> None:
     encoded = CODEC.encode(value)
     for value_bytes in (_PREFIX.pack(len(encoded)), encoded):
-        view = memoryview(value_bytes)
-        while view:
-            written = stream.write(view[:_CHUNK])
-            if type(written) is not int or not 0 < written <= min(len(view), _CHUNK):
-                raise ProtocolError("worker channel made no valid write progress")
-            view = view[written:]
+        _write(stream, value_bytes)
     stream.flush()

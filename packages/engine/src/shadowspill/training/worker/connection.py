@@ -4,6 +4,7 @@ from typing import BinaryIO, Literal, NoReturn
 
 from shadowspill_client.protocol.codec import ProtocolError
 
+from .binary import BinarySink, receive_stream
 from .channel import read_message, write_message
 from .protocol import (
     WorkerCall,
@@ -29,6 +30,7 @@ class WorkerConnection:
         self.valid = True
         self._pending: WorkerTicket | None = None
         self._phase: Literal["staging", "ready", "executing", "aborting"] | None = None
+        self._stream_size: int | None = None
 
     def check(self, command: WorkerCall) -> None:
         if not self.valid:
@@ -88,10 +90,33 @@ class WorkerConnection:
         )
         if (reply.status, reply.effect) not in expected:
             self._invalid("worker completion reply differs from the released action")
+        if (
+            self._stream_size is not None
+            and reply.status == "completed"
+            and (reply.result is None or reply.result.size_bytes != self._stream_size)
+        ):
+            self._invalid("worker result differs from its completed binary stream")
         self._consumed()
         if reply.effect == "unknown":
             self.valid = False
         return reply
+
+    def receive_stream(self, destination: BinarySink, *, size_bytes: int) -> None:
+        """Receive one admitted output, then require its ordinary completion reply.
+
+        Call after release, with persistent storage already reserved. Reading or
+        writing failure invalidates this channel; the group must confirm shutdown
+        before disposing its failed producer. No reconnect or replay is attempted.
+        """
+        self._require("executing")
+        if self._stream_size is not None:
+            raise RuntimeError("worker invocation already streamed its output")
+        try:
+            receive_stream(self._reader, destination, size_bytes=size_bytes)
+            self._stream_size = size_bytes
+        except BaseException:
+            self.valid = False
+            raise
 
     def _require(self, phase: str) -> None:
         if not self.valid or self._phase != phase:
@@ -111,6 +136,7 @@ class WorkerConnection:
 
     def _consumed(self) -> None:
         self._pending = self._phase = None
+        self._stream_size = None
         self.next_invocation += 1
 
     def _invalid(self, message: str) -> NoReturn:

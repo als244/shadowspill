@@ -159,6 +159,16 @@ remain atomic, and an uncertain commit requires recovery. Storage shutdown refus
 to retire a live staged owner, while failed cleanup remains retryable. This adds
 no execution path: the existing dispatcher still owns ordering and state effects.
 
+The existing private worker connection can receive a bounded binary stream during
+an already released invocation. `WorkerStream` frames borrowed encoder bytes in
+chunks of at most 64 KiB, hashes while sending, and leaves tensor encoding to the
+rank checkpoint writer. Binary and control frame prefixes are distinct. Receiving
+the declared bytes still requires the normal ticketed completion reply; the
+persistent artifact owner verifies its digest before publication. A lost stream
+or reply invalidates the channel and cannot authorize replay. Real CPU children
+exercise transfers directly into admitted artifact storage, process loss at both
+boundaries, and consecutive invocations. Save-command binding remains unfinished.
+
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
 and host-key verification to OpenSSH. Existing masters receive only forward and
