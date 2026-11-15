@@ -39,6 +39,7 @@ from .runs import RunInfo, RunPage
 from .service import ServiceError, ServiceInfo
 from .setup import TrainingSetup
 from .training import ResolvedTraining
+from .uploads import ArtifactUpload, UploadStatus
 
 VERSION = 1
 MAX_METADATA_BYTES = 1024 * 1024
@@ -75,6 +76,8 @@ _KINDS: Mapping[str, type[Record]] = {
     "plans.saved": SavedPlans,
     "checkpoint.manifest": CheckpointManifest,
     "nsys.manifest": NsightManifest,
+    "artifact.upload": ArtifactUpload,
+    "upload.status": UploadStatus,
 }
 
 

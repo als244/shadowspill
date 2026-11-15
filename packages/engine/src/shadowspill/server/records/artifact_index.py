@@ -10,9 +10,11 @@ from typing import Literal
 from shadowspill_client._records import Record, text
 from shadowspill_client.protocol.codec import RecordCodec
 from shadowspill_client.protocol.requests import ArtifactRef, identifier
+from shadowspill_client.protocol.uploads import UPLOAD_RECORD_BYTES, UploadStatus
 
 REFERENCE_BYTES = 4096
 _CODEC = RecordCodec({"artifact.reference": ArtifactRef})
+_UPLOAD_CODEC = RecordCodec({"upload.status": UploadStatus})
 
 
 type AliasKind = Literal["checkpoint", "plans", "nsys"]
@@ -78,6 +80,12 @@ class ArtifactIndex:
                 "kind TEXT, artifact_id TEXT NOT NULL, "
                 "PRIMARY KEY (session_id, run_id, name, kind))"
             )
+            self._db.execute(
+                "CREATE TABLE uploads (id TEXT PRIMARY KEY, "
+                "storage_key TEXT UNIQUE NOT NULL, expires_at REAL NOT NULL, "
+                "status BLOB NOT NULL)"
+            )
+            self._db.execute("CREATE INDEX upload_expiry ON uploads(expires_at)")
         except BaseException:
             if hasattr(self, "_db"):
                 self._db.close()
@@ -109,6 +117,57 @@ class ArtifactIndex:
         self._db.execute(
             "INSERT INTO artifacts VALUES (?, ?, ?)",
             (reference.id, storage_key(reference.id), reference_bytes(reference)),
+        )
+
+    def upload(self, artifact_id: str) -> UploadStatus | None:
+        row = self._db.execute(
+            "SELECT status FROM uploads WHERE id=?", (artifact_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        result = _UPLOAD_CODEC.decode(row[0], max_bytes=UPLOAD_RECORD_BYTES)
+        if not isinstance(result, UploadStatus):
+            raise ValueError("invalid derived upload index")
+        return result
+
+    def set_upload(self, status: UploadStatus) -> None:
+        if status.state != "uploading":
+            raise ValueError("only incomplete uploads have retained progress")
+        self._db.execute(
+            "INSERT OR REPLACE INTO uploads VALUES (?, ?, ?, ?)",
+            (
+                status.reference.id,
+                storage_key(status.reference.id),
+                status.expires_at,
+                _UPLOAD_CODEC.encode(status, max_bytes=UPLOAD_RECORD_BYTES),
+            ),
+        )
+
+    def remove_upload(self, artifact_id: str) -> None:
+        self._db.execute("DELETE FROM uploads WHERE id=?", (artifact_id,))
+
+    def upload_key(self, key: str) -> UploadStatus | None:
+        row = self._db.execute(
+            "SELECT id FROM uploads WHERE storage_key=?", (key,)
+        ).fetchone()
+        return None if row is None else self.upload(row[0])
+
+    def expired_uploads(self, now: float, *, after: str, limit: int) -> tuple[str, ...]:
+        return tuple(
+            row[0]
+            for row in self._db.execute(
+                "SELECT id FROM uploads WHERE expires_at<=? AND id>? "
+                "ORDER BY id LIMIT ?",
+                (now, after, limit),
+            )
+        )
+
+    def upload_page(self, after: str, limit: int) -> tuple[str, ...]:
+        return tuple(
+            row[0]
+            for row in self._db.execute(
+                "SELECT id FROM uploads WHERE id>? ORDER BY id LIMIT ?", (after, limit)
+            )
         )
 
     def page(self, after: str, limit: int) -> tuple[ArtifactRef, ...]:

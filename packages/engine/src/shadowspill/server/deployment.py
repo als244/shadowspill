@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from shadowspill.training.worker.resources import WorkerHost
 from shadowspill_client._records import integer, number
 
+from .artifact_uploads import UPLOAD_TTL_SECONDS
 from .http import HTTP_SCRATCH_BYTES
 from .local_creation import LocalCreationLimits
 
@@ -27,6 +28,7 @@ class ServerLimits:
     max_artifact_owners: int = 2
     artifact_bytes: int = 512 << 30
     artifact_count: int = 100000
+    upload_ttl_seconds: float = UPLOAD_TTL_SECONDS
     temporary_disk_bytes: int = 32 << 30
     temporary_files: int = 4096
     request_timeout: float = 30
@@ -61,6 +63,8 @@ class ServerLimits:
             raise ValueError("open request owners must cover every live run")
         if not number(self.request_timeout, "request timeout", minimum=0):
             raise ValueError("request timeout must be positive")
+        if not number(self.upload_ttl_seconds, "upload lifetime", minimum=0):
+            raise ValueError("upload lifetime must be positive")
         if not isinstance(self.creation, LocalCreationLimits):
             raise TypeError("creation limits require LocalCreationLimits")
 

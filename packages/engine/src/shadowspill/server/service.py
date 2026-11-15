@@ -114,7 +114,7 @@ class Server:
 
         storage_memory = partition(
             limits.storage_bytes,
-            1 + limits.max_open_records + 4 * limits.max_artifact_owners,
+            1 + limits.max_open_records + 5 * limits.max_artifact_owners,
         )
         jobs_memory = partition(
             limits.job_host_bytes * limits.max_training_runs, limits.max_training_runs
@@ -134,6 +134,7 @@ class Server:
             max_artifact_owners=limits.max_artifact_owners,
             artifact_bytes=limits.artifact_bytes,
             artifact_count=limits.artifact_count,
+            upload_ttl_seconds=limits.upload_ttl_seconds,
         )
         self._storage.recover()
         environment = dict(self.allocation.environment)

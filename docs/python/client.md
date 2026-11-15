@@ -40,6 +40,10 @@ live runs, waits for owned workers and preserves stored records/artifacts. Faile
 cleanup retains its owners for another `close()` attempt. Optional `ServerLimits`
 configures deployment memory, concurrency and storage envelopes. These limits
 belong to the deployment, independently of client training settings.
+Incomplete artifact transfers reserve their declared storage size and expire after
+24 hours without a verified chunk by default (`ServerLimits.upload_ttl_seconds`).
+The service reclaims them on storage access or reopening; saved artifacts do not
+expire under this policy.
 
 ```python
 from shadowspill_client import SSH, ServiceClient

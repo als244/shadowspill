@@ -11,11 +11,12 @@ from typing import Self
 
 from shadowspill.training.session.recovery import fail_interrupted_requests
 from shadowspill.training.session.state import OperationState
-from shadowspill_client._records import integer
+from shadowspill_client._records import integer, number
 from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.requests import identifier
 from shadowspill_client.protocol.service import ServiceError
 
+from .artifact_uploads import UPLOAD_TTL_SECONDS
 from .artifacts import ArtifactStore, _directory
 from .owners import OwnerCache
 from .records.artifact_index import storage_key
@@ -61,6 +62,7 @@ class ServiceStorage:
         artifact_bytes: int,
         artifact_count: int,
         artifact_transfers: int = 2,
+        upload_ttl_seconds: float = UPLOAD_TTL_SECONDS,
     ) -> None:
         self.incarnation = identifier(incarnation, "server incarnation")
         self.request_host_bytes = integer(
@@ -71,6 +73,8 @@ class ServiceStorage:
         integer(artifact_bytes, "artifact storage bytes", minimum=1)
         integer(artifact_count, "artifact count", minimum=1)
         integer(artifact_transfers, "artifact transfers", minimum=1)
+        if not number(upload_ttl_seconds, "upload lifetime", minimum=0):
+            raise ValueError("upload lifetime must be positive")
         if request_host_bytes > memory.max_bytes:
             raise ValueError("request owner cannot fit configured host memory")
         self.root, self.cache_root, self._memory = root, cache_root, memory
@@ -101,6 +105,7 @@ class ServiceStorage:
                     max_bytes=artifact_bytes,
                     max_artifacts=artifact_count,
                     max_transfers=artifact_transfers,
+                    upload_ttl_seconds=upload_ttl_seconds,
                 ),
                 max_owners=max_artifact_owners,
             )

@@ -20,6 +20,7 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef, identifier
 
 from .artifact_group import StagedArtifacts
+from .artifact_uploads import UPLOAD_TTL_SECONDS, ArtifactUploads
 from .artifact_writer import ProducedArtifacts
 from .records.artifact_index import (
     AliasKind,
@@ -76,6 +77,7 @@ class ArtifactStore:
         max_bytes: int,
         max_artifacts: int,
         max_transfers: int = 2,
+        upload_ttl_seconds: float = UPLOAD_TTL_SECONDS,
     ) -> None:
         self.owner_id = identifier(owner_id, "artifact owner ID")
         self.max_bytes = integer(max_bytes, "artifact storage bytes", minimum=1)
@@ -93,6 +95,9 @@ class ArtifactStore:
         self._bytes = self._count = self._readers = 0
         self._broken = self.closed = False
         try:
+            self.uploads = ArtifactUploads(
+                self, max_transfers=max_transfers, ttl_seconds=upload_ttl_seconds
+            )
             _directory(directory)
             self._journal = Journal(
                 directory / "events",
@@ -104,9 +109,12 @@ class ArtifactStore:
             )
             _directory(self._data)
             _directory(self._scratch)
+            _directory(self.uploads._directory)
             self._index = ArtifactIndex(cache_root)
             self._recover()
         except BaseException:
+            if hasattr(self, "uploads"):
+                self.uploads.close()
             if hasattr(self, "_index"):
                 self._index.close()
             if hasattr(self, "_journal"):
@@ -137,6 +145,8 @@ class ArtifactStore:
         elif first.kind != "artifacts.open" or dict(first.data) != identity:
             raise ValueError("artifact storage belongs to another owner")
         for row in rows:
+            if self.uploads.replay(row.kind, row.data):
+                continue
             if row.kind == "artifact.alias":
                 self._index.set_alias(ArtifactAlias.from_dict(dict(row.data)))
                 continue
@@ -148,10 +158,6 @@ class ArtifactStore:
             self._index.insert(reference)
             self._bytes += reference.size_bytes
             self._count += 1
-        if self._bytes > self.max_bytes or self._count > self.max_artifacts:
-            raise ValueError("retained artifacts exceed configured storage limits")
-        if self._index.alias_count() > self.max_artifacts:
-            raise ValueError("retained artifact names exceed configured storage limits")
         # The exclusive journal writer owns these private directories. Published
         # references are never swept; uncertain commits were reconciled above.
         with os.scandir(self._data) as entries:
@@ -161,6 +167,11 @@ class ArtifactStore:
                 if not self._index.contains(entry.name):
                     Path(entry.path).unlink()
         _sync_directory(self._data)
+        self.uploads.recover()
+        if self._bytes > self.max_bytes or self._count > self.max_artifacts:
+            raise ValueError("retained artifacts exceed configured storage limits")
+        if self._index.alias_count() > self.max_artifacts:
+            raise ValueError("retained artifact names exceed configured storage limits")
         with os.scandir(self._scratch) as entries:
             for entry in entries:
                 if not entry.name.startswith(
@@ -343,7 +354,10 @@ class ArtifactStore:
             raise
 
     def _capacity(self, ids: tuple[str, ...], size: int) -> None:
-        if self._reserved.intersection(ids):
+        self.uploads.expire()
+        if self._reserved.intersection(ids) or any(
+            self._index.upload(name) is not None for name in ids
+        ):
             raise RuntimeError("artifact publication is already in progress")
         if (
             self._bytes + size > self.max_bytes
@@ -463,6 +477,7 @@ class ArtifactStore:
                 raise RuntimeError("artifact producers or readers still own storage")
             for pending in tuple(self._pending.values()):
                 self._release(pending)
+            self.uploads.close()
             self._index.close()
             self._journal.close()
             self._disk.close()
