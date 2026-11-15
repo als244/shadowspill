@@ -16,6 +16,7 @@ from shadowspill.server.records.requests import RunIdentity
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.requests import OperationRequest, RequestIdentity
+from shadowspill_client.protocol.service import ServiceError
 from shadowspill_client.transport.http import HTTPTransport, RemoteError
 
 
@@ -153,17 +154,22 @@ def test_http_run_pages_fit_the_control_envelope_without_losing_cursor_rows(
         labels = {f"label-{i}": "x" * 256 for i in range(16)}
         ids = [f"run-{i:03}" for i in range(128)]
         for run_id in ids:
+            identity = RunIdentity("owner", "session", run_id)
             ctx.service.catalog.create(
-                RunIdentity("owner", "session", run_id),
+                identity,
                 request_sha256=creation.reference.sha256,
                 configuration=creation.configuration,
                 labels=labels,
+            )
+            ctx.service.catalog.stop(
+                identity, ServiceError("stopped", "\U0010ffff" * 1024)
             )
         seen, cursor = [], ""
         while True:
             page = client.request(
                 "GET", f"/v1/runs/session?limit=128&after={cursor}"
             ).value
+            assert len(page.runs) <= 32
             seen.extend(run.run_id for run in page.runs)
             if page.next_cursor is None:
                 break
@@ -181,3 +187,19 @@ def test_http_run_pages_fit_the_control_envelope_without_losing_cursor_rows(
             with pytest.raises(RemoteError) as bad:
                 client.request("GET", "/v1/runs/session?" + query)
             assert bad.value.status == 400
+
+
+def test_oversize_registration_publishes_no_artifacts_or_creation_job(
+    tmp_path, monkeypatch
+):
+    with configured(tmp_path, monkeypatch) as ctx, endpoint(ctx) as (client, _):
+        creation = TrainingCreation(
+            ctx.config, labels={str(i): "界" * 256 for i in range(16)}
+        )
+        with ctx.service.artifacts("owner") as artifacts:
+            assert artifacts.page() == ()
+            with pytest.raises(RemoteError) as invalid:
+                client.request("POST", ROOT, creation)
+            assert invalid.value.status == 400 and artifacts.page() == ()
+        assert ctx.jobs.used == (0, 0) and not ctx.owners
+        assert ctx.service.catalog.get(IDENTITY) is None

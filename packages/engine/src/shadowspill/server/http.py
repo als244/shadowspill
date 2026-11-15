@@ -39,6 +39,7 @@ from .artifacts import ArtifactStore
 from .authentication import BearerTokens
 from .creation_records import CreationRecord
 from .records.requests import RequestRecords, RunIdentity
+from .records.run_index import RUN_BYTES
 
 if TYPE_CHECKING:
     from _typeshed import WriteableBuffer
@@ -516,14 +517,17 @@ class _Handler(BaseHTTPRequestHandler):
             if set(query) - {"after", "limit"}:
                 raise ProtocolError("unknown run-list query")
             limit = int(query.get("limit", ["32"])[0])
+            if not 1 <= limit <= 128:
+                raise ProtocolError("run page limit must be in 1..128")
+            limit = min(limit, MAX_METADATA_BYTES // RUN_BYTES)
             rows = catalog.page(
                 owner, parts[2], after=query.get("after", [""])[0], limit=limit
             )
             if any(row.owner_id != owner or row.session_id != parts[2] for row in rows):
                 raise PermissionError("run page crossed authenticated scope")
             cursor = rows[-1].run_id if len(rows) == limit else None
-            # The catalog admits each persisted RunInfo within 8 KiB; up to
-            # 128 rows fit the common control envelope without partial records.
+            # Full lifecycle rows include failure/provenance headroom. Return
+            # fewer rows when needed to fit the common control envelope.
             self._reply(RunPage(rows, cursor))
             return
         if len(parts) != 4 or query:

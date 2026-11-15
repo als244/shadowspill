@@ -17,6 +17,7 @@ from shadowspill_client.protocol.service import ServiceError
 from .http import RunAccess
 from .live import LiveRun
 from .records.requests import RunIdentity
+from .records.run_index import registration_bytes
 from .storage import ServiceStorage
 
 
@@ -184,6 +185,7 @@ class RunJobs:
                 name=name,
                 labels={} if labels is None else labels,
             )
+            registration_bytes(info)
             memory = self._memory.reserve(self.host_bytes, timeout=0)
             job = _Job(info, memory)
             self._jobs[identity] = job

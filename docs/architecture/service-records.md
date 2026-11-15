@@ -52,7 +52,10 @@ conflicting reuse cannot start another job. GET on the same URL returns scoped
 creation progress or the saved terminal record. HTTP 202 continues until the
 creator thread returns and initialized workers are available. No polling request
 can start or replay work. Run listings use bounded owner/session pages with an
-explicit continuation cursor; each persisted row has an 8 KiB limit.
+explicit continuation cursor. Registration must fit 8 KiB before any creation
+artifact is published. Full lifecycle records have 32 KiB of space for the Plan
+reference, history ID and worst-case encoded failure diagnostic. HTTP pages return
+at most 32 complete rows to fit the shared 1 MiB control envelope.
 
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration

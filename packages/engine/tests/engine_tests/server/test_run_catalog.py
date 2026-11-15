@@ -8,6 +8,7 @@ import pytest
 
 from shadowspill.server.records.journal import Journal
 from shadowspill.server.records.requests import RunIdentity
+from shadowspill.server.records.run_index import RUN_BYTES, run_bytes
 from shadowspill.server.records.runs import INDEX_BYTES, RunCatalog
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.codec import ProtocolError, decode, encode
@@ -73,6 +74,26 @@ def test_exact_creation_retries_and_original_provenance_survive_close_and_restar
         with pytest.raises(RuntimeError, match="earlier server"):
             records.ready(IDENTITY, plans=PLANS, initial_history_id="history")
     assert budget.used == (0, 0)
+
+
+def test_registration_leaves_room_for_maximum_failure_and_ready_provenance(tmp_path):
+    error = ServiceError("x" * 128, "\U0010ffff" * 1024)
+    plans = ArtifactRef("p" * 128, "b" * 64, (1 << 63) - 1, "x" * 256)
+    labels = {str(i): "x" * 256 for i in range(16)}
+    with catalog(tmp_path) as records:
+        create(records, labels=labels, name="x" * 256)
+        records.progress(IDENTITY, "initializing")
+        records.ready(IDENTITY, plans=plans, initial_history_id="h" * 128)
+        stopped = records.stop(IDENTITY, error)
+        assert 8192 < len(run_bytes(stopped)) <= RUN_BYTES
+        failed_id = replace(IDENTITY, run_id="failed")
+        create(records, failed_id, labels=labels, name="x" * 256)
+        failed = records.fail(failed_id, error)
+        assert len(run_bytes(failed)) <= RUN_BYTES
+    with catalog(tmp_path, incarnation="replacement") as records:
+        assert records.get(IDENTITY) == stopped
+        assert records.get(failed_id) == failed
+        assert not records.interrupted()
 
 
 @pytest.mark.parametrize(

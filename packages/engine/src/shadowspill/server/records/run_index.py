@@ -9,7 +9,15 @@ from shadowspill_client.protocol.runs import RunInfo
 
 from .requests import RunIdentity
 
-RUN_BYTES = 8192
+REGISTRATION_BYTES = 8192
+# Preserve the registration allowance and leave room for a 4 KiB Plan reference,
+# a 128-character history ID and the complete ServiceError, whose 1,024 Unicode
+# characters can require 12 JSON bytes each. Caller-owned pages remain bounded.
+RUN_BYTES = 32 << 10
+
+
+def registration_bytes(info: RunInfo) -> bytes:
+    return encode(info, max_bytes=REGISTRATION_BYTES)
 
 
 def run_bytes(info: RunInfo) -> bytes:

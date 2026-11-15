@@ -13,10 +13,11 @@ from shadowspill_client.protocol.requests import ArtifactRef, identifier
 from shadowspill_client.protocol.runs import CREATION_STAGES, CreationStage, RunInfo
 from shadowspill_client.protocol.service import ServiceError
 
+from .artifact_index import reference_bytes
 from .journal import Journal
 from .journal_format import JournalLimits, JournalRecord
 from .requests import RunIdentity
-from .run_index import RUN_BYTES, RunIndex, run_bytes
+from .run_index import RUN_BYTES, RunIndex, registration_bytes, run_bytes
 
 INDEX_BYTES = 4 << 20
 
@@ -171,6 +172,7 @@ class RunCatalog:
             name=name,
             labels={} if labels is None else labels,
         )
+        registration_bytes(requested)
         with self._mutex:
             self._usable()
             before = self._index.get(identity)
@@ -206,6 +208,7 @@ class RunCatalog:
         self, identity: RunIdentity, *, plans: ArtifactRef, initial_history_id: str
     ) -> RunInfo:
         """The caller must have confirmed all workers' actual initialized readiness."""
+        reference_bytes(plans)
         with self._mutex:
             before = self._require(identity, live=True)
             return self._update(
