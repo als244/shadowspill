@@ -16,7 +16,10 @@ class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, *args):
         if fullname.split(".")[0] in {"torch", "triton", "pynvml"}:
             raise AssertionError("framework import in controller: " + fullname)
-        if fullname.startswith("shadowspill_workloads.recipes."):
+        if fullname.startswith("shadowspill_workloads.recipes.") or (
+            fullname.startswith("shadowspill_workloads.")
+            and ".implementations." in fullname
+        ):
             raise AssertionError("model import in controller: " + fullname)
 
 
@@ -71,7 +74,7 @@ with Server(
                 [
                     os.environ["SHADOWSPILL_DEMO_CLIENT_PYTHON"],
                     "-I",
-                    os.environ["SHADOWSPILL_REGRESSION_CLIENT_SCRIPT"],
+                    os.environ["SHADOWSPILL_DEMO_CLIENT_SCRIPT"],
                 ]
             ),
         ]
@@ -79,7 +82,11 @@ with Server(
     else:
         command = [
             sys.executable,
-            str(Path(__file__).with_name("_regression_service_client.py")),
+            str(
+                Path(__file__).with_name(
+                    options.get("client_script", "_regression_service_client.py")
+                )
+            ),
         ]
     client = subprocess.run(
         command, input=json.dumps(options), text=True, capture_output=True, timeout=660
@@ -103,8 +110,12 @@ assert not any(name in sys.modules for name in ("torch", "triton", "pynvml", "ml
 receipt.update(
     all_server_claims_released=True,
     controller_framework_free=True,
-    model="supplied regression: Linear(16,32), SiLU, Linear(32,8)",
-    oracle="independent NumPy SiLU derivatives and AdamW equations",
+    model=options.get(
+        "model_description", "supplied regression: Linear(16,32), SiLU, Linear(32,8)"
+    ),
+    oracle=options.get(
+        "oracle_description", "independent NumPy SiLU derivatives and AdamW equations"
+    ),
 )
 (root / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
 print("Qualified supplied regression step/split/evaluation/AdamW resume")
