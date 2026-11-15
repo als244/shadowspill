@@ -178,8 +178,6 @@ from the saved seed, restore identity and logical stream, recorded in
 `manifest.info.conversion.randomness`. Physical GPU identity does not affect seeds.
 Custom model-owned generators still require explicit registered state support.
 
-Public-client qualification covers exact stochastic replay for native and
-converted resume on one GPU, with independent loss/update checks for `step` and
-split updates. Service base omission and resumable uploads or downloads remain
-under implementation. Distributed conversion and training still require hardware
-qualification.
+Service base omission and resumable uploads or downloads remain under
+implementation. Qualification evidence and remaining hardware coverage are
+tracked separately from this API contract.
