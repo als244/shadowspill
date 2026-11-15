@@ -11,6 +11,7 @@ from shadowspill.training.worker.protocol import WorkerScope
 from shadowspill_client.buffers import BufferBudget
 
 marker, mode = Path(sys.argv[1]), sys.argv[2]
+rank = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 SIZE = (5 << 16) + 17
 
 
@@ -32,8 +33,9 @@ def execute(bound):
         output.write(b"x" * 17)
     if mode == "lost_completion":
         os._exit(42)
+    scope = f"{rank}-" if len(sys.argv) > 3 else ""
     ref = output.reference(
-        f"output-{bound.command.invocation}", "application/octet-stream"
+        f"output-{scope}{bound.command.invocation}", "application/octet-stream"
     )
     if mode == "bad_reference":
         from dataclasses import replace
@@ -43,5 +45,5 @@ def execute(bound):
 
 
 WorkerLoop(
-    WorkerScope("run", "server", "process-1", 0), bind, execute, BufferBudget(1)
+    WorkerScope("run", "server", "process-1", rank), bind, execute, BufferBudget(1)
 ).serve(sys.stdin.buffer, sys.stdout.buffer)

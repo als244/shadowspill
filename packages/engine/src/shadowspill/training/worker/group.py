@@ -1,7 +1,9 @@
 """Stage all participants, then release all before waiting on collective work."""
 
-from collections.abc import Callable, Mapping
-from contextlib import ExitStack
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import ExitStack, contextmanager
 from threading import Lock, RLock
 from types import MappingProxyType
 from typing import Self
@@ -77,8 +79,23 @@ class WorkerGroup:
         The dispatcher records completion before its publisher handles a failed
         output reply. Unknown execution/lost replies still stop the whole group.
         """
+        with self.staged(commands) as invocation:
+            invocation.execute()
+            for rank in self.connections:
+                invocation.finish(rank)
+            return invocation.results
+
+    @contextmanager
+    def staged(self, commands: Mapping[int, WorkerCall]) -> Iterator[WorkerInvocation]:
+        """Pause after every ready reply so the owner can admit complete outputs.
+
+        Resource admission failure here aborts all ready workers and confirms
+        unstarted execution. Once released, any unconsumed or unknown completion
+        stops the group. Ordinary run() uses this same boundary without a pause.
+        """
         if not self._busy.acquire(blocking=False):
             raise RuntimeError("another worker-group invocation is in flight")
+        invocation = None
         try:
             self._available()
             # All local metadata is checked before any worker receives a command.
@@ -117,23 +134,31 @@ class WorkerGroup:
                     raise ExecutionNotStarted(
                         f"Worker {rank} rejected input staging: {reply.message}"
                     )
-                for connection in self.connections.values():
-                    connection.release("execute")
-                completed = {}
-                for rank, connection in self.connections.items():
-                    reply = connection.finished()
-                    if reply.effect != "completed":
+                invocation = WorkerInvocation(self.connections, staged)
+                try:
+                    yield invocation
+                except Exception as error:
+                    if not invocation.released:
+                        invocation._abort()
+                        raise ExecutionNotStarted(str(error)) from error
+                    if isinstance(error, ExecutionNotStarted):
                         raise RuntimeError(
-                            f"Worker {rank} failed after release: {reply.message}"
-                        )
-                    completed[rank] = reply
-                return MappingProxyType(completed)
+                            "released workers cannot claim unstarted execution"
+                        ) from error
+                    raise
+                if not invocation.released:
+                    invocation._abort()
+                    raise ExecutionNotStarted("staged invocation was not released")
+                if not invocation.complete:
+                    raise RuntimeError("released workers have unconsumed completions")
             except ExecutionNotStarted:
                 raise
             except BaseException:
                 self.close()
                 raise
         finally:
+            if invocation is not None:
+                invocation._active = False
             self._busy.release()
 
     def _available(self) -> None:
@@ -158,3 +183,60 @@ class WorkerGroup:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+class WorkerInvocation:
+    """One staged group, borrowed only inside WorkerGroup.staged().
+
+    Release is broadcast before consuming any participant. The caller may receive
+    an admitted binary stream from a connection before finish(rank); its matching
+    ordinary reply still establishes completion. No command is ever resent.
+    """
+
+    def __init__(
+        self,
+        connections: Mapping[int, WorkerConnection],
+        ready: Mapping[int, WorkerReply],
+    ) -> None:
+        self.connections = connections
+        self.ready = MappingProxyType(dict(ready))
+        self.released = False
+        self._active = True
+        self._completed: dict[int, WorkerReply] = {}
+
+    @property
+    def complete(self) -> bool:
+        return self._completed.keys() == self.connections.keys()
+
+    @property
+    def results(self) -> Mapping[int, WorkerReply]:
+        if not self.complete:
+            raise RuntimeError("worker invocation has incomplete results")
+        return MappingProxyType(dict(self._completed))
+
+    def execute(self) -> None:
+        if not self._active or self.released:
+            raise RuntimeError("worker invocation is retired or already released")
+        # Set before the first send: a partial release is never an unstarted abort.
+        self.released = True
+        for connection in self.connections.values():
+            connection.release("execute")
+
+    def finish(self, rank: int) -> WorkerReply:
+        if not self._active or not self.released or rank in self._completed:
+            raise RuntimeError(
+                "worker completion is retired, unstarted or already read"
+            )
+        reply = self.connections[rank].finished()
+        if reply.effect != "completed":
+            raise RuntimeError(f"Worker {rank} failed after release: {reply.message}")
+        self._completed[rank] = reply
+        return reply
+
+    def _abort(self) -> None:
+        if not self._active or self.released:
+            raise RuntimeError("cannot abort a retired or released invocation")
+        for connection in self.connections.values():
+            connection.release("abort")
+        for connection in self.connections.values():
+            connection.finished()

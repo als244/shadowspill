@@ -169,6 +169,15 @@ or reply invalidates the channel and cannot authorize replay. Real CPU children
 exercise transfers directly into admitted artifact storage, process loss at both
 boundaries, and consecutive invocations. Save-command binding remains unfinished.
 
+`WorkerGroup.staged` exposes the existing all-ready boundary to storage admission.
+Ordinary `run` uses that same path. An admission failure aborts every ready worker
+and confirms that none executed; release broadcasts to all ranks before any reply
+is consumed. After release, missing completions or a false claim of unstarted
+execution stop the group. Two real CPU workers exercise this path through one
+staged persistent artifact group, including insufficient storage and loss of the
+second completion. This is internal invocation ownership, separate from client
+training settings and the server's setup component.
+
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
 and host-key verification to OpenSSH. Existing masters receive only forward and

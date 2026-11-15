@@ -31,6 +31,67 @@ def commands(invocation=1, sequence=1):
     }
 
 
+def test_all_ready_boundary_precedes_release_and_retires_its_borrowed_invocation():
+    with workers() as (group, events, stopped):
+        with group.staged(commands()) as invocation:
+            assert set(invocation.ready) == {0, 1}
+            assert all(reply.status == "ready" for reply in invocation.ready.values())
+            assert sorted(events) == [(0, "stage", 1), (1, "stage", 1)]
+            assert not invocation.released and not invocation.complete
+            with pytest.raises(RuntimeError, match="another worker-group"):
+                group.run(commands())
+            invocation.execute()
+            # Both workers wait on a barrier; release must broadcast before reads.
+            assert invocation.finish(1).effect == "completed"
+            assert not invocation.complete
+            assert invocation.finish(0).effect == "completed"
+            assert invocation.complete and set(invocation.results) == {0, 1}
+        assert not stopped and group.valid
+        with pytest.raises(RuntimeError, match="retired"):
+            invocation.execute()
+        with pytest.raises(RuntimeError, match="retired"):
+            invocation.finish(0)
+        assert set(group.run(commands(2, 2))) == {0, 1}
+
+
+@pytest.mark.parametrize("failure", ["admission", "unreleased"])
+def test_output_admission_failure_aborts_every_rank_without_execution(failure):
+    with workers() as (group, events, stopped):
+        with (
+            pytest.raises(ExecutionNotStarted),
+            group.staged(commands()) as invocation,
+        ):
+            assert not invocation.released
+            if failure == "admission":
+                raise ValueError("persistent storage cannot admit this generation")
+        assert sorted(events) == [(0, "stage", 1), (1, "stage", 1)]
+        assert not stopped and group.valid
+        assert {
+            connection.next_invocation for connection in group.connections.values()
+        } == {2}
+        group.run(commands(2, 2))
+        assert sorted(event for event in events if event[1] == "execute") == [
+            (0, "execute", 2),
+            (1, "execute", 2),
+        ]
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing_reply", "false_unstarted", "duplicate_release"]
+)
+def test_released_context_requires_all_replies_and_cannot_claim_unstarted(failure):
+    with workers() as (group, events, stopped):
+        with pytest.raises(RuntimeError), group.staged(commands()) as invocation:
+            invocation.execute()
+            invocation.finish(0)
+            if failure == "false_unstarted":
+                raise ExecutionNotStarted("cannot undo an already released invocation")
+            if failure == "duplicate_release":
+                invocation.execute()
+        assert stopped and group.closed and not group.valid
+        assert len([event for event in events if event[1] == "execute"]) == 2
+
+
 def test_failed_owned_process_cleanup_can_retry_without_reusing_worker_channels():
     attempts = []
     connection = WorkerConnection(SCOPE, io.BytesIO(), io.BytesIO())
