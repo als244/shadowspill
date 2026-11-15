@@ -249,6 +249,11 @@ a content-derived ID. Copying a checkpoint alone does not copy configuration,
 Plans or a frozen base. Missing setup dependencies are reported before workers
 start. Upload registration verifies file checksums and the complete rank set;
 normal setup/restore still checks executable Plans and tensor compatibility.
+For native resume with the copied Plans, `create_training_client(plans=plans,
+checkpoint=copied)` reads defaults from the checkpoint's recorded configuration;
+generated Plan summary pages do not need to be copied. Selecting different target
+Plans uses their saved configuration, or the explicit `config` supplied by the
+caller.
 
 Pass `runtime_trace=True` to a compute call to record that invocation. Its
 `result.traces` contains downloadable ZIP handles, one per participating worker.

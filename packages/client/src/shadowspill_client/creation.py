@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from ._async import CallFuture
 from .artifacts import ArtifactHandle
+from .checkpoints import CheckpointHandle
 from .protocol.codec import MAX_METADATA_BYTES, decode, digest, encode
 from .protocol.creation import TrainingCreation
 from .protocol.plans import PlanSummaryPage, summary_id
@@ -80,8 +81,7 @@ def _attach(service: ServiceClient, info: RunInfo) -> WriterLease:
         service._work.pause()
 
 
-def _config(service: ServiceClient, info: RunInfo) -> ResolvedTraining:
-    reference = info.configuration
+def _config(service: ServiceClient, reference: ArtifactRef) -> ResolvedTraining:
     if reference.size_bytes > MAX_METADATA_BYTES:
         raise ValueError("saved configuration exceeds its control metadata bound")
     with BytesIO() as stream:
@@ -102,12 +102,39 @@ def get_training_client(
 
     def attach() -> TrainingClient:
         info = _ready(service, run_id, read_only=read_only)
-        config = _config(service, info)
+        config = _config(service, info.configuration)
         writer = None if read_only else _attach(service, info)
         return TrainingClient(service, info, config, writer)
 
     service._work.submit(attach, future=future)
     return future
+
+
+def _resume_config(
+    service: ServiceClient, plans: ArtifactRef, checkpoint: ArtifactRef
+) -> ResolvedTraining:
+    manifest = CheckpointHandle(checkpoint, service)._manifest()[0]
+    if manifest.info.plans == plans:
+        # A copied native checkpoint already pins its exact resolved settings.
+        # It need not carry a generated summary/cache page from the old server.
+        reference = manifest.info.configuration
+        del manifest
+        return _config(service, reference)
+    del manifest
+    # Changed ownership uses the target Plans' settings, not the source layout.
+    page = service._request(
+        "GET", "/v1/artifacts/" + summary_id(plans, 0), PlanSummaryPage
+    )
+    if page.plans != plans or page.page != 0:
+        raise ValueError("saved configuration summary belongs to different Plans")
+    resolved = service._request(
+        "GET",
+        "/v1/artifacts/configuration." + page.configuration_sha256,
+        ResolvedTraining,
+    )
+    if digest(resolved) != page.configuration_sha256:
+        raise ValueError("saved configuration differs from its Plans summary")
+    return resolved
 
 
 def create_training_client(
@@ -146,21 +173,8 @@ def create_training_client(
 
     def create() -> TrainingClient:
         if settings is None:
-            assert plan_ref is not None
-            page = service._request(
-                "GET", "/v1/artifacts/" + summary_id(plan_ref, 0), PlanSummaryPage
-            )
-            if page.plans != plan_ref or page.page != 0:
-                raise ValueError(
-                    "saved configuration summary belongs to different Plans"
-                )
-            resolved = service._request(
-                "GET",
-                "/v1/artifacts/configuration." + page.configuration_sha256,
-                ResolvedTraining,
-            )
-            if digest(resolved) != page.configuration_sha256:
-                raise ValueError("saved configuration differs from its Plans summary")
+            assert plan_ref is not None and checkpoint_ref is not None
+            resolved = _resume_config(service, plan_ref, checkpoint_ref)
         elif isinstance(settings, TrainingSetup):
             resolved = service._request(
                 "POST", "/v1/training/describe", TrainingPreview, settings

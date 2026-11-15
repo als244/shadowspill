@@ -26,6 +26,7 @@ from shadowspill_client import ServiceClient, Weights
 from shadowspill_client.creation import CreationError
 from shadowspill_client.protocol.checkpoints import CheckpointConversion, CheckpointInfo
 from shadowspill_client.protocol.creation import TrainingCreation
+from shadowspill_client.protocol.plans import summary_id
 
 
 def checkpoint(ctx):
@@ -55,6 +56,27 @@ def checkpoint(ctx):
             ranks,
             lambda rank, sink: stream_rank(executors[rank.rank], info, sink),
         )
+
+
+def test_native_resume_reads_checkpoint_defaults_without_a_generated_plan_summary(
+    tmp_path, monkeypatch
+):
+    with configured(tmp_path, monkeypatch, saved=True) as ctx:
+        source = checkpoint(ctx)
+        with ctx.service.artifacts("owner") as artifacts:
+            assert artifacts.get(summary_id(ctx.saved, 0)) is None
+        with (
+            endpoint(ctx) as (transport, _),
+            ServiceClient(address(transport), token=TOKEN) as service,
+        ):
+            training = service.create_training_client(
+                plans=service.artifact(ctx.saved), checkpoint=service.artifact(source)
+            ).result(10)
+            assert training.get_config() == ctx.config
+            assert ctx.owners[-1].run.controller.boundary.completed_updates == 7
+            assert not ctx.phases
+            training.close().result(5)
+            until(lambda: ctx.jobs.used == (0, 0))
 
 
 @pytest.mark.parametrize("saved", [False, True])
