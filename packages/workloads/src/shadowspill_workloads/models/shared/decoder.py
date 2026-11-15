@@ -218,7 +218,12 @@ def packed_metadata(
     sequence = torch.searchsorted(ends, token, right=True)
     positions = (token - (ends - sequence_lengths)[sequence]).long()
     cu_seqlens = F.pad(ends, (1, 0))
-    return Packing(positions, cu_seqlens, min(capacity, tokens.shape[1]), None)
+    # Native variable-length GQA has a max_seqlen=1 specialization that assumes
+    # every reserved sequence slot owns a token. Tensor metadata deliberately
+    # retains empty slots. A conservative kernel length bound of two selects
+    # the general varlen path; actual token positions, rotary indices and the
+    # scheduled input capacity stay unchanged.
+    return Packing(positions, cu_seqlens, max(2, min(capacity, tokens.shape[1])), None)
 
 
 def apply_rotary(
