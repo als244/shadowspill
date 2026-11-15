@@ -6,6 +6,7 @@ import json
 import socket
 import sys
 from dataclasses import replace
+from fnmatch import fnmatchcase
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -37,7 +38,7 @@ WEIGHTS = np.array([1.0, -0.5, 0.0])
 class Oracle:
     """Explicit tanh/softmax derivatives; no engine or autodiff dependency."""
 
-    def __init__(self, initial):
+    def __init__(self, initial, *, trainable=None):
         self.weights = {
             name: np.asarray(value, dtype=np.float32).copy()
             for name, value in initial.items()
@@ -45,6 +46,12 @@ class Oracle:
         self.gradients = {
             name: np.zeros(value.shape, dtype=np.float64)
             for name, value in self.weights.items()
+        }
+        self.trainable = {
+            name
+            for name in self.weights
+            if trainable is None
+            or any(fnmatchcase(name, pattern) for pattern in trainable)
         }
 
     def forward_backward(self, noise, temperature=1.0):
@@ -86,7 +93,8 @@ class Oracle:
 
     def update(self, rate, scale):
         for name, value in self.weights.items():
-            value -= rate * scale * self.gradients[name]
+            if name in self.trainable:
+                value -= rate * scale * self.gradients[name]
             self.gradients[name].fill(0)
 
 

@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,12 +33,17 @@ from shadowspill_client import (
 )
 
 
-def test_independent_numpy_oracle_matches_autograd_for_weighted_split_updates():
+@pytest.mark.parametrize("frozen", [False, True])
+def test_independent_numpy_oracle_matches_autograd_for_weighted_split_updates(frozen):
     with preserve_rng(torch.device("cpu")):
         torch.manual_seed(203)
         model = stochastic_definition.create(SimpleNamespace(num_classes=3))
+        if frozen:
+            for value in model.encoder.parameters():
+                value.requires_grad_(False)
         reference = Oracle(
-            {name: value.detach().numpy() for name, value in model.named_parameters()}
+            {name: value.detach().numpy() for name, value in model.named_parameters()},
+            trainable=["head.*"] if frozen else None,
         )
         optimizer = torch.optim.SGD(model.parameters(), lr=0.02, foreach=False)
         for temperature in (0.5, 1.0):
@@ -59,6 +65,8 @@ def test_independent_numpy_oracle_matches_autograd_for_weighted_split_updates():
                 backward=True,
             )
         for name, value in model.named_parameters():
+            if not value.requires_grad:
+                continue
             np.testing.assert_allclose(
                 reference.gradients[name], value.grad.numpy(), rtol=1e-5, atol=1e-6
             )
@@ -71,7 +79,7 @@ def test_independent_numpy_oracle_matches_autograd_for_weighted_split_updates():
             )
 
 
-def configured(tmp_path, monkeypatch):
+def configured(tmp_path, monkeypatch, *, trainable=None):
     installed = install(tmp_path / "site-packages", stochastic=True)
     for name in list(sys.modules):
         if name.split(".")[0] == "external_classifier_fixture":
@@ -82,7 +90,11 @@ def configured(tmp_path, monkeypatch):
     )
     return resolve_training(
         load_registry(["external-classifier-fixture"]),
-        **{**arguments(), "memory": Memory(device_gib=2, spill_gib=0.0625)},
+        **{
+            **arguments(),
+            "model": replace(arguments()["model"], trainable=trainable),
+            "memory": Memory(device_gib=2, spill_gib=0.0625),
+        },
         execution=Execution(seed=37),
         operations={
             "step": ["metrics"],

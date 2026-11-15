@@ -15,10 +15,11 @@ from shadowspill.training.worker.initialization import prepare_initialization
 
 
 @pytest.mark.cuda
+@pytest.mark.parametrize("frozen", [False, True], ids=["full", "frozen"])
 def test_public_uploaded_checkpoint_continues_step_and_split_training(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, frozen
 ):
-    setup = configured(tmp_path, monkeypatch)
+    setup = configured(tmp_path, monkeypatch, trainable=["head.*"] if frozen else None)
     model = setup.model.create()
     with (
         prepare_initialization(setup)[0].description.open(
@@ -65,3 +66,4 @@ def test_public_uploaded_checkpoint_continues_step_and_split_training(
     assert all(row["independent_step_and_split_oracle"] for row in receipt["runs"])
     assert receipt["runs"][1]["exact_training_and_evaluation_rng"]
     assert receipt["runs"][0]["checkpoint"] == receipt["runs"][1]["checkpoint"]
+    assert all(row["frozen_base_reconstructed"] == frozen for row in receipt["runs"])

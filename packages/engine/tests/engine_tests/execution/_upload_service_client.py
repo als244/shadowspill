@@ -5,6 +5,7 @@ import json
 import runpy
 import socket
 import sys
+import tarfile
 from pathlib import Path
 from tempfile import mkdtemp
 
@@ -35,6 +36,7 @@ def main():
     raw = sys.stdin.buffer.read((1 << 20) + 1)
     assert len(raw) <= 1 << 20
     options = json.loads(raw)
+    trainable = options["config"]["model"]["trainable"]
     connection = (
         {"ssh": SSH(options["ssh_host"], options["port"])}
         if options.get("ssh_host")
@@ -48,7 +50,7 @@ def main():
             training = client.create_training_client(
                 config=ResolvedTraining.from_dict(options["config"])
             ).result(180)
-            oracle = Oracle(options["initial"])
+            oracle = Oracle(options["initial"], trainable=trainable)
             first = training.step(records(), optim={"lr": 0.03}, grad_scale=0.5).result(
                 120
             )
@@ -61,6 +63,19 @@ def main():
             manifest = checkpoint.manifest().result(30)
             directory = Path(mkdtemp(prefix="shadowspill-training-upload-"))
             checkpoint.download(directory / "checkpoint").result(60)
+            assert (manifest.info.frozen_base is not None) == (trainable is not None)
+            if trainable is not None:
+                assert manifest.info.frozen_base.model.trainable == tuple(trainable)
+                for path in (directory / "checkpoint" / "ranks").iterdir():
+                    with tarfile.open(path) as archive:
+                        rank = json.loads(archive.extractfile("manifest.json").read())
+                    assert rank["omitted_parameters"] == [
+                        "encoder.bias",
+                        "encoder.weight",
+                    ]
+                    assert not {"encoder.bias", "encoder.weight"}.intersection(
+                        row["name"] for row in rank["tensors"]
+                    )
             dependencies = (manifest.info.configuration, manifest.info.plans)
             for reference in dependencies:
                 client.artifact(reference).download(directory / reference.id).result(60)
@@ -94,7 +109,7 @@ def main():
             ).value
             assert info.initial_checkpoint == checkpoint.reference
             assert info.initial_completed_updates == 1
-            oracle = Oracle(state["boundary_weights"])
+            oracle = Oracle(state["boundary_weights"], trainable=trainable)
 
         observations = []
 
@@ -140,7 +155,6 @@ def main():
         oracle.update(0.02, -0.5)
         assert split.completed_updates == 3
         finish(training.forward(records(targets=False), outputs="predictions"))
-        closed(client, training)
         if options["phase"] == "source":
             state["observations"] = observations
             state["final_weights"] = {
@@ -168,6 +182,27 @@ def main():
                 np.testing.assert_array_equal(
                     value, np.asarray(state["final_weights"][name], dtype=np.float32)
                 )
+        if trainable is not None:
+            restored = training.load_checkpoint(checkpoint.id).result(120)
+            assert restored.completed_updates == 1
+            oracle = Oracle(state["boundary_weights"], trainable=trainable)
+            again = training.step(
+                records(),
+                optim={"lr": 0.04},
+                grad_scale=1.25,
+                loss_params={"temperature": 1.5},
+            ).result(120)
+            values = outputs(again, memory)
+            oracle.check(values, again, temperature=1.5, backward=True)
+            np.testing.assert_array_equal(
+                values["noise"], observations[0]["outputs"]["noise"]
+            )
+            assert again.completed_updates == 2
+            following = training.save_checkpoint().result(120)
+            before = checkpoint.manifest().result(30)
+            after = following.manifest().result(30)
+            assert before.info.frozen_base == after.info.frozen_base
+        closed(client, training)
     assert memory.used == client._memory.used == client._work.pending.used == (0, 0)
     assert not any(name in sys.modules for name in ("torch", "triton", "shadowspill"))
     print(
@@ -181,6 +216,7 @@ def main():
                 "run_id": training.run_id,
                 "independent_step_and_split_oracle": True,
                 "exact_training_and_evaluation_rng": options["phase"] == "target",
+                "frozen_base_reconstructed": trainable is not None,
                 "observations": observations,
             }
         )
