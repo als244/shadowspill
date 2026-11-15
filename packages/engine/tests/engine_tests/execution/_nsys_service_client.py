@@ -15,6 +15,7 @@ import numpy as np
 
 from shadowspill_client import SSH, ServiceClient
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.protocol.runs import RunInfo
 from shadowspill_client.protocol.training import ResolvedTraining
 
 
@@ -157,6 +158,15 @@ def main():
             if enabled:
                 assert training.nsys().result(30).record.status == "pending"
             training.close().result(180)
+            deadline = monotonic() + 120
+            while True:
+                info = client._request(
+                    "GET", f"/v1/runs/nsys-session/{training.run_id}", RunInfo
+                )
+                if info.state == "closed":
+                    break
+                assert monotonic() < deadline, info
+                Event().wait(0.05)
             receipt = {
                 "run_id": training.run_id,
                 "captured": enabled,
