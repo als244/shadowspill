@@ -15,6 +15,7 @@ from engine_tests.server.test_checkpoints import stream_rank
 from engine_tests.server.test_checkpoints import workers as saved_workers
 from engine_tests.server.test_request_records import request
 from engine_tests.server.test_request_records import store as records_store
+from engine_tests.training.test_prepared_requests import family
 from engine_tests.training.test_worker_checkpoints import dispatch, running, save_call
 from shadowspill.checkpoint import checkpoint_size, load_checkpoint
 from shadowspill.checkpoint.identity import state_identity
@@ -28,12 +29,23 @@ from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.session.state import OperationState
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.checkpoints import CheckpointInfo
-from shadowspill_client.protocol.codec import decode, digest
+from shadowspill_client.protocol.codec import decode, digest, encode
 from shadowspill_client.protocol.requests import OperationRequest
 from shadowspill_client.results import TrainingRequestError
 
 
-def generation(artifacts, *, count=2, updates=3, name="source", bad_rank=False):
+def configuration():
+    return family().inventory.layouts.setup.config
+
+
+def generation(
+    artifacts, *, count=2, updates=3, name="source", bad_rank=False, config=None
+):
+    config_ref = artifacts.get("config")
+    if config is not None:
+        body = encode(config)
+        config_ref = reference(body, "configuration." + digest(config))
+        artifacts.put(config_ref, lambda _: io.BytesIO(body))
     info = CheckpointInfo(
         "session",
         "run",
@@ -41,7 +53,7 @@ def generation(artifacts, *, count=2, updates=3, name="source", bad_rank=False):
         f"{name}-{updates}",
         updates,
         count,
-        artifacts.get("config"),
+        config_ref,
         artifacts.get("plans"),
         sys.byteorder,
         metadata={"cursor": [4, 8]},
@@ -56,14 +68,14 @@ def generation(artifacts, *, count=2, updates=3, name="source", bad_rank=False):
             state_sha256=state_identity(executors[-1]),
             size_bytes=checkpoint_size(executors[-1], metadata=info.rank_metadata()),
         )
-    reference = publish_checkpoint(
+    published = publish_checkpoint(
         artifacts,
         info,
         ranks,
         lambda rank, sink: stream_rank(executors[rank.rank], info, sink),
         name=name,
     )
-    return reference, executors
+    return published, executors
 
 
 def compare_saved(artifacts, reference, expected, root):
@@ -124,7 +136,9 @@ def test_all_rank_restore_validates_before_release_and_never_replays(
             ranks=(0, 1),
             _workspace=budget.reserve(CHECKPOINT_METADATA_BYTES),
         )
-        resolver = CheckpointResolver(artifacts, session_id="session", world_size=2)
+        resolver = CheckpointResolver(
+            artifacts, session_id="session", world_size=2, configuration=configuration()
+        )
 
         def resolve():
             call.restore = resolver(command)
@@ -246,13 +260,77 @@ def test_public_missing_checkpoint_rejects_before_worker_work(tmp_path):
         assert training.close().result(10).completed_updates == 0
 
 
+@pytest.mark.parametrize(
+    "difference", ["semantics", "definition", "source", "defaults", "objective"]
+)
+def test_ordered_restore_checks_optimizer_interpretation_before_acceptance(
+    tmp_path, difference
+):
+    with connected(tmp_path, completed_updates=12) as (
+        training,
+        _,
+        http,
+        records,
+        controller,
+        _,
+    ):
+        config = training.get_config()
+        if difference == "semantics":
+            changed = replace(
+                config,
+                optimizer=replace(config.optimizer, config={"reinterpret": True}),
+            )
+        elif difference == "definition":
+            changed = replace(
+                config,
+                optimizer=replace(config.optimizer, definition="other-optimizer"),
+            )
+        elif difference == "source":
+            changed = replace(
+                config,
+                definition_sources={
+                    **config.definition_sources,
+                    "optimizer": replace(
+                        config.definition_sources["optimizer"], version="different"
+                    ),
+                },
+            )
+        elif difference == "defaults":
+            changed = replace(
+                config, optimizer=replace(config.optimizer, defaults={"lr": 100.0})
+            )
+        else:
+            changed = replace(
+                config,
+                objective=replace(config.objective, definition="another-objective"),
+            )
+        source, _ = generation(http.artifacts, count=1, config=changed)
+        before = controller.boundary
+        load = training.load_checkpoint(source.id)
+        if difference in ("semantics", "definition", "source"):
+            with pytest.raises(TrainingRequestError, match="optimizer semantics"):
+                load.result(10)
+            assert records.get(load.request_id)[1].acceptance is None
+            assert controller.boundary == before
+            assert not list(tmp_path.glob("executions-*"))
+        else:
+            result = load.result(10)
+            assert (
+                result.completed_updates == 3 and result.history_id != before.history_id
+            )
+            assert training.get_config() == config
+        training.close().result(10)
+
+
 def test_alias_resolves_at_ordered_acceptance_and_survives_record_reopen(tmp_path):
     with store(tmp_path) as artifacts, records_store(tmp_path) as records:
         for name in ("config", "plans"):
-            body = name.encode()
+            body = encode(configuration()) if name == "config" else name.encode()
             artifacts.put(reference(body, name), lambda _, body=body: io.BytesIO(body))
         original, _ = generation(artifacts, count=1)
-        resolver = CheckpointResolver(artifacts, session_id="session", world_size=1)
+        resolver = CheckpointResolver(
+            artifacts, session_id="session", world_size=1, configuration=configuration()
+        )
         command = OperationRequest(
             replace(request().identity, request_id="load", sequence=2),
             "restore",
@@ -291,6 +369,7 @@ def test_incompatible_generation_fails_before_acceptance(tmp_path, difference):
             http.artifacts,
             session_id="session",
             world_size=2 if difference == "world_size" else 1,
+            configuration=configuration(),
         )
         command = OperationRequest(request().identity, "restore", restore=source.id)
         if difference == "dependency":

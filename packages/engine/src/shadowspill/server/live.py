@@ -210,6 +210,7 @@ class LiveRun:
                         self._artifacts,
                         session_id=self.identity.session_id,
                         world_size=len(prepared),
+                        configuration=self._family.inventory.layouts.setup.config,
                     ),
                 ),
                 self._workers,

@@ -189,7 +189,7 @@ def test_new_setup_preserves_optimizer_interpretation_but_not_old_defaults(
             )
         with ctx.service.artifacts("owner") as artifacts:
             source = CheckpointResolver(
-                artifacts, session_id="unused", world_size=1
+                artifacts, session_id="unused", world_size=1, configuration=ctx.config
             ).resolve(reference)
             if change in ("semantics", "source"):
                 with pytest.raises(ValueError, match="optimizer semantics"):

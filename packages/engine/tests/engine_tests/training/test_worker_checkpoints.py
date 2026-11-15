@@ -32,7 +32,7 @@ from shadowspill.training.worker.requests import NodeFiles, WorkerRequests
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.checkpoint_settings import CheckpointSave
 from shadowspill_client.protocol.checkpoints import CheckpointManifest
-from shadowspill_client.protocol.codec import decode
+from shadowspill_client.protocol.codec import decode, encode
 from shadowspill_client.protocol.requests import OperationRequest
 
 
@@ -89,8 +89,11 @@ def running(root, artifacts, *, mode="normal", count=2):
                     ),
                 ),
             )
-        config = reference(b"config", "config")
-        artifacts.put(config, lambda _: io.BytesIO(b"config"))
+        from engine_tests.training.test_prepared_requests import family
+
+        config_body = encode(family().inventory.layouts.setup.config)
+        config = reference(config_body, "config")
+        artifacts.put(config, lambda _: io.BytesIO(config_body))
         plans = reference(b"plans", "plans")
         artifacts.put(plans, lambda _: io.BytesIO(b"plans"))
         checkpoints = RunCheckpoints(

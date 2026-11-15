@@ -56,12 +56,20 @@ def validate_resume_optimizer(
 class CheckpointResolver:
     """Borrow storage under the prepared call's bounded metadata reservation."""
 
-    def __init__(self, artifacts: ArtifactStore, *, session_id: str, world_size: int):
+    def __init__(
+        self,
+        artifacts: ArtifactStore,
+        *,
+        session_id: str,
+        world_size: int,
+        configuration: ResolvedTraining,
+    ):
         self.artifacts, self.session_id, self.world_size = (
             artifacts,
             session_id,
             world_size,
         )
+        self.configuration = configuration
 
     def __call__(self, request: OperationRequest) -> ResolvedCheckpoint:
         name = request.restore
@@ -116,4 +124,6 @@ class CheckpointResolver:
                 raise ValueError(
                     f"checkpoint dependency is unavailable: {dependency.id}"
                 )
-        return ResolvedCheckpoint(reference, value)
+        resolved = ResolvedCheckpoint(reference, value)
+        validate_resume_optimizer(self.artifacts, resolved, self.configuration)
+        return resolved

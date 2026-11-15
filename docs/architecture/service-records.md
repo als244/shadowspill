@@ -712,3 +712,9 @@ the saved update and publishes parent lineage only after every worker is ready.
 provenance and remain fixed across later operations, restore segments and close.
 Changing ownership or an optimizer's state interpretation still requires a
 supported conversion; setup may change defaults without reinterpreting state.
+
+Ordered in-place restore and new-run creation use the same optimizer compatibility
+check: definition/source, state configuration, groups and precision must match.
+Per-call defaults and objective provenance do not reinterpret tensor state. A
+mismatch fails before acceptance or startup; the prepared restore reservation
+covers both the global manifest and the bounded source configuration graph.

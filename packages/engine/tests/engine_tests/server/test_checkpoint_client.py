@@ -32,11 +32,15 @@ def connected(root, *, completed_updates=0):
         records_store(root) as records,
         running(root, http.artifacts, count=1) as (workers, publisher, _),
     ):
+        plans = family()
         prepared = PreparedRequests(
-            family(),
+            plans,
             cache_root=root,
             checkpoint=CheckpointResolver(
-                http.artifacts, session_id="session", world_size=1
+                http.artifacts,
+                session_id="session",
+                world_size=1,
+                configuration=plans.inventory.layouts.setup.config,
             ),
         )
         config = prepared.setup.config

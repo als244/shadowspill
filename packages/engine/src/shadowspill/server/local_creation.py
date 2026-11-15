@@ -41,7 +41,7 @@ from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.protocol.training import ResolvedTraining
 
 from .artifacts import ArtifactStore
-from .checkpoint_restore import CheckpointResolver, validate_resume_optimizer
+from .checkpoint_restore import CheckpointResolver
 from .creation_records import load_creation
 from .live import LiveRun
 from .plan_summaries import publish_summary
@@ -209,14 +209,13 @@ class LocalCreation:
                     self._artifacts,
                     session_id=self.identity.session_id,
                     world_size=setup.context.parallelism.world_size,
+                    configuration=setup.config,
                 ).resolve(creation.checkpoint)
             )
             # A complete checkpoint is the initializer. Historical fresh-weight
             # provenance in saved Plans never requires opening that old source.
             if checkpoint is None:
                 prepare_initialization(setup)
-            else:
-                validate_resume_optimizer(self._artifacts, checkpoint, setup.config)
             weights = []
             initial = creation.config.model.initialize
             if (
