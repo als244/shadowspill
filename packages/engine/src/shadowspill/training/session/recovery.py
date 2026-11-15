@@ -65,6 +65,7 @@ def fail_interrupted_requests(
                     if receipt is None
                     else receipt.completed_updates,
                     accumulation=None if receipt is None else receipt.accumulation,
+                    history_id=None if receipt is None else receipt.history_id,
                 ),
             )
             failed += 1

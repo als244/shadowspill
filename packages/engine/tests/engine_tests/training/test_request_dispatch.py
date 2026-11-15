@@ -32,7 +32,7 @@ def publish(receipt, work):
     return OperationResult(
         receipt.identity,
         receipt.operation,
-        "history",
+        receipt.history_id,
         receipt.outcome,
         receipt.completed_updates,
         receipt.accumulation,
@@ -211,6 +211,11 @@ def test_required_publication_failure_preserves_known_update_and_closes_host_out
         assert failed.failure.execution_effect == "completed"
         assert failed.failure.completed_updates == 1 and failed.failure.state_valid
         assert (
+            failed.failure.history_id
+            == records.execution("a").history_id
+            == state.boundary.history_id
+        )
+        assert (
             records.execution("a").completed_updates
             == state.boundary.completed_updates
             == 1
@@ -219,6 +224,24 @@ def test_required_publication_failure_preserves_known_update_and_closes_host_out
         assert work.closed
         assert dispatcher.run("a", execute, publish, participates=True) == failed
         assert calls == ["a"]
+
+
+def test_publisher_cannot_change_the_confirmed_history(tmp_path):
+    with store(tmp_path) as records:
+        state = OperationState(history_id="confirmed-history")
+        dispatcher = RequestDispatcher(records, state, max_pending=1)
+        submit(dispatcher, records, "a", 1)
+        failed = dispatcher.run(
+            "a",
+            lambda _: HostWork(),
+            lambda receipt, work: replace(
+                publish(receipt, work), history_id="invented-history"
+            ),
+            participates=True,
+        )
+        assert failed.failure.code == "publication_failed"
+        assert failed.failure.history_id == "confirmed-history"
+        assert state.boundary.valid and state.boundary.completed_updates == 1
 
 
 def test_optional_artifact_issue_leaves_training_successful(tmp_path):

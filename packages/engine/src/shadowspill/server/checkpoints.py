@@ -43,12 +43,11 @@ class RunCheckpoints:
         artifacts: ArtifactStore,
         *,
         session_id: str,
-        history: Callable[[], str],
         configuration: ArtifactRef,
         plans: ArtifactRef,
         world_size: int,
     ) -> None:
-        self.artifacts, self.session_id, self.history = artifacts, session_id, history
+        self.artifacts, self.session_id = artifacts, session_id
         self.configuration, self.plans, self.world_size = (
             configuration,
             plans,
@@ -69,7 +68,7 @@ class RunCheckpoints:
         return CheckpointInfo(
             self.session_id,
             request.identity.run_id,
-            self.history(),
+            transition.before.history_id,
             request.identity.request_id,
             transition.before.completed_updates,
             self.world_size,

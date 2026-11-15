@@ -20,6 +20,7 @@ def finish(records, state, key, *, participates=None):
         ExecutionReceipt(
             command.identity,
             command.operation,
+            boundary.history_id,
             "skipped" if transition.skipped else "completed",
             boundary.completed_updates,
             boundary.accumulation,
@@ -29,7 +30,7 @@ def finish(records, state, key, *, participates=None):
         OperationResult(
             command.identity,
             command.operation,
-            "history",
+            boundary.history_id,
             "skipped" if transition.skipped else "completed",
             boundary.completed_updates,
             boundary.accumulation,
@@ -143,14 +144,18 @@ def test_rejection_waits_for_earlier_execution_before_reporting_surviving_bounda
         boundary = state.complete(pending)
         records.executed(
             ExecutionReceipt(
-                a.identity, "step", "completed", boundary.completed_updates
+                a.identity,
+                "step",
+                boundary.history_id,
+                "completed",
+                boundary.completed_updates,
             )
         )
         records.complete(
             OperationResult(
                 a.identity,
                 "step",
-                "h",
+                boundary.history_id,
                 "completed",
                 boundary.completed_updates,
                 grad_scale=1,

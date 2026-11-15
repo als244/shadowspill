@@ -238,7 +238,7 @@ def invoke(
         return OperationResult(
             command.identity,
             operation,
-            "history",
+            receipt.history_id,
             receipt.outcome,
             receipt.completed_updates,
             receipt.accumulation,

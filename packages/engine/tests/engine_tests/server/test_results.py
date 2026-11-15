@@ -81,7 +81,6 @@ def test_discard_publishes_confirmed_state_without_tensor_scratch(tmp_path):
         ResultPublisher(
             artifacts,
             session_id="session",
-            history_id="history",
             root=tmp_path,
             memory=memory,
             disk=disk,
@@ -130,7 +129,6 @@ def test_production_publisher_restores_caller_order_and_records_loss(
         publisher = ResultPublisher(
             artifacts,
             session_id="session",
-            history_id="history",
             root=tmp_path,
             memory=memory,
             disk=disk,
@@ -165,7 +163,6 @@ def test_production_publisher_restores_caller_order_and_records_loss(
                 with ResultPublisher(
                     artifacts,
                     session_id="other-session",
-                    history_id="other-history",
                     root=tmp_path,
                     memory=memory,
                     disk=disk,
@@ -218,7 +215,6 @@ def test_failed_result_cleanup_remains_owned_for_publisher_retry(tmp_path, monke
         publisher = ResultPublisher(
             artifacts,
             session_id="session",
-            history_id="history",
             root=tmp_path,
             memory=memory,
             disk=disk,

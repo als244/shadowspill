@@ -144,10 +144,18 @@ def test_known_execution_and_output_publication_failure_remain_distinct(tmp_path
         with pytest.raises(ValueError, match="undispatched"):
             records.fail("a", Failure("output", "failed output", "completed", True, 1))
         records.dispatch("a")
-        receipt = ExecutionReceipt(command.identity, command.operation, "completed", 1)
+        receipt = ExecutionReceipt(
+            command.identity, command.operation, "history", "completed", 1
+        )
         records.executed(receipt)
         failure = Failure(
-            "output", "failed output", "completed", True, 1, receipt.accumulation
+            "output",
+            "failed output",
+            "completed",
+            True,
+            1,
+            receipt.accumulation,
+            history_id=receipt.history_id,
         )
         failed = records.fail("a", failure)
         assert records.submit(command) == failed

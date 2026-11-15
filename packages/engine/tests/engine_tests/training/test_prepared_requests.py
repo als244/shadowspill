@@ -138,7 +138,7 @@ def finish(dispatcher, inputs, command):
         return OperationResult(
             receipt.identity,
             receipt.operation,
-            "history",
+            receipt.history_id,
             receipt.outcome,
             receipt.completed_updates,
             receipt.accumulation,
@@ -213,7 +213,7 @@ def test_real_upload_selects_only_prepared_shapes_and_defaults_are_nonsticky(tmp
                 return OperationResult(
                     receipt.identity,
                     receipt.operation,
-                    "history",
+                    receipt.history_id,
                     receipt.outcome,
                     receipt.completed_updates,
                     receipt.accumulation,

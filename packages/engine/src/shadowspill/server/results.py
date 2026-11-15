@@ -27,13 +27,11 @@ class ResultPublisher:
         artifacts: ArtifactStore,
         *,
         session_id: str,
-        history_id: str,
         root: Path,
         memory: BufferBudget,
         disk: BufferBudget,
     ) -> None:
         self.session_id = identifier(session_id, "session ID")
-        self.history_id = identifier(history_id, "history ID")
         self.artifacts, self.root, self.memory, self.disk = (
             artifacts,
             root,
@@ -95,7 +93,7 @@ class ResultPublisher:
             return OperationResult(
                 call.request.identity,
                 call.request.operation,
-                self.history_id,
+                receipt.history_id,
                 receipt.outcome,
                 receipt.completed_updates,
                 receipt.accumulation,

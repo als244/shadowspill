@@ -93,7 +93,6 @@ def running(root, artifacts, *, mode="normal", count=2):
         checkpoints = RunCheckpoints(
             artifacts,
             session_id="session",
-            history=lambda: "history",
             configuration=config,
             plans=plans,
             world_size=count,
@@ -115,7 +114,6 @@ def running(root, artifacts, *, mode="normal", count=2):
             ResultPublisher(
                 artifacts,
                 session_id="session",
-                history_id="history",
                 root=root,
                 memory=memory,
                 disk=disk,
@@ -223,6 +221,11 @@ def test_ordered_rank_save_admission_receipt_and_publication(
             with artifacts.open(manifest_ref) as source:
                 manifest = decode(source.read())
             assert isinstance(manifest, CheckpointManifest)
+            assert (
+                manifest.info.history_id
+                == outcome.result.history_id
+                == state.boundary.history_id
+            )
             assert manifest.info.completed_updates == 9 and manifest.info.metadata[
                 "cursor"
             ] == (2, 7)

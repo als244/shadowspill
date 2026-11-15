@@ -58,6 +58,7 @@ def test_final_outcome_cannot_invent_or_change_execution_facts(tmp_path):
         for changed in (
             replace(result(command), completed_updates=1),
             replace(result(command), outcome="skipped"),
+            replace(result(command), history_id="other-history"),
         ):
             with pytest.raises(ValueError, match="differs from confirmed execution"):
                 records.complete(changed)
@@ -81,6 +82,7 @@ def test_final_outcome_cannot_invent_or_change_execution_facts(tmp_path):
             True,
             receipt.completed_updates,
             receipt.accumulation,
+            history_id=receipt.history_id,
         )
         assert records.fail("a", failure).failure == failure
 
@@ -117,13 +119,14 @@ def test_receipt_index_failure_after_commit_recovers_the_original_known_effect(
         assert failure.execution_effect == "completed"
         assert failure.completed_updates == receipt.completed_updates
         assert failure.accumulation == receipt.accumulation
+        assert failure.history_id == receipt.history_id
         assert not failure.state_valid and not state.boundary.valid
         assert fail_interrupted_requests(recovered, state).failed_requests == 0
 
 
 def test_restart_keeps_confirmed_update_count_without_restoring_live_counters(tmp_path):
     command = replace(request(), operation="step", mode="training")
-    receipt = ExecutionReceipt(command.identity, "step", "completed", 5)
+    receipt = ExecutionReceipt(command.identity, "step", "history", "completed", 5)
     with store(tmp_path) as records:
         records.submit(command)
         records.accept("a")

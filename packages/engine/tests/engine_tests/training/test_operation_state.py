@@ -24,6 +24,27 @@ def test_completion_projection_is_the_same_boundary_without_committing_it():
     assert state.complete(pending) == projected
 
 
+def test_restore_history_changes_only_at_confirmation_and_never_rewinds_identity():
+    state = OperationState(completed_updates=10, history_id="initial")
+    before = state.boundary
+    rejected = state.begin("restore", "rejected")
+    projected = state.completion(rejected, restored_updates=3)
+    assert projected.history_id != before.history_id
+    assert state.completion(rejected, restored_updates=3) == projected
+    assert state.boundary == before
+    assert state.fail(rejected, execution_started=False) == before
+
+    restore = state.begin("restore", "restore-1")
+    expected = state.completion(restore, restored_updates=3)
+    completed = state.complete(restore, restored_updates=3)
+    assert completed == expected and completed.completed_updates == 3
+    assert completed.history_id not in (before.history_id, projected.history_id)
+    assert state.complete(state.begin("forward", "next")) == completed
+    second = state.complete(state.begin("restore", "restore-2"), restored_updates=0)
+    assert second.history_id not in (before.history_id, completed.history_id)
+    assert second.completed_updates == 0
+
+
 def finish(state, command, request_id, **kwargs):
     pending = state.begin(command, request_id, **kwargs)
     state.complete(pending)

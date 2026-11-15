@@ -66,10 +66,13 @@ class Failure(Record):
     completed_updates: int | None = None
     accumulation: Accumulation | None = None
     failed_dependencies: Sequence[str] = ()
+    history_id: str | None = None
 
     def __post_init__(self) -> None:
         text(self.code, "error code")
         text(self.message, "error message")
+        if self.history_id is not None:
+            identifier(self.history_id, "history ID")
         if self.execution_effect not in ("not_started", "completed", "unknown"):
             raise ValueError("unknown execution effect")
         if type(self.state_valid) is not bool:
@@ -113,6 +116,7 @@ class ExecutionReceipt(Record):
 
     identity: RequestIdentity
     operation: Operation
+    history_id: str
     outcome: Literal["completed", "skipped"]
     completed_updates: int
     accumulation: Accumulation = field(default_factory=Accumulation)
@@ -122,6 +126,7 @@ class ExecutionReceipt(Record):
         object.__setattr__(
             self, "identity", record(RequestIdentity, self.identity, "identity")
         )
+        identifier(self.history_id, "history ID")
         if self.operation not in OPERATIONS or self.outcome not in (
             "completed",
             "skipped",
@@ -147,6 +152,7 @@ class ExecutionReceipt(Record):
         return cls(
             result.identity,
             result.operation,
+            result.history_id,
             result.outcome,
             result.completed_updates,
             result.accumulation,

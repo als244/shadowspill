@@ -261,6 +261,7 @@ class AcceptanceOrder:
             completed_updates=boundary.completed_updates if boundary.valid else None,
             accumulation=boundary.accumulation if boundary.valid else None,
             failed_dependencies=rejection.dependencies,
+            history_id=boundary.history_id if boundary.valid else None,
         )
         self._records.fail(request_id, failure)
         self._ready.pop(request_id, None)

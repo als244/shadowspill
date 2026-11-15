@@ -48,6 +48,7 @@ from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
 from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
 from shadowspill.training.session.controller import RunController  # noqa: E402
 from shadowspill.training.session.prepared import PreparedRequests  # noqa: E402
+from shadowspill.training.session.state import OperationState  # noqa: E402
 from shadowspill.training.worker.launch import start_processes  # noqa: E402
 from shadowspill.training.worker.node import WorkerNode  # noqa: E402
 from shadowspill.training.worker.protocol import WorkerScope  # noqa: E402
@@ -264,7 +265,6 @@ with (
         ResultPublisher(
             artifacts,
             session_id="session",
-            history_id="history",
             root=directory,
             memory=publication.budget,
             disk=disk,
@@ -278,6 +278,7 @@ with (
             ),
             server_incarnation="agent",
             budget=uploads.budget,
+            state=OperationState(history_id="history"),
         ) as controller,
         serving(controller, storage, http_server.budget, http_client.budget) as client,
     ):

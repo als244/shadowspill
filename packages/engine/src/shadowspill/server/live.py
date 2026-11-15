@@ -13,6 +13,7 @@ from threading import Lock, RLock
 from shadowspill.training.preparation.family_records import PreparedPlans
 from shadowspill.training.session.controller import RunController
 from shadowspill.training.session.prepared import PreparedRequests
+from shadowspill.training.session.state import OperationState
 from shadowspill.training.worker.group import WorkerGroup
 from shadowspill.training.worker.launch import WorkerProcess, start_processes
 from shadowspill.training.worker.node import WorkerNode
@@ -162,12 +163,10 @@ class LiveRun:
             self._publisher = ResultPublisher(
                 self._artifacts,
                 session_id=self.identity.session_id,
-                history_id=self.history_id,
                 root=self._root,
                 memory=self._publication,
                 disk=self._disk,
             )
-            publisher = self._publisher
             self._workers = WorkerRequests(
                 self._group,
                 prepared,
@@ -176,7 +175,6 @@ class LiveRun:
                 checkpoints=RunCheckpoints(
                     self._artifacts,
                     session_id=self.identity.session_id,
-                    history=lambda: publisher.history_id,
                     configuration=info.configuration,
                     plans=self.plans,
                     world_size=len(prepared),
@@ -189,6 +187,7 @@ class LiveRun:
                 self._publisher,
                 server_incarnation=self.storage.incarnation,
                 budget=self._uploads,
+                state=OperationState(history_id=self.history_id),
             )
             with self._mutex:
                 self._active()

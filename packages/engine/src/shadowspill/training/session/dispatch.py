@@ -107,6 +107,7 @@ class RequestDispatcher:
                             boundary.valid,
                             boundary.completed_updates,
                             boundary.accumulation,
+                            history_id=boundary.history_id,
                         ),
                     )
             except BaseException as error:
@@ -233,6 +234,7 @@ class RequestDispatcher:
             receipt = ExecutionReceipt(
                 request.identity,
                 request.operation,
+                boundary.history_id,
                 "skipped" if transition.skipped else "completed",
                 boundary.completed_updates,
                 boundary.accumulation,
@@ -266,6 +268,7 @@ class RequestDispatcher:
                         self._state.boundary.valid,
                         receipt.completed_updates,
                         receipt.accumulation,
+                        history_id=receipt.history_id,
                     ),
                 )
             if not isinstance(error, Exception):

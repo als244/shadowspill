@@ -225,6 +225,15 @@ define the forwarding boundary.
 
 ## Request and worker ownership
 
+History identity belongs to the existing `OperationState`, alongside completed
+updates and accumulation. Live creation supplies the initial history; a confirmed
+restore starts a distinct history even when its update count decreases. Admission
+can project that history without changing state. Execution receipts persist it
+before publication, and successful results and known-completion failures must
+match it. Restart classification retains the receipt's history without claiming
+the old workers survived. Checkpoint saves read history from the queue-head
+boundary; result publishers cannot supply a different one.
+
 `server.jobs.RunJobs` bounds creation jobs and live runs in one service-owned
 table. It reserves a slot and the deployment's per-job host envelope before
 durable registration, resource-free factory construction or thread launch. Exact

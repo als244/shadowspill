@@ -16,6 +16,7 @@ from engine_tests.training.test_worker_checkpoints import running
 from shadowspill.server.http import RunAccess
 from shadowspill.training.session.controller import RunController
 from shadowspill.training.session.prepared import PreparedRequests
+from shadowspill.training.session.state import OperationState
 from shadowspill_client import ServiceClient, TrainingClient
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.checkpoints import CheckpointHandle
@@ -42,6 +43,7 @@ def connected(root):
             publisher,
             server_incarnation="server",
             budget=inputs,
+            state=OperationState(history_id="history"),
         )
 
         @contextmanager

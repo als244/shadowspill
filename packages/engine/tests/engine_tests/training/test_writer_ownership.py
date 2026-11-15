@@ -34,7 +34,7 @@ def publish(receipt, work):
     return OperationResult(
         receipt.identity,
         receipt.operation,
-        "history",
+        receipt.history_id,
         receipt.outcome,
         receipt.completed_updates,
         receipt.accumulation,

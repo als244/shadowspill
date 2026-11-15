@@ -17,6 +17,7 @@ def receipt():
     return ExecutionReceipt(
         RequestIdentity("a", "run", 1, "writer", 1, "server"),
         "forward_backward",
+        "history",
         "completed",
         2,
         Accumulation(3, True, ("a",), 1),
@@ -29,7 +30,7 @@ def test_completion_fact_roundtrips_independently_of_published_result():
     result = OperationResult(
         value.identity,
         value.operation,
-        "history",
+        value.history_id,
         value.outcome,
         value.completed_updates,
         value.accumulation,
@@ -46,6 +47,8 @@ def test_completion_fact_roundtrips_independently_of_published_result():
         {"completed_updates": -1},
         {"state_valid": False},
         {"state_valid": 1},
+        {"history_id": "../history"},
+        {"history_id": None},
     ],
 )
 def test_invalid_completion_fact_is_rejected(change):

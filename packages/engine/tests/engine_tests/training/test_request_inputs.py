@@ -104,7 +104,7 @@ def test_out_of_order_real_uploads_cannot_overtake_and_finish_releases_ownership
                 return OperationResult(
                     receipt.identity,
                     receipt.operation,
-                    "history",
+                    receipt.history_id,
                     receipt.outcome,
                     receipt.completed_updates,
                     receipt.accumulation,

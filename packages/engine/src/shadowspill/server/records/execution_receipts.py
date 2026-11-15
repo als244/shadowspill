@@ -30,5 +30,6 @@ def validate_outcome(status: RequestStatus, receipt: ExecutionReceipt | None) ->
             failure.execution_effect != "completed"
             or failure.completed_updates != receipt.completed_updates
             or failure.accumulation != receipt.accumulation
+            or failure.history_id != receipt.history_id
         ):
             raise ValueError("failure differs from confirmed execution")

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field, replace
 from typing import Literal
+from uuid import uuid4
 
 from shadowspill_client.protocol.requests import identifier
 from shadowspill_client.protocol.results import Accumulation
@@ -34,6 +36,7 @@ _COMMANDS = frozenset(
 
 @dataclass(frozen=True)
 class Boundary:
+    history_id: str
     completed_updates: int = 0
     accumulation: Accumulation = field(default_factory=Accumulation)
     valid: bool = True
@@ -66,9 +69,17 @@ class OperationState:
     not. A restored checkpoint can rewind updates, never generation identities.
     """
 
-    def __init__(self, *, completed_updates: int = 0) -> None:
+    def __init__(
+        self, *, completed_updates: int = 0, history_id: str | None = None
+    ) -> None:
         self._updates(completed_updates)
-        self._boundary = Boundary(completed_updates=completed_updates)
+        self._boundary = Boundary(
+            identifier(
+                "history-" + uuid4().hex if history_id is None else history_id,
+                "history ID",
+            ),
+            completed_updates=completed_updates,
+        )
         self._pending: Transition | None = None
 
     @property
@@ -163,7 +174,18 @@ class OperationState:
         elif command == "restore":
             assert restored_updates is not None
             updates = restored_updates
+        # Stable across repeated admission projections, unique to this restore.
+        # Publication does not own or change the authoritative history boundary.
+        history = before.history_id
+        if command == "restore":
+            history = (
+                "history-"
+                + hashlib.sha256(
+                    (history + "\0" + pending.request_id).encode()
+                ).hexdigest()
+            )
         return Boundary(
+            history,
             updates,
             accumulation,
             before.valid or command == "restore",
