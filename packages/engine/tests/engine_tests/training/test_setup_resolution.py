@@ -32,6 +32,7 @@ from shadowspill_client import (
 )
 from shadowspill_client.protocol.codec import decode, encode
 from shadowspill_client.protocol.operations import OperationKey
+from shadowspill_client.protocol.setup import TrainingSetup
 
 
 def installed(*, model=None, objective=None, optimizer=None, model_source=SOURCE):
@@ -105,6 +106,28 @@ def test_inspection_and_creation_use_one_snapshot_without_model_construction():
         config.model.config["num_classes"] = 5
     with pytest.raises(ValueError, match="overlap"):
         resolve_training(registry, config=config, optimizer=None)
+
+
+def test_portable_keywords_use_the_existing_resolver_and_generic_parallelism():
+    requested = arguments()
+    fields = [
+        InputFieldPlacement(tuple(field.path))
+        for field in resolve_training(installed(), **requested).config.inputs.fields
+    ]
+    layout = Parallelism.dp(
+        num_replicas=2, inputs=InputPlacement.independent(2, fields=fields)
+    )
+    requested["parallelism"] = layout
+    requested["operations"] = {"forward": ["predictions"]}
+    direct = resolve_training(installed(), **requested)
+    portable = TrainingSetup(**{**requested, "parallelism": layout.to_dict()})
+    described = resolve_training(installed(), decode(encode(portable)))
+    assert described.config == direct.config
+    assert described.context.parallelism == direct.context.parallelism
+    assert described.expansions == direct.expansions
+    assert resolve_training(installed(), described.config).config == direct.config
+    with pytest.raises(ValueError, match="overlap"):
+        resolve_training(installed(), portable, memory=requested["memory"])
 
 
 def test_changed_sources_missing_defaults_and_contracts_fail_recheck():

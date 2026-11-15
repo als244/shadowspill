@@ -34,6 +34,8 @@ from shadowspill_client.protocol.service import (
     ServiceError,
     ServiceInfo,
 )
+from shadowspill_client.protocol.setup import TrainingSetup
+from shadowspill_client.protocol.training import ResolvedTraining
 
 from .artifacts import ArtifactStore
 from .authentication import BearerTokens
@@ -183,6 +185,8 @@ class HTTPService(ThreadingHTTPServer):
         artifacts: Callable[[str], AbstractContextManager[ArtifactStore]],
         memory: BufferBudget,
         jobs: RunJobs | None = None,
+        describe: Callable[[TrainingSetup | ResolvedTraining], ResolvedTraining]
+        | None = None,
         request_timeout: float = 120,
         tls: ssl.SSLContext | None = None,
     ) -> None:
@@ -190,6 +194,9 @@ class HTTPService(ThreadingHTTPServer):
         self.authentication, self.runs, self.artifacts = authentication, runs, artifacts
         self.memory = memory
         self.jobs = jobs
+        # The deployment callback reserves its CPU resolution envelope. HTTP
+        # keeps decoded request/response metadata in its existing scratch owner.
+        self.describe = describe
         if jobs is not None and jobs.storage.incarnation != self.incarnation:
             raise ValueError("creation registry belongs to another server incarnation")
         if memory.max_bytes < HTTP_SCRATCH_BYTES:
@@ -394,6 +401,20 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(ServiceInfo(self.server.incarnation, owner))
             return
         if (
+            parts == ("v1", "training", "describe")
+            and self.command == "POST"
+            and not query
+        ):
+            if self.server.describe is None:
+                raise KeyError("setup inspection is unavailable")
+            if self.headers.get("Content-Type") != CONTROL_MEDIA_TYPE:
+                raise ProtocolError("setup has no control media type")
+            settings = body.record()
+            if not isinstance(settings, (TrainingSetup, ResolvedTraining)):
+                raise ProtocolError("inspection requires setup or resolved settings")
+            self._reply(self.server.describe(settings))
+            return
+        if (
             len(parts) == 3
             and parts[:2] == ("v1", "artifacts")
             and self.command == "GET"
@@ -572,6 +593,7 @@ class _Handler(BaseHTTPRequestHandler):
             info.state == "ready" and not self.server.jobs.available(identity)
         )
         self._reply(info, 202 if pending else 200)
+
     def _headers(
         self, status: int, length: int, media: str, *, etag: str | None = None
     ) -> None:

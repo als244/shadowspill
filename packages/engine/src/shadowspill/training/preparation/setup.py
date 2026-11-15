@@ -36,6 +36,7 @@ from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.definitions import DefinitionSource
 from shadowspill_client.protocol.operations import OperationKey
+from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.protocol.training import Origin, ResolvedTraining
 
 from .expansion import ExpandedPreparation, expand_schedules
@@ -361,13 +362,38 @@ def _recheck(registry: Registry, config: ResolvedTraining) -> ResolvedSetup:
     return _assemble(registry, config, model, objective, optimizer, parallelism)
 
 
-def resolve_training(registry: Registry, **setup: Any) -> ResolvedSetup:
+def resolve_training(
+    registry: Registry,
+    settings: TrainingSetup | ResolvedTraining | None = None,
+    **setup: Any,
+) -> ResolvedSetup:
     """Describe keyword settings or recheck exactly one resolved snapshot.
 
     The same entry point is used by creation. No workers, model factories,
     runtime allocation, capture, compilation, profiling or search run here.
     A preview is neither a resource reservation nor a readiness certificate.
     """
+    if settings is not None:
+        if setup:
+            raise ValueError("portable settings cannot overlap setup keywords")
+        if isinstance(settings, ResolvedTraining):
+            setup = {"config": settings}
+        elif isinstance(settings, TrainingSetup):
+            setup = {
+                "model": settings.model,
+                "objective": settings.objective,
+                "batch": settings.batch,
+                "memory": settings.memory,
+                "optimizer": settings.optimizer,
+                "execution": settings.execution,
+                "operations": settings.operations,
+                "prepare": settings.prepare,
+                "parallelism": None
+                if settings.parallelism is None
+                else Parallelism.from_dict(plain(settings.parallelism)),
+            }
+        else:
+            raise TypeError("settings requires TrainingSetup or ResolvedTraining")
     if "config" in setup:
         config = setup.pop("config")
         if setup:

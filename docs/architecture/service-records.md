@@ -57,6 +57,14 @@ artifact is published. Full lifecycle records have 32 KiB of space for the Plan
 reference, history ID and worst-case encoded failure diagnostic. HTTP pages return
 at most 32 complete rows to fit the shared 1 MiB control envelope.
 
+`POST /v1/training/describe` accepts portable setup keywords or an existing
+resolved configuration. Its configured callback uses the same CPU setup resolver
+as creation, including installed definitions and generic parallelism. Defaults
+resolve on the server; omitted initialization stays omitted. The deployment
+reserves a CPU resolution envelope, while the HTTP handler retains its usual
+metadata scratch. Description starts no workers, reserves no GPUs and publishes
+no run or artifact. A successful preview does not promise available resources.
+
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
 and host-key verification to OpenSSH. Existing masters receive only forward and

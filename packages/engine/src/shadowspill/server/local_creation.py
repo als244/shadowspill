@@ -35,6 +35,8 @@ from shadowspill_client._records import integer, names
 from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.runs import CreationStage, RunInfo
+from shadowspill_client.protocol.setup import TrainingSetup
+from shadowspill_client.protocol.training import ResolvedTraining
 
 from .artifacts import ArtifactStore
 from .creation_records import load_creation
@@ -110,6 +112,10 @@ class LocalCreationFactory:
 
     def __call__(self, info: RunInfo) -> LocalCreation:
         return LocalCreation(self, info)
+
+    def describe(self, settings: TrainingSetup | ResolvedTraining) -> ResolvedTraining:
+        """Use the same CPU resolver; the caller owns the control-memory envelope."""
+        return resolve_training(load_registry(self.packages), settings).config
 
 
 class LocalCreation:

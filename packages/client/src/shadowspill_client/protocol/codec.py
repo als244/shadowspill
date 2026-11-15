@@ -33,6 +33,7 @@ from .results import (
 )
 from .runs import RunInfo, RunPage
 from .service import ServiceError, ServiceInfo
+from .setup import TrainingSetup
 from .training import ResolvedTraining
 
 VERSION = 1
@@ -64,6 +65,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "run.info": RunInfo,
     "run.page": RunPage,
     "training.creation": TrainingCreation,
+    "training.setup": TrainingSetup,
 }
 
 

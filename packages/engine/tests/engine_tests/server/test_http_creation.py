@@ -10,6 +10,7 @@ from engine_tests.server.test_http import OTHER_TOKEN, ROOT, TOKEN
 from engine_tests.server.test_jobs import until
 from engine_tests.server.test_local_creation import configured
 from engine_tests.server.test_storage import IDENTITY
+from engine_tests.training.test_setup_resolution import arguments
 from shadowspill.server.authentication import BearerTokens
 from shadowspill.server.http import HTTP_SCRATCH_BYTES, HTTPService
 from shadowspill.server.records.requests import RunIdentity
@@ -17,6 +18,7 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.requests import OperationRequest, RequestIdentity
 from shadowspill_client.protocol.service import ServiceError
+from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.transport.http import HTTPTransport, RemoteError
 
 
@@ -24,6 +26,11 @@ from shadowspill_client.transport.http import HTTPTransport, RemoteError
 def endpoint(ctx):
     memory = BufferBudget(HTTP_SCRATCH_BYTES * 2, 2)
     client_memory = BufferBudget(HTTP_SCRATCH_BYTES * 2, 2)
+
+    def describe(settings):
+        with ctx.job_memory.reserve(ctx.jobs.host_bytes, timeout=0):
+            return ctx.factory.describe(settings)
+
     service = HTTPService(
         ("127.0.0.1", 0),
         incarnation="server",
@@ -31,6 +38,7 @@ def endpoint(ctx):
         runs=ctx.jobs.access,
         artifacts=ctx.service.artifacts,
         jobs=ctx.jobs,
+        describe=describe,
         memory=memory,
         request_timeout=5,
     )
@@ -203,3 +211,30 @@ def test_oversize_registration_publishes_no_artifacts_or_creation_job(
             assert invalid.value.status == 400 and artifacts.page() == ()
         assert ctx.jobs.used == (0, 0) and not ctx.owners
         assert ctx.service.catalog.get(IDENTITY) is None
+
+
+def test_http_setup_inspection_is_framework_free_and_creates_no_worker_or_records(
+    tmp_path, monkeypatch
+):
+    with configured(tmp_path, monkeypatch) as ctx, endpoint(ctx) as (client, _):
+        values = arguments()
+        values["model"] = replace(values["model"], initialize=None)
+        before = ctx.node.used
+        config = client.request(
+            "POST", "/v1/training/describe", TrainingSetup(**values)
+        ).value
+        assert config.model.initialize is None
+        assert config.objective.defaults == {"temperature": 1.0}
+        assert client.request("POST", "/v1/training/describe", config).value == config
+        assert ctx.node.used == before and ctx.job_memory.used == (0, 0)
+        assert ctx.jobs.used == (0, 0) and not ctx.owners and not ctx.phases
+        assert ctx.service.catalog.page("owner", "session") == ()
+        with ctx.service.artifacts("owner") as artifacts:
+            assert artifacts.page() == ()
+        with pytest.raises(RemoteError) as bad:
+            client.request("POST", "/v1/training/describe", TrainingCreation(config))
+        assert bad.value.status == 400
+        with ctx.job_memory.reserve(ctx.jobs.host_bytes, timeout=0):
+            with pytest.raises(RemoteError) as busy:
+                client.request("POST", "/v1/training/describe", config)
+            assert busy.value.status == 429
