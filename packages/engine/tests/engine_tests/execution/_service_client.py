@@ -76,12 +76,12 @@ def qualify(client, config, memory, oracle):
             if page.next_page is None:
                 break
             index = page.next_page
-        rows = [row for page in summary for row in page.rows]
-        planned = [row for row in rows if row.kind == "worker_plan"]
+        summary_rows = [row for page in summary for row in page.rows]
+        planned = [row for row in summary_rows if row.kind == "worker_plan"]
         assert len(planned) == page.plan_count and page.plan_count > 0
         assert all(row.values["simulated"] for row in planned)
         assert all(row.values["duration_seconds"] >= 0 for row in planned)
-        assert {row.kind for row in rows} == {
+        assert {row.kind for row in summary_rows} == {
             "configuration",
             "batch",
             "build_case",
@@ -131,7 +131,7 @@ def qualify(client, config, memory, oracle):
                 "completed_updates": closed.completed_updates,
                 "plans": saved.reference.to_dict(),
                 "summary_pages": len(summary),
-                "summary_rows": len(rows),
+                "summary_rows": len(summary_rows),
                 "summary_plan_count": page.plan_count,
             }
         )
