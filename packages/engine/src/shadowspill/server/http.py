@@ -26,6 +26,7 @@ from shadowspill_client.protocol.codec import (
 )
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.payload_io import BufferReader
+from shadowspill_client.protocol.preview import TrainingPreview
 from shadowspill_client.protocol.requests import OperationRequest, identifier
 from shadowspill_client.protocol.results import RequestStatus
 from shadowspill_client.protocol.runs import RunInfo, RunPage
@@ -185,7 +186,7 @@ class HTTPService(ThreadingHTTPServer):
         artifacts: Callable[[str], AbstractContextManager[ArtifactStore]],
         memory: BufferBudget,
         jobs: RunJobs | None = None,
-        describe: Callable[[TrainingSetup | ResolvedTraining], ResolvedTraining]
+        describe: Callable[[TrainingSetup | ResolvedTraining], TrainingPreview]
         | None = None,
         request_timeout: float = 120,
         tls: ssl.SSLContext | None = None,

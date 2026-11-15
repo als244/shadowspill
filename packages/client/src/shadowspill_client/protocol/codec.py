@@ -23,6 +23,7 @@ from .creation import TrainingCreation
 from .definitions import DefinitionSource, OutputSet
 from .inputs import InputSchema
 from .preparation import ResolvedPreparation
+from .preview import TrainingPreview
 from .requests import OperationRequest, WriterLease
 from .results import (
     Acceptance,
@@ -66,6 +67,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "run.page": RunPage,
     "training.creation": TrainingCreation,
     "training.setup": TrainingSetup,
+    "training.preview": TrainingPreview,
 }
 
 

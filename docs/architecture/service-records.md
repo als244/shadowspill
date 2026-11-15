@@ -63,7 +63,18 @@ as creation, including installed definitions and generic parallelism. Defaults
 resolve on the server; omitted initialization stays omitted. The deployment
 reserves a CPU resolution envelope, while the HTTP handler retains its usual
 metadata scratch. Description starts no workers, reserves no GPUs and publishes
-no run or artifact. A successful preview does not promise available resources.
+no run or artifact. The returned `TrainingPreview` includes the immutable config
+and per-operation geometry/schedule counts from that resolver. Capture expansion
+and reuse remain separate from these counts. A successful preview does not promise
+available resources.
+
+The public `shadowspill_client.ServiceClient` composes this protocol and the owned
+SSH forward. Its bounded connection pool returns query futures, and explicit
+artifact handles stream verified downloads into new local files. Closing a
+connection stops its polling/transfers and waits for their I/O before releasing
+the forward; it never sends an ordered training close. Metadata futures retain
+no task input closure after completion or failure. Preparation stays in the
+server creation component, separate from the developing live training handle.
 
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration

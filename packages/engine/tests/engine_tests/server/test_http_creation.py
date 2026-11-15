@@ -220,12 +220,13 @@ def test_http_setup_inspection_is_framework_free_and_creates_no_worker_or_record
         values = arguments()
         values["model"] = replace(values["model"], initialize=None)
         before = ctx.node.used
-        config = client.request(
+        preview = client.request(
             "POST", "/v1/training/describe", TrainingSetup(**values)
         ).value
+        config = preview.config
         assert config.model.initialize is None
         assert config.objective.defaults == {"temperature": 1.0}
-        assert client.request("POST", "/v1/training/describe", config).value == config
+        assert client.request("POST", "/v1/training/describe", config).value == preview
         assert ctx.node.used == before and ctx.job_memory.used == (0, 0)
         assert ctx.jobs.used == (0, 0) and not ctx.owners and not ctx.phases
         assert ctx.service.catalog.page("owner", "session") == ()

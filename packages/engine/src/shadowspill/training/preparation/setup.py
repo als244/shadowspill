@@ -36,6 +36,7 @@ from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.definitions import DefinitionSource
 from shadowspill_client.protocol.operations import OperationKey
+from shadowspill_client.protocol.preview import PreparationEstimate, TrainingPreview
 from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.protocol.training import Origin, ResolvedTraining
 
@@ -58,6 +59,17 @@ class ResolvedSetup:
     @property
     def model(self) -> ResolvedModel:
         return self.context.model
+
+    def preview(self) -> TrainingPreview:
+        return TrainingPreview(
+            self.config,
+            tuple(
+                PreparationEstimate(
+                    key, value.build_cases, len(value.candidates), len(value.rejected)
+                )
+                for key, value in self.expansions.items()
+            ),
+        )
 
 
 def _assemble(
