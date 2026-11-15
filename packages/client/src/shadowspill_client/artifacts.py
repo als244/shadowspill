@@ -22,11 +22,22 @@ class ArtifactHandle:
     def id(self) -> str:
         return self.reference.id
 
-    def download(self, path: str | Path) -> CallFuture[Path]:
+    def download(self, path: str | Path, *, resume: bool = False) -> CallFuture[Path]:
         """Stream and verify into a new local file; never overwrite an existing one."""
+        if type(resume) is not bool:
+            raise TypeError("download resume must be boolean")
         destination = Path(path)
 
         def transfer() -> Path:
+            if resume:
+                from .downloads import resume_download
+
+                return resume_download(
+                    self._service._transport,
+                    self.reference,
+                    destination,
+                    memory=self._service._memory,
+                )
             with destination.open("xb") as stream:
                 try:
                     self._service._transport.download(

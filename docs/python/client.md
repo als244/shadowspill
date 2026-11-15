@@ -10,7 +10,8 @@ operations. `shadowspill.server.Server` owns startup and the assigned resources.
 Checkpoint save, ordered restore, new-run resume and explicit directory downloads
 are supported. New-run creation converts compatible checkpoint state when its
 prepared Plans change. Named Plans can be saved and retrieved after worker close
-or service restart. Resumable transfers are still being implemented.
+or service restart. Explicit file and checkpoint downloads can retain verified
+progress for resume; uploads are still being implemented.
 Existing phase and Trainer APIs remain available during migration.
 
 Start the service on Chicago or another machine with an existing GPU allocation:
@@ -142,6 +143,16 @@ verifies bytes into a new local file. Existing files are preserved; a failed
 transfer removes its partial destination. Tensor data is never implicitly loaded
 by a metadata result.
 
+For large files, use `artifact.download(local_path, resume=True).result()` from
+the first attempt. An interrupted transfer retains bounded progress metadata and
+partial bytes in `<local_path>.shadowspill-download`. After reconnecting, attach
+the same reference with `service.artifact(reference)` and explicitly repeat the
+download with `resume=True`. The client verifies the retained prefix before
+requesting the remaining bytes and checks the complete file checksum before
+publishing the destination. No exchange retries automatically. Changed references,
+corrupt prefixes and concurrent writers are rejected; existing destination files
+are preserved. The client removes its partial directory after success.
+
 A checkpoint save occupies the same ordered stream as training. Finish an open
 accumulation with `optim_step` or `discard_gradients` first. Later updates wait for
 the complete checkpoint to commit; a completed save does not increment the update
@@ -196,6 +207,16 @@ from the saved seed, restore identity and logical stream, recorded in
 `manifest.info.conversion.randomness`. Physical GPU identity does not affect seeds.
 Custom model-owned generators still require explicit registered state support.
 
+`checkpoint.download(path, resume=True)` retains an incomplete directory with its
+checkpoint identity and completed/partial rank files. Repeat the call explicitly
+after reconnecting. Completed ranks are verified locally and need no second
+download; partial ranks use the same verified suffix transfer. `manifest.json`
+appears only after every rank is complete. A directory with unrelated content or
+a completed manifest is preserved and rejected as a new destination. Default
+`resume=False` keeps the existing behavior of removing this attempt's incomplete
+copy. File locking currently targets the Linux and macOS client platforms; Linux
+qualification is recorded separately from the outstanding macOS release gate.
+
 Pass `runtime_trace=True` to a compute call to record that invocation. Its
 `result.traces` contains downloadable ZIP handles, one per participating worker.
 Each archive contains a request/Plan/rank/update association in `manifest.json`,
@@ -237,6 +258,6 @@ The deployment installs Nsight and provides collector host, disk and finalizatio
 allowances through `ServerLimits.creation.nsys`; client settings contain no
 server paths or executable names. Captured timings include profiler overhead.
 
-Service base omission and resumable uploads or downloads remain under
+Service base omission and resumable uploads remain under
 implementation. Qualification evidence and remaining hardware coverage are
 tracked separately from this API contract.

@@ -30,16 +30,28 @@ class CheckpointHandle(ArtifactHandle):
         """Verify the small generation manifest without downloading rank data."""
         return self._service._work.submit(lambda: self._manifest()[0])
 
-    def download(self, path: str | Path) -> CallFuture[Path]:
+    def download(self, path: str | Path, *, resume: bool = False) -> CallFuture[Path]:
         """Copy the manifest and rank files into a new directory, serially.
 
         Existing destinations are never overwritten. Publish the local manifest
         last; failure removes only files created by this call. Plans and frozen
         base dependencies are separate artifacts, not implicit large downloads.
         """
+        if type(resume) is not bool:
+            raise TypeError("download resume must be boolean")
         destination = Path(path)
 
         def transfer() -> Path:
+            if resume:
+                from .downloads import resume_checkpoint
+
+                return resume_checkpoint(
+                    self._service._transport,
+                    self.reference,
+                    destination,
+                    self._manifest,
+                    memory=self._service._memory,
+                )
             manifest, body = self._manifest()
             destination.mkdir()
             files: list[Path] = []

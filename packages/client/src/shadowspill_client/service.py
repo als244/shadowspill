@@ -16,6 +16,7 @@ from .buffers import BufferBudget
 from .captures import NsightCapture, get_nsys
 from .checkpoints import CheckpointHandle
 from .creation import TrainingFuture, create_training_client, get_training_client
+from .downloads import CHECKPOINT_SCRATCH_BYTES, FILE_SCRATCH_BYTES
 from .plans import PlansHandle, get_plans
 from .protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
 from .protocol.codec import ProtocolError, encode
@@ -60,7 +61,10 @@ class ServiceClient:
         self._handles: WeakSet[TrainingClient] = WeakSet()
         self._handle_lock = Lock()
         self._memory = BufferBudget(
-            max_connections * HTTP_SCRATCH_BYTES + SSH_BYTES, max_connections + 1
+            max_connections
+            * (HTTP_SCRATCH_BYTES + FILE_SCRATCH_BYTES + CHECKPOINT_SCRATCH_BYTES)
+            + SSH_BYTES,
+            3 * max_connections + 1,
         )
         self._tunnel = None if ssh is None else SSHTunnel(ssh, memory=self._memory)
         try:
