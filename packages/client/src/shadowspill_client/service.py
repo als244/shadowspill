@@ -18,7 +18,7 @@ from .checkpoints import CheckpointHandle
 from .creation import TrainingFuture, create_training_client, get_training_client
 from .downloads import CHECKPOINT_SCRATCH_BYTES, FILE_SCRATCH_BYTES
 from .plans import PlansHandle, get_plans
-from .protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
+from .protocol.checkpoints import CHECKPOINT_MEDIA_TYPE, WEIGHTS_MEDIA_TYPE
 from .protocol.codec import ProtocolError, encode
 from .protocol.preview import TrainingPreview
 from .protocol.requests import ArtifactRef, identifier
@@ -29,6 +29,7 @@ from .training import TrainingClient
 from .transport.http import HTTP_SCRATCH_BYTES, HTTPTransport
 from .transport.ssh import SSH, SSH_BYTES, SSHTunnel
 from .uploads import UPLOAD_SCRATCH_BYTES
+from .weights import WeightsHandle
 
 R = TypeVar("R", bound=Record)
 
@@ -131,6 +132,8 @@ class ServiceClient:
             raise TypeError("artifact requires an immutable server reference")
         if reference.media_type == CHECKPOINT_MEDIA_TYPE:
             return CheckpointHandle(reference, self)
+        if reference.media_type == WEIGHTS_MEDIA_TYPE:
+            return WeightsHandle(reference, self)
         return ArtifactHandle(reference, self)
 
     def create_training_client(self, **setup: Any) -> TrainingFuture:

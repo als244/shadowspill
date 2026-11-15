@@ -4,7 +4,10 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Protocol
 
-from shadowspill_client.protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
+from shadowspill_client.protocol.checkpoints import (
+    CHECKPOINT_MEDIA_TYPE,
+    WEIGHTS_MEDIA_TYPE,
+)
 from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, ProtocolError, encode
 from shadowspill_client.protocol.requests import ArtifactRef, OperationRequest
 from shadowspill_client.protocol.results import (
@@ -237,7 +240,13 @@ class RequestDispatcher:
             checkpoint=ArtifactRef(
                 "c" * 128, "0" * 64, MAX_METADATA_BYTES, CHECKPOINT_MEDIA_TYPE
             )
-            if request.operation in ("save", "restore")
+            if request.operation == "restore"
+            or (request.save is not None and request.save.kind == "checkpoint")
+            else None,
+            weights=ArtifactRef(
+                "w" * 128, "0" * 64, MAX_METADATA_BYTES, WEIGHTS_MEDIA_TYPE
+            )
+            if request.save is not None and request.save.kind == "weights"
             else None,
             metadata={} if restore is None else restore.manifest.info.metadata,
         )

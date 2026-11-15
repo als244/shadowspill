@@ -26,11 +26,15 @@ from shadowspill_client.protocol.runs import RunInfo
 
 
 @contextmanager
-def connected(root, *, completed_updates=0):
+def connected(root, *, completed_updates=0, weights=False):
     with (
         endpoint(root) as http,
         records_store(root) as records,
-        running(root, http.artifacts, count=1) as (workers, publisher, _),
+        running(root, http.artifacts, count=1, weights=weights) as (
+            workers,
+            publisher,
+            _,
+        ),
     ):
         plans = family()
         prepared = PreparedRequests(

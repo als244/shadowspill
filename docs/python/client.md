@@ -107,7 +107,8 @@ and `service.get_training_client(run_id).result()`. Writable reattachment fences
 the earlier writer; `read_only=True` permits inspection without takeover.
 
 Runtime methods are `step`, `forward_backward`, `optim_step`, `forward`,
-`discard_gradients`, `save_checkpoint`, `load_checkpoint` and ordered `close`, all returning futures. Input arrays and
+`discard_gradients`, `save_checkpoint`, `export_weights`, `load_checkpoint` and
+ordered `close`, all returning futures. Input arrays and
 controls are copied before the submission returns. Bounded staging/pending counts
 apply backpressure, and snapshots that cannot fit fail promptly. Earlier pending
 requests become explicit dependencies, so a rejected backward contribution cannot
@@ -179,6 +180,24 @@ values under the existing checkpoint reconstruction rules. Caller metadata is
 frozen before submission and returned in the manifest. The save future preserves
 its request identity and `.accepted()` observation. Request lookup exposes the
 same handle as `training.requests.get(request_id).result().checkpoint`.
+
+`training.export_weights(name="inference").result()` returns a separate
+`WeightsHandle` for inference or adapters. It uses the same ordered completed-update
+boundary, authoritative `weights="master"`/`"compute"` selection, metadata ownership
+and atomic rank publication. It reads only model weights and persistent buffers;
+optimizer, gradient, RNG and execution-temporary payloads are excluded. Verified
+unchanged frozen parameters are represented by the exact base dependency. Modified
+frozen state remains in the export; without known base provenance all model weights
+are retained.
+
+The supported `format="shadowspill"` records logical tensor names, tied views and
+owned shard coordinates. Other formats currently fail before worker execution;
+installed external-format exporters remain under implementation. The result has
+`.manifest()` and explicit `.download(path, resume=True)` methods, and a downloaded
+directory can be copied with `service.artifacts.upload(...)`. It can be inspected
+after workers close. Request lookup exposes `.weights`, while `.checkpoint` is
+absent. An inference export cannot be passed to `load_checkpoint` or used for
+optimizer resume.
 
 `load_checkpoint` accepts an immutable ID or run-local name. Ordered acceptance
 pins the name to an immutable checkpoint, exposed by the future's

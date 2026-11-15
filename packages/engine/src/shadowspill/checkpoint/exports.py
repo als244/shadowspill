@@ -53,7 +53,8 @@ def _describe(
     omitted = set() if frozen_state_id is None else omitted_parameters(state)
     selected = select_weights(state, weights)
     layout = PlanState(state.plan, state.plans, logical_rank=state.logical_rank)
-    if state_identity(layout) != state_identity(state):
+    identity = state_identity(state)
+    if state_identity(layout) != identity:
         raise ValueError("exported state differs from saved tensor ownership")
     logical = tuple(layout.logical_tensors(roles=("parameter", "buffer", "master")))
     model_names = {item.archive.name for item in logical if item.archive is not None}
@@ -78,6 +79,7 @@ def _describe(
         "version": 1,
         "byteorder": sys.byteorder,
         "logical_rank": state.logical_rank,
+        "state": identity,
         "model_state": digest(views),
         "program": state.plan.program.digest,
         "additional_programs": {

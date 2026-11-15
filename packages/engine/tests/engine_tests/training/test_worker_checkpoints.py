@@ -37,7 +37,7 @@ from shadowspill_client.protocol.requests import OperationRequest
 
 
 @contextmanager
-def running(root, artifacts, *, mode="normal", count=2):
+def running(root, artifacts, *, mode="normal", count=2, weights=False):
     children, connections, prepared = [], {}, {}
     metadata, memory, disk = (BufferBudget(32 << 20, 10) for _ in range(3))
     grants = FileGrants(root=root, memory=memory)
@@ -63,6 +63,7 @@ def running(root, artifacts, *, mode="normal", count=2):
                     mode if rank == 1 or mode == "frozen" else "normal",
                     str(grants.root),
                     str(count),
+                    "weights" if weights else "checkpoint",
                 ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -72,6 +73,14 @@ def running(root, artifacts, *, mode="normal", count=2):
             children.append(child)
             scope = WorkerScope("run", "server", f"process-{rank}", rank)
             connections[rank] = WorkerConnection(scope, child.stdout, child.stdin)
+            if weights:
+                from engine_tests.checkpoint.test_conversion import (
+                    family as state_family,
+                )
+
+                program = state_family(count, 0)[rank].plan.program
+            else:
+                program = SimpleNamespace(digest="a" * 64)
             prepared[rank] = SimpleNamespace(
                 startup=SimpleNamespace(scope=scope),
                 outputs={},
@@ -79,13 +88,7 @@ def running(root, artifacts, *, mode="normal", count=2):
                     bind=bind,
                     primary="main",
                     prepared=SimpleNamespace(
-                        plans={
-                            rank: {
-                                "main": SimpleNamespace(
-                                    program=SimpleNamespace(digest="a" * 64)
-                                )
-                            }
-                        }
+                        plans={rank: {"main": SimpleNamespace(program=program)}}
                     ),
                 ),
             )

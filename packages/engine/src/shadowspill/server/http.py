@@ -20,7 +20,10 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from shadowspill.training.session.writers import Attachment
 from shadowspill_client._records import Record, number
 from shadowspill_client.buffers import BufferBudget, BufferLease
-from shadowspill_client.protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
+from shadowspill_client.protocol.checkpoints import (
+    CHECKPOINT_MEDIA_TYPE,
+    WEIGHTS_MEDIA_TYPE,
+)
 from shadowspill_client.protocol.codec import (
     MAX_METADATA_BYTES,
     ProtocolError,
@@ -46,7 +49,7 @@ from shadowspill_client.protocol.uploads import ArtifactUpload
 from .artifacts import ArtifactStore
 from .authentication import BearerTokens
 from .checkpoint_restore import (
-    read_checkpoint_manifest,
+    read_saved_manifest,
     require_checkpoint_dependencies,
 )
 from .creation_records import CreationRecord
@@ -632,11 +635,12 @@ class _Handler(BaseHTTPRequestHandler):
             if len(parts) == 2 and parts[1] == "complete" and self.command == "POST":
 
                 def validate(path: Path) -> None:
-                    if status.reference.media_type == CHECKPOINT_MEDIA_TYPE:
+                    if status.reference.media_type in (
+                        CHECKPOINT_MEDIA_TYPE,
+                        WEIGHTS_MEDIA_TYPE,
+                    ):
                         with path.open("rb") as stream:
-                            manifest = read_checkpoint_manifest(
-                                status.reference, stream
-                            )
+                            manifest = read_saved_manifest(status.reference, stream)
                         # A local backup contains ranks, not implicit copies of
                         # Plans or frozen bases. Restore checks those separately
                         # before starting workers, through the same resolver.

@@ -208,7 +208,11 @@ class WorkerRequests:
             descriptions = []
             for rank, reply in invocation.ready.items():
                 description = reply.checkpoint
-                if description is None or description.rank != rank:
+                if (
+                    description is None
+                    or description.rank != rank
+                    or description.kind != info.kind
+                ):
                     raise ValueError("worker omitted its checkpoint admission")
                 worker = self.prepared[rank]
                 plans = worker.bindings.prepared.plans[rank]

@@ -8,7 +8,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, BinaryIO
 
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.checkpoints import RANK_MEDIA_TYPE, SaveInfo
+from shadowspill_client.protocol.checkpoints import SaveInfo
 from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
 
@@ -49,7 +49,7 @@ class WorkerCheckpointWriter:
         self.frozen_base = frozen_base
 
     def _describe(self, info: SaveInfo) -> RankSave:
-        from shadowspill.checkpoint import checkpoint_size
+        from shadowspill.checkpoint import checkpoint_size, weights_size
         from shadowspill.checkpoint.identity import state_identity
 
         if info.plans != self.plans or info.byteorder != sys.byteorder:
@@ -60,13 +60,17 @@ class WorkerCheckpointWriter:
             raise ValueError(
                 "checkpoint frozen base differs from the initialized worker"
             )
-        randomness = None if self.randomness is None else self.randomness.capture()
+        randomness = (
+            self.randomness.capture()
+            if info.kind == "checkpoint" and self.randomness is not None
+            else None
+        )
         metadata = info.rank_metadata()
         if randomness is not None:
             metadata["randomness"] = randomness
         return RankSave(
             self.executor.logical_rank,
-            checkpoint_size(
+            (checkpoint_size if info.kind == "checkpoint" else weights_size)(
                 self.executor,
                 metadata=metadata,
                 weights=info.weights,
@@ -76,6 +80,7 @@ class WorkerCheckpointWriter:
             self.executor.plan.program.digest,
             {name: plan.program.digest for name, plan in self.executor.plans.items()},
             randomness,
+            info.kind,
         )
 
     def prepare(self, call: BoundWorkerCall) -> BoundWorkerCall:
@@ -86,7 +91,7 @@ class WorkerCheckpointWriter:
             return replace(call, checkpoint=self._describe(info))
 
     def __call__(self, call: BoundWorkerCall) -> RankSaved:
-        from shadowspill.checkpoint import write_checkpoint
+        from shadowspill.checkpoint import write_checkpoint, write_weights
 
         info, admitted = call.command.checkpoint, call.checkpoint
         if info is None or admitted is None:
@@ -95,7 +100,9 @@ class WorkerCheckpointWriter:
             if self._describe(info) != admitted:
                 raise ValueError("checkpoint state description changed after staging")
             with WorkerStream(self.stream, size_bytes=admitted.size_bytes) as sink:
-                manifest = write_checkpoint(
+                manifest = (
+                    write_checkpoint if info.kind == "checkpoint" else write_weights
+                )(
                     self.executor,
                     sink,
                     metadata=admitted.metadata(info),
@@ -108,6 +115,6 @@ class WorkerCheckpointWriter:
                 # Send only confirmed identity fields, never the tensor inventory
                 # a second time inside a bounded metadata reply.
                 return RankSaved(
-                    sink.reference("checkpoint-rank", RANK_MEDIA_TYPE).sha256,
+                    sink.reference("saved-rank", info.rank_media_type).sha256,
                     admitted.confirmation(info),
                 )

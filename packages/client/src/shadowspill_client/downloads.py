@@ -12,7 +12,7 @@ from typing import BinaryIO
 
 from ._records import Record, integer, record
 from .buffers import BufferBudget
-from .protocol.checkpoints import CheckpointManifest
+from .protocol.checkpoints import CheckpointManifest, WeightsManifest
 from .protocol.codec import MAX_METADATA_BYTES, RecordCodec
 from .protocol.requests import ArtifactRef
 from .transport.http import HTTPTransport
@@ -234,7 +234,7 @@ def resume_checkpoint(
     transport: HTTPTransport,
     reference: ArtifactRef,
     destination: Path,
-    load: Callable[[], tuple[CheckpointManifest, bytes]],
+    load: Callable[[], tuple[CheckpointManifest | WeightsManifest, bytes]],
     *,
     memory: BufferBudget,
 ) -> Path:

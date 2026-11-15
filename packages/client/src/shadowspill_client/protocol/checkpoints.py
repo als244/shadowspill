@@ -11,6 +11,8 @@ from .requests import ArtifactRef, identifier
 
 CHECKPOINT_MEDIA_TYPE = "application/vnd.shadowspill.checkpoint+json"
 RANK_MEDIA_TYPE = "application/vnd.shadowspill.checkpoint-rank"
+WEIGHTS_MEDIA_TYPE = "application/vnd.shadowspill.weights+json"
+WEIGHTS_RANK_MEDIA_TYPE = "application/vnd.shadowspill.weights-rank"
 
 
 @dataclass(frozen=True)
@@ -66,8 +68,14 @@ class SaveInfo(Record):
     metadata: Mapping[str, Value] = field(default_factory=dict)
     conversion: CheckpointConversion | None = None
     frozen_base: FrozenBase | None = None
+    kind: Literal["checkpoint", "weights"] = "checkpoint"
+    format: str = "shadowspill"
 
     def __post_init__(self) -> None:
+        if self.kind not in ("checkpoint", "weights") or self.format != "shadowspill":
+            raise ValueError("unknown saved-state kind or archive format")
+        if self.kind == "weights" and self.conversion is not None:
+            raise ValueError("weights exports have no optimizer-state conversion")
         for name in ("session_id", "run_id", "history_id", "request_id"):
             identifier(getattr(self, name), name)
         integer(self.completed_updates, "completed updates")
@@ -106,7 +114,20 @@ class SaveInfo(Record):
             value.pop("conversion")
         if self.frozen_base is None:
             value.pop("frozen_base")
-        return {"checkpoint": value}
+        if self.kind == "checkpoint":
+            value.pop("kind")
+            value.pop("format")
+        return {self.kind: value}
+
+    @property
+    def media_type(self) -> str:
+        return (
+            CHECKPOINT_MEDIA_TYPE if self.kind == "checkpoint" else WEIGHTS_MEDIA_TYPE
+        )
+
+    @property
+    def rank_media_type(self) -> str:
+        return RANK_MEDIA_TYPE if self.kind == "checkpoint" else WEIGHTS_RANK_MEDIA_TYPE
 
 
 @dataclass(frozen=True)
@@ -120,7 +141,7 @@ class SavedRank(Record):
         object.__setattr__(
             self, "archive", record(ArtifactRef, self.archive, "archive")
         )
-        if self.archive.media_type != RANK_MEDIA_TYPE:
+        if self.archive.media_type not in (RANK_MEDIA_TYPE, WEIGHTS_RANK_MEDIA_TYPE):
             raise ValueError("checkpoint rank requires a rank archive")
         if (
             not isinstance(self.state_sha256, str)
@@ -135,18 +156,41 @@ class CheckpointManifest(Record):
     ranks: Sequence[SavedRank]
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "info", record(SaveInfo, self.info, "checkpoint")
-        )
-        if not isinstance(self.ranks, (tuple, list)) or not self.ranks:
-            raise ValueError("checkpoint requires its complete rank set")
-        ranks = tuple(record(SavedRank, rank, "rank") for rank in self.ranks)
-        if len(ranks) != self.info.world_size or any(
-            rank.rank != index for index, rank in enumerate(ranks)
-        ):
-            raise ValueError(
-                "checkpoint requires each logical rank exactly once in order"
-            )
-        if len({rank.archive.id for rank in ranks}) != len(ranks):
-            raise ValueError("checkpoint ranks must reference distinct archives")
+        info, ranks = _generation(self.info, self.ranks, "checkpoint")
+        object.__setattr__(self, "info", info)
         object.__setattr__(self, "ranks", ranks)
+
+
+@dataclass(frozen=True)
+class WeightsManifest(Record):
+    """Inference model state and base dependencies; never optimizer-resume state."""
+
+    info: SaveInfo
+    ranks: Sequence[SavedRank]
+
+    def __post_init__(self) -> None:
+        info, ranks = _generation(self.info, self.ranks, "weights")
+        if info.frozen_state_id is not None and info.frozen_base is None:
+            raise ValueError("weights export requires its exact frozen base")
+        object.__setattr__(self, "info", info)
+        object.__setattr__(self, "ranks", ranks)
+
+
+def _generation(
+    info: object, rows: object, kind: str
+) -> tuple[SaveInfo, tuple[SavedRank, ...]]:
+    info = record(SaveInfo, info, kind)
+    if info.kind != kind:
+        raise ValueError("saved state kind differs from its generation manifest")
+    if not isinstance(rows, (tuple, list)) or not rows:
+        raise ValueError(f"{kind} requires its complete rank set")
+    ranks = tuple(record(SavedRank, row, "rank") for row in rows)
+    if len(ranks) != info.world_size or any(
+        row.rank != index for index, row in enumerate(ranks)
+    ):
+        raise ValueError(f"{kind} requires each logical rank exactly once in order")
+    if any(row.archive.media_type != info.rank_media_type for row in ranks):
+        raise ValueError("rank archive kind differs from its generation")
+    if len({row.archive.id for row in ranks}) != len(ranks):
+        raise ValueError(f"{kind} ranks must reference distinct archives")
+    return info, ranks

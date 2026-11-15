@@ -64,11 +64,17 @@ class ResultPublisher:
             metrics: dict[str, float | int] = {}
             outputs: dict[str, ArtifactRef] = {}
             checkpoint = None
+            weights = None
             metadata = {}
             if call.request.operation == "save":
                 if work.checkpoint is None:
                     raise ValueError("save has no owned checkpoint generation")
-                checkpoint = work.checkpoint.commit()[-1]
+                saved = work.checkpoint.commit()[-1]
+                assert call.request.save is not None
+                if call.request.save.kind == "checkpoint":
+                    checkpoint = saved
+                else:
+                    weights = saved
             if call.request.operation == "restore":
                 if call.restore is None:
                     raise ValueError("restore has no accepted checkpoint input")
@@ -118,6 +124,7 @@ class ResultPublisher:
                 loss=loss,
                 state_valid=receipt.state_valid,
                 checkpoint=checkpoint,
+                weights=weights,
                 metadata=metadata,
                 traces=traces,
                 artifact_issues=issues,

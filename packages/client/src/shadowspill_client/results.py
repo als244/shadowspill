@@ -11,6 +11,7 @@ from ._async import CallFuture
 from .checkpoints import CheckpointHandle
 from .protocol.requests import RequestIdentity
 from .protocol.results import Acceptance, OperationResult, RequestStatus
+from .weights import WeightsHandle
 
 if TYPE_CHECKING:
     from .service import ServiceClient
@@ -51,6 +52,9 @@ class TrainingResult:
             None
             if record.checkpoint is None
             else CheckpointHandle(record.checkpoint, service)
+        )
+        self.weights = (
+            None if record.weights is None else WeightsHandle(record.weights, service)
         )
 
 

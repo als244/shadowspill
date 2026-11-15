@@ -8,7 +8,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from .._records import Record, Value, integer, mapping, names, number, record, text
-from .checkpoints import CHECKPOINT_MEDIA_TYPE
+from .checkpoints import CHECKPOINT_MEDIA_TYPE, WEIGHTS_MEDIA_TYPE
 from .controls import Scalar
 from .requests import (
     OPERATIONS,
@@ -186,6 +186,7 @@ class OperationResult(Record):
     state_valid: bool = True
     checkpoint: ArtifactRef | None = None
     metadata: Mapping[str, Value] = field(default_factory=dict)
+    weights: ArtifactRef | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -202,9 +203,22 @@ class OperationResult(Record):
             )
             if self.checkpoint.media_type != CHECKPOINT_MEDIA_TYPE:
                 raise ValueError("checkpoint result requires a checkpoint manifest")
-        if (self.operation in ("save", "restore")) != (self.checkpoint is not None):
+        if self.weights is not None:
+            object.__setattr__(
+                self, "weights", record(ArtifactRef, self.weights, "weights")
+            )
+            if self.weights.media_type != WEIGHTS_MEDIA_TYPE:
+                raise ValueError("weights result requires an inference manifest")
+        if (
+            (self.operation == "restore" and self.weights is not None)
+            or (self.operation not in ("save", "restore") and self.weights is not None)
+            or (self.checkpoint is not None and self.weights is not None)
+            or (self.operation in ("save", "restore"))
+            != (self.checkpoint is not None or self.weights is not None)
+        ):
             raise ValueError(
-                "only checkpoint save/restore returns a checkpoint reference"
+                "save requires one checkpoint reference or weights reference; "
+                "restore requires a checkpoint reference"
             )
         object.__setattr__(
             self, "metadata", mapping(self.metadata, "checkpoint metadata")

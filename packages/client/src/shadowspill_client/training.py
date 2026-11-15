@@ -29,6 +29,7 @@ from .protocol.results import RequestStatus
 from .protocol.runs import RunInfo
 from .protocol.training import ResolvedTraining
 from .results import OperationFuture, TrainingRequestError, TrainingResult
+from .weights import WeightsHandle
 
 if TYPE_CHECKING:
     from .service import ServiceClient
@@ -371,6 +372,26 @@ class TrainingClient:
     def load_checkpoint(self, checkpoint_id: str) -> OperationFuture[TrainingResult]:
         """Restore an ID or run-local name in order; return saved caller metadata."""
         return self._submit("restore", restore=checkpoint_id)
+
+    def export_weights(
+        self,
+        *,
+        name: str | None = None,
+        format: str = "shadowspill",
+        weights: Literal["master", "compute"] = "master",
+        metadata: Mapping[str, Value] | None = None,
+    ) -> OperationFuture[WeightsHandle]:
+        """Save inference state at a completed update; copying it is explicit."""
+        settings = SaveSettings(
+            name, {} if metadata is None else metadata, weights, "weights", format
+        )
+
+        def exported(result: TrainingResult) -> WeightsHandle:
+            if result.weights is None:
+                raise ValueError("export completed without a weights reference")
+            return result.weights
+
+        return self._submit("save", save=settings)._mapped(exported)
 
     def close(self) -> OperationFuture[TrainingResult]:
         return self._submit("close")

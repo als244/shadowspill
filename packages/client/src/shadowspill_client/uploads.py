@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, BinaryIO
 
 from .artifacts import ArtifactHandle
 from .downloads import CHECKPOINT_SCRATCH_BYTES
-from .protocol.checkpoints import CHECKPOINT_MEDIA_TYPE, CheckpointManifest
+from .protocol.checkpoints import CheckpointManifest, WeightsManifest
 from .protocol.codec import MAX_METADATA_BYTES, ProtocolError, decode
 from .protocol.requests import ArtifactRef
 from .protocol.uploads import MAX_UPLOAD_CHUNK_BYTES, ArtifactUpload, UploadStatus
@@ -161,17 +161,17 @@ def _checkpoint(
             body = stream.read(MAX_METADATA_BYTES + 1)
             digest = hashlib.sha256(body).hexdigest()
             value = decode(body)
-            if not isinstance(value, CheckpointManifest):
-                raise ValueError("directory upload requires a checkpoint manifest")
+            if not isinstance(value, (CheckpointManifest, WeightsManifest)):
+                raise ValueError("directory upload requires a saved-state manifest")
             manifest = value
             del value, body
             expected = reference or ArtifactRef(
-                "upload." + digest, digest, original[2], CHECKPOINT_MEDIA_TYPE
+                "upload." + digest, digest, original[2], manifest.info.media_type
             )
             if (
                 expected.sha256 != digest
                 or expected.size_bytes != original[2]
-                or expected.media_type != CHECKPOINT_MEDIA_TYPE
+                or expected.media_type != manifest.info.media_type
             ):
                 raise ValueError(
                     "checkpoint upload differs from its immutable reference"

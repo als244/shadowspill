@@ -12,8 +12,17 @@ class SaveSettings(Record):
     name: str | None = None
     metadata: Mapping[str, Value] = field(default_factory=dict)
     weights: Literal["master", "compute"] = "master"
+    kind: Literal["checkpoint", "weights"] = "checkpoint"
+    format: str = "shadowspill"
 
     def __post_init__(self) -> None:
+        if self.kind not in ("checkpoint", "weights"):
+            raise ValueError("unknown save kind")
+        text(self.format, "save format")
+        if len(self.format) > 128 or (
+            self.kind == "checkpoint" and self.format != "shadowspill"
+        ):
+            raise ValueError("unsupported or oversized save format")
         if self.name is not None:
             text(self.name, "checkpoint name")
             if self.name != self.name.strip() or len(self.name) > 256:

@@ -19,7 +19,7 @@ from ..config import (
     Preparation,
 )
 from .captures import NsightManifest
-from .checkpoints import CheckpointManifest
+from .checkpoints import CheckpointManifest, WeightsManifest
 from .controls import ControlSchema
 from .creation import TrainingCreation
 from .definitions import DefinitionSource, OutputSet
@@ -76,6 +76,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "plans.summary": PlanSummaryPage,
     "plans.saved": SavedPlans,
     "checkpoint.manifest": CheckpointManifest,
+    "weights.manifest": WeightsManifest,
     "checkpoint.frozen_base": FrozenBase,
     "nsys.manifest": NsightManifest,
     "artifact.upload": ArtifactUpload,

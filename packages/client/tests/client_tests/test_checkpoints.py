@@ -51,6 +51,8 @@ def test_manifest_roundtrip_and_owned_metadata():
     ordinary = updated.to_dict()
     ordinary.pop("conversion")
     ordinary.pop("frozen_base")
+    ordinary.pop("kind")
+    ordinary.pop("format")
     assert updated.rank_metadata()["checkpoint"] == ordinary
 
 
@@ -72,6 +74,8 @@ def test_conversion_provenance_roundtrips_and_is_included_in_rank_boundary():
     assert decode(encode(converted)) == converted
     metadata = converted.info.to_dict()
     metadata.pop("frozen_base")
+    metadata.pop("kind")
+    metadata.pop("format")
     assert converted.info.rank_metadata()["checkpoint"] == metadata
     assert conversion.randomness["source_streams"] == ()
     for changes in ({"version": 2}, {"version": True}, {"logical_state_sha256": "bad"}):

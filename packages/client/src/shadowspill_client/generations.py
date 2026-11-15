@@ -5,11 +5,11 @@ from pathlib import Path
 
 from ._async import CallFuture
 from .artifacts import ArtifactHandle
-from .protocol.checkpoints import CheckpointManifest
+from .protocol.checkpoints import CheckpointManifest, WeightsManifest
 from .protocol.codec import MAX_METADATA_BYTES, decode
 
 
-class GenerationHandle[Manifest: CheckpointManifest](ArtifactHandle):
+class GenerationHandle[Manifest: CheckpointManifest | WeightsManifest](ArtifactHandle):
     @property
     def _manifest_type(self) -> type[Manifest]:
         raise NotImplementedError
@@ -23,7 +23,7 @@ class GenerationHandle[Manifest: CheckpointManifest](ArtifactHandle):
             self.reference.media_type != self._media_type
             or self.reference.size_bytes > MAX_METADATA_BYTES
         ):
-            raise ValueError("checkpoint reference exceeds its metadata bounds")
+            raise ValueError("saved generation exceeds its metadata bounds")
         with io.BytesIO() as stream:
             self._service._transport.download(
                 "/v1/artifacts/" + self.id, self.reference, stream
@@ -31,7 +31,7 @@ class GenerationHandle[Manifest: CheckpointManifest](ArtifactHandle):
             body = stream.getvalue()
         value = decode(body)
         if not isinstance(value, self._manifest_type):
-            raise ValueError("artifact is not a checkpoint manifest")
+            raise ValueError("artifact is not the expected generation manifest")
         return value, body
 
     def manifest(self) -> CallFuture[Manifest]:

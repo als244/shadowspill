@@ -4,13 +4,14 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 from shadowspill.checkpoint.random_streams import read_snapshot
 from shadowspill_client._records import Record, Value, integer, mapping, record
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
     RANK_MEDIA_TYPE,
+    WEIGHTS_RANK_MEDIA_TYPE,
     SavedRank,
     SaveInfo,
 )
@@ -32,6 +33,8 @@ class RankRestore(Record):
             object.__setattr__(self, name, record(kind, getattr(self, name), name))
         if (
             self.checkpoint.media_type != CHECKPOINT_MEDIA_TYPE
+            or self.info.kind != "checkpoint"
+            or self.rank.archive.media_type != RANK_MEDIA_TYPE
             or self.rank.rank >= self.info.world_size
         ):
             raise ValueError("restore rank differs from its checkpoint generation")
@@ -47,8 +50,13 @@ class RankSave(Record):
     program: str
     additional_programs: Mapping[str, str]
     randomness: Mapping[str, Value] | None = None
+    kind: Literal["checkpoint", "weights"] = "checkpoint"
 
     def __post_init__(self) -> None:
+        if self.kind not in ("checkpoint", "weights") or (
+            self.kind == "weights" and self.randomness is not None
+        ):
+            raise ValueError("unknown rank save kind or RNG in inference export")
         integer(self.size_bytes, "rank archive bytes", minimum=1)
         # Reuse the portable rank identity check, without claiming a payload hash.
         self.reference("preflight", "0" * 64)
@@ -73,7 +81,14 @@ class RankSave(Record):
     def reference(self, artifact_id: str, sha256: str) -> SavedRank:
         return SavedRank(
             self.rank,
-            ArtifactRef(artifact_id, sha256, self.size_bytes, RANK_MEDIA_TYPE),
+            ArtifactRef(
+                artifact_id,
+                sha256,
+                self.size_bytes,
+                RANK_MEDIA_TYPE
+                if self.kind == "checkpoint"
+                else WEIGHTS_RANK_MEDIA_TYPE,
+            ),
             self.state_sha256,
         )
 
@@ -89,9 +104,11 @@ class RankSave(Record):
 
     def confirmation(self, info: SaveInfo) -> dict[str, Any]:
         """Bounded completion fields; the full tensor manifest stays in the archive."""
+        if self.kind != info.kind:
+            raise ValueError("rank save kind differs from its admitted boundary")
         return {
-            "format": "shadowspill.checkpoint",
-            "version": 2,
+            "format": "shadowspill." + self.kind,
+            "version": 2 if self.kind == "checkpoint" else 1,
             "logical_rank": self.rank,
             "state": self.state_sha256,
             "program": self.program,
@@ -117,4 +134,4 @@ class RankSaved(Record):
 
 def checkpoint_id(info: SaveInfo) -> str:
     key = "\0".join((info.session_id, info.run_id, info.request_id))
-    return "checkpoint." + hashlib.sha256(key.encode()).hexdigest()
+    return info.kind + "." + hashlib.sha256(key.encode()).hexdigest()

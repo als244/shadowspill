@@ -203,6 +203,8 @@ class WorkerCall(Record):
                 or self.scope.rank >= info.world_size
                 or info.weights != settings.weights
                 or info.metadata != settings.metadata
+                or info.kind != settings.kind
+                or info.format != settings.format
             ):
                 raise ValueError("checkpoint boundary differs from its worker request")
         if self.request.operation in STATE_OPERATIONS:

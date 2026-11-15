@@ -24,6 +24,10 @@ rank, marker, mode = int(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 executor = MemoryExecutor()
 executor.plan.program.digest = "a" * 64
 executor.logical_rank = rank
+if sys.argv[6:] == ["weights"]:
+    from engine_tests.checkpoint.test_conversion import HostRank, family
+
+    executor = HostRank(family(int(sys.argv[5]), 0)[rank], initialize=True)
 executor.close = lambda: None
 executor.discard_gradients = lambda: None
 executor.synchronize = lambda: None

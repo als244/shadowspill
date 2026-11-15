@@ -24,11 +24,10 @@ from shadowspill.training.worker.checkpoint_records import (
     checkpoint_id,
 )
 from shadowspill_client.protocol.checkpoints import (
-    CHECKPOINT_MEDIA_TYPE,
-    RANK_MEDIA_TYPE,
     CheckpointManifest,
     SavedRank,
     SaveInfo,
+    WeightsManifest,
 )
 from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.frozen import FrozenBase
@@ -78,6 +77,10 @@ class RunCheckpoints:
             or transition.before.accumulation.open
         ):
             raise ValueError("checkpoint requires a valid completed-update boundary")
+        if settings.format != "shadowspill":
+            raise ValueError(
+                f"no installed weights exporter for format {settings.format!r}"
+            )
         return SaveInfo(
             self.session_id,
             request.identity.run_id,
@@ -94,6 +97,8 @@ class RunCheckpoints:
             frozen_state_id=None
             if self.frozen_base is None
             else self.frozen_base.identity,
+            kind=settings.kind,
+            format=settings.format,
         )
 
     def stage(
@@ -141,13 +146,16 @@ def stage_checkpoint(
     if len(ranks) + 1 > MAX_GROUP_ARTIFACTS:
         raise ValueError("checkpoint rank set exceeds the artifact publication bound")
     ranks = tuple(ranks)
+    if any(rank.kind != info.kind for rank in ranks):
+        raise ValueError("rank save kind differs from the admitted generation")
     artifact_id = checkpoint_id(info)
+    manifest_type = CheckpointManifest if info.kind == "checkpoint" else WeightsManifest
     placeholders = tuple(
         rank.reference(f"{artifact_id}.rank.{rank.rank}", "0" * 64) for rank in ranks
     )
     # All digests have fixed width, so this is the exact metadata size, not a
     # guessed model envelope. Encode before invoking a rank or reserving disk.
-    encoded_size = len(encode(CheckpointManifest(info, placeholders)))
+    encoded_size = len(encode(manifest_type(info, placeholders)))
     dependencies = [info.configuration, info.plans]
     if info.frozen_base is not None and info.frozen_base.artifact is not None:
         dependencies.append(info.frozen_base.artifact)
@@ -160,10 +168,10 @@ def stage_checkpoint(
         else ArtifactAlias(info.session_id, info.run_id, name, artifact_id)
     )
     specs = [
-        OutputSpec(row.archive.id, row.archive.size_bytes, RANK_MEDIA_TYPE)
+        OutputSpec(row.archive.id, row.archive.size_bytes, info.rank_media_type)
         for row in placeholders
     ]
-    specs.append(OutputSpec(artifact_id, encoded_size, CHECKPOINT_MEDIA_TYPE))
+    specs.append(OutputSpec(artifact_id, encoded_size, info.media_type))
     by_id = {
         row.archive.id: rank for row, rank in zip(placeholders, ranks, strict=True)
     }
@@ -177,7 +185,7 @@ def stage_checkpoint(
             row = rank.reference(spec.id, saved.sha256)
             completed.append(row)
             return row.archive
-        body = encode(CheckpointManifest(info, completed))
+        body = encode(manifest_type(info, completed))
         with memoryview(body) as data:
             offset = 0
             while offset < len(data):
@@ -187,7 +195,7 @@ def stage_checkpoint(
             artifact_id,
             hashlib.sha256(body).hexdigest(),
             len(body),
-            CHECKPOINT_MEDIA_TYPE,
+            info.media_type,
         )
 
     return artifacts.stage_group(specs, produce, alias=alias)

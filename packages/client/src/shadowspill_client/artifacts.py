@@ -60,7 +60,7 @@ class ArtifactTransfers:
     def upload(
         self, path: str | Path, *, reference: ArtifactRef | None = None
     ) -> CallFuture[ArtifactHandle]:
-        """Register a file or checkpoint directory, resuming verified progress.
+        """Register a file, checkpoint or weights directory with verified resume.
 
         Repeating this call explicitly resumes an incomplete transfer. Exchanges
         are never retried automatically. Keep local files unchanged until the

@@ -9,7 +9,9 @@ from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.worker.frozen import validate_base
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
+    WEIGHTS_MEDIA_TYPE,
     CheckpointManifest,
+    WeightsManifest,
 )
 from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, decode
 from shadowspill_client.protocol.requests import (
@@ -22,12 +24,12 @@ from shadowspill_client.protocol.training import ResolvedTraining
 from .artifacts import ArtifactStore
 
 
-def read_checkpoint_manifest(
+def read_saved_manifest(
     reference: ArtifactRef, stream: BinaryIO
-) -> CheckpointManifest:
+) -> CheckpointManifest | WeightsManifest:
     """Decode only a bounded, checksum-verified portable generation manifest."""
     if (
-        reference.media_type != CHECKPOINT_MEDIA_TYPE
+        reference.media_type not in (CHECKPOINT_MEDIA_TYPE, WEIGHTS_MEDIA_TYPE)
         or reference.size_bytes > MAX_METADATA_BYTES
     ):
         raise ValueError("checkpoint is not a bounded generation manifest")
@@ -38,13 +40,32 @@ def read_checkpoint_manifest(
     ):
         raise ValueError("checkpoint manifest differs from its immutable reference")
     value = decode(body)
+    expected = (
+        CheckpointManifest
+        if reference.media_type == CHECKPOINT_MEDIA_TYPE
+        else WeightsManifest
+    )
+    if not isinstance(value, expected):
+        raise ValueError("artifact kind differs from its saved generation")
+    return value
+
+
+def read_checkpoint_manifest(
+    reference: ArtifactRef, stream: BinaryIO
+) -> CheckpointManifest:
+    if reference.media_type != CHECKPOINT_MEDIA_TYPE:
+        raise ValueError("checkpoint is not a bounded generation manifest")
+    value = read_saved_manifest(reference, stream)
     if not isinstance(value, CheckpointManifest):
         raise ValueError("artifact is not a checkpoint generation")
     return value
 
 
 def require_checkpoint_dependencies(
-    artifacts: ArtifactStore, manifest: CheckpointManifest, *, setup: bool = True
+    artifacts: ArtifactStore,
+    manifest: CheckpointManifest | WeightsManifest,
+    *,
+    setup: bool = True,
 ) -> None:
     """Registration requires all ranks; restore additionally requires its setup."""
     dependencies = [row.archive for row in manifest.ranks]
