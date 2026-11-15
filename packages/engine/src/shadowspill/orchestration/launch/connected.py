@@ -29,9 +29,13 @@ class ConnectedProcess:
         cwd: Path,
         log_limit_bytes: int = 64 << 20,
         startup_timeout: float = 120,
+        shutdown_grace_seconds: float = 5,
     ) -> None:
         if number(startup_timeout, "worker startup timeout", minimum=0) == 0:
             raise ValueError("worker startup timeout must be positive")
+        self._shutdown_grace = number(
+            shutdown_grace_seconds, "worker shutdown grace", minimum=0
+        )
         self._socket, child = socketpair()
         self.closed = False
         self._lock = RLock()
@@ -78,14 +82,20 @@ class ConnectedProcess:
             finally:
                 self._socket.close()
 
-    def close(self, *, grace_seconds: float = 5, terminate_seconds: float = 2) -> None:
+    def close(
+        self, *, grace_seconds: float | None = None, terminate_seconds: float = 2
+    ) -> None:
+        """Use the launcher's bounded finalization allowance unless overridden."""
         with self._lock:
             if not self.closed:
                 try:
                     self.disconnect()
                 finally:
                     self.process.close(
-                        grace_seconds=grace_seconds, terminate_seconds=terminate_seconds
+                        grace_seconds=self._shutdown_grace
+                        if grace_seconds is None
+                        else grace_seconds,
+                        terminate_seconds=terminate_seconds,
                     )
                 self.closed = True
 

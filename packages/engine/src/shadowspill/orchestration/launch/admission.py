@@ -233,6 +233,7 @@ class NodeLease:
         cwd: Path,
         log_limit_bytes: int = 64 << 20,
         startup_timeout: float = 120,
+        shutdown_grace_seconds: float = 5,
     ) -> ConnectedProcess:
         """Launch once on a reserved slot, setting visibility before any import."""
         with self._lock:
@@ -254,6 +255,7 @@ class NodeLease:
                 cwd=cwd,
                 log_limit_bytes=log_limit_bytes,
                 startup_timeout=startup_timeout,
+                shutdown_grace_seconds=shutdown_grace_seconds,
             )
             self._children[device_id] = child
             return child

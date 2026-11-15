@@ -126,3 +126,36 @@ def test_failed_construction_closes_both_socket_ends(tmp_path, monkeypatch, fail
             startup_timeout=1e300 if failure == "timeout" else 5,
         )
     assert all(endpoint.fileno() == -1 for endpoint in endpoints)
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_collector_finalization_grace_is_owned_at_launch_and_can_be_overridden(
+    tmp_path, override
+):
+    script = """
+import socket, sys, time
+from pathlib import Path
+with socket.socket(fileno=int(sys.argv[1])) as control:
+    control.sendall(b'ready')
+    assert control.recv(1) == b''
+Path('worker-exited').touch()
+time.sleep(0.1)
+Path('report-finalized').touch()
+"""
+    with ConnectedProcess(
+        lambda fd: [sys.executable, "-c", script, str(fd)],
+        environment={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+        directory=tmp_path / "logs",
+        cwd=tmp_path,
+        shutdown_grace_seconds=1,
+    ) as child:
+        assert child.stream.read(5) == b"ready"
+        if override:
+            child.close(grace_seconds=0, terminate_seconds=1)
+            assert child.process.returncode != 0
+        else:
+            child.close()
+            assert child.process.returncode == 0
+            assert (tmp_path / "worker-exited").exists()
+        assert (tmp_path / "report-finalized").exists() is (not override)
+        assert child.closed and child.stream.closed
