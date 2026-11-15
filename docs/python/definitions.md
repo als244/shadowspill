@@ -50,7 +50,20 @@ portable settings, input schemas and provenance. Configuration factories return
 dataclasses or mappings. The resolved model's `create()` is a separate preparation
 action. Objectives declare required model capabilities; resolution rejects
 incompatible bindings. An objective with several named output sets supplies a
-`bind(config, outputs)` function selecting the computation for that set.
+`bind(config, OperationKey)` function selecting the computation for that operation,
+output set and model mode. `OutputSet(forward=...)` can describe a separate
+forward-only contract under the same output name. For example, policy training
+needs advantages and old logprobs while a logprob-only forward does not. Both
+contracts are inspectable and saved; preparation selects the exact one before
+validation, packing and capture. A forward in training mode still uses the
+forward-only contract.
+
+Objectives may supply `configure(values, resolved_model)` to infer structural
+settings from the model's CPU description. The normal typed configuration factory
+checks its result; resolving those defaults again must give the same settings.
+Like input schemas, controls and output mappings can be functions of that typed
+configuration. These functions run during setup, never during runtime requests.
+The resulting concrete contracts are validated and pinned in the saved setup.
 
 Models that need geometry-dependent construction or provider resources can supply
 `build(config, ModelBuildContext)`. This CPU hook returns `ModelBuild` with complete

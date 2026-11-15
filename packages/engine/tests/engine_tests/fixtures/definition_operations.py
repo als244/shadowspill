@@ -28,9 +28,11 @@ def predictions(model, inputs, loss_inputs, loss_params):
     return {"prediction": model(**inputs)}
 
 
-def objective_binding(config, outputs):
+def objective_binding(config, key):
     return (
-        external_definition.classification_loss if outputs == "metrics" else predictions
+        external_definition.classification_loss
+        if key.outputs == "metrics"
+        else predictions
     )
 
 

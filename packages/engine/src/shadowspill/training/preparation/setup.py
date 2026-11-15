@@ -84,11 +84,11 @@ def _assemble(
     context = PreparationContext(model, schema, tuple(config.batches), parallelism)
     if (
         schema != config.inputs
-        or objective.definition.controls != config.loss_controls
+        or objective.controls != config.loss_controls
         or (None if optimizer is None else optimizer.definition.controls)
         != config.optimizer_controls
         or objective.definition.participation != config.participation
-        or {name: objective.definition.outputs.get(name) for name in config.outputs}
+        or {name: objective.outputs.get(name) for name in config.outputs}
         != config.outputs
     ):
         raise ValueError(
@@ -306,12 +306,12 @@ def _describe(
         engine_source=engine_source,
         client_source=client_source,
         inputs=schema,
-        loss_controls=resolved_objective.definition.controls,
+        loss_controls=resolved_objective.controls,
         optimizer_controls=None
         if resolved_optimizer is None
         else resolved_optimizer.definition.controls,
         outputs={
-            key.outputs: resolved_objective.definition.outputs[key.outputs]
+            key.outputs: resolved_objective.outputs[key.outputs]
             for key in keys
             if key.outputs is not None
         },

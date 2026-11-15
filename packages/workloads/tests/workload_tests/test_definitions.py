@@ -16,6 +16,7 @@ from shadowspill.training.definitions import (
     Registry,
 )
 from shadowspill_client import Model, Weights
+from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_workloads.definitions import register
 
 
@@ -148,7 +149,9 @@ def test_regression_prediction_requires_no_loss_fields_and_evaluation_is_read_on
     )
     model = description.create()
     inputs = {"value": torch.randn(3, 16)}
-    predictions = objective.computation("predictions")
+    predictions = objective.computation(
+        OperationKey("forward", "predictions", "evaluation")
+    )
     model.train()
     first = predictions(model, inputs, {}, {})["prediction"]
     assert model.updates.item() == 1

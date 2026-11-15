@@ -10,9 +10,10 @@ from shadowspill.parallelism import Parallelism
 from shadowspill.resources.description import validate_resources
 from shadowspill_client import Model, Optimizer
 from shadowspill_client._records import Value, mapping, plain
-from shadowspill_client.protocol.controls import Scalar
-from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.controls import ControlSchema, Scalar
+from shadowspill_client.protocol.definitions import DefinitionSource, OutputSet
 from shadowspill_client.protocol.inputs import InputSchema
+from shadowspill_client.protocol.operations import OperationKey
 
 from .build import ModelBuild, ModelBuildContext
 from .contracts import (
@@ -182,14 +183,24 @@ class ResolvedObjective:
     inputs: InputSchema
     defaults: Mapping[str, Scalar]
 
-    def computation(self, outputs: str | None = None) -> Computation:
-        selected = self.definition.default_outputs if outputs is None else outputs
-        if selected not in self.definition.outputs:
-            raise ValueError(f"unknown output set: {selected}")
+    @property
+    def controls(self) -> ControlSchema:
+        assert isinstance(self.definition.controls, ControlSchema)
+        return self.definition.controls
+
+    @property
+    def outputs(self) -> Mapping[str, OutputSet]:
+        assert not callable(self.definition.outputs)
+        return self.definition.outputs
+
+    def computation(self, key: OperationKey | None = None) -> Computation:
+        key = key or OperationKey("step", self.definition.default_outputs)
+        if key.outputs not in self.outputs:
+            raise ValueError(f"unknown output set: {key.outputs}")
         if self.definition.bind is None:
             return self.definition.compute
         configured, _ = _configuration(self.definition.config, self.config)
-        computation = self.definition.bind(configured, selected)
+        computation = self.definition.bind(configured, key)
         if not callable(computation):
             raise TypeError("objective binding must return a callable")
         return computation
@@ -469,18 +480,44 @@ class Registry:
             raise ValueError(
                 f"model lacks required objective capabilities: {sorted(missing)}"
             )
+        requested = {} if config is None else config
         configured, settings = _configuration(
-            objective.config, {} if config is None else config
+            objective.config,
+            requested
+            if objective.configure is None
+            else objective.configure(requested, model),
         )
+        if objective.configure is not None:
+            _, checked = _configuration(
+                objective.config, objective.configure(settings, model)
+            )
+            if checked != settings:
+                raise ValueError(
+                    "objective settings hook is not stable with resolved defaults"
+                )
+        objective = replace(
+            objective,
+            controls=objective.controls(configured)
+            if callable(objective.controls)
+            else objective.controls,
+            outputs=objective.outputs(configured)
+            if callable(objective.outputs)
+            else objective.outputs,
+        )
+        assert isinstance(objective.controls, ControlSchema)
+        assert not callable(objective.outputs)
         inputs = _schema(objective.inputs, configured)
         model_paths = {tuple(field.path) for field in model.inputs.fields}
         loss_fields = {tuple(field.path): field for field in inputs.fields}
         for name, output in objective.outputs.items():
-            if (
-                set(output.model_inputs) - model_paths
-                or set(output.loss_inputs) - loss_fields.keys()
-            ):
-                raise ValueError(f"output {name} references an undeclared input field")
+            for concrete in (output, output.forward):
+                if concrete is not None and (
+                    set(concrete.model_inputs) - model_paths
+                    or set(concrete.loss_inputs) - loss_fields.keys()
+                ):
+                    raise ValueError(
+                        f"output {name} references an undeclared input field"
+                    )
         if objective.participation.path:
             field = loss_fields.get(tuple(objective.participation.path))
             if field is None or field.dtype != "bool" or field.padding is not False:

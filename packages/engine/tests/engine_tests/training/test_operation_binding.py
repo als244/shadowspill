@@ -77,7 +77,7 @@ def test_external_capture_uses_runtime_coefficients_and_preserves_weighted_sum()
         for temperature in (0.5, 2.0):
             args = binding.arguments(adapted, {"temperature": temperature})
             loss, valid = captured.exported.exported_program.module()(*args)
-            expected = objective.computation("metrics")(
+            expected = objective.computation(OperationKey("step", "metrics"))(
                 model,
                 {"pixels": args[0]["pixels"][:3]},
                 {k: v[:3] for k, v in args[1].items()},

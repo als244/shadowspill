@@ -99,5 +99,5 @@ def loss(model, inputs, loss_inputs, loss_params):
     )
 
 
-def bind(config, selected):
-    return loss if selected == "metrics" else predictions
+def bind(config, key):
+    return loss if key.outputs == "metrics" else predictions

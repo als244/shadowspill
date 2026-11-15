@@ -12,6 +12,7 @@ from shadowspill_client._records import Value
 from shadowspill_client.protocol.controls import ControlSchema
 from shadowspill_client.protocol.definitions import OutputSet, Participation
 from shadowspill_client.protocol.inputs import InputSchema
+from shadowspill_client.protocol.operations import OperationKey
 
 from .allocations import allocation_invariants
 
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
     from .build import ModelBuild, ModelBuildContext
     from .initialization import InitializationContext, ModelInitialization
+    from .registry import ResolvedModel
 
 type Configuration = Callable[..., Any]
 type Schema = InputSchema | Callable[[Any], InputSchema]
@@ -114,23 +116,33 @@ class ObjectiveDefinition:
     scalar totals and preserves outputs for real data. Declaring a participation
     field alone does not prove that a callable honors it. The preparation binder
     requires this guarantee for padded operation families.
+
+    ``configure(values, model)`` can resolve model-dependent structural settings
+    on CPU. Inputs, controls and outputs may resolve from the typed configuration.
+    ``bind(config, OperationKey)`` selects the captured computation; a forward
+    output override declares its separate input/control/result contract.
     """
 
     id: str
     compute: Computation
     inputs: Schema
     config: Configuration = dict
-    controls: ControlSchema = field(default_factory=lambda: ControlSchema({}))
-    outputs: Mapping[str, OutputSet] = field(
+    controls: ControlSchema | Callable[[Any], ControlSchema] = field(
+        default_factory=lambda: ControlSchema({})
+    )
+    outputs: Mapping[str, OutputSet] | Callable[[Any], Mapping[str, OutputSet]] = field(
         default_factory=lambda: {"metrics": OutputSet()}
     )
     default_outputs: str = "metrics"
     requires: Sequence[str] = ()
     participation: Participation = field(default_factory=Participation)
     reduction: Literal["sum", "custom"] = "sum"
-    bind: Callable[[Any, str], Computation] | None = None
+    bind: Callable[[Any, OperationKey], Computation] | None = None
     padding_safe: bool = False
     allocation_invariants: Mapping[str, str] = field(default_factory=dict)
+    configure: (
+        Callable[[Mapping[str, Value], ResolvedModel], Mapping[str, Value]] | None
+    ) = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -138,38 +150,45 @@ class ObjectiveDefinition:
             raise TypeError("objective compute and config must be callable")
         if not isinstance(self.inputs, InputSchema) and not callable(self.inputs):
             raise TypeError("inputs must be an InputSchema or a schema resolver")
-        if not isinstance(self.controls, ControlSchema) or not isinstance(
-            self.participation, Participation
-        ):
+        if (
+            not isinstance(self.controls, ControlSchema) and not callable(self.controls)
+        ) or not isinstance(self.participation, Participation):
             raise TypeError("objective requires declared controls and participation")
         if self.reduction not in ("sum", "custom"):
             raise ValueError("declare summed or custom objective semantics")
         if type(self.padding_safe) is not bool:
             raise TypeError("objective padding_safe must be boolean")
-        outputs = dict(self.outputs)
-        if not outputs or self.default_outputs not in outputs:
+        if self.configure is not None and not callable(self.configure):
+            raise TypeError("configure must be an installed CPU settings function")
+        outputs = None if callable(self.outputs) else dict(self.outputs)
+        if outputs is not None and (not outputs or self.default_outputs not in outputs):
             raise ValueError("objective must name a declared default output set")
         if self.bind is not None and not callable(self.bind):
             raise TypeError("objective bind must be callable")
-        if len(outputs) > 1 and self.bind is None:
+        if (outputs is None or len(outputs) > 1) and self.bind is None:
             raise ValueError(
                 "multiple output sets require an explicit computation binding"
             )
-        if any(
+        if outputs is not None and any(
             not isinstance(k, str) or not k or not isinstance(v, OutputSet)
             for k, v in outputs.items()
         ):
             raise TypeError("outputs must map names to OutputSet records")
-        for output in outputs.values():
-            if set(output.controls) - self.controls.fields.keys():
-                raise ValueError("output set references an undeclared control")
+        if outputs is not None and isinstance(self.controls, ControlSchema):
+            for output in outputs.values():
+                for concrete in (output, output.forward):
+                    if concrete is not None and (
+                        set(concrete.controls) - self.controls.fields.keys()
+                    ):
+                        raise ValueError("output set references an undeclared control")
         required = tuple(self.requires)
         if any(not isinstance(v, str) or not v for v in required) or len(
             set(required)
         ) != len(required):
             raise ValueError("invalid required capabilities")
         object.__setattr__(self, "requires", required)
-        object.__setattr__(self, "outputs", MappingProxyType(outputs))
+        if outputs is not None:
+            object.__setattr__(self, "outputs", MappingProxyType(outputs))
         object.__setattr__(
             self,
             "allocation_invariants",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Literal
 
@@ -75,6 +75,8 @@ class OutputSet(Record):
     Paths are explicit component tuples. Optional, known input fields may still
     be submitted, but a selected set cannot silently depend on omitted fields.
     Scalar metrics declare reductions; tensor outputs retain their inverse map.
+    An optional ``forward`` contract declares the fields, controls and results
+    needed without a training loss. It cannot itself contain another override.
     """
 
     model_inputs: Sequence[Sequence[str]] = ()
@@ -84,6 +86,7 @@ class OutputSet(Record):
     metrics: Mapping[str, Literal["sum", "min", "max", "identical"]] = field(
         default_factory=dict
     )
+    forward: OutputSet | None = None
 
     def __post_init__(self) -> None:
         for name in ("model_inputs", "loss_inputs"):
@@ -109,6 +112,17 @@ class OutputSet(Record):
             )
         object.__setattr__(self, "tensors", MappingProxyType(tensors))
         object.__setattr__(self, "metrics", MappingProxyType(metrics))
+        if self.forward is not None:
+            forward = record(OutputSet, self.forward, "forward outputs")
+            if forward.forward is not None:
+                raise ValueError("forward output contracts cannot be nested")
+            object.__setattr__(self, "forward", forward)
+
+    def select(self, *, forward: bool) -> OutputSet:
+        """Return the concrete contract used by one prepared operation."""
+        if forward and self.forward is not None:
+            return self.forward
+        return self if self.forward is None else replace(self, forward=None)
 
 
 @dataclass(frozen=True)

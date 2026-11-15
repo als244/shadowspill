@@ -70,7 +70,12 @@ class OperationBinding:
         self.inputs, self.outputs, self.buffer = inputs, outputs, buffer
         self.logical_rank = layout.logical_rank
         self.contributes_loss = layout.placement.contributes_loss(self.logical_rank)
-        self.computation = contract.objective.computation(contract.key.outputs)
+        self.computation = contract.objective.computation(contract.key)
+        self.control_names = tuple(contract.controls.fields)
+        self.metrics = tuple(contract.outputs.metrics)
+        self.tensor_dtypes = {
+            name: output.dtype for name, output in contract.outputs.tensors.items()
+        }
         self.tensor_shapes = {
             name: outputs.worker_shape(name, buffer, self.logical_rank)
             for name in contract.outputs.tensors
@@ -114,7 +119,7 @@ class OperationBinding:
 
         from shadowspill.pytorch.contracts import normalize_objective_result
 
-        if set(loss_params) != set(self.contract.controls.fields):
+        if set(loss_params) != set(self.control_names):
             raise ValueError("objective controls differ from the prepared operation")
         value = self.computation(model, inputs, loss_inputs, loss_params)
         if forward and isinstance(value, Mapping):
@@ -129,10 +134,10 @@ class OperationBinding:
                 loss = loss * 0
         if values is None:
             values = {}
-        expected = set(self.contract.outputs.metrics) | set(self.tensor_shapes)
+        expected = set(self.metrics) | set(self.tensor_shapes)
         if not isinstance(values, Mapping) or set(values) != expected:
             raise ValueError("computation outputs differ from the declared output set")
-        for name in self.contract.outputs.metrics:
+        for name in self.metrics:
             metric = values[name]
             if (
                 not isinstance(metric, torch.Tensor)
@@ -146,7 +151,7 @@ class OperationBinding:
                 not isinstance(tensor, torch.Tensor)
                 or tuple(tensor.shape) != shape
                 or str(tensor.dtype)
-                != "torch." + self.contract.outputs.tensors[name].dtype
+                != "torch." + self.tensor_dtypes[name]
             ):
                 raise ValueError(
                     f"tensor output {name} differs from its declared layout"

@@ -51,8 +51,8 @@ def predictions(model, inputs, loss_inputs, loss_params):
     return {"prediction": model(**inputs)}
 
 
-def bind(config, outputs):
-    return weighted_squared_error if outputs == "metrics" else predictions
+def bind(config, key):
+    return weighted_squared_error if key.outputs == "metrics" else predictions
 
 
 def weighted_squared_error(model, inputs, loss_inputs, loss_params):

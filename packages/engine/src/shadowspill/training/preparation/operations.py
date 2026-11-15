@@ -44,7 +44,7 @@ def resolve_operations(
                 choice.outputs,
                 choice.mode or ("evaluation" if operation == "forward" else "training"),
             )
-            if key.outputs not in objective.definition.outputs:
+            if key.outputs not in objective.outputs:
                 raise ValueError(f"unknown output set: {key.outputs}")
             if key in result:
                 raise ValueError("duplicate operation/output/mode combination")
@@ -60,13 +60,15 @@ class OperationContract:
     objective: ResolvedObjective
 
     def __post_init__(self) -> None:
-        if self.key.outputs not in self.objective.definition.outputs:
+        if self.key.outputs not in self.objective.outputs:
             raise ValueError("operation requires a declared objective output set")
 
     @property
     def outputs(self) -> OutputSet:
         assert self.key.outputs is not None
-        return self.objective.definition.outputs[self.key.outputs]
+        return self.objective.outputs[self.key.outputs].select(
+            forward=self.key.operation == "forward"
+        )
 
     @property
     def required_paths(self) -> tuple[Path, ...]:
@@ -82,7 +84,7 @@ class OperationContract:
     def controls(self) -> ControlSchema:
         return ControlSchema(
             {
-                name: self.objective.definition.controls.fields[name]
+                name: self.objective.controls.fields[name]
                 for name in sorted(self.outputs.controls)
             }
         )
