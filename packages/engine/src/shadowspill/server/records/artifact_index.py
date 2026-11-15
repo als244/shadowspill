@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Literal
 
 from shadowspill_client._records import Record, text
 from shadowspill_client.protocol.codec import RecordCodec
@@ -14,12 +15,19 @@ REFERENCE_BYTES = 4096
 _CODEC = RecordCodec({"artifact.reference": ArtifactRef})
 
 
-def alias_scope(session_id: str, run_id: str, name: str) -> tuple[str, str, str]:
+type AliasKind = Literal["checkpoint", "plans"]
+
+
+def alias_scope(
+    session_id: str, run_id: str, name: str, kind: AliasKind = "checkpoint"
+) -> tuple[str, str, str, AliasKind]:
     identifier(session_id, "artifact session ID")
     identifier(run_id, "artifact run ID")
     if len(text(name, "artifact name")) > 256:
         raise ValueError("artifact name exceeds its bound")
-    return session_id, run_id, name
+    if kind not in ("checkpoint", "plans"):
+        raise ValueError("unknown named artifact kind")
+    return session_id, run_id, name, kind
 
 
 @dataclass(frozen=True)
@@ -30,9 +38,10 @@ class ArtifactAlias(Record):
     run_id: str
     name: str
     artifact_id: str
+    kind: AliasKind = "checkpoint"
 
     def __post_init__(self) -> None:
-        alias_scope(self.session_id, self.run_id, self.name)
+        alias_scope(self.session_id, self.run_id, self.name, self.kind)
         identifier(self.artifact_id, "named artifact ID")
 
 
@@ -65,7 +74,8 @@ class ArtifactIndex:
             )
             self._db.execute(
                 "CREATE TABLE aliases (session_id TEXT, run_id TEXT, name TEXT, "
-                "artifact_id TEXT NOT NULL, PRIMARY KEY (session_id, run_id, name))"
+                "kind TEXT, artifact_id TEXT NOT NULL, "
+                "PRIMARY KEY (session_id, run_id, name, kind))"
             )
         except BaseException:
             if hasattr(self, "_db"):
@@ -113,17 +123,20 @@ class ArtifactIndex:
         if self.get(alias.artifact_id) is None:
             raise ValueError("artifact alias requires a committed target")
         self._db.execute(
-            "INSERT OR REPLACE INTO aliases VALUES (?, ?, ?, ?)",
-            (alias.session_id, alias.run_id, alias.name, alias.artifact_id),
+            "INSERT OR REPLACE INTO aliases VALUES (?, ?, ?, ?, ?)",
+            (alias.session_id, alias.run_id, alias.name, alias.kind, alias.artifact_id),
         )
 
+    def alias_count(self) -> int:
+        return int(self._db.execute("SELECT COUNT(*) FROM aliases").fetchone()[0])
+
     def resolve_alias(
-        self, session_id: str, run_id: str, name: str
+        self, session_id: str, run_id: str, name: str, kind: AliasKind = "checkpoint"
     ) -> ArtifactRef | None:
         row = self._db.execute(
             "SELECT artifact_id FROM aliases "
-            "WHERE session_id=? AND run_id=? AND name=?",
-            (session_id, run_id, name),
+            "WHERE session_id=? AND run_id=? AND name=? AND kind=?",
+            (session_id, run_id, name, kind),
         ).fetchone()
         return None if row is None else self.get(row[0])
 

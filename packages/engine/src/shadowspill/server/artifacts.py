@@ -22,6 +22,7 @@ from shadowspill_client.protocol.requests import ArtifactRef, identifier
 from .artifact_group import StagedArtifacts
 from .artifact_writer import ProducedArtifacts
 from .records.artifact_index import (
+    AliasKind,
     ArtifactAlias,
     ArtifactIndex,
     alias_scope,
@@ -149,6 +150,8 @@ class ArtifactStore:
             self._count += 1
         if self._bytes > self.max_bytes or self._count > self.max_artifacts:
             raise ValueError("retained artifacts exceed configured storage limits")
+        if self._index.alias_count() > self.max_artifacts:
+            raise ValueError("retained artifact names exceed configured storage limits")
         # The exclusive journal writer owns these private directories. Published
         # references are never swept; uncertain commits were reconciled above.
         with os.scandir(self._data) as entries:
@@ -194,12 +197,54 @@ class ArtifactStore:
             return self._index.page(after, limit)
 
     def resolve_alias(
-        self, session_id: str, run_id: str, name: str
+        self, session_id: str, run_id: str, name: str, *, kind: AliasKind = "checkpoint"
     ) -> ArtifactRef | None:
-        scope = alias_scope(session_id, run_id, name)
+        scope = alias_scope(session_id, run_id, name, kind)
         with self._mutex:
             self._usable()
             return self._index.resolve_alias(*scope)
+
+    def name(self, reference: ArtifactRef, alias: ArtifactAlias) -> ArtifactRef:
+        """Durably name existing immutable content without copying its payload.
+
+        Repeated exact saves do not append another record. Names are scoped by
+        run and kind, so saving Plans cannot replace a checkpoint name. A lost
+        commit acknowledgement requires reconciliation, never data rollback.
+        """
+        with self._mutex:
+            self._usable()
+            if (
+                alias.artifact_id != reference.id
+                or self._index.get(reference.id) != reference
+            ):
+                raise ValueError("artifact name requires its exact committed target")
+            with self._open(reference):
+                pass
+            if (
+                self._index.resolve_alias(
+                    alias.session_id, alias.run_id, alias.name, alias.kind
+                )
+                == reference
+            ):
+                return reference
+            self._alias_capacity(alias)
+            try:
+                self._journal.append([("artifact.alias", alias.to_dict())])
+                self._index.set_alias(alias)
+            except BaseException:
+                self._broken = True
+                raise
+            return reference
+
+    def _alias_capacity(self, alias: ArtifactAlias) -> None:
+        if (
+            self._index.resolve_alias(
+                alias.session_id, alias.run_id, alias.name, alias.kind
+            )
+            is None
+            and self._index.alias_count() >= self.max_artifacts
+        ):
+            raise ValueError("artifact name capacity is exhausted")
 
     def put(
         self,
@@ -283,6 +328,8 @@ class ArtifactStore:
             self._usable()
             if any(self._index.get(name) is not None for name in ids):
                 raise ValueError("artifact ID is already committed")
+            if alias is not None:
+                self._alias_capacity(alias)
             self._capacity(ids, size)
             producer = ProducedArtifacts(
                 specs, root=self._scratch, disk=self._disk, memory=self._memory
@@ -324,6 +371,10 @@ class ArtifactStore:
     ) -> tuple[ArtifactRef, ...]:
         with self._mutex:
             self._usable()
+            if alias is not None:
+                # A different producer may have committed another new name
+                # since staging. Check before linking files or appending records.
+                self._alias_capacity(alias)
             try:
                 # Link only after hashing the complete stream. The same
                 # filesystem keeps this bounded and avoids a second copy.
