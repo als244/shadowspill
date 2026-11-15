@@ -8,6 +8,7 @@ from client_tests.test_training_config import resolved
 from shadowspill_client.protocol.codec import decode, digest, encode
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.requests import ArtifactRef
+from shadowspill_client.protocol.runs import RunInfo, RunPage
 
 
 def test_creation_owns_all_choices_separately_from_the_resolved_setup():
@@ -39,3 +40,40 @@ def test_creation_does_not_accept_unknown_paths_or_executable_setup():
             )
     with pytest.raises(TypeError, match="ArtifactRef"):
         TrainingCreation(resolved(), plans="/client/private/training.ssp")
+
+
+def test_creation_organization_is_owned_validated_and_part_of_the_digest():
+    labels = {"experiment": "demo"}
+    creation = TrainingCreation(resolved(), name="example", labels=labels)
+    labels["experiment"] = "changed"
+    assert creation.labels["experiment"] == "demo"
+    assert decode(encode(creation)) == creation
+    assert digest(replace(creation, name="new")) != digest(creation)
+    with pytest.raises(ValueError, match="run name"):
+        replace(creation, name="x" * 257)
+    with pytest.raises(ValueError, match="label"):
+        replace(creation, labels={"k": "x" * 257})
+
+
+def test_run_page_roundtrip_requires_one_scope_and_a_valid_continuation():
+    run = RunInfo(
+        "owner",
+        "session",
+        "a",
+        "server",
+        "a" * 64,
+        ArtifactRef("configuration", "b" * 64, 100),
+    )
+    page = RunPage([run, replace(run, run_id="b")], "b")
+    assert decode(encode(page)) == page
+    assert decode(encode(RunPage([]))).runs == ()
+    for rows, cursor in (
+        ([run, run], None),
+        ([replace(run, run_id="b"), run], None),
+        ([run, replace(run, owner_id="other", run_id="b")], None),
+        ([run], "missing"),
+        ([], "a"),
+        ([run] * 129, None),
+    ):
+        with pytest.raises(ValueError):
+            RunPage(rows, cursor)

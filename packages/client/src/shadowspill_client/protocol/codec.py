@@ -31,7 +31,7 @@ from .results import (
     OperationResult,
     RequestStatus,
 )
-from .runs import RunInfo
+from .runs import RunInfo, RunPage
 from .service import ServiceError, ServiceInfo
 from .training import ResolvedTraining
 
@@ -62,6 +62,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "service.info": ServiceInfo,
     "service.error": ServiceError,
     "run.info": RunInfo,
+    "run.page": RunPage,
     "training.creation": TrainingCreation,
 }
 

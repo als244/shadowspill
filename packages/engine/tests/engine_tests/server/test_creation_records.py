@@ -49,6 +49,8 @@ def test_choices_reopen_under_the_catalog_identity_without_a_handler_closure(tmp
                     configuration=replace(record.configuration, sha256="c" * 64),
                 ),
             )
+        with pytest.raises(ValueError, match="organization"):
+            load_creation(artifacts, replace(info(record), name="changed"))
 
 
 def test_choices_cannot_be_loaded_from_configuration_alone(tmp_path):

@@ -5,6 +5,8 @@ import importlib.abc
 import io
 import json
 import os
+import shlex
+import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,7 +34,6 @@ from shadowspill.orchestration.launch.node_capacity import discover_capacity  # 
 from shadowspill.orchestration.launch.publication import require_output  # noqa: E402
 from shadowspill.orchestration.launch.staging import FileDelivery  # noqa: E402
 from shadowspill.server.authentication import BearerTokens  # noqa: E402
-from shadowspill.server.creation_records import CreationRecord  # noqa: E402
 from shadowspill.server.http import HTTP_SCRATCH_BYTES, HTTPService, RunAccess  # noqa: E402
 from shadowspill.server.jobs import RunJobs  # noqa: E402
 from shadowspill.server.live import LiveRun  # noqa: E402
@@ -56,7 +57,6 @@ from shadowspill.training.worker.resources import WorkerHost  # noqa: E402
 from shadowspill.training.worker.runtime import PreparedWorker  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
 from shadowspill_client.protocol.codec import encode  # noqa: E402
-from shadowspill_client.protocol.creation import TrainingCreation  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
 from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
 from shadowspill_client.protocol.requests import (  # noqa: E402
@@ -581,11 +581,12 @@ qualify_allocation_stop()
 def qualify_creation_factory():
     receipts = []
     factory_disk = BufferBudget(512 << 20, 200)
-    fixed_bytes = (160 + 512 + 32) << 20
+    http_bytes = HTTP_SCRATCH_BYTES * 2
+    fixed_bytes = ((160 + 512) << 20) + http_bytes
     with (
         HostArena(admission, 160 << 20, 8) as storage_arena,
         HostArena(admission, 512 << 20, 1) as job_arena,
-        HostArena(admission, 32 << 20, 3) as client_arena,
+        HostArena(admission, http_bytes, 2) as http_arena,
         persistent_storage(
             storage_arena.budget, incarnation="factory-agent"
         ) as storage,
@@ -630,113 +631,78 @@ def qualify_creation_factory():
             reap_interval=0.01,
         )
         jobs.start()
-        saved = None
+        service = HTTPService(
+            ("127.0.0.1", 0),
+            incarnation="factory-agent",
+            authentication=BearerTokens({token: "owner"}),
+            runs=jobs.access,
+            artifacts=storage.artifacts,
+            jobs=jobs,
+            memory=http_arena.budget,
+            request_timeout=30,
+        )
+        thread = Thread(target=service.serve_forever, kwargs={"poll_interval": 0.01})
+        thread.start()
         try:
-            for mode in ("fresh", "saved"):
+            options = {
+                "port": service.server_port,
+                "token": token,
+                "config": prepared_worker.bindings.setup.config.to_dict(),
+                "oracle": oracle,
+            }
+            host = os.environ.get("SHADOWSPILL_DEMO_CLIENT_HOST")
+            if host:
+                command = [
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=10",
+                    host,
+                    shlex.join(
+                        [
+                            os.environ["SHADOWSPILL_DEMO_CLIENT_PYTHON"],
+                            "-I",
+                            os.environ["SHADOWSPILL_DEMO_CLIENT_SCRIPT"],
+                        ]
+                    ),
+                ]
+                options["ssh_host"] = "chicago"
+            else:
+                command = [
+                    sys.executable,
+                    str(Path(__file__).with_name("_service_client.py")),
+                ]
+            result = subprocess.run(
+                command,
+                input=json.dumps(options),
+                capture_output=True,
+                text=True,
+                timeout=240,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            client_receipt = json.loads(result.stdout)
+            assert client_receipt["all_client_claims_released"]
+            if host:
+                assert client_receipt["client_host"] == "tubingen"
+            (directory / "demo-client.json").write_text(
+                json.dumps(client_receipt, indent=2) + "\n"
+            )
+            deadline = monotonic() + 30
+            while jobs.used != (0, 0):
+                assert monotonic() < deadline, jobs.failures()
+                Event().wait(0.01)
+            assert len(owners) == 2 and all(
+                owner.closed and owner.run.closed for owner in owners
+            )
+            assert factory_disk.used == job_arena.budget.used == (0, 0)
+            assert admission.used.host_bytes == fixed_bytes
+            assert not admission.used.devices
+            for result in client_receipt["runs"]:
+                mode = result["mode"]
                 identity = RunIdentity("owner", "factory-session", mode)
-                creation = CreationRecord.encode(
-                    TrainingCreation(prepared_worker.bindings.setup.config, plans=saved)
-                )
-                jobs.create(
-                    identity,
-                    request_sha256=creation.reference.sha256,
-                    configuration=creation.configuration,
-                    publish=lambda record=creation: record.publish(artifacts),
-                )
-                deadline = monotonic() + 180
-                while not jobs._jobs.get(identity) or not jobs._jobs[identity].live:
-                    info = storage.catalog.get(identity)
-                    assert info.state in ("preparing", "ready"), info
-                    assert monotonic() < deadline, (info, jobs.failures())
-                    Event().wait(0.01)
-                owner = owners[-1]
-                assert owner.run.ready and owner._phases is None
                 info = storage.catalog.get(identity)
-                assert info.state == "ready" and info.plans is not None
-                saved = info.plans
-                with jobs.access(identity) as access:
-                    controller = access.live()
-                    controller.attach("factory-writer")
-
-                    def invoke(
-                        operation,
-                        *,
-                        outputs=None,
-                        current=access,
-                        run_id=mode,
-                        **options,
-                    ):
-                        controller = current.live()
-                        sequence = current.records.last_sequence + 1
-                        name = f"factory-{sequence}"
-                        payload, wire, count = None, None, 0
-                        if operation != "close":
-                            datums = records(targets=operation != "forward")
-                            with snapshot_batch(
-                                datums, client_arena.budget
-                            ) as snapshot:
-                                payload = ArtifactRef(
-                                    name,
-                                    snapshot.sha256,
-                                    snapshot.size_bytes,
-                                    MEDIA_TYPE,
-                                )
-                                wire, count = b"".join(snapshot.chunks()), len(datums)
-                        request = OperationRequest(
-                            RequestIdentity(
-                                name,
-                                run_id,
-                                sequence,
-                                "factory-writer",
-                                1,
-                                "factory-agent",
-                            ),
-                            operation,
-                            payload,
-                            count,
-                            **({} if outputs is None else {"outputs": outputs}),
-                            **options,
-                        )
-                        controller.register(request)
-                        controller.receive(
-                            name, None if wire is None else io.BytesIO(wire)
-                        )
-                        status = controller.wait(name, timeout=120)
-                        controller.drain(timeout=120)
-                        assert status.state == "completed", status
-                        return status.result
-
-                    result = invoke(
-                        "step",
-                        optim={"lr": 0.03},
-                        grad_scale=0.5,
-                        loss_params={"temperature": 2.0},
-                    )
-                    np.testing.assert_allclose(result.loss, oracle["loss"], rtol=1e-4)
-                    prediction = invoke("forward", outputs="predictions")
-                    ref = prediction.outputs["prediction"]
-                    with (
-                        artifacts.open(ref) as stream,
-                        read_payload(stream, ref, client_arena.budget) as decoded,
-                    ):
-                        rows = decoded.datums[0].inputs
-                        actual = np.stack(
-                            [rows[str(index)].array() for index in range(3)]
-                        )
-                        np.testing.assert_allclose(
-                            actual, oracle["after_step"], rtol=1e-4, atol=1e-5
-                        )
-                    closed = invoke("close")
-                    assert closed.completed_updates == 1 and controller.closed
-                deadline = monotonic() + 30
-                while jobs.used != (0, 0):
-                    assert monotonic() < deadline, jobs.failures()
-                    Event().wait(0.01)
-                assert owner.closed and owner.run.closed
-                assert factory_disk.used == job_arena.budget.used == (0, 0)
-                assert admission.used.host_bytes == fixed_bytes
-                assert not admission.used.devices
-                assert storage.catalog.get(identity).state == "closed"
+                assert info.state == "closed"
                 manifests = []
                 for ref in artifacts.page(limit=128):
                     if ref.id.startswith("preparation."):
@@ -753,14 +719,18 @@ def qualify_creation_factory():
                 receipts.append(
                     {
                         "mode": mode,
-                        "completed_updates": closed.completed_updates,
+                        "completed_updates": result["completed_updates"],
                         "phases": phases,
                         "preparation_manifests": len(manifests),
-                        "plans": saved.to_dict(),
+                        "plans": info.plans.to_dict(),
                         "all_run_claims_released": True,
                     }
                 )
         finally:
+            service.shutdown()
+            service.server_close()
+            thread.join(timeout=5)
+            assert not thread.is_alive() and http_arena.budget.used == (0, 0)
             jobs.close(timeout=30)
     assert admission.used.claims == 0 and factory_disk.used == (0, 0)
     (directory / "factory-creation.json").write_text(

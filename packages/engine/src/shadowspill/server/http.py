@@ -24,9 +24,11 @@ from shadowspill_client.protocol.codec import (
     decode,
     encode,
 )
+from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.payload_io import BufferReader
 from shadowspill_client.protocol.requests import OperationRequest, identifier
 from shadowspill_client.protocol.results import RequestStatus
+from shadowspill_client.protocol.runs import RunInfo, RunPage
 from shadowspill_client.protocol.service import (
     CONTROL_MEDIA_TYPE,
     ServiceError,
@@ -35,10 +37,13 @@ from shadowspill_client.protocol.service import (
 
 from .artifacts import ArtifactStore
 from .authentication import BearerTokens
+from .creation_records import CreationRecord
 from .records.requests import RequestRecords, RunIdentity
 
 if TYPE_CHECKING:
     from _typeshed import WriteableBuffer
+
+    from .jobs import RunJobs
 
 _CHUNK = 64 << 10
 HTTP_SCRATCH_BYTES = 16 * MAX_METADATA_BYTES + 2 * _CHUNK
@@ -176,12 +181,16 @@ class HTTPService(ThreadingHTTPServer):
         runs: Callable[[RunIdentity], AbstractContextManager[RunAccess]],
         artifacts: Callable[[str], AbstractContextManager[ArtifactStore]],
         memory: BufferBudget,
+        jobs: RunJobs | None = None,
         request_timeout: float = 120,
         tls: ssl.SSLContext | None = None,
     ) -> None:
         self.incarnation = identifier(incarnation, "server incarnation")
         self.authentication, self.runs, self.artifacts = authentication, runs, artifacts
         self.memory = memory
+        self.jobs = jobs
+        if jobs is not None and jobs.storage.incarnation != self.incarnation:
+            raise ValueError("creation registry belongs to another server incarnation")
         if memory.max_bytes < HTTP_SCRATCH_BYTES:
             raise ValueError("HTTP scratch cannot fit the configured node arena")
         self.request_timeout = number(
@@ -411,8 +420,12 @@ class _Handler(BaseHTTPRequestHandler):
                         self.wfile.write(block)
                         remaining -= len(block)
             return
+        if parts[:2] == ("v1", "runs") and len(parts) in (3, 4):
+            self._creation(owner, parts, query, body)
+            return
         if len(parts) < 5 or parts[:2] != ("v1", "runs"):
             raise KeyError("route")
+
         identity = RunIdentity(owner, parts[2], parts[3])
         with self.server.runs(identity) as run:
             if run.records.identity != identity:
@@ -488,6 +501,73 @@ class _Handler(BaseHTTPRequestHandler):
                     return
             raise KeyError("route")
 
+    def _creation(
+        self,
+        owner: str,
+        parts: tuple[str, ...],
+        query: dict[str, list[str]],
+        body: _Body,
+    ) -> None:
+        jobs = self.server.jobs
+        if jobs is None:
+            raise KeyError("creation routes are unavailable")
+        catalog = jobs.storage.catalog
+        if len(parts) == 3 and self.command == "GET":
+            if set(query) - {"after", "limit"}:
+                raise ProtocolError("unknown run-list query")
+            limit = int(query.get("limit", ["32"])[0])
+            rows = catalog.page(
+                owner, parts[2], after=query.get("after", [""])[0], limit=limit
+            )
+            if any(row.owner_id != owner or row.session_id != parts[2] for row in rows):
+                raise PermissionError("run page crossed authenticated scope")
+            cursor = rows[-1].run_id if len(rows) == limit else None
+            # The catalog admits each persisted RunInfo within 8 KiB; up to
+            # 128 rows fit the common control envelope without partial records.
+            self._reply(RunPage(rows, cursor))
+            return
+        if len(parts) != 4 or query:
+            raise KeyError("route")
+        identity = RunIdentity(owner, parts[2], parts[3])
+        if self.command == "POST":
+            if self.headers.get("Content-Type") != CONTROL_MEDIA_TYPE:
+                raise ProtocolError("creation has no control media type")
+            creation = body.record()
+            if not isinstance(creation, TrainingCreation):
+                raise ProtocolError("creation requires resolved training choices")
+            record = CreationRecord.encode(creation)
+
+            def publish() -> None:
+                with jobs.storage.artifacts(owner) as artifacts:
+                    record.publish(artifacts)
+
+            jobs.create(
+                identity,
+                request_sha256=record.reference.sha256,
+                configuration=record.configuration,
+                name=creation.name,
+                labels=creation.labels,
+                publish=publish,
+            )
+        elif self.command != "GET":
+            raise KeyError("route")
+        info = catalog.get(identity)
+        if info is None:
+            raise KeyError("run")
+        self._run_reply(info, identity)
+
+    def _run_reply(self, info: RunInfo, identity: RunIdentity) -> None:
+        if (info.owner_id, info.session_id, info.run_id) != (
+            identity.owner_id,
+            identity.session_id,
+            identity.run_id,
+        ):
+            raise PermissionError("run catalog crossed authenticated scope")
+        assert self.server.jobs is not None
+        pending = info.state == "preparing" or (
+            info.state == "ready" and not self.server.jobs.available(identity)
+        )
+        self._reply(info, 202 if pending else 200)
     def _headers(
         self, status: int, length: int, media: str, *, etag: str | None = None
     ) -> None:

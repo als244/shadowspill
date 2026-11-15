@@ -110,6 +110,20 @@ class RunJobs:
                 if job.cleanup_error is not None
             )
 
+    def available(self, identity: RunIdentity) -> bool:
+        """A creation reply must wait for the creator's actual thread exit."""
+        with self._mutex:
+            job = self._jobs.get(identity)
+            return (
+                not self._closing
+                and job is not None
+                and job.live
+                and not job.retiring
+                and job.owner is not None
+                and job.owner.run is not None
+                and not job.owner.run.finished
+            )
+
     def start(self) -> None:
         with self._mutex:
             if self._thread is not None or self._closing:

@@ -1,7 +1,7 @@
 """Small persisted run descriptions; mutable execution effects live in requests."""
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
@@ -15,6 +15,18 @@ type CreationStage = Literal[
     "queued", "build", "profile", "communicate", "plan", "initializing"
 ]
 CREATION_STAGES = ("queued", "build", "profile", "communicate", "plan", "initializing")
+
+
+def organization(name: str | None, labels: Mapping[str, str]) -> Mapping[str, str]:
+    """Use the same bounded organization fields in creation and saved records."""
+    if name is not None and len(text(name, "run name")) > 256:
+        raise ValueError("run name exceeds its bound")
+    if not isinstance(labels, Mapping) or len(labels) > 16:
+        raise ValueError("run labels must be a mapping of at most 16 items")
+    for key, value in labels.items():
+        if len(text(key, "label key")) > 64 or len(text(value, "label value")) > 256:
+            raise ValueError("run label exceeds its bound")
+    return MappingProxyType(dict(labels))
 
 
 @dataclass(frozen=True)
@@ -75,14 +87,27 @@ class RunInfo(Record):
             raise ValueError("initialized runs require Plans and a history identity")
         if self.state in ("preparing", "failed") and self.plans is not None:
             raise ValueError("unfinished creation has no initialized run")
-        if self.name is not None and len(text(self.name, "run name")) > 256:
-            raise ValueError("run name exceeds its bound")
-        if not isinstance(self.labels, Mapping) or len(self.labels) > 16:
-            raise ValueError("run labels must be a mapping of at most 16 items")
-        for key, value in self.labels.items():
-            if (
-                len(text(key, "label key")) > 64
-                or len(text(value, "label value")) > 256
-            ):
-                raise ValueError("run label exceeds its bound")
-        object.__setattr__(self, "labels", MappingProxyType(dict(self.labels)))
+        object.__setattr__(self, "labels", organization(self.name, self.labels))
+
+
+@dataclass(frozen=True)
+class RunPage(Record):
+    runs: Sequence[RunInfo]
+    next_cursor: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.runs, (tuple, list)) or len(self.runs) > 128:
+            raise ValueError("run page must contain at most 128 records")
+        rows = tuple(record(RunInfo, value, "run") for value in self.runs)
+        if rows:
+            scope = rows[0].owner_id, rows[0].session_id
+            if any((row.owner_id, row.session_id) != scope for row in rows):
+                raise ValueError("run page crosses an owner or session")
+            ids = [row.run_id for row in rows]
+            if ids != sorted(set(ids)):
+                raise ValueError("run page requires distinct ordered IDs")
+        if self.next_cursor is not None:
+            identifier(self.next_cursor, "run cursor")
+            if not rows or self.next_cursor != rows[-1].run_id:
+                raise ValueError("run cursor must identify the final returned row")
+        object.__setattr__(self, "runs", rows)

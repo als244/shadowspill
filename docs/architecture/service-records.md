@@ -39,9 +39,20 @@ loading a whole artifact. It does not redirect credentials or retry a mutation.
 Reachable listeners require TLS; loopback HTTP also supports SSH forwarding.
 TLS verification, owner isolation, disconnects, incomplete uploads and capacity
 limits have real loopback tests. Ordinary/provider GPU tests use these routes for
-updates, discard, close and downloads after worker exit. Public service creation,
+updates, discard, close and downloads after worker exit. Public server constructors,
 SDK training handles, range-resumable transfers and actual
 multi-node deployment remain separate implementation work.
+
+Creation now uses `POST /v1/runs/{session}/{run}` with the portable
+`TrainingCreation` record, including exact resolved settings, initialization/Plan
+references, resource-wait intent, name and labels. The handler publishes choices
+only after registry admission and delegates startup to its configured factory.
+Identical retries return the original run, including terminal failures or closes;
+conflicting reuse cannot start another job. GET on the same URL returns scoped
+creation progress or the saved terminal record. HTTP 202 continues until the
+creator thread returns and initialized workers are available. No polling request
+can start or replay work. Run listings use bounded owner/session pages with an
+explicit continuation cursor; each persisted row has an 8 KiB limit.
 
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
@@ -84,8 +95,8 @@ HTTP lookup context pins the controller through the exchange. Allocation stop
 can quiesce children while a borrow remains, but cannot delete files, clear the
 live owner or release its host envelope until the borrow returns. Shutdown also
 retains an unfinished factory/creation thread. Record lookup remains available
-after physical retirement. Public creation routes and server/allocation
-constructors remain separate integration work.
+after physical retirement. Public server/allocation constructors remain separate
+integration work.
 
 The node-backed `HostArena` can claim a job's combined controller capacity once,
 then partition it into independently closed staging, transfer and publication
