@@ -27,6 +27,8 @@ class OptimizerDefinition:
     to captured bindings; a declared override must affect the saved computation.
     Optional ``configure(Optimizer)`` validates groups/precision and translates
     them into that same factory config on CPU, with stable resolved defaults.
+    ``master_dtype`` may be a dtype name or CPU config resolver; it selects the
+    existing separate optimizer-parameter capture, without changing model dtype.
     """
 
     id: str
@@ -37,6 +39,7 @@ class OptimizerDefinition:
     defaults: Mapping[str, Any] = field(default_factory=dict)
     configure: Callable[[Optimizer], Mapping[str, Value]] | None = None
     allocation_invariants: Mapping[str, str] = field(default_factory=dict)
+    master_dtype: str | Callable[[Any], str | None] | None = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -44,6 +47,14 @@ class OptimizerDefinition:
             raise TypeError("optimizer config and create must be callable")
         if self.configure is not None and not callable(self.configure):
             raise TypeError("configure must be an installed CPU settings function")
+        if not callable(self.master_dtype) and self.master_dtype not in (
+            None,
+            "float16",
+            "bfloat16",
+            "float32",
+            "float64",
+        ):
+            raise ValueError("optimizer master_dtype must name a floating dtype")
         if not isinstance(self.controls, ControlSchema):
             raise TypeError("optimizer requires a ControlSchema")
         if self.control_bindings.keys() != self.controls.fields.keys():

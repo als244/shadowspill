@@ -165,6 +165,11 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
             "optimizer_source": None
             if setup.optimizer is None or output_only
             else setup.optimizer.source.to_dict(),
+            "optimizer_master_dtype": None
+            if setup.optimizer is None
+            or output_only
+            or binding.contract.key.operation == "forward"
+            else setup.optimizer.master_dtype,
             "output_only": output_only,
             "scenario": {
                 "preset": setup.config.preparation.preset,

@@ -51,16 +51,21 @@ class ModelBuild:
 
     The same ordinary model factory receives this normalized config at capture.
     Existing Resource and OperatorPreparation APIs own creation, binary capture,
-    measurement, restoration and cleanup. Policies and optimizer options remain
-    separate and cannot be replaced by this hook.
+    measurement, restoration and cleanup. ``grad_dtype`` selects the existing
+    captured gradient storage/accumulation precision; None keeps the core default.
+    Policies and optimizer options remain separate and cannot be replaced by
+    this hook.
     """
 
     config: Mapping[str, Value]
     resources: Mapping[str, Resource] = field(default_factory=dict)
     operator_preparation: Sequence[OperatorPreparation] = ()
     allocation_invariants: Mapping[str, str] = field(default_factory=dict)
+    grad_dtype: str | None = None
 
     def __post_init__(self) -> None:
+        if self.grad_dtype not in (None, "float16", "bfloat16", "float32", "float64"):
+            raise ValueError("model build grad_dtype must name a floating dtype")
         resources = dict(self.resources)
         if any(
             not isinstance(name, str) or not name or not isinstance(item, Resource)
@@ -89,4 +94,5 @@ class ModelBuild:
                 item.to_dict() for item in self.operator_preparation
             ],
             "allocation_invariants": dict(self.allocation_invariants),
+            "grad_dtype": self.grad_dtype,
         }

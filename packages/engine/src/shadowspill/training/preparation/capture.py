@@ -36,6 +36,8 @@ def build_template(
     options = materialize_build_options(
         registry, template.build, setup.config.policy_sources
     )
+    if template.model_build.grad_dtype is not None:
+        options["grad_dtype"] = getattr(torch, template.model_build.grad_dtype)
     with representative_inputs(
         template.binding.inputs,
         template.representative,

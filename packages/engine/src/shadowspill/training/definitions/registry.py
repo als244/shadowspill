@@ -220,6 +220,11 @@ class ResolvedOptimizer:
     defaults: Mapping[str, Scalar]
     settings: Optimizer | None = None
 
+    @property
+    def master_dtype(self) -> str | None:
+        assert not callable(self.definition.master_dtype)
+        return self.definition.master_dtype
+
     def create(self, model: Any, controls: Mapping[str, Any]) -> Any:
         if controls.keys() != self.definition.controls.fields.keys():
             raise ValueError(
@@ -392,7 +397,15 @@ class Registry:
                 )
             config = constructor_config(settings, optimizer.configure)
             defaults = cast(Mapping[str, Scalar], settings.defaults)
-        _, values = _configuration(optimizer.config, {} if config is None else config)
+        configured, values = _configuration(
+            optimizer.config, {} if config is None else config
+        )
+        optimizer = replace(
+            optimizer,
+            master_dtype=optimizer.master_dtype(configured)
+            if callable(optimizer.master_dtype)
+            else optimizer.master_dtype,
+        )
         controls = optimizer.controls.resolve(
             defaults=optimizer.defaults, overrides=defaults
         )

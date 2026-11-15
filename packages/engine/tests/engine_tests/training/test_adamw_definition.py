@@ -31,8 +31,10 @@ from shadowspill.training.definitions import load_registry
 from shadowspill_client import Optimizer
 registry = load_registry(['shadowspill'])
 resolved = registry.resolve_optimizer('mlops/adamw@1', settings=Optimizer(
-    'mlops/adamw@1', precision={'opt_state_dtype': 'float32'}))
+    'mlops/adamw@1', precision={
+        'opt_state_dtype': 'float32', 'master_dtype': 'float32'}))
 assert resolved.config['opt_state_dtype'] == 'float32'
+assert resolved.master_dtype == 'float32'
 assert 'mlops' not in sys.modules
 assert registry.resolve_optimizer(resolved.definition.id,
     settings=resolved.settings, source=resolved.source) == resolved
@@ -87,7 +89,7 @@ def test_factory_preserves_precision_trainable_selection_and_consumed_controls(d
     "settings",
     [
         {"groups": {"head": {"lr": 0.1}}},
-        {"precision": {"master_dtype": "float32"}},
+        {"precision": {"master_dtype": "bfloat16"}},
         {"precision": {"gradient_dtype": "float64"}},
         {"precision": {"parameter_rounding": "truncate"}},
         {"config": {"maximize": 1}},

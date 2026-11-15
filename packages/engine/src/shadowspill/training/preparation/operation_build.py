@@ -69,6 +69,18 @@ def build_operation(
             )
         elif kind == "step":
             assert optimizer is not None
+            if optimizer.master_dtype is not None:
+                import torch
+
+                master_dtype = getattr(torch, optimizer.master_dtype)
+                if (
+                    "master_dtype" in settings
+                    and settings["master_dtype"] != master_dtype
+                ):
+                    raise ValueError(
+                        "build master dtype differs from the optimizer definition"
+                    )
+                settings["master_dtype"] = master_dtype
             program = build_step(
                 model,
                 objective=binding.objective,
@@ -101,6 +113,7 @@ def build_operation(
             "controls": optimizer.definition.controls.to_dict(),
             "defaults": dict(optimizer.defaults),
             "bindings": dict(optimizer.definition.control_bindings),
+            "master_dtype": optimizer.master_dtype,
         }
     provenance = {
         **binding.signature(),

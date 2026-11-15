@@ -28,6 +28,7 @@ class AdamWConfig:
     parameter_rounding: str = "nearest"
     opt_state_rounding: str = "nearest"
     maximize: bool = False
+    master_dtype: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("gradient_dtype", "opt_state_dtype"):
@@ -43,6 +44,8 @@ class AdamWConfig:
                 raise ValueError(f"unsupported AdamW {name}")
         if type(self.maximize) is not bool:
             raise TypeError("AdamW maximize must be boolean")
+        if self.master_dtype not in (None, "float32"):
+            raise ValueError("MLOps AdamW supports absent or float32 master_dtype")
 
 
 def configure(settings: Optimizer) -> Mapping[str, Value]:
@@ -126,6 +129,7 @@ def register(registry: Registry) -> None:
             },
             config=AdamWConfig,
             configure=configure,
+            master_dtype=lambda config: config.master_dtype,
             # These exact provider forms allocate only fixed-geometry outputs;
             # the out/in-place kernels use preallocated tensors and no scratch.
             # Scalar values (including zero LR) cannot change that geometry.
