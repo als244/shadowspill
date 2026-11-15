@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal, cast
 
 from .._records import Record, integer, mapping, number, record, text
@@ -13,6 +14,28 @@ def metric_cursor(value: int, name: str) -> int:
     if value >= 1 << 63:
         raise ValueError(f"{name} exceeds the supported journal range")
     return value
+
+
+@dataclass(frozen=True)
+class MetricAnnotation(Record):
+    request_id: str
+    values: Mapping[str, float | int]
+    metric_id: str
+
+    def __post_init__(self) -> None:
+        identifier(self.request_id, "metric request")
+        identifier(self.metric_id, "caller metric ID")
+        # Bound the number and names before copying caller-owned values. These
+        # are scalars, so no arbitrary nested tree or tensor snapshot is retained.
+        if not isinstance(self.values, Mapping) or not 1 <= len(self.values) <= 128:
+            raise ValueError("caller metrics require 1..128 named scalars")
+        owned = {}
+        for name, value in self.values.items():
+            if len(text(name, "caller metric name")) > 256:
+                raise ValueError("caller metric name exceeds 256 characters")
+            number(value, f"caller metric {name}")
+            owned[name] = value
+        object.__setattr__(self, "values", MappingProxyType(owned))
 
 
 @dataclass(frozen=True)
@@ -28,6 +51,8 @@ class MetricRecord(Record):
     loss: float | int | None = None
     metrics: Mapping[str, float | int] = field(default_factory=dict)
     failure_code: str | None = None
+    source: Literal["engine", "caller"] = "engine"
+    annotation_id: str | None = None
 
     def __post_init__(self) -> None:
         if not metric_cursor(self.position, "metric position"):
@@ -59,8 +84,20 @@ class MetricRecord(Record):
         object.__setattr__(self, "metrics", cast(Mapping[str, float | int], values))
         if self.failure_code is not None:
             text(self.failure_code, "metric failure code")
+        if self.source == "caller":
+            if self.annotation_id is None:
+                raise ValueError("caller metrics require an annotation identity")
+            MetricAnnotation(self.identity.request_id, self.metrics, self.annotation_id)
+            if self.loss is not None:
+                raise ValueError("caller metrics cannot supply engine loss")
+        elif self.source != "engine" or self.annotation_id is not None:
+            raise ValueError("invalid metric namespace or annotation identity")
         if self.outcome == "failed":
-            if self.failure_code is None or self.metrics or self.loss is not None:
+            if (
+                self.failure_code is None
+                or (self.source == "engine" and self.metrics)
+                or self.loss is not None
+            ):
                 raise ValueError(
                     "failed metrics require a failure code and no invented scalars"
                 )

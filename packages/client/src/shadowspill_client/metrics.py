@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._async import CallFuture
-from .protocol.codec import MAX_METADATA_BYTES, ProtocolError, encode
-from .protocol.metrics import MetricPage, MetricSnapshot, metric_cursor
+from .protocol.codec import MAX_METADATA_BYTES, ProtocolError, digest, encode
+from .protocol.metrics import (
+    MetricAnnotation,
+    MetricPage,
+    MetricRecord,
+    MetricSnapshot,
+    metric_cursor,
+)
 from .protocol.requests import identifier
 
 if TYPE_CHECKING:
@@ -27,6 +35,41 @@ class MetricQueries:
         self._service = service
         self.session_id = identifier(session_id, "metric session")
         self.run_id = identifier(run_id, "metric run")
+
+    def _log(
+        self,
+        values: Mapping[str, float | int],
+        *,
+        request_id: str,
+        metric_id: str | None = None,
+    ) -> CallFuture[MetricRecord]:
+        annotation = MetricAnnotation(
+            request_id, values, "content" if metric_id is None else metric_id
+        )
+        if metric_id is None:
+            # Explicitly repeating identical content after a lost reply is safe.
+            # There is no automatic network retry or training request involved.
+            annotation = replace(annotation, metric_id=digest(annotation))
+        encode(annotation)
+
+        def append() -> MetricRecord:
+            row = self._service._request(
+                "POST",
+                f"/v1/runs/{self.session_id}/{self.run_id}/metrics",
+                MetricRecord,
+                annotation,
+            )
+            if (
+                row.source != "caller"
+                or row.identity.run_id != self.run_id
+                or row.identity.request_id != annotation.request_id
+                or row.annotation_id != annotation.metric_id
+                or row.metrics != annotation.values
+            ):
+                raise ProtocolError("caller metric reply differs from its annotation")
+            return row
+
+        return self._service._work.submit(append)
 
     def query(
         self, *, after: int = 0, through: int | None = None, limit: int = 100

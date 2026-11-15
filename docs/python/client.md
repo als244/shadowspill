@@ -175,6 +175,24 @@ page in memory, preserves existing files and removes its incomplete destination
 on failure. Later results do not change the chosen snapshot; another explicit
 export can start after its `through` boundary.
 
+Record evaluation or reward scalars with
+`training.log_metrics({"eval/reward": reward}, request_id=result.request_id).result()`.
+The request must already have a completed, skipped or failed outcome. The saved
+annotation keeps that request's original history and update count, even if the run
+has since restored an earlier checkpoint. Queries and JSONL include these entries
+with `source="caller"`; automatic measurements use `source="engine"`. Caller
+values cannot replace engine values or supply objective loss.
+
+Annotations have their own journal positions, so late metrics appear in later
+polls without changing earlier snapshots. Identical values for the same request
+have a stable annotation ID; explicitly repeating the call after a lost reply is
+idempotent. An optional `metric_id` names an immutable annotation within that
+request and rejects different values under the same ID. Each call accepts up to
+128 finite numeric scalars with names of at most 256 characters. This metadata
+operation works after worker close or restart, including through a read-only
+training handle, and requires the authenticated run owner. It does not submit a
+training operation, change counters or contact a tracker.
+
 For large files, use `artifact.download(local_path, resume=True).result()` from
 the first attempt. An interrupted transfer retains bounded progress metadata and
 partial bytes in `<local_path>.shadowspill-download`. After reconnecting, attach

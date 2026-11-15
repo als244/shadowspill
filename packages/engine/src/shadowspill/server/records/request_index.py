@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from shadowspill_client.protocol.codec import decode, digest, encode
+from shadowspill_client.protocol.metrics import MetricRecord
 from shadowspill_client.protocol.requests import OperationRequest, WriterLease
 from shadowspill_client.protocol.results import ExecutionReceipt, RequestStatus
 
@@ -32,6 +33,10 @@ class RequestIndex:
             self._db.execute(
                 "CREATE TABLE writers (id TEXT PRIMARY KEY, lease BLOB NOT NULL)"
             )
+            self._db.execute("""CREATE TABLE caller_metrics (
+                position INTEGER PRIMARY KEY, request_id TEXT NOT NULL,
+                annotation_id TEXT NOT NULL, record BLOB NOT NULL,
+                UNIQUE(request_id, annotation_id))""")
         except BaseException:
             if hasattr(self, "_db"):
                 self._db.close()
@@ -137,14 +142,41 @@ class RequestIndex:
             ),
         )
 
-    def finished(self, after: int, through: int, limit: int) -> list[tuple[int, str]]:
+    def annotation(self, request_id: str, annotation_id: str) -> MetricRecord | None:
+        row = self._db.execute(
+            "SELECT record FROM caller_metrics WHERE request_id=? AND annotation_id=?",
+            (request_id, annotation_id),
+        ).fetchone()
+        if row is None:
+            return None
+        value = decode(row[0])
+        if (
+            not isinstance(value, MetricRecord)
+            or value.source != "caller"
+            or value.identity.request_id != request_id
+            or value.annotation_id != annotation_id
+        ):
+            raise ValueError("invalid derived caller metric index")
+        return value
+
+    def add_annotation(self, row: MetricRecord) -> None:
+        self._db.execute(
+            "INSERT INTO caller_metrics VALUES (?, ?, ?, ?)",
+            (row.position, row.identity.request_id, row.annotation_id, encode(row)),
+        )
+
+    def metric_events(
+        self, after: int, through: int, limit: int
+    ) -> list[tuple[int, str, str | None]]:
         return [
-            (int(row[0]), str(row[1]))
+            (int(row[0]), str(row[1]), row[2])
             for row in self._db.execute(
-                """SELECT finished_position, id FROM requests
+                """SELECT finished_position AS position, id, NULL FROM requests
                 WHERE finished_position > ? AND finished_position <= ?
-                ORDER BY finished_position LIMIT ?""",
-                (after, through, limit),
+                UNION ALL SELECT position, request_id, annotation_id FROM caller_metrics
+                WHERE position > ? AND position <= ?
+                ORDER BY position LIMIT ?""",
+                (after, through, after, through, limit),
             )
         ]
 

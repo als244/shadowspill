@@ -17,6 +17,7 @@ from .metrics import MetricQueries
 from .plans import PlansHandle
 from .protocol.checkpoint_settings import SaveSettings
 from .protocol.controls import Scalar
+from .protocol.metrics import MetricRecord
 from .protocol.payload import MEDIA_TYPE, snapshot_batch
 from .protocol.requests import (
     ArtifactRef,
@@ -90,6 +91,21 @@ class TrainingClient:
 
     def get_config(self) -> ResolvedTraining:
         return self._config
+
+    def log_metrics(
+        self,
+        values: Mapping[str, float | int],
+        *,
+        request_id: str,
+        metric_id: str | None = None,
+    ) -> CallFuture[MetricRecord]:
+        """Persist caller scalars against an explicit terminal request result.
+
+        This metadata call neither uses a training sequence nor acquires a writer.
+        An explicit metric_id is immutable within that request; otherwise identical
+        values share a deterministic ID for safe explicit retry after reconnect.
+        """
+        return self.metrics._log(values, request_id=request_id, metric_id=metric_id)
 
     def nsys(self, *, rank: int = 0) -> CallFuture[NsightCapture]:
         """Inspect a startup capture; native reports finalize after worker exit."""

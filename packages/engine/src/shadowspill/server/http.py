@@ -31,6 +31,7 @@ from shadowspill_client.protocol.codec import (
     encode,
 )
 from shadowspill_client.protocol.creation import TrainingCreation
+from shadowspill_client.protocol.metrics import MetricAnnotation
 from shadowspill_client.protocol.payload_io import BufferReader
 from shadowspill_client.protocol.plans import SavedPlans
 from shadowspill_client.protocol.preview import TrainingPreview
@@ -536,6 +537,14 @@ class _Handler(BaseHTTPRequestHandler):
                         limit=int(query.get("limit", ["100"])[0]),
                     )
                 )
+                return
+            if route == ("metrics",) and self.command == "POST" and not query:
+                if self.headers.get("Content-Type") != CONTROL_MEDIA_TYPE:
+                    raise ProtocolError("caller metrics have no control media type")
+                annotation = body.record()
+                if not isinstance(annotation, MetricAnnotation):
+                    raise ProtocolError("caller metrics require an annotation")
+                self._reply(run.records.log_metrics(annotation))
                 return
             if (
                 len(route) == 2

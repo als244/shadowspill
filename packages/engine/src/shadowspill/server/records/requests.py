@@ -13,7 +13,11 @@ from types import TracebackType
 from typing import Any, Self
 
 from shadowspill_client.protocol.codec import digest, encode
-from shadowspill_client.protocol.metrics import MetricPage
+from shadowspill_client.protocol.metrics import (
+    MetricAnnotation,
+    MetricPage,
+    MetricRecord,
+)
 from shadowspill_client.protocol.requests import (
     ArtifactRef,
     OperationRequest,
@@ -189,6 +193,30 @@ class RequestRecords:
                 limit=limit,
             )
 
+    def log_metrics(self, annotation: MetricAnnotation) -> MetricRecord:
+        """Attach immutable caller scalars to a terminal result, without dispatch."""
+        from .metrics import caller_metric
+
+        if not isinstance(annotation, MetricAnnotation):
+            raise TypeError("caller metrics require a bounded annotation")
+        with self._mutex:
+            self._usable()
+            previous = self._index.annotation(
+                annotation.request_id, annotation.metric_id
+            )
+            if previous is not None:
+                if previous.metrics != annotation.values:
+                    raise ValueError("caller metric ID already names different values")
+                return previous
+            row = caller_metric(
+                self._journal.position + 1,
+                annotation,
+                *self._require(annotation.request_id),
+            )
+            encode(row)
+            self._commit("metrics.caller", row.to_dict())
+            return row
+
     def submit(self, request: OperationRequest) -> RequestStatus:
         """Persist metadata/ID reservation; this is explicitly not acceptance."""
         with self._mutex:
@@ -319,7 +347,28 @@ class RequestRecords:
         return row[:2]
 
     def _apply(self, record: JournalRecord) -> None:
-        if record.kind == "writer.claim":
+        if record.kind == "metrics.caller":
+            from .metrics import caller_metric
+
+            row = MetricRecord.from_dict(record.data)
+            if row.source != "caller" or row.annotation_id is None:
+                raise ValueError("caller journal record has invalid namespace/identity")
+            annotation = MetricAnnotation(
+                row.identity.request_id, row.metrics, row.annotation_id
+            )
+            expected = caller_metric(
+                record.position, annotation, *self._require(annotation.request_id)
+            )
+            if (
+                row != expected
+                or self._index.annotation(annotation.request_id, annotation.metric_id)
+                is not None
+            ):
+                raise ValueError(
+                    "caller journal record differs or repeats an annotation"
+                )
+            self._index.add_annotation(row)
+        elif record.kind == "writer.claim":
             writer = WriterLease.from_dict(record.data)
             if (
                 writer.run_id != self.identity.run_id

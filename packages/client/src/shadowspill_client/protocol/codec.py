@@ -25,7 +25,7 @@ from .creation import TrainingCreation
 from .definitions import DefinitionSource, OutputSet
 from .frozen import FrozenBase
 from .inputs import InputSchema
-from .metrics import MetricPage, MetricRecord, MetricSnapshot
+from .metrics import MetricAnnotation, MetricPage, MetricRecord, MetricSnapshot
 from .plans import PlanSummaryPage, SavedPlans
 from .preparation import ResolvedPreparation
 from .preview import TrainingPreview
@@ -81,6 +81,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "metrics.page": MetricPage,
     "metrics.record": MetricRecord,
     "metrics.snapshot": MetricSnapshot,
+    "metrics.annotation": MetricAnnotation,
     "checkpoint.frozen_base": FrozenBase,
     "nsys.manifest": NsightManifest,
     "artifact.upload": ArtifactUpload,

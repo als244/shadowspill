@@ -30,6 +30,7 @@ class TrainingResult:
     def __init__(self, record: OperationResult, service: ServiceClient) -> None:
         self.record = record
         self.identity, self.operation = record.identity, record.operation
+        self.request_id = record.identity.request_id
         self.history_id, self.outcome = record.history_id, record.outcome
         self.completed_updates = record.completed_updates
         self.accumulation, self.state_valid = record.accumulation, record.state_valid
