@@ -52,7 +52,28 @@ shows the full interface. The supplied
 [regression definition](../../packages/workloads/src/shadowspill_workloads/definitions/regression.py)
 uses the same registry and its existing model. Importing either description
 requires no Torch import; model construction is explicit. Text and media catalog
-definitions will migrate as their preparation paths become available.
+definitions migrate as their preparation paths become available.
+
+`shadowspill/llama3@1` now has an installed packed preparation definition. Its
+CPU setup and capture checks cover sequence isolation, empty sequences, masked
+targets, full and LoRA gradients and the scheduled token cap. Public GPU text
+training, allocation bounds for selected providers and checkpoint resume remain
+under qualification; this is not yet a replacement for the existing Llama recipe.
+The initial installed path uses MLOps with BF16 compute and FP32 gradients by
+default. `Model.precision` accepts `compute_dtype`, `grad_dtype` and `lora_dtype`
+(FP32 or BF16); optimizer masters are a separate optimizer setting. `config`
+selects a named `preset` (default `tiny`) and optional `architecture` overrides.
+LoRA uses the family's existing targets unless supplied explicitly; its current
+provider supports zero dropout. Initialization uses explicit random weights or a
+native training checkpoint; pretrained reference resolution remains to migrate.
+
+The Llama batch declares `token_capacity`, `max_sequence_length` and
+`max_sequences`. An optional `typical={"sequence_length": ...}` affects timing
+samples only. The preset requests half-capacity and full-capacity buffers with
+counts one and two; admission discards combinations exceeding the scheduled cap.
+Explicit candidate lists replace those choices. Physical sequence slots include
+separate padding segments, preserving caller boundaries even with empty Datums.
+Every named output closure is packed and validated by the generic engine.
 
 The workloads entry point also installs `shadowspill/cross_entropy@1` and
 `shadowspill/clipped_policy@1`. A compatible model declares the `target_logprobs`

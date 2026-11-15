@@ -1,0 +1,158 @@
+"""Packed token views, sequence boundaries and inspectable Llama preparation."""
+
+from math import ceil
+
+from shadowspill.training.definitions import (
+    InputAdapter,
+    InputView,
+    RepresentativePattern,
+    RepresentativeSample,
+)
+from shadowspill.training.inputs.shapes import BufferShape
+from shadowspill_client import BuildCandidates, PlanningOptions, Preparation
+from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
+
+PRESET = "shadowspill/llama3_packed@1"
+TOKENS = ("inputs", "tokens")
+LENGTHS = ("inputs", "sequence_lengths")
+
+
+def schema(config):
+    return InputSchema(
+        [
+            TensorField(
+                ("tokens",),
+                "int64",
+                ("position",),
+                "pack",
+                0,
+                minimum=0,
+                maximum=config.architecture["vocab_size"] - 1,
+            )
+        ],
+        [
+            Capacity("token_capacity", "tokens", "sum", ("tokens",), 0, scheduled=True),
+            Capacity("max_sequence_length", "tokens", "max", ("tokens",), 0),
+            Capacity("max_sequences", "sequences", "count"),
+        ],
+    )
+
+
+def adapter(config, layout):
+    (size,) = layout.buffer.fields[TOKENS]
+    if any(layout.local_shape(p) != s for p, s in layout.buffer.fields.items()):
+        raise ValueError(
+            "Llama packed attention requires complete sequences per worker"
+        )
+    capacity = config.architecture["max_seq_len"]
+    slots = layout.buffer.max_datums + ceil(size / capacity)
+
+    def fill(context, arrays):
+        lengths = arrays[LENGTHS]
+        end = 0
+        for index, region in enumerate(context.routed.owner.regions):
+            (span,) = region.fields[TOKENS]
+            if span.start != end or span.stop - span.start > capacity:
+                raise ValueError("Llama input regions violate sequence geometry")
+            lengths[index] = span.stop - span.start
+            end = span.stop
+        # Padding is its own causal sequence(s), never a continuation of a Datum.
+        # Its slots are reserved in addition to the public sequence-count bound.
+        index = len(context.routed.owner.regions)
+        while end < size:
+            amount = min(capacity, size - end)
+            lengths[index] = amount
+            index += 1
+            end += amount
+
+    return InputAdapter(
+        views=[
+            InputView(p, p, (1, *shape)) for p, shape in layout.buffer.fields.items()
+        ],
+        metadata=[TensorField(LENGTHS, "int32", (slots,), minimum=0, maximum=capacity)],
+        fill=fill,
+        padding_safe=True,
+    )
+
+
+def _check(context):
+    placement = context.parallelism.inputs
+    if placement is None:
+        raise ValueError("packed preparation requires explicit input ownership")
+    capacity = context.model.config["architecture"]["max_seq_len"]
+    for batch in context.batches:
+        if batch.limits.keys() != {
+            "token_capacity",
+            "max_sequence_length",
+            "max_sequences",
+        }:
+            raise ValueError(
+                "Llama requires token, sequence-length and sequence-count limits"
+            )
+        if any(type(value) is not int or value < 1 for value in batch.limits.values()):
+            raise ValueError("Llama capacities must be positive integers")
+        if batch.limits["max_sequence_length"] > capacity:
+            raise ValueError("sequence-length limit exceeds Llama rotary capacity")
+        if batch.limits["token_capacity"] >= 2**31:
+            raise ValueError("Llama packed offsets require fewer than 2**31 tokens")
+        if batch.limits["max_sequences"] >= 2**31:
+            raise ValueError("Llama sequence count exceeds int32 metadata capacity")
+        if batch.typical.keys() - {"sequence_length"}:
+            raise ValueError("unknown Llama timing hint")
+        typical = batch.typical.get("sequence_length", 1)
+        if type(typical) is not int or not 1 <= typical <= min(
+            batch.limits["max_sequence_length"], batch.limits["token_capacity"]
+        ):
+            raise ValueError("typical sequence length must satisfy the hard limits")
+    return placement.partition_count
+
+
+def defaults(context):
+    partitions = _check(context)
+    sizes = set()
+    for batch in context.batches:
+        cap = batch.limits["token_capacity"]
+        full = max(1, cap // partitions)
+        sizes.update((max(1, full // 2), full))
+    return Preparation(
+        preset=PRESET,
+        candidates=BuildCandidates(microbatch_sizes=sorted(sizes)),
+        planning=PlanningOptions(microbatch_counts=[1, 2]),
+    )
+
+
+def buffers(context, batch, paths, size):
+    partitions = _check(context)
+    if not 0 < size < 2**31:
+        raise ValueError("Llama microbatch size must fit int32 offsets")
+    shape = BufferShape(
+        context.batches[batch].limits["max_sequences"], {p: (size,) for p in paths}
+    )
+    return (shape,) * partitions
+
+
+def representative(context, batch, physical):
+    _check(context)
+    settings = context.batches[batch]
+    (size,) = physical.fields[TOKENS]
+    length = min(
+        size,
+        settings.limits["max_sequence_length"],
+        settings.typical.get("sequence_length", settings.limits["max_sequence_length"]),
+    )
+    count = min(
+        physical.max_datums, size // length, settings.limits["token_capacity"] // length
+    )
+    values = {}
+    for field in context.schema.fields:
+        path = tuple(field.path)
+        if path in physical.fields:
+            values[path] = (
+                field.default
+                if field.default is not None
+                else (True if field.dtype == "bool" else 0)
+            )
+    return RepresentativePattern(
+        "packed_sequence_length_hint",
+        [RepresentativeSample(values, {"position": length}, count=count)],
+    )
