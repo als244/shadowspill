@@ -237,6 +237,25 @@ Static options and unused tensors cannot be advertised as runtime overrides.
 The registry resolves nonsticky defaults before construction; it does not run
 optimizer steps or introduce another optimizer implementation.
 
+The engine distribution publishes an optional optimizer registration hook. Include
+`"shadowspill"` in the server's `workload_packages` alongside your installed model
+package to enable `Optimizer("mlops/adamw@1")`. This requires MLOps on the server;
+external packages can supply their own optimizers without loading this hook.
+Registration hashes the installed provider source without importing Torch or
+constructing an optimizer. Construction calls the existing `mlops.optim.AdamW`.
+
+This definition currently supports one parameter group, selecting only trainable
+parameters. Runtime controls are `lr`, `beta1`, `beta2`, `eps` and `weight_decay`;
+omitted values use the immutable setup defaults. Structural `config` supports
+`maximize`. `precision` accepts `gradient_dtype` and `opt_state_dtype` (`parameter`,
+`float32`, `float16` or `bfloat16`), plus `parameter_rounding` and
+`opt_state_rounding` (`nearest` or `stochastic`). Defaults match MLOps: BF16 update
+gradients and moments, nearest rounding. These dtype settings describe the
+optimizer's input conversion and moment storage; they do not change model,
+master-weight or gradient-accumulation storage. Unsupported groups and precision
+options fail during description. For the existing FP32 regression recipe, specify
+`precision={"opt_state_dtype": "float32"}` to preserve its optimizer settings.
+
 The phase engine also provides `artifacts.state_inventory.program_state(program,
 logical_rank=0)`. It describes captured parameters, buffers, masters, persistent
 gradients, optimizer tensors and host counters using role/name/component IDs.

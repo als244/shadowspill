@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["blake3>=1.0,<2", "matplotlib>=3.9", "numpy>=2.0"]
 
+[project.entry-points."shadowspill.definitions"]
+optimizers = "shadowspill.training.definitions.adamw:register"
+
 [project.optional-dependencies]
 pytorch = ["torch>=2.13,<2.14", "nvidia-ml-py>=13.580,<14"]
 training = ["shadowspill-client==0.1.0.dev0", "wandb>=0.20"]
