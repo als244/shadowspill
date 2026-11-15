@@ -211,3 +211,36 @@ validate_allocation_coverage(template, saved)
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_compiler_seed_fill_has_an_exact_contract_and_retains_output_storage():
+    import torch
+
+    from shadowspill.pytorch._rng import preserve_rng
+
+    template = next(iter(inventory().templates.values()))
+    saved = certify(
+        template, compiler_fixture(template, opaque=["aten.randint.low_out"])
+    )
+    validate_allocation_coverage(template, saved)
+    contracts = saved.bindings["allocation_coverage"]["tasks"]["update_impl"][
+        "contracts"
+    ]
+    assert contracts == {
+        "aten.randint.low_out": "shadowspill/aten-randint-out-allocation@1"
+    }
+    with pytest.raises(ValueError, match="missing all-value"):
+        allocation_coverage(
+            template, compiler_fixture(template, opaque=["aten.randint.default"])
+        )
+    with preserve_rng(torch.device("cpu")):
+        output = torch.empty(7, dtype=torch.int64)
+        pointer, size = output.data_ptr(), output.untyped_storage().nbytes()
+        for seed, fill in ((0, -1), (91, 0), (2**63 + 1, 2**63 - 1)):
+            torch.manual_seed(seed)
+            output.fill_(fill)
+            result = torch.ops.aten.randint.low_out(
+                -(2**63), 2**63 - 1, [7], out=output
+            )
+            assert result.data_ptr() == pointer and output.shape == (7,)
+            assert output.untyped_storage().nbytes() == size

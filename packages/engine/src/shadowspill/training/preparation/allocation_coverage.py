@@ -34,6 +34,11 @@ _BUILTIN = {
     "torch.ops.shadowspill.accumulate_matmul_.default": (
         "shadowspill/accumulate-matmul-allocation@1"
     ),
+    # Inductor RandomSeeds writes a captured count of int64 seeds into its
+    # preallocated output. ATen's out/random kernel uses only that fixed extent,
+    # dtype and scalar range; previous output values and RNG state cannot change
+    # storage geometry. This does not certify other random/provider operators.
+    "aten.randint.low_out": "shadowspill/aten-randint-out-allocation@1",
 }
 
 
