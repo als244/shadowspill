@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from shadowspill import Trainer
-from shadowspill.training import _state
+from shadowspill.checkpoint import metadata_values as _state
 
 
 class Schedule:

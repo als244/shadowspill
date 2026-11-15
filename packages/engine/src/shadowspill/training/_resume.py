@@ -10,12 +10,11 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 from shadowspill.checkpoint import load_checkpoint, save_checkpoint
+from shadowspill.checkpoint import metadata_values as _state
 from shadowspill.checkpoint.load import checkpoint_metadata
 from shadowspill.checkpoint.weights import WeightRepresentation
 from shadowspill.execution.tensors import TensorChunk
 from shadowspill.pytorch._rng import restore_rng, rng_state
-
-from . import _state
 
 if TYPE_CHECKING:
     from .trainer import Trainer
