@@ -6,7 +6,12 @@ from math import prod
 import numpy as np
 import pytest
 
-from shadowspill.checkpoint.mapping import LogicalSpan, LogicalView, intersections
+from shadowspill.checkpoint.mapping import (
+    LogicalSpan,
+    LogicalView,
+    coverage,
+    intersections,
+)
 
 
 def view(
@@ -194,3 +199,48 @@ def test_huge_contiguous_views_stay_a_single_span_without_payload_allocation():
 def test_invalid_view_is_rejected_without_iterating_payloads(change):
     with pytest.raises((TypeError, ValueError)):
         replace(view((4,)), **change)
+
+
+def test_coverage_enumerates_every_copy_including_strides_and_partial_overlap():
+    views = [
+        view((3, 4), region=(0, 7)),
+        view((3, 4), region=(7, 5)),
+        view((3, 4), stride=(1, 3)),
+        view((3, 4), local=(2, 2), origin=(1, 1)),
+    ]
+    expected_views = [expected(item) for item in views]
+    seen = {}
+    for region in coverage(views):
+        for offset in range(region.elements):
+            logical = region.logical_offset + offset
+            assert logical not in seen
+            seen[logical] = [
+                (copy.view, copy.archive_offset + offset) for copy in region.copies
+            ]
+    assert seen == {
+        element: [
+            (index, item[element])
+            for index, item in enumerate(expected_views)
+            if element in item
+        ]
+        for element in range(12)
+    }
+
+
+@pytest.mark.parametrize(
+    "regions,gap", [([(1, 4)], 0), ([(0, 2), (3, 2)], 2), ([(0, 4)], 4)]
+)
+def test_coverage_rejects_missing_prefix_middle_or_tail(regions, gap):
+    with pytest.raises(ValueError, match=f"gap at element {gap}"):
+        list(coverage([view((5,), region=region) for region in regions]))
+
+
+def test_coverage_handles_empty_and_huge_replicated_views_without_payloads():
+    assert not list(coverage([view((0, 4)), view((0, 4))]))
+    regions = list(coverage([view((25_000_000_000,))] * 4))
+    assert len(regions) == 1 and len(regions[0].copies) == 4
+    assert regions[0].elements == 25_000_000_000
+    with pytest.raises(ValueError, match="at least one"):
+        list(coverage([]))
+    with pytest.raises(ValueError, match="shapes differ"):
+        list(coverage([view((4,)), view((2, 2))]))

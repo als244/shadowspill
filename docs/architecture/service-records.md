@@ -710,7 +710,17 @@ Logical intersections stream bounded descriptors even for strided views; they
 allocate no tensor data. Factored optimizer state keeps its own shape. Undefined
 encoded or sharded optimizer mappings fail explicitly, as does registered state
 without an export binding. These descriptions do not yet implement conversion,
-replica consistency checks, or publication of a converted checkpoint.
+publication of a converted checkpoint.
+
+The offline `checkpoint.reading.read_rank` context reuses the same parser,
+geometry validation and payload checksums before exposing bounded random reads
+of saved representations. Its owner keeps sources immutable and publishes only
+after successful context exit. `checkpoint.transfer.transfer_tensor` verifies
+complete source/target logical coverage, checks every overlapping source replica
+bit for bit, and streams into unpublished target callbacks under an explicit
+scratch limit. An ordinary floating-point weight cast requires an explicit
+transformation; optimizer state is copied without reinterpretation. This layer
+does not choose identities, prove target ties or commit a checkpoint generation.
 
 New-run checkpoint initialization uses this CPU preflight before the existing
 all-worker startup release, followed by the same bounded checkpoint reader used

@@ -1,7 +1,9 @@
 """Bounded intersections of explicit logical views and owned archive regions."""
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from heapq import merge
+from itertools import groupby
 from math import prod
 
 from shadowspill.artifacts._values import nonnegative_int
@@ -163,3 +165,62 @@ def intersections(source: LogicalView, target: LogicalView) -> Iterator[Intersec
             left = next(sources, None)
         else:
             right = next(targets, None)
+
+
+@dataclass(frozen=True)
+class Copy:
+    view: int
+    archive_offset: int
+
+
+@dataclass(frozen=True)
+class CoveredRange:
+    logical_offset: int
+    elements: int
+    copies: tuple[Copy, ...]
+
+
+def coverage(views: Sequence[LogicalView]) -> Iterator[CoveredRange]:
+    """Prove full logical coverage while enumerating every overlapping replica.
+
+    At most one span per input view is active. The input order determines copy
+    order; it does not authorize choosing one copy without checking consistency.
+    Exhaust this iterator to prove coverage, including its trailing boundary.
+    """
+    if not views:
+        raise ValueError("logical coverage requires at least one view")
+    if any(view.shape != views[0].shape for view in views):
+        raise ValueError("logical coverage shapes differ")
+
+    def boundaries(
+        index: int, view: LogicalView
+    ) -> Iterator[tuple[int, int, int, int]]:
+        for span in view.spans():
+            yield span.logical_offset, 1, index, span.archive_offset
+            yield span.logical_offset + span.elements, 0, index, 0
+
+    active: dict[int, tuple[int, int]] = {}
+    cursor = 0
+    events = merge(*(boundaries(index, view) for index, view in enumerate(views)))
+    for boundary, group in groupby(events, key=lambda event: event[0]):
+        if cursor < boundary:
+            if not active:
+                raise ValueError(
+                    f"logical state coverage has a gap at element {cursor}"
+                )
+            yield CoveredRange(
+                cursor,
+                boundary - cursor,
+                tuple(
+                    Copy(index, start + cursor - begin)
+                    for index, (begin, start) in sorted(active.items())
+                ),
+            )
+        for at, starts, index, offset in group:
+            if starts:
+                active[index] = at, offset
+            else:
+                del active[index]
+        cursor = boundary
+    if cursor != prod(views[0].shape):
+        raise ValueError(f"logical state coverage has a gap at element {cursor}")
