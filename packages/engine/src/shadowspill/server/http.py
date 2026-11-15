@@ -26,6 +26,7 @@ from shadowspill_client.protocol.codec import (
 )
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.payload_io import BufferReader
+from shadowspill_client.protocol.plans import SavedPlans
 from shadowspill_client.protocol.preview import TrainingPreview
 from shadowspill_client.protocol.requests import OperationRequest, identifier
 from shadowspill_client.protocol.results import RequestStatus
@@ -41,6 +42,7 @@ from shadowspill_client.protocol.training import ResolvedTraining
 from .artifacts import ArtifactStore
 from .authentication import BearerTokens
 from .creation_records import CreationRecord
+from .records.artifact_index import ArtifactAlias
 from .records.requests import RequestRecords, RunIdentity, WriterFenced
 from .records.run_index import RUN_BYTES
 
@@ -457,6 +459,9 @@ class _Handler(BaseHTTPRequestHandler):
             raise KeyError("route")
 
         identity = RunIdentity(owner, parts[2], parts[3])
+        if parts[4:] == ("plans",):
+            self._plans(identity, query, body)
+            return
         with self.server.runs(identity) as run:
             if run.records.identity != identity:
                 raise PermissionError("run lookup crossed authenticated scope")
@@ -531,6 +536,55 @@ class _Handler(BaseHTTPRequestHandler):
                     return
             raise KeyError("route")
 
+    def _plans(
+        self, identity: RunIdentity, query: dict[str, list[str]], body: _Body
+    ) -> None:
+        jobs = self.server.jobs
+        if jobs is None:
+            raise KeyError("saved Plan routes are unavailable")
+        info = jobs.storage.catalog.get(identity)
+        if info is None or info.plans is None:
+            raise KeyError("run Plans")
+        self._run_scope(info, identity)
+        with self.server.artifacts(identity.owner_id) as store:
+            if store.owner_id != identity.owner_id:
+                raise PermissionError("Plan lookup crossed owner scope")
+            if self.command == "POST" and not query:
+                if self.headers.get("Content-Type") != CONTROL_MEDIA_TYPE:
+                    raise ProtocolError("Plan name has no control media type")
+                saved = body.record()
+                if not isinstance(saved, SavedPlans) or (
+                    saved.session_id,
+                    saved.run_id,
+                    saved.plans,
+                ) != (identity.session_id, identity.run_id, info.plans):
+                    raise ProtocolError("saved Plans differ from their source run")
+                store.name(
+                    saved.plans,
+                    ArtifactAlias(
+                        saved.session_id,
+                        saved.run_id,
+                        saved.name,
+                        saved.plans.id,
+                        "plans",
+                    ),
+                )
+            elif self.command == "GET" and set(query) == {"name"}:
+                name = query["name"][0]
+                reference = store.resolve_alias(
+                    identity.session_id, identity.run_id, name, kind="plans"
+                )
+                if reference is None:
+                    raise KeyError("Plan name")
+                if reference != info.plans:
+                    raise ValueError("saved Plans differ from their source run")
+                saved = SavedPlans(
+                    identity.session_id, identity.run_id, name, reference
+                )
+            else:
+                raise ProtocolError("invalid saved Plan route")
+            self._reply(saved)
+
     def _creation(
         self,
         owner: str,
@@ -589,13 +643,17 @@ class _Handler(BaseHTTPRequestHandler):
             raise KeyError("run")
         self._run_reply(info, identity)
 
-    def _run_reply(self, info: RunInfo, identity: RunIdentity) -> None:
+    @staticmethod
+    def _run_scope(info: RunInfo, identity: RunIdentity) -> None:
         if (info.owner_id, info.session_id, info.run_id) != (
             identity.owner_id,
             identity.session_id,
             identity.run_id,
         ):
             raise PermissionError("run catalog crossed authenticated scope")
+
+    def _run_reply(self, info: RunInfo, identity: RunIdentity) -> None:
+        self._run_scope(info, identity)
         assert self.server.jobs is not None
         pending = info.state == "preparing" or (
             info.state == "ready" and not self.server.jobs.available(identity)

@@ -9,8 +9,8 @@ reattachment and explicit artifact downloads. `TrainingClient` submits live
 operations. `shadowspill.server.Server` owns startup and the assigned resources.
 Checkpoint save, ordered restore, new-run resume and explicit directory downloads
 are supported. New-run creation converts compatible checkpoint state when its
-prepared Plans change. Resumable transfers and named Plan saves are still being
-implemented.
+prepared Plans change. Named Plans can be saved and retrieved after worker close
+or service restart. Resumable transfers are still being implemented.
 Existing phase and Trainer APIs remain available during migration.
 
 Start the service on Chicago or another machine with an existing GPU allocation:
@@ -117,6 +117,16 @@ planner or issue a training operation; they remain available after worker close
 and server restart. `.plans.download(path).result()` explicitly exports the full
 bundle. Simulated durations are estimates for the recorded representative inputs,
 separate from observed training latency.
+
+`saved = training.plans.save(name="baseline").result()` gives the stored bundle
+a run-local name and returns an immutable Plan handle. It copies no weights or
+bundle data and does not enter the training queue. Plan names are independent
+of checkpoint names. Saving the same name again is idempotent.
+After reconnecting with the same `session_id`, retrieve it with
+`service.get_plans(run_id, name="baseline").result()`. Both operations work after
+worker close and service restart, without acquiring a writer or GPU. Pass the
+handle as `plans=saved` when creating another compatible training run; supply
+explicit initialization or a checkpoint as usual. Downloads remain explicit.
 
 An immutable artifact reference can be attached to the current connection with
 `service.artifact(reference)`. Its `.download(local_path).result()` streams and

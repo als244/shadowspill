@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Literal
 
-from .._records import Record, Value, integer, mapping, record
-from .requests import ArtifactRef
+from .._records import Record, Value, integer, mapping, record, text
+from .requests import ArtifactRef, identifier
 
 type SummaryKind = Literal[
     "configuration",
@@ -31,6 +31,29 @@ SUMMARY_KINDS = frozenset(
     }
 )
 MAX_SUMMARY_ROWS = 32
+
+
+def plan_name(name: str) -> str:
+    if len(text(name, "Plan name")) > 256:
+        raise ValueError("Plan name exceeds its bound")
+    name.encode("utf-8")  # Reject lone surrogates before durable storage or a URL.
+    return name
+
+
+@dataclass(frozen=True)
+class SavedPlans(Record):
+    """A run-local name for immutable server Plans, independent of workers."""
+
+    session_id: str
+    run_id: str
+    name: str
+    plans: ArtifactRef
+
+    def __post_init__(self) -> None:
+        identifier(self.session_id, "Plan session ID")
+        identifier(self.run_id, "Plan run ID")
+        plan_name(self.name)
+        object.__setattr__(self, "plans", record(ArtifactRef, self.plans, "Plans"))
 
 
 def summary_id(plans: ArtifactRef, page: int) -> str:

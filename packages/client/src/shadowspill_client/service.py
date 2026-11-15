@@ -15,6 +15,7 @@ from .artifacts import ArtifactHandle
 from .buffers import BufferBudget
 from .checkpoints import CheckpointHandle
 from .creation import TrainingFuture, create_training_client, get_training_client
+from .plans import PlansHandle, get_plans
 from .protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
 from .protocol.codec import ProtocolError, encode
 from .protocol.preview import TrainingPreview
@@ -128,6 +129,10 @@ class ServiceClient:
         self, run_id: str, *, read_only: bool = False
     ) -> TrainingFuture:
         return get_training_client(self, run_id, read_only=read_only)
+
+    def get_plans(self, run_id: str, *, name: str) -> CallFuture[PlansHandle]:
+        """Retrieve named Plans in this session, including after worker close."""
+        return get_plans(self, run_id, name=name)
 
     def _retain_handle(self, handle: TrainingClient) -> None:
         with self._handle_lock:

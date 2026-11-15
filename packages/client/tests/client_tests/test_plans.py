@@ -5,7 +5,11 @@ from dataclasses import replace
 import pytest
 
 from shadowspill_client.protocol.codec import decode, encode
-from shadowspill_client.protocol.plans import PlanSummaryPage, PlanSummaryRow
+from shadowspill_client.protocol.plans import (
+    PlanSummaryPage,
+    PlanSummaryRow,
+    SavedPlans,
+)
 from shadowspill_client.protocol.requests import ArtifactRef
 
 
@@ -26,3 +30,21 @@ def test_summary_wire_roundtrip_is_bounded_and_owned():
     ):
         with pytest.raises(ValueError):
             replace(page, **options)
+
+
+def test_named_plans_preserve_unicode_names_and_bound_context():
+    saved = SavedPlans(
+        "session", "run", "模型 / best + 1", ArtifactRef("plans", "a" * 64, 3)
+    )
+    assert decode(encode(saved)) == saved
+    for options in (
+        {"session_id": "../other"},
+        {"run_id": "a/b"},
+        {"name": ""},
+        {"name": " leading"},
+        {"name": "x" * 257},
+        {"name": "\ud800"},
+        {"plans": None},
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            replace(saved, **options)

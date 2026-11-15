@@ -66,7 +66,11 @@ class TrainingClient:
         self._service, self._config, self._writer = service, config, writer
         self.session_id, self.run_id = info.session_id, info.run_id
         self.read_only = writer is None
-        self.plans = None if info.plans is None else PlansHandle(info.plans, service)
+        self.plans = (
+            None
+            if info.plans is None
+            else PlansHandle(info.plans, service, info.run_id)
+        )
         self.requests = RequestQueries(self)
         self._route = f"/v1/runs/{self.session_id}/{self.run_id}"
         self._submission, self._upload, self._state = Lock(), Condition(), Lock()

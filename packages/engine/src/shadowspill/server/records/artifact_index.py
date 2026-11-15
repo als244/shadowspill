@@ -25,6 +25,7 @@ def alias_scope(
     identifier(run_id, "artifact run ID")
     if len(text(name, "artifact name")) > 256:
         raise ValueError("artifact name exceeds its bound")
+    name.encode("utf-8")  # SQLite text must be representable before journal commit.
     if kind not in ("checkpoint", "plans"):
         raise ValueError("unknown named artifact kind")
     return session_id, run_id, name, kind

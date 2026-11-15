@@ -15,6 +15,17 @@ def publish(artifacts):
     return artifacts.put(reference(), lambda _: io.BytesIO(b"result"))
 
 
+@pytest.mark.parametrize("kind", ["plans", "checkpoint"])
+def test_unencodable_name_cannot_poison_durable_storage(tmp_path, kind):
+    with store(tmp_path) as artifacts:
+        ref = publish(artifacts)
+        with pytest.raises(UnicodeEncodeError):
+            artifacts.name(ref, ArtifactAlias("s", "r", "\ud800", ref.id, kind))
+        artifacts.name(ref, ArtifactAlias("s", "r", "valid", ref.id, kind))
+    with store(tmp_path) as recovered:
+        assert recovered.resolve_alias("s", "r", "valid", kind=kind) == ref
+
+
 def test_names_are_scoped_idempotent_and_durable_without_payload_copy(tmp_path):
     with store(tmp_path) as artifacts:
         ref = publish(artifacts)
