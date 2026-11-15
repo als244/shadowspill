@@ -48,6 +48,10 @@ class RunIdentity:
         }
 
 
+class WriterFenced(PermissionError):
+    """Authenticated run access does not authorize this retired writer lease."""
+
+
 class RequestRecords:
     """Single-writer records for one owner/session/run, not live GPU-state recovery.
 
@@ -279,7 +283,7 @@ class RequestRecords:
 
     def _check_writer(self, request: OperationRequest) -> None:
         if self._writer is None or not self._writer.permits(request.identity):
-            raise PermissionError(
+            raise WriterFenced(
                 "writer lease is absent or fenced; reattach explicitly"
             )
 

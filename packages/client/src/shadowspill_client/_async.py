@@ -32,6 +32,12 @@ class CallFuture[T]:
     def cancel(self) -> bool:
         return False
 
+    def _set_result(self, value: T) -> None:
+        self._future.set_result(value)
+
+    def _set_exception(self, error: BaseException) -> None:
+        self._future.set_exception(error)
+
 
 class ConnectionWork:
     def __init__(self, max_pending: int, workers: int) -> None:
@@ -53,18 +59,28 @@ class ConnectionWork:
         self.stopped.wait(seconds)
         self.check()
 
-    def submit[T](self, action: Callable[[], T]) -> CallFuture[T]:
+    def submit[T](
+        self,
+        action: Callable[[], T],
+        *,
+        future: CallFuture[T] | None = None,
+        cleanup: Callable[[], None] | None = None,
+    ) -> CallFuture[T]:
         self.check()
         lease = self.pending.reserve(TASK_BYTES)
-        future: CallFuture[T] = CallFuture()
+        result = CallFuture[T]() if future is None else future
 
         def run() -> None:
-            nonlocal action
+            nonlocal action, cleanup
             value: T
             error: BaseException | None = None
             try:
-                self.check()
-                value = action()
+                try:
+                    self.check()
+                    value = action()
+                finally:
+                    if cleanup is not None:
+                        cleanup()
             except BaseException as caught:
                 # Retaining a failed future must not retain its task's inputs.
                 caught.__traceback__ = None
@@ -72,20 +88,24 @@ class ConnectionWork:
                 error = caught
             finally:
                 del action
+                cleanup = None
                 lease.close()
             if error is None:
-                future._future.set_result(value)
+                result._set_result(value)
             else:
-                future._future.set_exception(error)
+                result._set_exception(error)
 
         try:
             self.executor.submit(run)
         except BaseException:
             lease.close()
             raise
-        return future
+        return result
 
-    def close(self) -> None:
+    def stop(self) -> None:
         self.stopped.set()
         self.pending.close()
+
+    def close(self) -> None:
+        self.stop()
         self.executor.shutdown(wait=True)

@@ -4,8 +4,8 @@ import importlib.abc
 import json
 import socket
 import sys
-from contextlib import ExitStack
-from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Event
 from time import monotonic
 
@@ -26,19 +26,10 @@ sys.meta_path.insert(0, Block())
 
 import numpy as np  # noqa: E402
 
-from shadowspill_client import SSH, Datum  # noqa: E402
+from shadowspill_client import SSH, Datum, ServiceClient  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
-from shadowspill_client.protocol.creation import TrainingCreation  # noqa: E402
-from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
 from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
-from shadowspill_client.protocol.requests import (  # noqa: E402
-    ArtifactRef,
-    OperationRequest,
-    RequestIdentity,
-)
 from shadowspill_client.protocol.training import ResolvedTraining  # noqa: E402
-from shadowspill_client.transport.http import HTTPTransport  # noqa: E402
-from shadowspill_client.transport.ssh import SSHTunnel  # noqa: E402
 
 
 def records(targets):
@@ -64,104 +55,57 @@ def ready(client, route, *, state="ready"):
 
 def qualify(client, config, memory, oracle):
     saved, receipts = None, []
-    service = client.request("GET", "/v1/info").value
+    preview = client.describe_training(config=config).result(20)
+    assert preview.config == config
     for mode in ("fresh", "saved"):
-        route = "/v1/runs/factory-session/" + mode
-        creation = TrainingCreation(config, plans=saved, name="demo-" + mode)
-        client.request("POST", route, creation)
-        info = ready(client, route)
-        assert info.plans is not None and info.owner_id == service.owner_id
-        assert client.request("POST", route, creation).value == info
-        saved = info.plans
-        writer = client.request("POST", route + "/writers/demo-writer").value
-
-        def invoke(
-            operation,
-            sequence,
-            *,
-            output=None,
-            run_id=mode,
-            base=route,
-            lease=writer,
-            **options,
-        ):
-            name, payload, wire, count = f"demo-{sequence}", None, None, 0
-            if operation != "close":
-                datums = records(operation != "forward")
-                with snapshot_batch(datums, memory) as snapshot:
-                    payload = ArtifactRef(
-                        name, snapshot.sha256, snapshot.size_bytes, MEDIA_TYPE
-                    )
-                    wire, count = b"".join(snapshot.chunks()), len(datums)
-            request = OperationRequest(
-                RequestIdentity(
-                    name,
-                    run_id,
-                    sequence,
-                    lease.writer_id,
-                    lease.writer_epoch,
-                    service.server_incarnation,
-                ),
-                operation,
-                payload,
-                count,
-                **({} if output is None else {"outputs": output}),
-                **options,
-            )
-            client.request("POST", base + "/requests", request)
-            path = base + "/requests/" + name
-            accepted = (
-                client.request("PUT", path + "/input")
-                if wire is None
-                else client.upload(path + "/input", payload, [wire])
-            ).value
-            assert accepted.acceptance is not None, accepted
-            deadline = monotonic() + 120
-            while True:
-                status = client.request(
-                    "GET", path + "?wait=completed&timeout=10"
-                ).value
-                if status.state in ("completed", "skipped", "failed"):
-                    break
-                assert monotonic() < deadline
-            assert status.state == "completed", status
-            # An identical request after completion queries the original effect.
-            assert client.request("POST", base + "/requests", request).value == status
-            return status.result
-
-        result = invoke(
-            "step",
-            1,
+        pending = client.create_training_client(
+            config=preview.config, plans=saved, name="demo-" + mode
+        )
+        assert pending.run_id
+        training = pending.result(180)
+        assert training.run_id == pending.run_id and training.get_config() == config
+        saved = training.plans
+        assert saved is not None
+        step = training.step(
+            records(True),
             optim={"lr": 0.03},
             grad_scale=0.5,
             loss_params={"temperature": 2.0},
         )
+        assert step.request_id and step.accepted().result(30).identity == step.identity
+        result = step.result(120)
         np.testing.assert_allclose(result.loss, oracle["loss"], rtol=1e-4)
-        prediction = invoke("forward", 2, output="predictions")
-        reference = prediction.outputs["prediction"]
-        closed = invoke("close", 3)
+        assert training.requests.get(step.request_id).result(10).record == result.record
+        prediction = training.forward(records(False), outputs="predictions").result(120)
+        output = prediction.outputs["prediction"]
+        closed = training.close().result(30)
         assert closed.completed_updates == 1
-        assert ready(client, route, state="closed").plans == saved
-        assert client.request("POST", route, creation).value.state == "closed"
-        # Results remain downloadable after both execution and creation retire.
-        target = BytesIO()
-        client.download("/v1/artifacts/" + reference.id, reference, target)
-        with read_payload(BytesIO(target.getvalue()), reference, memory) as decoded:
-            rows = decoded.datums[0].inputs
-            actual = np.stack([rows[str(index)].array() for index in range(3)])
-            np.testing.assert_allclose(
-                actual, oracle["after_step"], rtol=1e-4, atol=1e-5
-            )
+        route = "/v1/runs/factory-session/" + training.run_id
+        assert ready(client._transport, route, state="closed").plans == saved.reference
+        # Public output handles download only on explicit request, after worker exit.
+        with TemporaryDirectory(prefix="shadowspill-demo-output-") as directory:
+            path = output.download(Path(directory) / "predictions.ssp").result(30)
+            with (
+                path.open("rb") as stream,
+                read_payload(stream, output.reference, memory) as decoded,
+            ):
+                rows = decoded.datums[0].inputs
+                actual = np.stack([rows[str(index)].array() for index in range(3)])
+                np.testing.assert_allclose(
+                    actual, oracle["after_step"], rtol=1e-4, atol=1e-5
+                )
+        readonly = client.get_training_client(training.run_id, read_only=True).result(
+            10
+        )
+        assert readonly.requests.get(step.request_id).result(10).record == result.record
         receipts.append(
             {
                 "mode": mode,
+                "run_id": training.run_id,
                 "completed_updates": closed.completed_updates,
-                "plans": saved.to_dict(),
+                "plans": saved.reference.to_dict(),
             }
         )
-    page = client.request("GET", "/v1/runs/factory-session").value
-    assert [row.run_id for row in page.runs] == ["fresh", "saved"]
-    assert all(row.state == "closed" for row in page.runs)
     return receipts
 
 
@@ -169,23 +113,25 @@ raw = sys.stdin.buffer.read((1 << 20) + 1)
 assert len(raw) <= 1 << 20
 options = json.loads(raw)
 memory = BufferBudget(64 << 20, 8)
-with ExitStack() as stack:
-    base = f"http://127.0.0.1:{options['port']}"
-    if options.get("ssh_host"):
-        tunnel = stack.enter_context(
-            SSHTunnel(SSH(options["ssh_host"], options["port"]), memory=memory)
-        )
-        base = tunnel.start()
-    client = HTTPTransport(base, token=options["token"], memory=memory, timeout=30)
+connection = (
+    {"ssh": SSH(options["ssh_host"], options["port"])}
+    if options.get("ssh_host")
+    else {"base_url": f"http://127.0.0.1:{options['port']}"}
+)
+with ServiceClient(
+    **connection, token=options["token"], session_id="factory-session", timeout=30
+) as client:
     receipts = qualify(
         client, ResolvedTraining.from_dict(options["config"]), memory, options["oracle"]
     )
+assert client._memory.used == client._work.pending.used == (0, 0)
 assert memory.used == (0, 0)
 assert not any(name in sys.modules for name in ("torch", "triton", "shadowspill"))
 print(
     json.dumps(
         {
             "client_host": socket.gethostname(),
+            "public_training_client": True,
             "python": sys.version,
             "numpy": np.__version__,
             "runs": receipts,

@@ -74,7 +74,23 @@ artifact handles stream verified downloads into new local files. Closing a
 connection stops its polling/transfers and waits for their I/O before releasing
 the forward; it never sends an ordered training close. Metadata futures retain
 no task input closure after completion or failure. Preparation stays in the
-server creation component, separate from the developing live training handle.
+server creation component, separate from the live training handle.
+
+The SDK's `creation` module submits exact settings, polls confirmed creation
+progress, and explicitly attaches a writer. Its `training` module owns snapshots,
+bounded pending calls and ordered metadata/upload delivery; it imports no setup,
+planner or worker launcher. All execution state remains in the existing server
+controller. Runtime futures retain stable identities and original acceptance;
+required outputs are explicit handles. Earlier pending IDs remain dependencies
+even through client capacity waits. An uncertain exchange blocks new submissions
+until explicit reattachment. Connection shutdown releases queued snapshots and
+polling without issuing a training close. Reattachment and stopped-run reads load
+the saved immutable configuration rather than running preparation again.
+
+Portable raw setup serializes operations as ordered entries because canonical
+JSON sorts object keys. This preserves direct resolver operation/default order.
+An authenticated stale writer now receives the specific `writer_fenced` code;
+credential or owner failures retain the generic access-denied response.
 
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration

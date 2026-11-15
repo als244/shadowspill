@@ -41,7 +41,7 @@ from shadowspill_client.protocol.training import ResolvedTraining
 from .artifacts import ArtifactStore
 from .authentication import BearerTokens
 from .creation_records import CreationRecord
-from .records.requests import RequestRecords, RunIdentity
+from .records.requests import RequestRecords, RunIdentity, WriterFenced
 from .records.run_index import RUN_BYTES
 
 if TYPE_CHECKING:
@@ -336,6 +336,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self.headers.get_all("Authorization") or ()
             )
             self._dispatch(owner)
+        except WriterFenced:
+            self._reply(
+                ServiceError(
+                    "writer_fenced", "Writer lease is fenced; reattach explicitly."
+                ),
+                403,
+            )
         except PermissionError:
             self._reply(ServiceError("not_authorized", "Service access denied."), 403)
         except KeyError:

@@ -4,19 +4,23 @@ from __future__ import annotations
 
 import os
 import ssl
+from threading import Lock
 from typing import Any, Self, TypeVar
 from uuid import uuid4
+from weakref import WeakSet
 
 from ._async import CallFuture, ConnectionWork
 from ._records import Record, integer
 from .artifacts import ArtifactHandle
 from .buffers import BufferBudget
+from .creation import TrainingFuture, create_training_client, get_training_client
 from .protocol.codec import ProtocolError, encode
 from .protocol.preview import TrainingPreview
 from .protocol.requests import ArtifactRef, identifier
 from .protocol.service import ServiceInfo
 from .protocol.setup import TrainingSetup
 from .protocol.training import ResolvedTraining
+from .training import TrainingClient
 from .transport.http import HTTP_SCRATCH_BYTES, HTTPTransport
 from .transport.ssh import SSH, SSH_BYTES, SSHTunnel
 
@@ -49,6 +53,8 @@ class ServiceClient:
         integer(max_connections, "max_connections", minimum=1)
         self.session_id = identifier(session_id or uuid4().hex, "session ID")
         self._work = ConnectionWork(max_pending_requests, max_connections)
+        self._handles: WeakSet[TrainingClient] = WeakSet()
+        self._handle_lock = Lock()
         self._memory = BufferBudget(
             max_connections * HTTP_SCRATCH_BYTES + SSH_BYTES, max_connections + 1
         )
@@ -111,7 +117,24 @@ class ServiceClient:
             raise TypeError("artifact requires an immutable server reference")
         return ArtifactHandle(reference, self)
 
+    def create_training_client(self, **setup: Any) -> TrainingFuture:
+        return create_training_client(self, **setup)
+
+    def get_training_client(
+        self, run_id: str, *, read_only: bool = False
+    ) -> TrainingFuture:
+        return get_training_client(self, run_id, read_only=read_only)
+
+    def _retain_handle(self, handle: TrainingClient) -> None:
+        with self._handle_lock:
+            self._work.check()
+            self._handles.add(handle)
+
     def close(self) -> None:
+        self._work.stop()
+        with self._handle_lock:
+            for handle in self._handles:
+                handle._disconnect()
         self._work.close()
         if self._tunnel is not None:
             self._tunnel.close()

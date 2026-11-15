@@ -52,3 +52,20 @@ def test_setup_rejects_incomplete_or_executable_protocol_values(changes):
 def test_remote_setup_never_accepts_factory_or_filesystem_keywords():
     with pytest.raises(ValueError, match="unknown fields"):
         TrainingSetup.from_dict({**setup().to_dict(), "factory": "/client/model.py"})
+
+
+def test_canonical_wire_preserves_operation_and_output_default_order():
+    value = setup(
+        operations={
+            "step": ["metrics"],
+            "forward_backward": ["metrics", "other"],
+            "forward": ["prediction", Operation("metrics", "training")],
+        }
+    )
+    restored = decode(encode(value))
+    assert tuple(restored.operations) == tuple(value.operations)
+    assert restored == value
+    wire = value.to_dict()
+    wire["operations"].append(wire["operations"][0])
+    with pytest.raises(ValueError, match="duplicate operation"):
+        TrainingSetup.from_dict(wire)

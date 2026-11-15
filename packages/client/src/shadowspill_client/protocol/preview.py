@@ -61,7 +61,8 @@ class TrainingPreview(Record):
         rows.extend(
             f"{item.operation.operation}/{item.operation.outputs} "
             f"({item.operation.mode}): {item.geometry_cases} "
-            f"physical cases before capture expansion/reuse; {item.candidate_schedules} "
+            "physical cases before capture expansion/reuse; "
+            f"{item.candidate_schedules} "
             f"candidate schedules, {item.rejected_schedules} rejected."
             for item in self.preparation
         )

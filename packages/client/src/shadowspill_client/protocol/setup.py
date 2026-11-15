@@ -3,6 +3,7 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Any, Self
 
 from .._records import Record, Value, mapping, record, text
 from ..config import (
@@ -28,6 +29,40 @@ class TrainingSetup(Record):
     execution: Execution | None = None
     operations: Mapping[str, Sequence[str | Operation]] | None = None
     prepare: Preparation | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        value = super().to_dict()
+        if self.operations is not None:
+            # Canonical JSON sorts object keys. An ordered entry list preserves
+            # the same operation/default sequence as direct CPU resolution.
+            value["operations"] = [
+                {"operation": key, "outputs": items}
+                for key, items in value["operations"].items()
+            ]
+        return value
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> Self:
+        if not isinstance(value, Mapping):
+            raise TypeError("TrainingSetup requires an object")
+        value = dict(value)
+        entries = value.get("operations")
+        if entries is not None:
+            if not isinstance(entries, (list, tuple)) or len(entries) > 4096:
+                raise ValueError("wire operations require a bounded ordered entry list")
+            operations = {}
+            for entry in entries:
+                if not isinstance(entry, Mapping) or set(entry) != {
+                    "operation",
+                    "outputs",
+                }:
+                    raise ValueError("invalid ordered operation entry")
+                key = text(entry["operation"], "operation")
+                if key in operations:
+                    raise ValueError("duplicate operation entry")
+                operations[key] = entry["outputs"]
+            value["operations"] = operations
+        return super().from_dict(value)
 
     def __post_init__(self) -> None:
         for name, cls in (

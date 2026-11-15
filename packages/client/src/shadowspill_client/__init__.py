@@ -1,4 +1,4 @@
-"""Lightweight records for ShadowSpill training, without the engine or models."""
+"""Lightweight ShadowSpill service and training clients, without engine or models."""
 
 from .config import (
     BatchConfig,
@@ -20,6 +20,7 @@ from .config import (
 )
 from .datum import Datum
 from .service import ServiceClient
+from .training import TrainingClient
 from .transport.ssh import SSH
 
 __version__ = "0.1.0.dev0"
@@ -42,5 +43,6 @@ __all__ = [
     "Preparation",
     "ProfilingOptions",
     "ServiceClient",
+    "TrainingClient",
     "Weights",
 ]

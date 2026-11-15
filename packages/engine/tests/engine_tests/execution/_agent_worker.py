@@ -631,6 +631,11 @@ def qualify_creation_factory():
             reap_interval=0.01,
         )
         jobs.start()
+
+        def describe(settings):
+            with job_arena.budget.reserve(512 << 20, timeout=0):
+                return configured.describe(settings)
+
         service = HTTPService(
             ("127.0.0.1", 0),
             incarnation="factory-agent",
@@ -638,6 +643,7 @@ def qualify_creation_factory():
             runs=jobs.access,
             artifacts=storage.artifacts,
             jobs=jobs,
+            describe=describe,
             memory=http_arena.budget,
             request_timeout=30,
         )
@@ -700,7 +706,7 @@ def qualify_creation_factory():
             assert not admission.used.devices
             for result in client_receipt["runs"]:
                 mode = result["mode"]
-                identity = RunIdentity("owner", "factory-session", mode)
+                identity = RunIdentity("owner", "factory-session", result["run_id"])
                 info = storage.catalog.get(identity)
                 assert info.state == "closed"
                 manifests = []
@@ -708,7 +714,7 @@ def qualify_creation_factory():
                     if ref.id.startswith("preparation."):
                         with artifacts.open(ref) as stream:
                             manifest = json.load(stream)
-                        if manifest["run_id"] == mode:
+                        if manifest["run_id"] == result["run_id"]:
                             manifests.append(manifest)
                 phases = sorted(m["phase"] for m in manifests if "phase" in m)
                 assert phases == (
