@@ -9,7 +9,7 @@ from functools import partial
 from math import prod
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, BinaryIO
 
 import torch
 
@@ -97,7 +97,7 @@ def _source(entry: RankedTensor, readers: Sequence[RankReader]) -> SourceView | 
 
 @contextmanager
 def convert_state(
-    sources: Sequence[tuple[PlanState, Path]],
+    sources: Sequence[tuple[PlanState, Path | BinaryIO]],
     targets: Sequence[PlanState],
     directory: Path,
     *,

@@ -7,7 +7,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
 from types import MappingProxyType
-from typing import Any
+from typing import Any, BinaryIO
 
 import torch
 
@@ -91,7 +91,7 @@ def _signature(stream: Any) -> tuple[int, ...]:
 @contextmanager
 def read_rank(
     state: CheckpointState,
-    path: str | os.PathLike[str],
+    path: str | os.PathLike[str] | BinaryIO,
     *,
     chunk_bytes: int,
     frozen_state_id: str | None = None,
@@ -104,8 +104,10 @@ def read_rank(
     Metadata retains the archive's existing count, byte and JSON bounds. The
     caller separately admits this metadata and any destination staging.
 
-    Local file changes are detected again on successful exit. Source immutability
-    is still an owner requirement; this is not a locking or publication service.
+    Local file changes are detected again on successful exit. Borrowed streams
+    require a real file descriptor for the same immutability check and remain
+    open at their original position. Source immutability is an owner requirement;
+    this is not a locking or publication service.
     """
     if type(chunk_bytes) is not int or chunk_bytes < 1:
         raise ValueError("checkpoint source chunk_bytes must be a positive integer")

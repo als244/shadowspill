@@ -6,7 +6,7 @@ import os
 import re
 import tarfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import BinaryIO
 
 BLOCK = 512
@@ -106,9 +106,20 @@ def check_json(data: bytes) -> None:
 
 
 @contextmanager
-def open_checkpoint(path: str | os.PathLike[str]) -> Iterator[tarfile.TarFile]:
-    """Validate ordinary rank framing before TarFile reads even its first member."""
-    with open(path, "rb") as stream:
+def open_checkpoint(
+    source: str | os.PathLike[str] | BinaryIO,
+) -> Iterator[tarfile.TarFile]:
+    """Validate rank framing; supplied seekable streams remain caller-owned."""
+    with (
+        open(source, "rb")
+        if isinstance(source, (str, os.PathLike))
+        else nullcontext(source)
+    ) as stream:
+        original = stream.tell()
         check_headers(stream)
-        with tarfile.open(fileobj=stream, mode="r:") as archive:
-            yield archive
+        try:
+            stream.seek(0)
+            with tarfile.open(fileobj=stream, mode="r:") as archive:
+                yield archive
+        finally:
+            stream.seek(original)

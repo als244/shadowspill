@@ -128,3 +128,34 @@ def test_reader_closes_after_owner_failure_and_does_not_mask_it(tmp_path):
     ):
         raise RuntimeError("publication failed")
     assert source.closed
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_borrowed_artifact_file_preserves_owner_and_position(tmp_path, failure):
+    state, path = saved(tmp_path)
+    with path.open("rb") as stream:
+        stream.seek(37)
+        try:
+            with read_rank(state, stream, chunk_bytes=17) as reader:
+                assert reader.manifest["metadata"]["updates"] == 7
+                chunk = reader.chunks["bf16"]
+                result = torch.empty(2, dtype=chunk.dtype)
+                reader.readinto(chunk, result)
+                if failure:
+                    raise RuntimeError("owner failed")
+        except RuntimeError as error:
+            assert failure and str(error) == "owner failed"
+        assert not stream.closed and stream.tell() == 37 and reader.closed
+
+
+def test_changed_borrowed_file_is_rejected_before_publication(tmp_path):
+    state, path = saved(tmp_path)
+    with path.open("rb") as stream:
+        with (
+            pytest.raises(ValueError, match="changed during conversion"),
+            read_rank(state, stream, chunk_bytes=17),
+            path.open("r+b") as other,
+        ):
+            other.seek(512)
+            other.write(b"\xff")
+        assert not stream.closed
