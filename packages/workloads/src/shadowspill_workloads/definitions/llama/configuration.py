@@ -10,6 +10,8 @@ from shadowspill_client import LoRA
 from shadowspill_client._records import plain
 from shadowspill_workloads.models.llama3.config import PRESETS, Config
 
+from .allocations import CONTRACTS
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -99,7 +101,9 @@ def create(config):
 
 
 def build(config, context):
-    return ModelBuild(asdict(config), grad_dtype=config.grad_dtype)
+    return ModelBuild(
+        asdict(config), grad_dtype=config.grad_dtype, allocation_invariants=CONTRACTS
+    )
 
 
 @contextmanager
