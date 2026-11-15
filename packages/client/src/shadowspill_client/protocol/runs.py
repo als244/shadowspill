@@ -13,9 +13,17 @@ from .service import ServiceError
 
 type RunState = Literal["preparing", "ready", "failed", "stopped", "closed"]
 type CreationStage = Literal[
-    "queued", "build", "profile", "communicate", "plan", "initializing"
+    "queued", "build", "profile", "communicate", "plan", "converting", "initializing"
 ]
-CREATION_STAGES = ("queued", "build", "profile", "communicate", "plan", "initializing")
+CREATION_STAGES = (
+    "queued",
+    "build",
+    "profile",
+    "communicate",
+    "plan",
+    "converting",
+    "initializing",
+)
 
 
 def organization(name: str | None, labels: Mapping[str, str]) -> Mapping[str, str]:
@@ -56,6 +64,7 @@ class RunInfo(Record):
     error: ServiceError | None = None
     parent_checkpoint: ArtifactRef | None = None
     initial_completed_updates: int = 0
+    initial_checkpoint: ArtifactRef | None = None
 
     def __post_init__(self) -> None:
         for name in ("owner_id", "session_id", "run_id", "server_incarnation"):
@@ -88,6 +97,17 @@ class RunInfo(Record):
                 raise ValueError("checkpoint lineage requires initialized run history")
         elif self.initial_completed_updates:
             raise ValueError("fresh initialization starts at zero completed updates")
+        if self.initial_checkpoint is not None:
+            object.__setattr__(
+                self,
+                "initial_checkpoint",
+                record(ArtifactRef, self.initial_checkpoint, "initial checkpoint"),
+            )
+            if (
+                self.parent_checkpoint is None
+                or self.initial_checkpoint.media_type != CHECKPOINT_MEDIA_TYPE
+            ):
+                raise ValueError("initial checkpoint requires checkpoint lineage")
         if self.error is not None:
             object.__setattr__(self, "error", record(ServiceError, self.error, "error"))
         if self.state not in ("preparing", "ready", "failed", "stopped", "closed"):

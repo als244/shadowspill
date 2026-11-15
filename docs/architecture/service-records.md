@@ -118,9 +118,9 @@ chunks to a borrowed blocking sink, handles partial writes, and returns the exac
 written manifest. It does not flush, close or commit the destination. File saves
 use this same encoder and retain temporary-file/fsync/rename behavior. The stream
 owner must admit storage and confirm successful rank completion before publishing;
-an incomplete or failed stream is discarded. Cross-layout conversion remains
-unfinished. Archive metadata inspection can
-import without loading the framework or worker-side tensor I/O.
+an incomplete or failed stream is discarded. Conversion uses this same encoder,
+as described below. Archive metadata inspection can import without loading the
+framework or worker-side tensor I/O.
 
 `checkpoint.checkpoint_size` derives exact archive bytes from the same tensor
 descriptors, weight selection, manifest encoding and TAR framing, before reading
@@ -148,7 +148,7 @@ already exist in the authenticated owner's storage. Global metadata bytes are
 admitted exactly before starting any rank. This entry point accepts trusted
 installed writers; uploaded files need separate validation. Its socket tests cover
 multiple rank archives, a missing completion, mismatched identities and preserved
-aliases. Logical cross-layout conversion and RNG restoration remain unfinished.
+aliases. Service conversion is described below; RNG restoration remains unfinished.
 
 `stage_checkpoint` uses `ArtifactStore.stage_group` to return completed, private
 files as a `StagedArtifacts` owner. The dispatcher can persist its execution receipt
@@ -190,8 +190,8 @@ Open accumulation is rejected before contacting workers. Admission failure prese
 state; missing completions stop the group without replay. Assembly failure after
 all completions is a publication failure with known state. CPU subprocess tests
 cover these boundaries and restore the emitted archives. The service currently
-includes frozen tensors; declared base omission,
-conversion and RNG integration still require implementation. Worker tensor copies
+includes frozen tensors; declared base omission and RNG integration still require
+implementation. Worker tensor copies
 reuse admitted staging; checkpoint descriptor/manifest peaks are included in the
 deployment's decoded-artifact allowance and still need scale qualification.
 
@@ -217,7 +217,8 @@ FileGrants checksum and retain each rank archive through worker completion.
 Every worker validates its complete native inventory and generation metadata
 before any execute command is broadcast. Loading delegates to the native loader,
 reserving space for its destination and optional cast chunk. Compatible native
-ownership is required; cross-layout conversion remains pending.
+ownership is required for in-place restore; new-run creation can convert state
+before workers start, as described below.
 Preflight rejection preserves all workers. A partial load or missing completion
 invalidates the group; it cannot be replayed on that incarnation. Confirmed restore
 commits its saved update count and new history before result publication.
@@ -750,10 +751,23 @@ Checkpointable weights, optimizer state, counters and registered buffers cannot
 use this initializer. Strided constants fill borrowed subregions without a full
 tensor copy; missing or external defaults fail during preflight.
 
-Automatic conversion in service creation still needs resource admission,
-conversion provenance and resource/progress wiring. The existing creation path
-continues to require directly compatible checkpoints; engine/GPU training after
-conversion and the broader release matrix remain unqualified.
+When the target Plans differ, `LocalCreation` reports `converting` and starts an
+owned CPU preparation child through the existing launcher. The service controller
+does not import Torch or initialize a GPU. It pins immutable source files, admits
+the child host envelope and exact temporary disk/file bounds, and reserves the
+complete final generation before releasing conversion. The child reuses the
+bounded converter and existing rank encoder. Cancellation closes that process
+before source pins and temporary files retire; capped logs remain service
+artifacts. Failed preparation never publishes a partial global generation.
+
+Converted manifests include `CheckpointConversion`: the source checkpoint,
+source Plans, target logical-state digest and version. The target configuration
+and Plans plus this provenance give conversion a deterministic identity; a
+completed artifact can be reused. Original update/history metadata and weight
+selection remain unchanged. Source code pins do not execute or repin old Plans
+while reading their state descriptions. Target Plans still pass the normal strict
+preparation recheck. GPU training after conversion and the broader release matrix
+require separate qualification.
 
 New-run checkpoint initialization uses this CPU preflight before the existing
 all-worker startup release, followed by the same bounded checkpoint reader used
@@ -762,10 +776,12 @@ optimizer semantics; `PreparedWorker` selects either fresh weights or checkpoint
 initialization. Old initializer provenance inside saved Plans does not require
 granting or opening those weight artifacts. `LiveRun` starts `OperationState` at
 the saved update and publishes parent lineage only after every worker is ready.
-`RunInfo.parent_checkpoint` and `initial_completed_updates` are durable creation
-provenance and remain fixed across later operations, restore segments and close.
-Changing ownership or an optimizer's state interpretation still requires a
-supported conversion; setup may change defaults without reinterpreting state.
+`RunInfo.parent_checkpoint` retains the caller-selected checkpoint, while
+`initial_checkpoint` records the actual startup generation, including conversion.
+These and `initial_completed_updates` are durable creation provenance and remain
+fixed across later operations, restore segments and close. Changed ownership
+requires compatible logical mappings; changing optimizer state interpretation
+still fails. Setup may change defaults without reinterpreting state.
 
 Ordered in-place restore and new-run creation use the same optimizer compatibility
 check: definition/source, state configuration, groups and precision must match.

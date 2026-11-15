@@ -8,8 +8,9 @@ require the engine, PyTorch, Triton or the supplied workloads.
 reattachment and explicit artifact downloads. `TrainingClient` submits live
 operations. `shadowspill.server.Server` owns startup and the assigned resources.
 Checkpoint save, ordered restore, new-run resume and explicit directory downloads
-are supported for matching state ownership. Layout conversion, resumable transfers
-and named Plan saves are still being implemented.
+are supported. New-run creation converts compatible checkpoint state when its
+prepared Plans change. Resumable transfers and named Plan saves are still being
+implemented.
 Existing phase and Trainer APIs remain available during migration.
 
 Start the service on Chicago or another machine with an existing GPU allocation:
@@ -161,7 +162,13 @@ Directory download verifies each immutable rank file, streams serially and write
 A failed download leaves the committed server checkpoint available and does not
 repeat training or saving. Plans and frozen-base dependencies are separate
 artifacts; downloading the checkpoint does not implicitly copy them. The current
-service save includes frozen tensors. Restore and new-run resume currently require
-compatible native state ownership. Service base omission, cross-layout conversion,
-RNG integration and resumable uploads or
-downloads remain under implementation.
+service save includes frozen tensors. In-place restore requires compatible native
+state ownership. New-run resume can convert compatible logical state into a new
+Plan family before starting workers; preparation reports a `converting` stage.
+The run keeps the selected source in `parent_checkpoint` and records the actual
+startup artifact in `initial_checkpoint`. Converted manifests record their source
+checkpoint, source Plans, logical state identity and conversion version. Conversion
+preserves optimizer state and weight selection, and rejects incompatible state.
+Service base omission, RNG integration and resumable uploads or downloads remain
+under implementation. Distributed conversion and training still require hardware
+qualification.

@@ -651,7 +651,7 @@ def qualify_public_server():
                 input=json.dumps(options),
                 capture_output=True,
                 text=True,
-                timeout=240,
+                timeout=360,
             )
             assert result.returncode == 0, result.stdout + result.stderr
             client_receipt = json.loads(result.stdout)
@@ -684,6 +684,32 @@ def qualify_public_server():
                 assert resumed_info.initial_history_id == result["new_run_history_id"]
                 assert resumed_info.configuration == info.configuration
                 assert result["new_run_resume_update_oracle"]
+                conversion = result["conversion"]
+                converted_info = storage.catalog.get(
+                    RunIdentity("owner", "factory-session", conversion["run_id"])
+                )
+                assert converted_info.state == "closed"
+                assert converted_info.parent_checkpoint == checkpoint_ref
+                assert converted_info.initial_checkpoint == ArtifactRef.from_dict(
+                    conversion["initial_checkpoint"]
+                )
+                assert converted_info.initial_checkpoint != checkpoint_ref
+                assert converted_info.initial_completed_updates == 1
+                assert (
+                    converted_info.initial_history_id
+                    == conversion["initial_history_id"]
+                )
+                assert converted_info.plans == ArtifactRef.from_dict(
+                    conversion["plans"]
+                )
+                assert (
+                    conversion["split_update_oracle"]
+                    and conversion["whole_step_oracle"]
+                )
+                with artifacts.open(converted_info.initial_checkpoint) as stream:
+                    converted_manifest = decode(stream.read())
+                assert converted_manifest.info.conversion.source == checkpoint_ref
+                assert converted_manifest.info.plans == converted_info.plans
                 assert (
                     artifacts.resolve_alias(
                         "factory-session", result["run_id"], "step-1"
@@ -705,7 +731,7 @@ def qualify_public_server():
                         rank_manifest = read_manifest(archive)
                     assert (
                         rank_manifest["metadata"]["checkpoint"]
-                        == checkpoint_manifest.info.to_dict()
+                        == checkpoint_manifest.info.rank_metadata()["checkpoint"]
                     )
                     assert rank_manifest["state"] == row.state_sha256
                     assert rank_manifest["tensors"]

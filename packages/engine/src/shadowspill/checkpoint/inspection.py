@@ -16,13 +16,17 @@ MANIFEST_NODES = 1 << 20
 MANIFEST_DEPTH = 64
 
 
-def check_headers(stream: BinaryIO) -> None:
+def check_headers(
+    stream: BinaryIO, *, max_manifest_bytes: int = MANIFEST_LIMIT
+) -> None:
     """Inspect fixed headers only, without loading tensor payloads or extensions.
 
     The rank writer emits ordinary uncompressed GNU TAR members. Long-name,
     sparse and PAX extension records are unnecessary and rejected before TarFile
     can expand them. GNU base-256 sizes remain supported for large tensors.
     """
+    if type(max_manifest_bytes) is not int or max_manifest_bytes < 0:
+        raise ValueError("checkpoint manifest byte limit must be nonnegative")
     original = stream.tell()
     try:
         size = stream.seek(0, os.SEEK_END)
@@ -57,8 +61,12 @@ def check_headers(stream: BinaryIO) -> None:
                 )
             ):
                 raise ValueError("invalid checkpoint archive members")
-            if info.name == "manifest.json" and info.size > MANIFEST_LIMIT:
-                raise ValueError("checkpoint manifest exceeds 16 MiB")
+            if info.name == "manifest.json" and info.size > min(
+                MANIFEST_LIMIT, max_manifest_bytes
+            ):
+                raise ValueError(
+                    "checkpoint manifest exceeds 16 MiB or configured byte limit"
+                )
             if info.name == "manifest.blake3" and info.size != 64:
                 raise ValueError("invalid checkpoint manifest checksum")
             names.add(info.name)
@@ -108,6 +116,8 @@ def check_json(data: bytes) -> None:
 @contextmanager
 def open_checkpoint(
     source: str | os.PathLike[str] | BinaryIO,
+    *,
+    max_manifest_bytes: int = MANIFEST_LIMIT,
 ) -> Iterator[tarfile.TarFile]:
     """Validate rank framing; supplied seekable streams remain caller-owned."""
     with (
@@ -116,7 +126,7 @@ def open_checkpoint(
         else nullcontext(source)
     ) as stream:
         original = stream.tell()
-        check_headers(stream)
+        check_headers(stream, max_manifest_bytes=max_manifest_bytes)
         try:
             stream.seek(0)
             with tarfile.open(fileobj=stream, mode="r:") as archive:

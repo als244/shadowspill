@@ -18,14 +18,19 @@ from uuid import uuid4
 
 from shadowspill.orchestration.launch.admission import (
     NodeAdmission,
+    NodeLease,
+    ResourceRequest,
     ResourcesUnavailable,
 )
 from shadowspill.orchestration.launch.host_arena import HostArena, HostPartition
+from shadowspill.orchestration.launch.log_files import LogFiles
 from shadowspill.orchestration.launch.phases import NodePhases
+from shadowspill.orchestration.launch.processes import worker_command
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.bundle import TrainingBundle
 from shadowspill.training.preparation.job import BUNDLE_NAME, prepare_job
 from shadowspill.training.preparation.setup import resolve_training
+from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.worker.checkpoint_records import RankRestore
 from shadowspill.training.worker.initialization import prepare_initialization
 from shadowspill.training.worker.node import WorkerNode
@@ -41,6 +46,7 @@ from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.protocol.training import ResolvedTraining
 
 from .artifacts import ArtifactStore
+from .checkpoint_conversion import prepare_checkpoint
 from .checkpoint_restore import CheckpointResolver
 from .creation_records import load_creation
 from .live import LiveRun
@@ -144,6 +150,8 @@ class LocalCreation:
         self._directory: TemporaryDirectory[str] | None = None
         self._phases: NodePhases | None = None
         self._node: WorkerNode | None = None
+        self._conversion_lease: NodeLease | None = None
+        self._conversion_logs: LogFiles | None = None
 
     def _active(self) -> None:
         if self._cancelled.is_set() or self.closed:
@@ -208,7 +216,7 @@ class LocalCreation:
                 else CheckpointResolver(
                     self._artifacts,
                     session_id=self.identity.session_id,
-                    world_size=setup.context.parallelism.world_size,
+                    world_size=None,
                     configuration=setup.config,
                 ).resolve(creation.checkpoint)
             )
@@ -327,6 +335,15 @@ class LocalCreation:
             self._active()
             family = bundle.recheck(registry)
             publish_summary(self._artifacts, plans, family)
+            if checkpoint is not None and checkpoint.manifest.info.plans != plans:
+                checkpoint = self._convert_checkpoint(
+                    checkpoint,
+                    plans,
+                    setup.config,
+                    ranks,
+                    root,
+                    wait=creation.wait_for_resources,
+                )
             workers = {
                 rank: PreparedWorker.resolve(
                     family,
@@ -383,6 +400,7 @@ class LocalCreation:
                 plans=plans,
                 history_id="history-" + uuid4().hex,
                 checkpoint=checkpoint,
+                parent_checkpoint=creation.checkpoint,
                 root=root,
                 metadata=metadata,
                 uploads=uploads,
@@ -398,6 +416,91 @@ class LocalCreation:
         return hashlib.sha256(
             "\0".join((self.identity.session_id, self.identity.run_id, name)).encode()
         ).hexdigest()
+
+    def _convert_checkpoint(
+        self,
+        checkpoint: ResolvedCheckpoint,
+        plans: ArtifactRef,
+        config: ResolvedTraining,
+        world_size: int,
+        root: Path,
+        *,
+        wait: bool,
+    ) -> ResolvedCheckpoint:
+        factory, limits = self._factory, self._factory.limits
+        assert self._artifacts is not None
+        if limits.preparation_host_bytes < 1 << 20:
+            raise ValueError("checkpoint conversion host envelope is too small")
+        self._admit_host(
+            limits.preparation_host_bytes + limits.transfer_bytes, 2, wait=wait
+        )
+        try:
+            host = self._partition(limits.preparation_host_bytes, 1)
+            transfers = self._partition(limits.transfer_bytes, 4).budget
+            self._conversion_lease = factory.node.reserve(
+                ResourceRequest({}, limits.preparation_host_bytes),
+                host=host,
+                cancelled=self._cancelled,
+            )
+            self._conversion_logs = LogFiles(
+                self._conversion_lease,
+                None,
+                root=root,
+                disk=factory.disk,
+                memory=transfers,
+                limit_bytes=limits.log_bytes,
+            )
+            factory.storage.catalog.progress(self.identity, "converting")
+            child = self._conversion_lease.launch_host(
+                lambda fd: worker_command(
+                    "shadowspill.training.worker.convert_checkpoint", (fd,)
+                ),
+                environment=factory.environment,
+                directory=self._conversion_logs.directory,
+                cwd=root,
+                log_limit_bytes=limits.log_bytes,
+            )
+            return prepare_checkpoint(
+                self._artifacts,
+                checkpoint,
+                child,
+                plans=plans,
+                configuration=self.info.configuration,
+                config=config,
+                world_size=world_size,
+                host_bytes=limits.preparation_host_bytes,
+                root=root,
+                memory=transfers,
+                disk=factory.disk,
+                max_disk_bytes=limits.preparation_disk_bytes,
+                max_files=limits.max_preparation_files,
+            )
+        finally:
+            self._retire_conversion()
+            self._release_host()
+
+    def _retire_conversion(self) -> None:
+        if self._conversion_lease is not None:
+            self._conversion_lease.close()
+        if self._conversion_logs is not None:
+            assert self._artifacts is not None
+            references = self._conversion_logs.references()
+            for reference in references.values():
+                self._artifacts.put(reference, self._conversion_logs.open)
+            self._publish_metadata(
+                "conversion",
+                {
+                    **self.identity.to_dict(),
+                    "phase": "converting",
+                    "streams": {
+                        name: reference.to_dict()
+                        for name, reference in references.items()
+                    },
+                },
+            )
+            self._conversion_logs.close()
+            self._conversion_logs = None
+        self._conversion_lease = None
 
     def _publish_file(self, path: Path, name: str) -> ArtifactRef:
         assert self._artifacts is not None
@@ -439,6 +542,7 @@ class LocalCreation:
         self._cancelled.set()
         errors = []
         for stop in (
+            None if self._conversion_lease is None else self._conversion_lease.close,
             None if self._phases is None else self._phases.stop,
             self.run.interrupt
             if self.run is not None
@@ -516,6 +620,7 @@ class LocalCreation:
                 self._node.close()
             if self._phases is not None:
                 self._phases.stop()
+            self._retire_conversion()
             self._archive_preparation()
             if self._phases is not None:
                 self._phases.close()

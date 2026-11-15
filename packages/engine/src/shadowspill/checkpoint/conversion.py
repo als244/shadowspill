@@ -18,6 +18,7 @@ from shadowspill.artifacts.tensors import TensorChunk
 
 from .compatibility import RankedTensor, describe_family, require_compatible
 from .frozen import omitted_parameters
+from .inspection import MANIFEST_LIMIT
 from .mapping import LogicalView
 from .reading import RankReader, read_rank
 from .staging import TensorStaging, stage_tensors
@@ -95,6 +96,24 @@ def _source(entry: RankedTensor, readers: Sequence[RankReader]) -> SourceView | 
     return SourceView(reader, reader.chunks[name], view)
 
 
+def conversion_tensors(
+    targets: Sequence[PlanState],
+    weights: WeightRepresentation,
+    frozen_state_id: str | None = None,
+) -> dict[tuple[int, str], TensorChunk]:
+    """Exact staged representations, shared with pre-conversion disk admission."""
+    chunks = {}
+    for state in targets:
+        selection = select_weights(state, weights)
+        excluded = set(selection.derived) | set(selection.gathered)
+        if frozen_state_id is not None:
+            excluded.update(omitted_parameters(state))
+        for chunk in state.tensor_chunks():
+            if chunk.name not in excluded:
+                chunks[(state.logical_rank, chunk.name)] = chunk
+    return chunks
+
+
 @contextmanager
 def convert_state(
     sources: Sequence[tuple[PlanState, Path | BinaryIO]],
@@ -105,6 +124,7 @@ def convert_state(
     max_disk_bytes: int,
     frozen_state_id: str | None = None,
     initialize_temporary: InitializeTemporary | None = None,
+    max_source_manifest_bytes: int = MANIFEST_LIMIT,
 ) -> Iterator[ConvertedState]:
     """Prepare unpublished state; the owner uses the existing rank/global writers.
 
@@ -136,6 +156,7 @@ def convert_state(
                     path,
                     chunk_bytes=transfer_budget,
                     frozen_state_id=frozen_state_id,
+                    max_manifest_bytes=max_source_manifest_bytes,
                 )
             )
             for state, path in sources
@@ -150,15 +171,7 @@ def convert_state(
                 "checkpoint ranks disagree on source boundary or weight selection"
             )
         weights: WeightRepresentation = first["weights"]
-        chunks = {}
-        for state in targets:
-            selection = select_weights(state, weights)
-            excluded = set(selection.derived) | set(selection.gathered)
-            if frozen_state_id is not None:
-                excluded.update(omitted_parameters(state))
-            for chunk in state.tensor_chunks():
-                if chunk.name not in excluded:
-                    chunks[(state.logical_rank, chunk.name)] = chunk
+        chunks = conversion_tensors(targets, weights, frozen_state_id)
         logical_keys = {
             (entry.rank, entry.tensor.archive.name)
             for entries in target_family.tensors.values()

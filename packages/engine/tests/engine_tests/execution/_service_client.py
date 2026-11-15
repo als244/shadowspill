@@ -5,6 +5,7 @@ import importlib.abc
 import json
 import socket
 import sys
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -27,8 +28,17 @@ sys.meta_path.insert(0, Block())
 
 import numpy as np  # noqa: E402
 
-from shadowspill_client import SSH, Datum, ServiceClient  # noqa: E402
+from shadowspill_client import (  # noqa: E402
+    SSH,
+    BuildCandidates,
+    Datum,
+    PlanningOptions,
+    Preparation,
+    ProfilingOptions,
+    ServiceClient,
+)
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
+from shadowspill_client.checkpoints import CheckpointHandle  # noqa: E402
 from shadowspill_client.protocol.codec import decode, digest  # noqa: E402
 from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
 from shadowspill_client.protocol.training import ResolvedTraining  # noqa: E402
@@ -63,8 +73,95 @@ def split_update(training):
     return training.optim_step(optim={"lr": 0.02}, grad_scale=-0.5).result(120)
 
 
+def qualify_conversion(client, config, memory, oracle, checkpoint, saved):
+    if saved is None:
+        pending = client.create_training_client(
+            model=replace(config.model, initialize=None),
+            objective=config.objective,
+            optimizer=config.optimizer,
+            batch=config.batches,
+            memory=config.memory,
+            parallelism=config.parallelism,
+            execution=config.execution,
+            operations={
+                "step": ["metrics"],
+                "forward_backward": ["metrics"],
+                "forward": ["predictions"],
+            },
+            prepare=Preparation(
+                candidates=BuildCandidates(microbatch_sizes=[4]),
+                planning=PlanningOptions(microbatch_counts=[1]),
+                profiling=ProfilingOptions(
+                    conditioning_seconds=0.001, measurement_seconds=0.002
+                ),
+            ),
+            checkpoint=checkpoint,
+            name="converted-fresh",
+        )
+    else:
+        pending = client.create_training_client(
+            plans=saved, checkpoint=checkpoint, name="converted-saved"
+        )
+    training = pending.result(180)
+    info = ready(client._transport, "/v1/runs/factory-session/" + training.run_id)
+    assert info.parent_checkpoint == checkpoint.reference
+    assert (
+        info.initial_checkpoint is not None
+        and info.initial_checkpoint != checkpoint.reference
+    )
+    assert info.initial_completed_updates == 1
+    assert training.get_config().model.initialize is None
+    converted = CheckpointHandle(info.initial_checkpoint, client)
+    manifest = converted.manifest().result(30)
+    assert manifest.info.conversion.source == checkpoint.reference
+    assert manifest.info.plans == training.plans.reference
+    first = training.forward(records(False), outputs="predictions").result(120)
+    assert first.completed_updates == 1
+    assert split_update(training).completed_updates == 2
+    split = training.forward(records(False), outputs="predictions").result(120)
+    restored = training.load_checkpoint(converted).result(120)
+    assert restored.completed_updates == 1 and restored.history_id != first.history_id
+    whole = training.step(
+        records(True),
+        optim={"lr": 0.04},
+        grad_scale=1.25,
+        loss_params={"temperature": 1.5},
+    ).result(120)
+    assert whole.completed_updates == 2
+    final = training.forward(records(False), outputs="predictions").result(120)
+    plans = training.plans
+    training.close().result(30)
+    for value, expected in (
+        (first, "after_step"),
+        (split, "after_split"),
+        (final, "after_converted_step"),
+    ):
+        handle = value.outputs["prediction"]
+        with TemporaryDirectory(prefix="shadowspill-demo-converted-") as directory:
+            path = handle.download(Path(directory) / "prediction.ssp").result(30)
+            with (
+                path.open("rb") as stream,
+                read_payload(stream, handle.reference, memory) as decoded,
+            ):
+                rows = decoded.datums[0].inputs
+                actual = np.stack([rows[str(index)].array() for index in range(3)])
+                np.testing.assert_allclose(
+                    actual, oracle[expected], rtol=1e-4, atol=1e-5
+                )
+    return plans, {
+        "run_id": training.run_id,
+        "parent_checkpoint": checkpoint.reference.to_dict(),
+        "initial_checkpoint": info.initial_checkpoint.to_dict(),
+        "plans": plans.reference.to_dict(),
+        "initial_history_id": info.initial_history_id,
+        "split_update_oracle": True,
+        "whole_step_oracle": True,
+        "fresh_initializer_omitted": True,
+    }
+
+
 def qualify(client, config, memory, oracle):
-    saved, receipts = None, []
+    saved, converted_plans, receipts = None, None, []
     preview = client.describe_training(config=config).result(20)
     assert preview.config == config
     for mode in ("fresh", "saved"):
@@ -244,6 +341,9 @@ def qualify(client, config, memory, oracle):
                     np.testing.assert_allclose(
                         actual, oracle[expected], rtol=1e-4, atol=1e-5
                     )
+        converted_plans, conversion = qualify_conversion(
+            client, config, memory, oracle, checkpoint, converted_plans
+        )
         receipts.append(
             {
                 "mode": mode,
@@ -268,6 +368,7 @@ def qualify(client, config, memory, oracle):
                 "new_run_id": resumed.run_id,
                 "new_run_history_id": first.history_id,
                 "new_run_resume_update_oracle": True,
+                "conversion": conversion,
             }
         )
     return receipts

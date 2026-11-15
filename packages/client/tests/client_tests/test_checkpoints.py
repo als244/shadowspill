@@ -5,7 +5,9 @@ from dataclasses import replace
 import pytest
 
 from shadowspill_client.protocol.checkpoints import (
+    CHECKPOINT_MEDIA_TYPE,
     RANK_MEDIA_TYPE,
+    CheckpointConversion,
     CheckpointInfo,
     CheckpointManifest,
     CheckpointRank,
@@ -46,7 +48,24 @@ def test_manifest_roundtrip_and_owned_metadata():
     updated = replace(value.info, metadata=metadata)
     metadata["cursor"].append(7)
     assert updated.metadata["cursor"] == (5, 6)
-    assert updated.rank_metadata()["checkpoint"] == updated.to_dict()
+    ordinary = updated.to_dict()
+    ordinary.pop("conversion")
+    assert updated.rank_metadata()["checkpoint"] == ordinary
+
+
+def test_conversion_provenance_roundtrips_and_is_included_in_rank_boundary():
+    value = manifest()
+    conversion = CheckpointConversion(
+        ArtifactRef("source", "e" * 64, 100, CHECKPOINT_MEDIA_TYPE),
+        value.info.plans,
+        "f" * 64,
+    )
+    converted = replace(value, info=replace(value.info, conversion=conversion))
+    assert decode(encode(converted)) == converted
+    assert converted.info.rank_metadata()["checkpoint"] == converted.info.to_dict()
+    for changes in ({"version": 2}, {"version": True}, {"logical_state_sha256": "bad"}):
+        with pytest.raises(ValueError):
+            replace(conversion, **changes)
 
 
 @pytest.mark.parametrize("ranks", [(), (0,), (1, 0), (0, 0), (0, 1, 2)])

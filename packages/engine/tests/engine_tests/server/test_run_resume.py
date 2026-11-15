@@ -24,7 +24,7 @@ from shadowspill.server.records.requests import RunIdentity
 from shadowspill.training.worker import runtime
 from shadowspill_client import ServiceClient, Weights
 from shadowspill_client.creation import CreationError
-from shadowspill_client.protocol.checkpoints import CheckpointInfo
+from shadowspill_client.protocol.checkpoints import CheckpointConversion, CheckpointInfo
 from shadowspill_client.protocol.creation import TrainingCreation
 
 
@@ -69,7 +69,39 @@ def test_resume_skips_fresh_initializer_and_preserves_ready_lineage(
         pytest.fail("checkpoint creation asked for fresh-weight initialization")
 
     # The fixture's child exercises startup/lifecycle, not model execution.
-    # Actual archive loading is qualified separately and by the GPU demo.
+    # Its placeholder Plans cannot be converted. Actual conversion and archive
+    # loading use real bundles in test_checkpoint_conversion and the GPU demo.
+    conversions = []
+
+    def convert(owner, source, plans, config, world_size, root, *, wait):
+        assert source.manifest.info.plans != plans
+        assert world_size == source.manifest.info.world_size
+        info = replace(
+            source.manifest.info,
+            plans=plans,
+            configuration=owner.info.configuration,
+            request_id="converted-" + owner.identity.run_id,
+            conversion=CheckpointConversion(
+                source.reference, source.manifest.info.plans, "a" * 64
+            ),
+        )
+        executors, ranks = workers(info)
+        reference = publish_checkpoint(
+            owner._artifacts,
+            info,
+            ranks,
+            lambda rank, sink: stream_rank(executors[rank.rank], info, sink),
+        )
+        resolved = CheckpointResolver(
+            owner._artifacts,
+            session_id=info.session_id,
+            world_size=world_size,
+            configuration=config,
+        ).resolve(reference)
+        conversions.append(reference)
+        return resolved
+
+    monkeypatch.setattr(local_creation.LocalCreation, "_convert_checkpoint", convert)
     with configured(
         tmp_path,
         monkeypatch,
@@ -91,12 +123,15 @@ def test_resume_skips_fresh_initializer_and_preserves_ready_lineage(
             identity = RunIdentity("owner", service.session_id, training.run_id)
             info = ctx.service.catalog.get(identity)
             assert info.parent_checkpoint == source
+            initial_checkpoint = source if saved else conversions[-1]
+            assert info.initial_checkpoint == initial_checkpoint
             assert info.initial_completed_updates == 7
             assert info.initial_history_id != "source-history"
             assert training.get_config() == ctx.config
             owner = ctx.owners[-1]
             worker = owner._node.prepared[0]
-            assert worker.initialization is None and worker.restore.checkpoint == source
+            assert worker.initialization is None
+            assert worker.restore.checkpoint == initial_checkpoint
             assert owner._node._launches[0].weights == ()
             assert owner.run.controller.boundary.completed_updates == 7
             closed = training.close().result(5)
@@ -120,6 +155,8 @@ def test_resume_skips_fresh_initializer_and_preserves_ready_lineage(
                 second.completed_updates == 7 and second.history_id != closed.history_id
             )
             until(lambda: ctx.jobs.used == (0, 0))
+
+            assert len(conversions) == (0 if saved else 2)
 
 
 def test_failed_checkpoint_delivery_never_publishes_initialized_lineage(

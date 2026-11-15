@@ -49,6 +49,7 @@ def _transition(before: RunInfo, after: RunInfo) -> None:
             after.plans != before.plans
             or after.initial_history_id != before.initial_history_id
             or after.parent_checkpoint != before.parent_checkpoint
+            or after.initial_checkpoint != before.initial_checkpoint
             or after.initial_completed_updates != before.initial_completed_updates
         ):
             raise ValueError(
@@ -214,11 +215,14 @@ class RunCatalog:
         initial_history_id: str,
         parent_checkpoint: ArtifactRef | None = None,
         initial_completed_updates: int = 0,
+        initial_checkpoint: ArtifactRef | None = None,
     ) -> RunInfo:
         """The caller must have confirmed all workers' actual initialized readiness."""
         reference_bytes(plans)
         if parent_checkpoint is not None:
             reference_bytes(parent_checkpoint)
+        if initial_checkpoint is not None:
+            reference_bytes(initial_checkpoint)
         with self._mutex:
             before = self._require(identity, live=True)
             return self._update(
@@ -231,6 +235,7 @@ class RunCatalog:
                     initial_history_id=initial_history_id,
                     parent_checkpoint=parent_checkpoint,
                     initial_completed_updates=initial_completed_updates,
+                    initial_checkpoint=initial_checkpoint or parent_checkpoint,
                 ),
             )
 

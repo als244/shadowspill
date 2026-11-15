@@ -96,6 +96,38 @@ def test_registration_leaves_room_for_maximum_failure_and_ready_provenance(tmp_p
         assert not records.interrupted()
 
 
+def test_converted_startup_keeps_original_parent_and_actual_state_after_restart(
+    tmp_path,
+):
+    from shadowspill_client.protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
+
+    parent = ArtifactRef("source", "d" * 64, 100, CHECKPOINT_MEDIA_TYPE)
+    converted = ArtifactRef("converted", "e" * 64, 200, CHECKPOINT_MEDIA_TYPE)
+    with catalog(tmp_path) as records:
+        create(records)
+        records.progress(IDENTITY, "converting")
+        records.progress(IDENTITY, "initializing")
+        initialized = records.ready(
+            IDENTITY,
+            plans=PLANS,
+            initial_history_id="new-history",
+            parent_checkpoint=parent,
+            initial_checkpoint=converted,
+            initial_completed_updates=17,
+        )
+        assert (
+            initialized.parent_checkpoint == parent
+            and initialized.initial_checkpoint == converted
+        )
+        records.finish(IDENTITY)
+    with catalog(tmp_path, incarnation="replacement") as records:
+        saved = records.get(IDENTITY)
+        assert (
+            saved.parent_checkpoint == parent and saved.initial_checkpoint == converted
+        )
+        assert saved.initial_completed_updates == 17
+
+
 @pytest.mark.parametrize(
     "change",
     [

@@ -61,7 +61,7 @@ class CheckpointResolver:
         artifacts: ArtifactStore,
         *,
         session_id: str,
-        world_size: int,
+        world_size: int | None,
         configuration: ResolvedTraining,
     ):
         self.artifacts, self.session_id, self.world_size = (
@@ -111,7 +111,7 @@ class CheckpointResolver:
         info = value.info
         if info.byteorder != sys.byteorder:
             raise ValueError("checkpoint byte order requires explicit conversion")
-        if info.world_size != self.world_size:
+        if self.world_size is not None and info.world_size != self.world_size:
             raise ValueError("checkpoint ownership requires explicit conversion")
         if info.frozen_state_id is not None:
             raise ValueError("this run has no declared frozen-base checkpoint identity")

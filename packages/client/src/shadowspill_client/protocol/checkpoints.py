@@ -13,6 +13,31 @@ RANK_MEDIA_TYPE = "application/vnd.shadowspill.checkpoint-rank"
 
 
 @dataclass(frozen=True)
+class CheckpointConversion(Record):
+    """Immutable source and transformation for a materialized target generation."""
+
+    source: ArtifactRef
+    source_plans: ArtifactRef
+    logical_state_sha256: str
+    version: Literal[1] = 1
+
+    def __post_init__(self) -> None:
+        for name in ("source", "source_plans"):
+            object.__setattr__(
+                self, name, record(ArtifactRef, getattr(self, name), name)
+            )
+        if self.source.media_type != CHECKPOINT_MEDIA_TYPE:
+            raise ValueError("conversion source requires a checkpoint generation")
+        if type(self.version) is not int or self.version != 1:
+            raise ValueError("unsupported checkpoint conversion version")
+        if (
+            not isinstance(self.logical_state_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.logical_state_sha256) is None
+        ):
+            raise ValueError("conversion requires a logical state SHA-256 identity")
+
+
+@dataclass(frozen=True)
 class CheckpointInfo(Record):
     """The completed boundary and fixed setup shared by every saved rank.
 
@@ -33,6 +58,7 @@ class CheckpointInfo(Record):
     weights: Literal["master", "compute"] = "master"
     frozen_state_id: str | None = None
     metadata: Mapping[str, Value] = field(default_factory=dict)
+    conversion: CheckpointConversion | None = None
 
     def __post_init__(self) -> None:
         for name in ("session_id", "run_id", "history_id", "request_id"):
@@ -52,10 +78,20 @@ class CheckpointInfo(Record):
         object.__setattr__(
             self, "metadata", mapping(self.metadata, "checkpoint metadata")
         )
+        if self.conversion is not None:
+            object.__setattr__(
+                self,
+                "conversion",
+                record(CheckpointConversion, self.conversion, "conversion"),
+            )
 
     def rank_metadata(self) -> dict[str, object]:
         """The same provenance travels inside each ordinary rank archive."""
-        return {"checkpoint": self.to_dict()}
+        value = self.to_dict()
+        if self.conversion is None:
+            # Ordinary generations retain the existing rank metadata format.
+            value.pop("conversion")
+        return {"checkpoint": value}
 
 
 @dataclass(frozen=True)

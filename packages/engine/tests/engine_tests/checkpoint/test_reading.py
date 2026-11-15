@@ -130,6 +130,22 @@ def test_reader_closes_after_owner_failure_and_does_not_mask_it(tmp_path):
     assert source.closed
 
 
+def test_manifest_envelope_is_checked_before_json_or_tensor_decoding(
+    tmp_path, monkeypatch
+):
+    from shadowspill.checkpoint import reading
+
+    state, path = saved(tmp_path)
+    monkeypatch.setattr(
+        reading, "_manifest", lambda *a: pytest.fail("decoded oversized metadata")
+    )
+    with (
+        pytest.raises(ValueError, match="configured byte limit"),
+        read_rank(state, path, chunk_bytes=16, max_manifest_bytes=1),
+    ):
+        pytest.fail("oversized source admitted")
+
+
 @pytest.mark.parametrize("failure", [False, True])
 def test_borrowed_artifact_file_preserves_owner_and_position(tmp_path, failure):
     state, path = saved(tmp_path)

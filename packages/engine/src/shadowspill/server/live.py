@@ -61,6 +61,7 @@ class LiveRun:
         publication: BufferBudget,
         disk: BufferBudget,
         checkpoint: ResolvedCheckpoint | None = None,
+        parent_checkpoint: ArtifactRef | None = None,
     ) -> None:
         self.history_id = identifier(history_id, "initial history ID")
         if (
@@ -69,6 +70,20 @@ class LiveRun:
         ):
             raise ValueError("resumed run requires a new history identity")
         self._checkpoint = checkpoint
+        if parent_checkpoint is not None and (
+            checkpoint is None
+            or (
+                parent_checkpoint != checkpoint.reference
+                and (
+                    checkpoint.manifest.info.conversion is None
+                    or checkpoint.manifest.info.conversion.source != parent_checkpoint
+                )
+            )
+        ):
+            raise ValueError("run parent differs from checkpoint conversion provenance")
+        self._parent_checkpoint = parent_checkpoint or (
+            None if checkpoint is None else checkpoint.reference
+        )
         ranks = [rank for node in nodes for rank in node.prepared]
         if (
             not nodes
@@ -230,7 +245,8 @@ class LiveRun:
                     self.identity,
                     plans=self.plans,
                     initial_history_id=self.history_id,
-                    parent_checkpoint=None
+                    parent_checkpoint=self._parent_checkpoint,
+                    initial_checkpoint=None
                     if self._checkpoint is None
                     else self._checkpoint.reference,
                     initial_completed_updates=self._controller.boundary.completed_updates,

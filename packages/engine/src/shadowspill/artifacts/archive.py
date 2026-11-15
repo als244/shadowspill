@@ -10,7 +10,7 @@ import tempfile
 import zipfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, ClassVar, Self
+from typing import Any, BinaryIO, ClassVar, Self
 
 from ._values import encoded
 
@@ -73,7 +73,7 @@ class Artifact:
     @classmethod
     def load(
         cls,
-        path: str | os.PathLike[str],
+        path: str | os.PathLike[str] | BinaryIO,
         *,
         max_metadata_bytes: int | None = None,
         max_payload_bytes: int | None = None,

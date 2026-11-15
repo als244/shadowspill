@@ -15,7 +15,7 @@ from shadowspill.artifacts._values import freeze, nonnegative_int
 from shadowspill.artifacts.tensors import TensorChunk
 
 from .frozen import validate_restore
-from .inspection import open_checkpoint
+from .inspection import MANIFEST_LIMIT, open_checkpoint
 from .load import _manifest, _Reader
 from .state import CheckpointState
 from .tensors import byte_view, geometry
@@ -95,6 +95,7 @@ def read_rank(
     *,
     chunk_bytes: int,
     frozen_state_id: str | None = None,
+    max_manifest_bytes: int = MANIFEST_LIMIT,
 ) -> Iterator[RankReader]:
     """Verify every stored byte before allowing random subregion reads.
 
@@ -111,7 +112,7 @@ def read_rank(
     """
     if type(chunk_bytes) is not int or chunk_bytes < 1:
         raise ValueError("checkpoint source chunk_bytes must be a positive integer")
-    with open_checkpoint(path) as archive:
+    with open_checkpoint(path, max_manifest_bytes=max_manifest_bytes) as archive:
         initial = _signature(archive.fileobj)
         manifest = _manifest(archive, state)
         omitted = validate_restore(state, manifest, frozen_state_id)

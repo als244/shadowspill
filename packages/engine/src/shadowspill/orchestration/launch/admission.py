@@ -258,6 +258,33 @@ class NodeLease:
             self._children[device_id] = child
             return child
 
+    def launch_host(
+        self,
+        command: Callable[[int], Sequence[str]],
+        *,
+        environment: Mapping[str, str],
+        directory: Path,
+        cwd: Path,
+        log_limit_bytes: int = 64 << 20,
+        startup_timeout: float = 120,
+    ) -> ConnectedProcess:
+        """Own one private CPU preparation channel under a host-only lease."""
+        with self._lock:
+            if self._closing or self.closed:
+                raise RuntimeError("resource lease is closing or closed")
+            if self.request.devices or self._children or self._command is not None:
+                raise ValueError("host preparation requires an unused host-only lease")
+            child = ConnectedProcess(
+                command,
+                environment={**environment, "CUDA_VISIBLE_DEVICES": ""},
+                directory=directory,
+                cwd=cwd,
+                log_limit_bytes=log_limit_bytes,
+                startup_timeout=startup_timeout,
+            )
+            self._children[""] = child
+            return child
+
     def launch_command(
         self,
         command: Sequence[str],

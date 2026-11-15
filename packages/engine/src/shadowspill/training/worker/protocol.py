@@ -17,6 +17,13 @@ from shadowspill_client.protocol.requests import (
 )
 
 from .checkpoint_records import RankRestore, RankSave, RankSaved
+from .conversion_records import (
+    ConversionCommand,
+    ConversionFailed,
+    ConversionPrepared,
+    ConversionRequest,
+    ConversionWritten,
+)
 
 
 class WorkerOutputError(RuntimeError):
@@ -316,5 +323,10 @@ CODEC = RecordCodec(
         "worker.call": WorkerCall,
         "worker.control": WorkerControl,
         "worker.reply": WorkerReply,
+        "conversion.request": ConversionRequest,
+        "conversion.prepared": ConversionPrepared,
+        "conversion.command": ConversionCommand,
+        "conversion.written": ConversionWritten,
+        "conversion.failed": ConversionFailed,
     }
 )

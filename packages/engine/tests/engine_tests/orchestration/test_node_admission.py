@@ -51,6 +51,32 @@ def test_claim_is_atomic_across_host_memory_and_exclusive_assigned_devices():
     assert not node.used.devices
 
 
+def test_host_preparation_masks_gpus_and_preserves_an_unrelated_device_claim(tmp_path):
+    node = NodeAdmission(capacity())
+    with node.reserve(request(host=0)):
+        with node.reserve(ResourceRequest({}, 70)) as lease:
+            script = (
+                "import os,socket,sys; "
+                "socket.socket(fileno=int(sys.argv[1])).sendall("
+                "os.environ['CUDA_VISIBLE_DEVICES'].encode() or b'<empty>')"
+            )
+            child = lease.launch_host(
+                lambda fd: [sys.executable, "-c", script, str(fd)],
+                environment={**os.environ, "CUDA_VISIBLE_DEVICES": "0,1"},
+                directory=tmp_path / "logs",
+                cwd=tmp_path,
+            )
+            assert child.stream.read(7) == b"<empty>"
+            assert child.process.wait(5) == 0
+            assert node.used.devices == {"a"}
+            with pytest.raises(ValueError, match="unused host-only"):
+                lease.launch_host(
+                    lambda fd: [], environment={}, directory=tmp_path, cwd=tmp_path
+                )
+        assert node.used.devices == {"a"} and node.used.host_bytes == 0
+    assert node.used.claims == 0
+
+
 @pytest.mark.parametrize(
     "invalid",
     [

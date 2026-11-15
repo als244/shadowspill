@@ -387,6 +387,17 @@ class ArtifactStore:
             with self._mutex:
                 self._readers -= 1
 
+    @contextmanager
+    def local_path(self, reference: ArtifactRef) -> Iterator[Path]:
+        """Pin a private local grant for an installed child, never an HTTP path.
+
+        The owner must join that child before leaving this borrow. The ordinary
+        open checks the committed reference, regular file and exact byte size.
+        The child still verifies content against the immutable artifact digest.
+        """
+        with self.open(reference):
+            yield self._path(reference)
+
     def close(self) -> None:
         with self._mutex:
             if self.closed:

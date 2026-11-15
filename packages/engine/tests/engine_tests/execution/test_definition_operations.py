@@ -309,12 +309,29 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     torch.save(oracle, tmp_path / "oracle.pt")
     with example(resolved, objective, "step") as (binding, adapted), torch.no_grad():
         after_split = reference(**binding.arguments(adapted, {"temperature": 1.0})[0])
+    with torch.no_grad():
+        for name, parameter in reference.named_parameters():
+            parameter.copy_(oracle["after_step"][name])
+    eager.zero_grad(set_to_none=True)
+    eager.param_groups[0]["lr"] = 0.04
+    with example(resolved, objective, "step") as (binding, adapted):
+        binding.objective(
+            reference, *binding.arguments(adapted, {"temperature": 1.5})
+        ).loss.backward()
+        for parameter in reference.parameters():
+            parameter.grad.mul_(1.25)
+        eager.step()
+        with torch.no_grad():
+            after_converted_step = reference(
+                **binding.arguments(adapted, {"temperature": 1.0})[0]
+            )
     (tmp_path / "agent-oracle.json").write_text(
         json.dumps(
             {
                 "loss": oracle["step_loss"].item(),
                 "after_step": oracle["predictions"][:3].tolist(),
                 "after_split": after_split[:3].tolist(),
+                "after_converted_step": after_converted_step[:3].tolist(),
             }
         )
     )
