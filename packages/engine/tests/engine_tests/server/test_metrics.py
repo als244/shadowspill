@@ -84,7 +84,7 @@ def test_query_includes_skipped_and_confirmed_failure_without_inventing_loss(tmp
         records.submit(failed)
         records.accept("failed")
         records.dispatch("failed")
-        completed = result(failed)
+        completed = replace(result(failed), loss=1.125)
         receipt = ExecutionReceipt.from_result(completed)
         records.executed(receipt)
         records.fail(
@@ -97,6 +97,8 @@ def test_query_includes_skipped_and_confirmed_failure_without_inventing_loss(tmp
                 completed_updates=receipt.completed_updates,
                 history_id=receipt.history_id,
                 accumulation=receipt.accumulation,
+                loss=completed.loss,
+                metrics=completed.metrics,
             ),
         )
         rows = records.metrics().records
@@ -105,7 +107,7 @@ def test_query_includes_skipped_and_confirmed_failure_without_inventing_loss(tmp
             rows[1].execution_effect == "completed"
             and rows[1].failure_code == "artifact_failed"
         )
-        assert rows[1].loss is None and not rows[1].metrics
+        assert rows[1].loss == 1.125 and rows[1].metrics == completed.metrics
 
 
 def test_metric_page_stops_at_codec_byte_bound_without_losing_the_next_record(tmp_path):

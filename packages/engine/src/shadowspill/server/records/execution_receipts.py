@@ -1,6 +1,6 @@
 """Completion facts constrain terminal outcomes independently of artifact delivery."""
 
-from shadowspill_client.protocol.requests import OperationRequest
+from shadowspill_client.protocol.requests import STATE_OPERATIONS, OperationRequest
 from shadowspill_client.protocol.results import ExecutionReceipt, RequestStatus
 
 
@@ -46,3 +46,8 @@ def validate_outcome(status: RequestStatus, receipt: ExecutionReceipt | None) ->
             or failure.history_id != receipt.history_id
         ):
             raise ValueError("failure differs from confirmed execution")
+        elif (
+            receipt.operation in STATE_OPERATIONS
+            and (failure.loss is not None or failure.metrics)
+        ) or (receipt.operation == "optim_step" and failure.loss is not None):
+            raise ValueError("failure scalars differ from the executed operation")

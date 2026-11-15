@@ -153,9 +153,11 @@ by a metadata result.
 without contacting workers. `service.get_metrics(run_id, ...)` provides the same
 inspection after reconnect or service restart, without loading a training client.
 Each record has its request identity, history, completed update count, loss and
-objective metrics. Skipped and failed requests remain visible; failed publication
-retains its confirmed execution effect and counters, with unavailable scalars left
-absent. Queries preserve the values returned by training and perform no averaging.
+objective metrics. Skipped and failed requests remain visible. If required tensor
+publication fails after scalar collection, the terminal failure and metric history
+retain the verified loss and metrics alongside the confirmed execution effect and
+counters. Unavailable scalars stay absent, including a crash before the terminal
+record commits. Queries preserve the collected values and perform no averaging.
 
 Pages contain `records`, a fixed journal boundary `through`, and an optional
 `next_cursor`. Follow `next_cursor` while keeping the same `through` to finish that

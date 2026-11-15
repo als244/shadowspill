@@ -8,7 +8,11 @@ import pytest
 
 from engine_tests.server.test_request_records import request, store
 from shadowspill.training.session import dispatch
-from shadowspill.training.session.dispatch import ExecutionNotStarted, RequestDispatcher
+from shadowspill.training.session.dispatch import (
+    ExecutionNotStarted,
+    PublicationFailed,
+    RequestDispatcher,
+)
 from shadowspill.training.session.state import OperationState
 from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.results import (
@@ -242,6 +246,23 @@ def test_publisher_cannot_change_the_confirmed_history(tmp_path):
         assert failed.failure.code == "publication_failed"
         assert failed.failure.history_id == "confirmed-history"
         assert state.boundary.valid and state.boundary.completed_updates == 1
+
+
+def test_failed_publication_cannot_attach_scalars_from_a_different_execution(tmp_path):
+    with store(tmp_path) as records:
+        state = OperationState(history_id="confirmed-history")
+        dispatcher = RequestDispatcher(records, state, max_pending=1)
+        submit(dispatcher, records, "a", 1)
+
+        def failed(receipt, work):
+            raise PublicationFailed(
+                "output failed",
+                replace(publish(receipt, work), history_id="unrelated", loss=11),
+            )
+
+        status = dispatcher.run("a", lambda _: HostWork(), failed, participates=True)
+        assert status.failure.history_id == "confirmed-history"
+        assert status.failure.loss is None and not status.failure.metrics
 
 
 def test_optional_artifact_issue_leaves_training_successful(tmp_path):

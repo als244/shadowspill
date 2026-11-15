@@ -9,15 +9,23 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from engine_tests.fixtures.definition_operations import records
+from engine_tests.fixtures.definition_operations import definitions, records
 from engine_tests.server.test_artifacts import store as artifact_store
+from engine_tests.server.test_http import ROOT, TOKEN, endpoint
 from engine_tests.server.test_request_records import request, store
+from engine_tests.server.test_service_client import address
 from engine_tests.training.test_outputs import assemble
 from engine_tests.training.test_prepared_requests import queue, upload
+from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.server.results import ResultPublisher
 from shadowspill.training.inputs.frames import InputFrame
+from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.setup import resolve_training
+from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill.training.result_frames import ResultFrames
+from shadowspill_client import ServiceClient
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.protocol.definitions import TensorOutput
 from shadowspill_client.protocol.payload_io import read_payload
 from shadowspill_client.protocol.requests import ArtifactRef, OperationRequest
 from shadowspill_client.protocol.results import ArtifactIssue
@@ -327,3 +335,111 @@ def test_failed_result_cleanup_remains_owned_for_publisher_retry(tmp_path, monke
         inputs.finish("a")
         inputs.staging.close()
     assert memory.used == (0, 0)
+
+
+@pytest.mark.parametrize("operation", ["step", "forward_backward"])
+@pytest.mark.parametrize("fault", ["assembly", "storage", "cleanup", "unverified"])
+def test_verified_scalars_survive_required_output_failure_and_journal_reopen(
+    tmp_path, monkeypatch, operation, fault
+):
+    # The same fixed-ABI CPU worker fixture declares both objective scalars and
+    # a requested tensor, so failure occurs after collecting genuine frame data.
+    _, objective, _ = definitions()
+    definition = replace(
+        objective.definition,
+        outputs={
+            "metrics": replace(
+                objective.definition.outputs["metrics"],
+                tensors={"prediction": TensorOutput("float32", (3,), "datum")},
+            )
+        },
+    )
+    inventory = capture_inventory(
+        prepare_layouts(
+            resolve_training(
+                installed(objective=definition),
+                **arguments(),
+                operations={operation: ["metrics"]},
+            )
+        )
+    )
+    memory, disk = BufferBudget(16 << 20, 10), BufferBudget(16 << 20, 10)
+    with (
+        store(tmp_path) as journal,
+        artifact_store(tmp_path, memory=memory) as artifacts,
+        ResultPublisher(
+            artifacts, session_id="session", root=tmp_path, memory=memory, disk=disk
+        ) as publisher,
+    ):
+        prepared, state, dispatcher, inputs = queue(journal, tmp_path, inventory)
+        command, wire = upload(operation=operation, outputs="metrics")
+        prepared.register(inputs, command)
+        inputs.receive("a", io.BytesIO(wire))
+        call = inputs.take("a")
+        work, calls = Work(call), []
+
+        def fail(*_):
+            raise OSError("injected " + fault + " failure")
+
+        def execute(_):
+            calls.append("a")
+            return work
+
+        with monkeypatch.context() as patch:
+            if fault == "assembly":
+                patch.setattr(ResultFrames, "assemble", fail)
+            elif fault == "storage":
+                patch.setattr(artifacts, "produce", fail)
+            elif fault == "cleanup":
+                patch.setattr(ResultFrames, "close", fail)
+            else:
+                patch.setattr(work, "verify", fail)
+            status = dispatcher.run(
+                "a",
+                execute,
+                lambda receipt, value: publisher(call, receipt, value),
+                participates=True,
+            )
+        failure = status.failure
+        assert (
+            failure.code == "publication_failed"
+            and failure.execution_effect == "completed"
+        )
+        assert failure.state_valid and work.closed and calls == ["a"]
+        count = len(call.candidate.source.layout.candidate.schedule.buffers)
+        if fault == "unverified":
+            assert failure.loss is None and not failure.metrics
+        else:
+            assert failure.loss == 0.5 * count
+            assert failure.metrics == {"valid_examples": 2 * count}
+        assert failure.completed_updates == (1 if operation == "step" else 0)
+        assert failure.completed_updates == state.boundary.completed_updates
+        assert journal.metrics().records[0].loss == failure.loss
+        assert journal.metrics().records[0].metrics == failure.metrics
+        assert [row.kind for row in journal._journal.records()][-3:] == [
+            "request.status",
+            "request.executed",
+            "request.status",
+        ]
+        assert (
+            dispatcher.run("a", execute, lambda *_: pytest.fail("replayed")) == status
+        )
+        assert calls == ["a"]
+        inputs.finish("a")
+        inputs.staging.close()
+    assert memory.used == disk.used == (0, 0)
+    with store(tmp_path) as reopened:
+        assert reopened.get("a")[1] == status
+        assert reopened.metrics().records[0].metrics == failure.metrics
+        with (
+            endpoint(
+                tmp_path, run=SimpleNamespace(journal=reopened, controller=None)
+            ) as http,
+            ServiceClient(
+                address(http.client), token=TOKEN, session_id="session"
+            ) as client,
+        ):
+            row = client.get_metrics("run").result(5).records[0]
+            assert row.loss == failure.loss and row.metrics == failure.metrics
+            assert http.client.request("GET", ROOT + "/requests/a").value == status
+        assert client._memory.used == client._work.pending.used == (0, 0)

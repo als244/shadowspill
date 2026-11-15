@@ -43,6 +43,8 @@ def _metric(
         failure.completed_updates,
         failure.state_valid,
         failure.execution_effect,
+        loss=failure.loss,
+        metrics=failure.metrics,
         failure_code=failure.code,
     )
 

@@ -93,13 +93,17 @@ class MetricRecord(Record):
         elif self.source != "engine" or self.annotation_id is not None:
             raise ValueError("invalid metric namespace or annotation identity")
         if self.outcome == "failed":
-            if (
-                self.failure_code is None
-                or (self.source == "engine" and self.metrics)
-                or self.loss is not None
+            if self.failure_code is None or (
+                self.source == "engine"
+                and (self.metrics or self.loss is not None)
+                and (
+                    self.execution_effect != "completed"
+                    or self.history_id is None
+                    or self.completed_updates is None
+                )
             ):
                 raise ValueError(
-                    "failed metrics require a failure code and no invented scalars"
+                    "failed metrics require a failure code and confirmed scalar effects"
                 )
         elif (
             self.failure_code is not None

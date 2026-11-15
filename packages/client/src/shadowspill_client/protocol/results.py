@@ -74,6 +74,8 @@ class Failure(Record):
     accumulation: Accumulation | None = None
     failed_dependencies: Sequence[str] = ()
     history_id: str | None = None
+    loss: float | int | None = None
+    metrics: Mapping[str, float | int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         text(self.code, "error code")
@@ -102,6 +104,17 @@ class Failure(Record):
         for value in dependencies:
             identifier(value, "failed dependency")
         object.__setattr__(self, "failed_dependencies", dependencies)
+        if self.loss is not None:
+            number(self.loss, "observed loss")
+        metrics = dict(self.metrics)
+        for name, metric_value in metrics.items():
+            text(name, "observed metric name")
+            number(metric_value, "observed metric value")
+        object.__setattr__(self, "metrics", MappingProxyType(metrics))
+        if (self.loss is not None or metrics) and (
+            self.execution_effect != "completed" or self.history_id is None
+        ):
+            raise ValueError("observed scalars require confirmed execution and history")
 
 
 @dataclass(frozen=True)

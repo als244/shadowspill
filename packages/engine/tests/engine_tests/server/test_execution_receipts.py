@@ -87,6 +87,33 @@ def test_final_outcome_cannot_invent_or_change_execution_facts(tmp_path):
         assert records.fail("a", failure).failure == failure
 
 
+@pytest.mark.parametrize("operation", ["close", "discard", "optim_step"])
+def test_failure_cannot_add_forward_measurements_to_nonforward_operations(
+    tmp_path, operation
+):
+    command = replace(request(), operation=operation, mode=None)
+    receipt = ExecutionReceipt(command.identity, operation, "history", "completed", 0)
+    with store(tmp_path) as records:
+        records.submit(command)
+        records.accept("a")
+        records.dispatch("a")
+        records.executed(receipt)
+        with pytest.raises(ValueError, match="scalars differ"):
+            records.fail(
+                "a",
+                Failure(
+                    "publication_failed",
+                    "bad measurements",
+                    "completed",
+                    True,
+                    0,
+                    receipt.accumulation,
+                    history_id="history",
+                    loss=1,
+                ),
+            )
+
+
 def test_receipt_index_failure_after_commit_recovers_the_original_known_effect(
     tmp_path, monkeypatch
 ):

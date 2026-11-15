@@ -1,6 +1,7 @@
 """Publish prepared caller-order tensors and metrics after confirmed execution."""
 
 import hashlib
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from threading import Lock
@@ -9,6 +10,7 @@ from typing import Self
 from shadowspill.orchestration.launch.publication import OutputSpec
 from shadowspill.training.result_frames import ResultFrames
 from shadowspill.training.result_metrics import result_metrics
+from shadowspill.training.session.dispatch import PublicationFailed
 from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.worker.requests import WorkerResults
 from shadowspill_client.buffers import BufferBudget
@@ -63,6 +65,7 @@ class ResultPublisher:
             loss: float | int | None = None
             metrics: dict[str, float | int] = {}
             outputs: dict[str, ArtifactRef] = {}
+            layout = None
             checkpoint = None
             weights = None
             metadata = {}
@@ -90,7 +93,26 @@ class ResultPublisher:
                 loss, metrics = result_metrics(
                     layout, work.frames, work.open, self.memory
                 )
-                if layout.outputs.tensors:
+            observed = OperationResult(
+                call.request.identity,
+                call.request.operation,
+                receipt.history_id,
+                receipt.outcome,
+                receipt.completed_updates,
+                receipt.accumulation,
+                metrics=metrics,
+                optim=call.controls.optim,
+                loss_params=call.controls.loss_params,
+                grad_scale=call.controls.grad_scale,
+                loss=loss,
+                state_valid=receipt.state_valid,
+                checkpoint=checkpoint,
+                weights=weights,
+                metadata=metadata,
+            )
+            try:
+                if layout is not None and layout.outputs.tensors:
+                    assert call.assignment is not None
                     owner = ResultFrames(
                         layout,
                         call.assignment,
@@ -106,29 +128,18 @@ class ResultPublisher:
                     finally:
                         owner.close()
                         self._owners.remove(owner)
-            traces, issues = (
-                self._traces(work) if call.request.runtime_trace else ((), ())
-            )
-            return OperationResult(
-                call.request.identity,
-                call.request.operation,
-                receipt.history_id,
-                receipt.outcome,
-                receipt.completed_updates,
-                receipt.accumulation,
-                metrics=metrics,
-                outputs=outputs,
-                optim=call.controls.optim,
-                loss_params=call.controls.loss_params,
-                grad_scale=call.controls.grad_scale,
-                loss=loss,
-                state_valid=receipt.state_valid,
-                checkpoint=checkpoint,
-                weights=weights,
-                metadata=metadata,
-                traces=traces,
-                artifact_issues=issues,
-            )
+                traces, issues = (
+                    self._traces(work) if call.request.runtime_trace else ((), ())
+                )
+                if not (outputs or traces or issues):
+                    return observed
+                return replace(
+                    observed, outputs=outputs, traces=traces, artifact_issues=issues
+                )
+            except Exception as error:
+                raise PublicationFailed(
+                    str(error) or type(error).__name__, observed
+                ) from error
         finally:
             self._busy.release()
 

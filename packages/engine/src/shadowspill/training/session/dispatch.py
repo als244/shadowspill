@@ -51,6 +51,21 @@ class ExecutionNotStarted(RuntimeError):
     """
 
 
+class PublicationFailed(RuntimeError):
+    """A publisher verified these scalars before required output publication failed.
+
+    The partial result has no promised output artifacts. Its identity/effects are
+    rechecked against the durable receipt before retaining any measurements in
+    the terminal failure. This never means execution should be repeated.
+    """
+
+    def __init__(self, message: str, observed: OperationResult) -> None:
+        if not isinstance(observed, OperationResult):
+            raise TypeError("publication measurements require a validated result")
+        super().__init__(message)
+        self.observed = observed
+
+
 class RequestDispatcher:
     """Dispatch only the accepted queue head; never retry uncertain worker work.
 
@@ -295,6 +310,12 @@ class RequestDispatcher:
             if ExecutionReceipt.from_result(result) != receipt:
                 raise ValueError("published result differs from confirmed execution")
         except BaseException as error:
+            observed = (
+                error.observed
+                if isinstance(error, PublicationFailed)
+                and ExecutionReceipt.from_result(error.observed) == receipt
+                else None
+            )
             with self.order.synchronized():
                 status = self._failed(
                     request,
@@ -306,6 +327,8 @@ class RequestDispatcher:
                         receipt.completed_updates,
                         receipt.accumulation,
                         history_id=receipt.history_id,
+                        loss=None if observed is None else observed.loss,
+                        metrics={} if observed is None else observed.metrics,
                     ),
                 )
             if not isinstance(error, Exception):
