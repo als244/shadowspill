@@ -8,9 +8,12 @@ from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from ._async import CallFuture
+from ._records import Value
 from .buffers import BufferBudget
+from .checkpoints import CheckpointHandle
 from .datum import Datum
 from .plans import PlansHandle
+from .protocol.checkpoint_settings import CheckpointSave
 from .protocol.controls import Scalar
 from .protocol.payload import MEDIA_TYPE, snapshot_batch
 from .protocol.requests import (
@@ -69,7 +72,7 @@ class TrainingClient:
         self._submission, self._upload, self._state = Lock(), Condition(), Lock()
         self._next = 1 if writer is None else writer.next_sequence
         self._upload_next = self._next
-        self._pending: dict[str, OperationFuture] = {}
+        self._pending: dict[str, OperationFuture[TrainingResult]] = {}
         self._blocked = False
         self._snapshots = BufferBudget(
             config.execution.max_staging_bytes, config.execution.max_pending_requests
@@ -99,7 +102,7 @@ class TrainingClient:
     def _wait(
         self,
         request_id: str,
-        future: OperationFuture | None = None,
+        future: OperationFuture[TrainingResult] | None = None,
         status: RequestStatus | None = None,
     ) -> TrainingResult:
         while True:
@@ -125,7 +128,8 @@ class TrainingClient:
         outputs: str | None = None,
         mode: Literal["evaluation", "training"] | None = None,
         runtime_trace: bool = False,
-    ) -> OperationFuture:
+        save: CheckpointSave | None = None,
+    ) -> OperationFuture[TrainingResult]:
         self._service._work.check()
         if self._writer is None:
             raise PermissionError("read-only training handle cannot submit operations")
@@ -166,6 +170,7 @@ class TrainingClient:
                     mode=mode,
                     runtime_trace=runtime_trace,
                     dependencies=dependencies,
+                    save=save,
                 )
                 if batch is not None:
                     from dataclasses import replace
@@ -178,7 +183,7 @@ class TrainingClient:
                             request_id, snapshot.sha256, snapshot.size_bytes, MEDIA_TYPE
                         ),
                     )
-                future = OperationFuture(identity)
+                future = OperationFuture[TrainingResult](identity)
                 with self._state:
                     self._next += 1
                     self._pending[request_id] = future
@@ -273,7 +278,7 @@ class TrainingClient:
         grad_scale: float = 1,
         outputs: str | None = None,
         runtime_trace: bool = False,
-    ) -> OperationFuture:
+    ) -> OperationFuture[TrainingResult]:
         return self._submit(
             "step",
             global_batch,
@@ -291,7 +296,7 @@ class TrainingClient:
         loss_params: Mapping[str, Scalar] | None = None,
         outputs: str | None = None,
         runtime_trace: bool = False,
-    ) -> OperationFuture:
+    ) -> OperationFuture[TrainingResult]:
         return self._submit(
             "forward_backward",
             global_batch,
@@ -306,7 +311,7 @@ class TrainingClient:
         optim: Mapping[str, Scalar] | None = None,
         grad_scale: float = 1,
         runtime_trace: bool = False,
-    ) -> OperationFuture:
+    ) -> OperationFuture[TrainingResult]:
         return self._submit(
             "optim_step",
             optim=optim,
@@ -322,7 +327,7 @@ class TrainingClient:
         mode: Literal["evaluation", "training"] = "evaluation",
         loss_params: Mapping[str, Scalar] | None = None,
         runtime_trace: bool = False,
-    ) -> OperationFuture:
+    ) -> OperationFuture[TrainingResult]:
         return self._submit(
             "forward",
             global_batch,
@@ -332,8 +337,25 @@ class TrainingClient:
             runtime_trace=runtime_trace,
         )
 
-    def discard_gradients(self) -> OperationFuture:
+    def discard_gradients(self) -> OperationFuture[TrainingResult]:
         return self._submit("discard")
 
-    def close(self) -> OperationFuture:
+    def save_checkpoint(
+        self,
+        *,
+        name: str | None = None,
+        metadata: Mapping[str, Value] | None = None,
+        weights: Literal["master", "compute"] = "master",
+    ) -> OperationFuture[CheckpointHandle]:
+        """Save on the server at this ordered boundary; tensor download is explicit."""
+        settings = CheckpointSave(name, {} if metadata is None else metadata, weights)
+
+        def checkpoint(result: TrainingResult) -> CheckpointHandle:
+            if result.checkpoint is None:
+                raise ValueError("save completed without a checkpoint reference")
+            return result.checkpoint
+
+        return self._submit("save", save=settings)._mapped(checkpoint)
+
+    def close(self) -> OperationFuture[TrainingResult]:
         return self._submit("close")

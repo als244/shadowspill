@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import Future
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from ._async import CallFuture
+from .checkpoints import CheckpointHandle
 from .protocol.requests import RequestIdentity
 from .protocol.results import Acceptance, OperationResult, RequestStatus
 
@@ -43,9 +46,14 @@ class TrainingResult:
             }
         )
         self.traces = tuple(service.artifact(reference) for reference in record.traces)
+        self.checkpoint = (
+            None
+            if record.checkpoint is None
+            else CheckpointHandle(record.checkpoint, service)
+        )
 
 
-class OperationFuture(CallFuture[TrainingResult]):
+class OperationFuture[T](CallFuture[T]):
     def __init__(self, identity: RequestIdentity) -> None:
         super().__init__()
         self.identity = identity
@@ -54,6 +62,24 @@ class OperationFuture(CallFuture[TrainingResult]):
 
     def accepted(self) -> CallFuture[Acceptance]:
         return self._acceptance
+
+    def _mapped[U](self, convert: Callable[[T], U]) -> OperationFuture[U]:
+        """Adapt a completed result without another submission or queued task."""
+        result = OperationFuture[U](self.identity)
+        result._acceptance = self._acceptance
+
+        def complete(source: Future[T]) -> None:
+            try:
+                value = convert(source.result())
+            except BaseException as error:
+                error.__traceback__ = None
+                error.__cause__ = error.__context__ = None
+                result._set_exception(error)
+            else:
+                result._set_result(value)
+
+        self._future.add_done_callback(complete)
+        return result
 
     def _observe(self, status: RequestStatus) -> None:
         if status.identity != self.identity:

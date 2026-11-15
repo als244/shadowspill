@@ -1,9 +1,9 @@
-# ShadowSpill client records
+# ShadowSpill client
 
-Portable configuration and logical examples for the training service under
-construction. This package supplies validated records, schemas, text helpers and
-internal HTTP/OpenSSH transports. Public ServiceClient/TrainingClient creation
-and training handles remain under development.
+Lightweight service connections, training submissions, portable configuration and
+explicit artifact downloads. Public `ServiceClient` owns description and creation;
+`TrainingClient` submits runtime operations against ready server workers. See the
+[client guide](../../docs/python/client.md) for current APIs and remaining work.
 
 ```python
 from shadowspill_client import BatchConfig, Datum, Model, Objective, Weights
@@ -17,8 +17,8 @@ example = Datum(inputs={"pixels": pixels}, loss_inputs={"class_id": 7})
 Configuration records own immutable copies of their JSON-compatible settings.
 Datum records hold caller data; they do not themselves copy arrays. The binary
 snapshot implementation in `protocol.payload` copies arrays and nested trees
-under `BufferBudget` byte/request limits. It is ready for the future submission
-boundary; ServiceClient and TrainingClient are still under development.
+under `BufferBudget` byte/request limits before submission returns. Server
+acceptance and completion remain separate observations.
 The separate `shadowspill_client.text.text_datum` helper constructs shifted,
 aligned next-token inputs without a tokenizer or model import.
 
@@ -35,15 +35,14 @@ Preparation settings expose fixed `BuildOptions`, explicit `BuildCandidates`,
 an installed server policy and its portable configuration. Omitted choices stay
 distinct from explicit `None` (unchunked); candidate axes and complete coupled
 `BuildCase` lists are mutually exclusive. These records preserve user choices;
-server preset resolution, coverage and memory admission remain later work.
+server preset resolution, coverage and memory admission run on the server.
 
 The protocol modules also define compute requests, acceptance, results and
 failures. `protocol.codec` encodes a versioned, bounded canonical JSON envelope.
 Tensor bytes use separate artifact references; Datum is deliberately not a wire
 record. Failures say whether execution never started, completed, or had unknown
 effects. Results include effective controls and immutable artifact references.
-The internal HTTP transport uses these same records; request futures remain under
-development.
+HTTP and OpenSSH connections use these same records and ordered request futures.
 
 `SSH` holds local connection settings, including an OpenSSH alias, service host
 and service port. `transport.ssh.SSHTunnel` creates a loopback forward for the same
@@ -54,8 +53,9 @@ Host-key verification, keys/agent and jump routing remain OpenSSH responsibiliti
 SSH startup and HTTP service readiness are separate checks. Local diagnostics and
 command ownership use a fixed client memory reservation; failed cleanup retains it
 for explicit retry. The transport has real local OpenSSH and Chicago-to-Della
-checks, including accepted execution continuing after tunnel closure. Public SDK
-connection composition and actual Apple Silicon qualification remain unfinished.
+checks, including accepted execution continuing after tunnel closure. The public
+SDK also runs from a NumPy-only Tubingen client against Chicago GPU workers.
+Actual Apple Silicon qualification remains unfinished.
 
 `protocol.payload.snapshot_batch` and `protocol.payload_io.read_payload` share
 versioned binary framing, explicit dtype/shape metadata and SHA-256 integrity.
@@ -64,4 +64,11 @@ their staging lease after transfer. Noncontiguous arrays, numeric lists/scalars,
 empty arrays and optional installed CPU Torch tensors are supported; BF16 uses
 bit-exact uint16 storage without adding Torch to the client dependencies. Snapshot
 completion establishes memory ownership; it does not establish server acceptance.
-Raw media processors and complete schema validation belong to later engine work.
+Installed server processors and engine schemas own media preparation and complete
+input validation.
+
+`training.save_checkpoint(...).result()` returns a small checkpoint handle after
+server persistence completes. `handle.manifest()` inspects its metadata and
+`handle.download(path)` copies rank files into a new local directory, including
+after worker exit. The client performs no build, planning, model initialization
+or worker launch. Restore/resume and resumable transfers are still in development.

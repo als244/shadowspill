@@ -8,6 +8,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tarfile
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Thread
@@ -54,7 +55,7 @@ from shadowspill.training.worker.requests import WorkerRequests  # noqa: E402
 from shadowspill.training.worker.resources import WorkerHost  # noqa: E402
 from shadowspill.training.worker.runtime import PreparedWorker  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
-from shadowspill_client.protocol.codec import encode  # noqa: E402
+from shadowspill_client.protocol.codec import decode, encode  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
 from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
 from shadowspill_client.protocol.requests import (  # noqa: E402
@@ -671,6 +672,33 @@ def qualify_public_server():
                 identity = RunIdentity("owner", "factory-session", result["run_id"])
                 info = storage.catalog.get(identity)
                 assert info.state == "closed"
+                checkpoint_ref = ArtifactRef.from_dict(result["checkpoint"])
+                assert (
+                    artifacts.resolve_alias(
+                        "factory-session", result["run_id"], "step-1"
+                    )
+                    == checkpoint_ref
+                )
+                with artifacts.open(checkpoint_ref) as stream:
+                    checkpoint_manifest = decode(stream.read())
+                assert checkpoint_manifest.info.completed_updates == 1
+                assert checkpoint_manifest.info.plans == info.plans
+                assert checkpoint_manifest.info.weights == result["checkpoint_weights"]
+                for row in checkpoint_manifest.ranks:
+                    from shadowspill.checkpoint.archive import read_manifest
+
+                    with (
+                        artifacts.open(row.archive) as stream,
+                        tarfile.open(fileobj=stream, mode="r:") as archive,
+                    ):
+                        rank_manifest = read_manifest(archive)
+                    assert (
+                        rank_manifest["metadata"]["checkpoint"]
+                        == checkpoint_manifest.info.to_dict()
+                    )
+                    assert rank_manifest["state"] == row.state_sha256
+                    assert rank_manifest["tensors"]
+                assert result["checkpoint_download_after_close"]
                 manifests = []
                 for ref in artifacts.page(limit=128):
                     if ref.id.startswith("preparation."):
@@ -729,3 +757,5 @@ print("Qualified authenticated HTTP queue and post-exit artifact downloads")
 print("Qualified bounded service storage and original GPU outcomes after restart")
 print("Qualified allocation stop with unresolved GPU gradients and no implicit update")
 print("Qualified configured fresh and saved creation through actual GPU retirement")
+
+print("Qualified ordered GPU checkpoints and post-exit downloads from the demo client")

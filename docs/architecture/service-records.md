@@ -148,8 +148,7 @@ already exist in the authenticated owner's storage. Global metadata bytes are
 admitted exactly before starting any rank. This entry point accepts trusted
 installed writers; uploaded files need separate validation. Its socket tests cover
 multiple rank archives, a missing completion, mismatched identities and preserved
-aliases. Public checkpoint methods, logical cross-layout conversion and RNG
-restoration remain unfinished.
+aliases. Logical cross-layout conversion and RNG restoration remain unfinished.
 
 `stage_checkpoint` uses `ArtifactStore.stage_group` to return completed, private
 files as a `StagedArtifacts` owner. The dispatcher can persist its execution receipt
@@ -191,7 +190,7 @@ Open accumulation is rejected before contacting workers. Admission failure prese
 state; missing completions stop the group without replay. Assembly failure after
 all completions is a publication failure with known state. CPU subprocess tests
 cover these boundaries and restore the emitted archives. The service currently
-includes frozen tensors; declared base omission, public SDK calls, ordered restore,
+includes frozen tensors; declared base omission, ordered restore,
 conversion and RNG integration still require implementation. Worker tensor copies
 reuse admitted staging; checkpoint descriptor/manifest peaks are included in the
 deployment's decoded-artifact allowance and still need scale qualification.
@@ -649,3 +648,12 @@ directory sync semantics from the configured storage filesystem. The parent
 directory is supplied by service storage; no records or caches default to a user's
 home directory. Tests cover failure at each publication boundary, a killed writer,
 concurrent producers, independent-process exclusion and framework-free recovery.
+
+The public TrainingClient now submits checkpoint save settings through its existing
+runtime queue. Its typed future maps the original completion to a CheckpointHandle
+without another task or request, preserving identity and acceptance observation.
+Manifest inspection verifies bounded metadata; explicit directory download streams
+rank files serially and writes the local manifest last. Download failure leaves
+the server outcome unchanged. HTTP/CPU subprocess tests cover save/close ordering,
+immutable metadata, post-worker downloads and a failed transfer followed by an
+explicit retry. Setup remains in the ServiceClient creation/server factory modules.

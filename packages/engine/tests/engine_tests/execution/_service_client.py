@@ -1,5 +1,6 @@
 """NumPy-only fixture client, runnable locally or on a separate demo machine."""
 
+import hashlib
 import importlib.abc
 import json
 import socket
@@ -28,7 +29,7 @@ import numpy as np  # noqa: E402
 
 from shadowspill_client import SSH, Datum, ServiceClient  # noqa: E402
 from shadowspill_client.buffers import BufferBudget  # noqa: E402
-from shadowspill_client.protocol.codec import digest  # noqa: E402
+from shadowspill_client.protocol.codec import decode, digest  # noqa: E402
 from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
 from shadowspill_client.protocol.training import ResolvedTraining  # noqa: E402
 
@@ -101,6 +102,24 @@ def qualify(client, config, memory, oracle):
         result = step.result(120)
         np.testing.assert_allclose(result.loss, oracle["loss"], rtol=1e-4)
         assert training.requests.get(step.request_id).result(10).record == result.record
+        started = monotonic()
+        checkpoint_future = training.save_checkpoint(
+            name="step-1",
+            metadata={"data_cursor": 3, "preparation": mode},
+            weights="master" if mode == "fresh" else "compute",
+        )
+        assert (
+            checkpoint_future.accepted().result(30).identity
+            == checkpoint_future.identity
+        )
+        checkpoint = checkpoint_future.result(120)
+        save_seconds = monotonic() - started
+        checkpoint_manifest = checkpoint.manifest().result(30)
+        assert checkpoint_manifest.info.completed_updates == 1
+        assert checkpoint_manifest.info.request_id == checkpoint_future.request_id
+        assert checkpoint_manifest.info.metadata["data_cursor"] == 3
+        assert checkpoint_manifest.info.plans == saved.reference
+        assert checkpoint_manifest.info.configuration.sha256 == digest(config)
         prediction = training.forward(records(False), outputs="predictions").result(120)
         output = prediction.outputs["prediction"]
         closed = training.close().result(30)
@@ -119,11 +138,28 @@ def qualify(client, config, memory, oracle):
                 np.testing.assert_allclose(
                     actual, oracle["after_step"], rtol=1e-4, atol=1e-5
                 )
+        with TemporaryDirectory(prefix="shadowspill-demo-checkpoint-") as directory:
+            copied = checkpoint.download(Path(directory) / "step-1").result(60)
+            assert (
+                decode((copied / "manifest.json").read_bytes()) == checkpoint_manifest
+            )
+            for row in checkpoint_manifest.ranks:
+                archive = copied / "ranks" / f"rank-{row.rank:05d}.ssp"
+                assert archive.stat().st_size == row.archive.size_bytes
+                with archive.open("rb") as stream:
+                    assert (
+                        hashlib.file_digest(stream, "sha256").hexdigest()
+                        == row.archive.sha256
+                    )
         readonly = client.get_training_client(training.run_id, read_only=True).result(
             10
         )
         assert readonly.requests.get(step.request_id).result(10).record == result.record
         assert readonly.plans.summary().result(10) == summary[0]
+        assert (
+            readonly.requests.get(checkpoint_future.request_id).result(10).checkpoint
+            == checkpoint
+        )
         receipts.append(
             {
                 "mode": mode,
@@ -133,6 +169,13 @@ def qualify(client, config, memory, oracle):
                 "summary_pages": len(summary),
                 "summary_rows": len(summary_rows),
                 "summary_plan_count": page.plan_count,
+                "checkpoint": checkpoint.reference.to_dict(),
+                "checkpoint_rank_bytes": sum(
+                    row.archive.size_bytes for row in checkpoint_manifest.ranks
+                ),
+                "checkpoint_save_seconds": save_seconds,
+                "checkpoint_weights": checkpoint_manifest.info.weights,
+                "checkpoint_download_after_close": True,
             }
         )
     return receipts

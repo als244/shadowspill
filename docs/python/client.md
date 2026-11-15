@@ -7,7 +7,8 @@ require the engine, PyTorch, Triton or the supplied workloads.
 `ServiceClient` supports authenticated connections, CPU setup previews, creation,
 reattachment and explicit artifact downloads. `TrainingClient` submits live
 operations. `shadowspill.server.Server` owns startup and the assigned resources.
-Checkpoint methods and named Plan saves are still being implemented.
+Checkpoint saves and explicit directory downloads are supported. Restore/resume,
+resumable transfers and named Plan saves are still being implemented.
 Existing phase and Trainer APIs remain available during migration.
 
 Start the service on Chicago or another machine with an existing GPU allocation:
@@ -82,7 +83,7 @@ and `service.get_training_client(run_id).result()`. Writable reattachment fences
 the earlier writer; `read_only=True` permits inspection without takeover.
 
 Runtime methods are `step`, `forward_backward`, `optim_step`, `forward`,
-`discard_gradients` and ordered `close`, all returning futures. Input arrays and
+`discard_gradients`, `save_checkpoint` and ordered `close`, all returning futures. Input arrays and
 controls are copied before the submission returns. Bounded staging/pending counts
 apply backpressure, and snapshots that cannot fit fail promptly. Earlier pending
 requests become explicit dependencies, so a rejected backward contribution cannot
@@ -112,3 +113,32 @@ An immutable artifact reference can be attached to the current connection with
 verifies bytes into a new local file. Existing files are preserved; a failed
 transfer removes its partial destination. Tensor data is never implicitly loaded
 by a metadata result.
+
+A checkpoint save occupies the same ordered stream as training. Finish an open
+accumulation with `optim_step` or `discard_gradients` first. Later updates wait for
+the complete checkpoint to commit; a completed save does not increment the update
+counter. Reusing `name` updates a run-local alias while preserving older generations.
+
+```python
+pending = training.save_checkpoint(name="step-50", metadata={"data_cursor": 50})
+checkpoint = pending.result()
+print(checkpoint.id)
+manifest = checkpoint.manifest().result()  # Small verified metadata only.
+training.close().result()
+checkpoint.download("./step-50").result()  # New local directory, after worker exit.
+```
+
+`weights="master"` is the default; `weights="compute"` selects compute-precision
+values under the existing checkpoint reconstruction rules. Caller metadata is
+frozen before submission and returned in the manifest. The save future preserves
+its request identity and `.accepted()` observation. Request lookup exposes the
+same handle as `training.requests.get(request_id).result().checkpoint`.
+
+Directory download verifies each immutable rank file, streams serially and writes
+`manifest.json` after the rank files. It does not overwrite existing destinations.
+A failed download leaves the committed server checkpoint available and does not
+repeat training or saving. Plans and frozen-base dependencies are separate
+artifacts; downloading the checkpoint does not implicitly copy them. The current
+service save includes frozen tensors. Ordered restore/new-run resume, service
+base omission, cross-layout conversion, RNG integration and resumable uploads or
+downloads remain under implementation.

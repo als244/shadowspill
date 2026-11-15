@@ -378,6 +378,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         in agent.stdout
     )
     assert "Qualified installed agent-owned GPU bootstrap" in agent.stdout
+    assert "Qualified ordered GPU checkpoints and post-exit downloads" in agent.stdout
     assert "Qualified production worker request/file coordination" in agent.stdout
     assert "Qualified production node worker lifecycle" in agent.stdout
     assert (

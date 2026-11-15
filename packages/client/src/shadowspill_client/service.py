@@ -13,7 +13,9 @@ from ._async import CallFuture, ConnectionWork
 from ._records import Record, integer
 from .artifacts import ArtifactHandle
 from .buffers import BufferBudget
+from .checkpoints import CheckpointHandle
 from .creation import TrainingFuture, create_training_client, get_training_client
+from .protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
 from .protocol.codec import ProtocolError, encode
 from .protocol.preview import TrainingPreview
 from .protocol.requests import ArtifactRef, identifier
@@ -115,6 +117,8 @@ class ServiceClient:
     def artifact(self, reference: ArtifactRef) -> ArtifactHandle:
         if not isinstance(reference, ArtifactRef):
             raise TypeError("artifact requires an immutable server reference")
+        if reference.media_type == CHECKPOINT_MEDIA_TYPE:
+            return CheckpointHandle(reference, self)
         return ArtifactHandle(reference, self)
 
     def create_training_client(self, **setup: Any) -> TrainingFuture:

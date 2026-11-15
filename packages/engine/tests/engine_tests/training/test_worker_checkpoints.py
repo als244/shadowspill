@@ -37,7 +37,7 @@ from shadowspill_client.protocol.requests import OperationRequest
 
 
 @contextmanager
-def running(root, artifacts, *, mode="normal"):
+def running(root, artifacts, *, mode="normal", count=2):
     children, connections, prepared = [], {}, {}
     metadata, memory, disk = (BufferBudget(32 << 20, 10) for _ in range(3))
 
@@ -52,7 +52,7 @@ def running(root, artifacts, *, mode="normal"):
         return BoundWorkerCall(command, None, CallControls(), {}, ())
 
     try:
-        for rank in range(2):
+        for rank in range(count):
             child = subprocess.Popen(
                 [
                     sys.executable,
@@ -96,7 +96,7 @@ def running(root, artifacts, *, mode="normal"):
             history=lambda: "history",
             configuration=config,
             plans=plans,
-            world_size=2,
+            world_size=count,
         )
         with (
             WorkerGroup(connections, stop=stop) as group,
