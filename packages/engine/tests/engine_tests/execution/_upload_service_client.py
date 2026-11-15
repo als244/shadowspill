@@ -155,6 +155,20 @@ def main():
         oracle.update(0.02, -0.5)
         assert split.completed_updates == 3
         finish(training.forward(records(targets=False), outputs="predictions"))
+        export_helpers = runpy.run_path(
+            str(Path(__file__).with_name("_weights_service_client.py"))
+        )
+        exported = export_helpers["check_export"](
+            training,
+            directory if options["phase"] == "source" else directory / "target-exports",
+            oracle,
+            options["initial"],
+            observations[-1],
+            Oracle,
+            frozen=trainable is not None,
+        )
+        # Inference exports must not disturb the following evaluation stream.
+        finish(training.forward(records(targets=False), outputs="predictions"))
         if options["phase"] == "source":
             state["observations"] = observations
             state["final_weights"] = {
@@ -217,6 +231,8 @@ def main():
                 "independent_step_and_split_oracle": True,
                 "exact_training_and_evaluation_rng": options["phase"] == "target",
                 "frozen_base_reconstructed": trainable is not None,
+                "inference_exports": exported,
+                "exported_inference_matches_independent_oracle": True,
                 "observations": observations,
             }
         )

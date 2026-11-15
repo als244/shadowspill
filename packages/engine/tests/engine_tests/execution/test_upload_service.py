@@ -67,3 +67,11 @@ def test_public_uploaded_checkpoint_continues_step_and_split_training(
     assert receipt["runs"][1]["exact_training_and_evaluation_rng"]
     assert receipt["runs"][0]["checkpoint"] == receipt["runs"][1]["checkpoint"]
     assert all(row["frozen_base_reconstructed"] == frozen for row in receipt["runs"])
+    assert all(
+        row["exported_inference_matches_independent_oracle"] for row in receipt["runs"]
+    )
+    assert all(
+        [item["representation"] for item in row["inference_exports"]]
+        == ["master", "compute"]
+        for row in receipt["runs"]
+    )
