@@ -12,7 +12,7 @@ import pytest
 from engine_tests.server.test_artifacts import reference, store
 from shadowspill.orchestration.launch.publication import OutputSpec
 from shadowspill.orchestration.launch.staging import FileDelivery
-from shadowspill.server.artifact_writer import ProducedArtifact
+from shadowspill.server.artifact_writer import ProducedArtifacts
 from shadowspill.server.artifacts import INDEX_BYTES
 from shadowspill.training.inputs.frames import InputFrame
 from shadowspill_client.buffers import BufferBudget
@@ -131,18 +131,18 @@ def test_producer_cleanup_failure_retains_committed_bytes_and_quota_owner(
 ):
     memory = BufferBudget(8 << 20, 10)
     artifacts = store(tmp_path, memory=memory)
-    close = ProducedArtifact.close
+    close = ProducedArtifacts.close
 
     def fail(_):
         raise OSError("cannot remove temporary producer")
 
-    monkeypatch.setattr(ProducedArtifact, "close", fail)
+    monkeypatch.setattr(ProducedArtifacts, "close", fail)
     with pytest.raises(OSError):
         artifacts.produce(spec(reference()), encode)
     assert artifacts._pending and artifacts._disk.used == (6, 1)
     with pytest.raises(OSError):
         artifacts.close()
-    monkeypatch.setattr(ProducedArtifact, "close", close)
+    monkeypatch.setattr(ProducedArtifacts, "close", close)
     artifacts.close()
     assert memory.used == (0, 0)
     with store(tmp_path) as recovered:

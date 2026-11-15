@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,19 +19,26 @@ from shadowspill_client._records import integer
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef, identifier
 
-from .artifact_writer import ProducedArtifact
-from .records.artifact_index import ArtifactIndex, reference_bytes, storage_key
+from .artifact_writer import ProducedArtifacts
+from .records.artifact_index import (
+    ArtifactAlias,
+    ArtifactIndex,
+    alias_scope,
+    reference_bytes,
+    storage_key,
+)
 from .records.journal import Journal, _sync_directory
 from .records.journal_format import JournalLimits
 
 INDEX_BYTES = 4 << 20
+MAX_GROUP_ARTIFACTS = 128
 
 
 @dataclass
 class _Publication:
-    id: str
+    ids: tuple[str, ...]
     size_bytes: int
-    owner: FileDelivery | ProducedArtifact
+    owner: FileDelivery | ProducedArtifacts
     committed: bool = False
     uncertain: bool = False
 
@@ -79,6 +86,7 @@ class ArtifactStore:
         self._mutex = RLock()
         self._disk = BufferBudget(max_bytes, max_transfers)
         self._pending: dict[str, _Publication] = {}
+        self._reserved: set[str] = set()
         self._receiving: set[str] = set()
         self._bytes = self._count = self._readers = 0
         self._broken = self.closed = False
@@ -86,7 +94,11 @@ class ArtifactStore:
             _directory(directory)
             self._journal = Journal(
                 directory / "events",
-                limits=JournalLimits(record_bytes=8192, commit_bytes=16384),
+                limits=JournalLimits(
+                    record_bytes=8192,
+                    commit_bytes=(MAX_GROUP_ARTIFACTS + 2) * 8192,
+                    commit_records=MAX_GROUP_ARTIFACTS + 1,
+                ),
             )
             _directory(self._data)
             _directory(self._scratch)
@@ -123,6 +135,9 @@ class ArtifactStore:
         elif first.kind != "artifacts.open" or dict(first.data) != identity:
             raise ValueError("artifact storage belongs to another owner")
         for row in rows:
+            if row.kind == "artifact.alias":
+                self._index.set_alias(ArtifactAlias.from_dict(dict(row.data)))
+                continue
             if row.kind != "artifact.put":
                 raise ValueError("unknown committed artifact record")
             reference = ArtifactRef.from_dict(dict(row.data))
@@ -177,6 +192,14 @@ class ArtifactStore:
             self._usable()
             return self._index.page(after, limit)
 
+    def resolve_alias(
+        self, session_id: str, run_id: str, name: str
+    ) -> ArtifactRef | None:
+        scope = alias_scope(session_id, run_id, name)
+        with self._mutex:
+            self._usable()
+            return self._index.resolve_alias(*scope)
+
     def put(
         self,
         reference: ArtifactRef,
@@ -191,15 +214,16 @@ class ArtifactStore:
                 if existing != reference:
                     raise ValueError("artifact ID already names different content")
                 return existing
-            self._capacity(reference.id, reference.size_bytes)
+            ids = (reference.id,)
+            self._capacity(ids, reference.size_bytes)
             delivery = FileDelivery(
                 [reference], root=self._scratch, disk=self._disk, memory=self._memory
             )
-            pending = self._track(reference.id, reference.size_bytes, delivery)
+            pending = self._track(ids, reference.size_bytes, delivery)
         try:
             delivery.receive(open_source)
             with delivery.use() as resolve:
-                return self._commit(pending, reference, resolve(reference))
+                return self._commit(pending, (reference,), (resolve(reference),))[0]
         finally:
             self._finish(pending)
 
@@ -212,51 +236,95 @@ class ArtifactStore:
         known expected digest, an already committed ID is a conflict, not an
         instruction to invoke the encoder again or replace the immutable file.
         """
+        return self.produce_group((spec,), lambda _, writer: write(writer))[0]
+
+    def produce_group(
+        self,
+        specs: Sequence[OutputSpec],
+        write: Callable[[OutputSpec, OutputWriter], ArtifactRef],
+        *,
+        alias: ArtifactAlias | None = None,
+    ) -> tuple[ArtifactRef, ...]:
+        """Admit and publish all members and an optional name in one durable commit.
+
+        Encoders run serially in the given order, directly in persistent storage.
+        None of the group is discoverable until every producer has confirmed its
+        complete output. A final manifest may reference earlier members. Failures
+        before commit reclaim all partials; uncertain commits require recovery.
+        """
+        if not 1 <= len(specs) <= MAX_GROUP_ARTIFACTS:
+            raise ValueError(
+                f"artifact group must contain 1..{MAX_GROUP_ARTIFACTS} files"
+            )
+        specs = tuple(specs)
+        ids = tuple(spec.id for spec in specs)
+        if len(set(ids)) != len(ids):
+            raise ValueError("artifact group requires distinct IDs")
+        if alias is not None and alias.artifact_id not in ids:
+            raise ValueError("artifact alias must name a member of its new generation")
+        size = sum(spec.size_bytes for spec in specs)
         with self._mutex:
             self._usable()
-            if self._index.get(spec.id) is not None:
+            if any(self._index.get(name) is not None for name in ids):
                 raise ValueError("artifact ID is already committed")
-            self._capacity(spec.id, spec.size_bytes)
-            producer = ProducedArtifact(
-                spec, root=self._scratch, disk=self._disk, memory=self._memory
+            self._capacity(ids, size)
+            producer = ProducedArtifacts(
+                specs, root=self._scratch, disk=self._disk, memory=self._memory
             )
-            pending = self._track(spec.id, spec.size_bytes, producer)
+            pending = self._track(ids, size, producer)
         try:
-            reference = producer.build(write)
-            return self._commit(pending, reference, producer.path)
+            references = producer.build(write)
+            return self._commit(pending, references, producer.paths, alias)
         finally:
             self._finish(pending)
 
-    def _capacity(self, artifact_id: str, size: int) -> None:
-        if artifact_id in self._pending:
+    def _capacity(self, ids: tuple[str, ...], size: int) -> None:
+        if self._reserved.intersection(ids):
             raise RuntimeError("artifact publication is already in progress")
-        if self._bytes + size > self.max_bytes or self._count == self.max_artifacts:
+        if (
+            self._bytes + size > self.max_bytes
+            or self._count + len(ids) > self.max_artifacts
+        ):
             raise ValueError("artifact storage capacity is exhausted")
 
     def _track(
-        self, artifact_id: str, size: int, owner: FileDelivery | ProducedArtifact
+        self, ids: tuple[str, ...], size: int, owner: FileDelivery | ProducedArtifacts
     ) -> _Publication:
-        pending = _Publication(artifact_id, size, owner)
-        self._pending[artifact_id] = pending
-        self._receiving.add(artifact_id)
+        pending = _Publication(ids, size, owner)
+        self._pending[ids[0]] = pending
+        self._reserved.update(ids)
+        self._receiving.add(ids[0])
         self._bytes += size
-        self._count += 1
+        self._count += len(ids)
         return pending
 
     def _commit(
-        self, pending: _Publication, reference: ArtifactRef, path: Path
-    ) -> ArtifactRef:
+        self,
+        pending: _Publication,
+        references: tuple[ArtifactRef, ...],
+        paths: tuple[Path, ...],
+        alias: ArtifactAlias | None = None,
+    ) -> tuple[ArtifactRef, ...]:
         with self._mutex:
             self._usable()
             try:
                 # Link only after hashing the complete stream. The same
                 # filesystem keeps this bounded and avoids a second copy.
-                with path.open("rb") as stream:
-                    os.fsync(stream.fileno())
-                os.link(path, self._path(reference))
+                for reference, path in zip(references, paths, strict=True):
+                    with path.open("rb") as stream:
+                        os.fsync(stream.fileno())
+                    os.link(path, self._path(reference))
                 _sync_directory(self._data)
-                self._journal.append([("artifact.put", reference.to_dict())])
-                self._index.insert(reference)
+                entries = [
+                    ("artifact.put", reference.to_dict()) for reference in references
+                ]
+                if alias is not None:
+                    entries.append(("artifact.alias", alias.to_dict()))
+                self._journal.append(entries)
+                for reference in references:
+                    self._index.insert(reference)
+                if alias is not None:
+                    self._index.set_alias(alias)
                 pending.committed = True
             except BaseException:
                 # A visible record may be durable even when acknowledgement
@@ -264,11 +332,11 @@ class ArtifactStore:
                 pending.uncertain = True
                 self._broken = True
                 raise
-        return reference
+        return references
 
     def _finish(self, pending: _Publication) -> None:
         with self._mutex:
-            self._receiving.discard(pending.id)
+            self._receiving.discard(pending.ids[0])
             try:
                 self._release(pending)
             except BaseException:
@@ -280,8 +348,9 @@ class ArtifactStore:
         pending.owner.close()
         if not pending.committed and not pending.uncertain:
             self._bytes -= pending.size_bytes
-            self._count -= 1
-        del self._pending[pending.id]
+            self._count -= len(pending.ids)
+        self._reserved.difference_update(pending.ids)
+        del self._pending[pending.ids[0]]
 
     @contextmanager
     def open(self, reference: ArtifactRef) -> Iterator[BinaryIO]:

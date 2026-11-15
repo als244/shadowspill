@@ -1,7 +1,7 @@
 """An admitted sequential producer for an unpublished persistent artifact."""
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import BinaryIO
@@ -27,8 +27,8 @@ class _HashingWriter(OutputWriter):
         return count
 
 
-class ProducedArtifact:
-    """The store owns this through production, commit and temporary-file cleanup.
+class ProducedArtifacts:
+    """One admitted group, owned through production, commit and file cleanup.
 
     Installed binary encoders write through the existing bounded OutputWriter.
     Hashing occurs during those writes; no tensor serializer, full host snapshot,
@@ -36,12 +36,19 @@ class ProducedArtifact:
     """
 
     def __init__(
-        self, spec: OutputSpec, *, root: Path, disk: BufferBudget, memory: BufferBudget
+        self,
+        specs: Sequence[OutputSpec],
+        *,
+        root: Path,
+        disk: BufferBudget,
+        memory: BufferBudget,
     ) -> None:
-        self.spec = spec
-        self._memory = memory.reserve((36 << 10) + COPY_BYTES, timeout=0)
+        self.specs = tuple(specs)
+        # One serial copy buffer; references, journal encoding and paths are
+        # bounded per member. Disk admission covers the entire unpublished group.
+        self._memory = memory.reserve((36 << 10) * len(specs) + COPY_BYTES, timeout=0)
         try:
-            self._disk = disk.reserve(spec.size_bytes, timeout=0)
+            self._disk = disk.reserve(sum(spec.size_bytes for spec in specs), timeout=0)
         except BaseException:
             self._memory.close()
             raise
@@ -51,21 +58,30 @@ class ProducedArtifact:
             self._disk.close()
             self._memory.close()
             raise
-        self.path = Path(self._directory.name) / "payload"
+        self.paths = tuple(
+            Path(self._directory.name) / str(index) for index in range(len(specs))
+        )
         self.closed = False
 
-    def build(self, write: Callable[[OutputWriter], ArtifactRef]) -> ArtifactRef:
+    def build(
+        self, write: Callable[[OutputSpec, OutputWriter], ArtifactRef]
+    ) -> tuple[ArtifactRef, ...]:
         if self.closed:
             raise RuntimeError("artifact producer is closed")
-        with self.path.open("xb", buffering=0) as stream:
-            writer = _HashingWriter(stream, self.spec.size_bytes)
-            reference = write(writer)
-            if not isinstance(reference, ArtifactRef):
-                raise TypeError("artifact encoder must return its immutable reference")
-            self.spec.check(reference)
-            if writer.remaining or writer.digest.hexdigest() != reference.sha256:
-                raise ValueError("artifact encoder bytes differ from its reference")
-            return reference
+        references = []
+        for spec, path in zip(self.specs, self.paths, strict=True):
+            with path.open("xb", buffering=0) as stream:
+                writer = _HashingWriter(stream, spec.size_bytes)
+                reference = write(spec, writer)
+                if not isinstance(reference, ArtifactRef):
+                    raise TypeError(
+                        "artifact encoder must return its immutable reference"
+                    )
+                spec.check(reference)
+                if writer.remaining or writer.digest.hexdigest() != reference.sha256:
+                    raise ValueError("artifact encoder bytes differ from its reference")
+                references.append(reference)
+        return tuple(references)
 
     def close(self) -> None:
         if not self.closed:

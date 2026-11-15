@@ -2,14 +2,38 @@
 
 import hashlib
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from shadowspill_client._records import Record, text
 from shadowspill_client.protocol.codec import RecordCodec
-from shadowspill_client.protocol.requests import ArtifactRef
+from shadowspill_client.protocol.requests import ArtifactRef, identifier
 
 REFERENCE_BYTES = 4096
 _CODEC = RecordCodec({"artifact.reference": ArtifactRef})
+
+
+def alias_scope(session_id: str, run_id: str, name: str) -> tuple[str, str, str]:
+    identifier(session_id, "artifact session ID")
+    identifier(run_id, "artifact run ID")
+    if len(text(name, "artifact name")) > 256:
+        raise ValueError("artifact name exceeds its bound")
+    return session_id, run_id, name
+
+
+@dataclass(frozen=True)
+class ArtifactAlias(Record):
+    """A run-local friendly name, updated in its generation's durable commit."""
+
+    session_id: str
+    run_id: str
+    name: str
+    artifact_id: str
+
+    def __post_init__(self) -> None:
+        alias_scope(self.session_id, self.run_id, self.name)
+        identifier(self.artifact_id, "named artifact ID")
 
 
 def storage_key(artifact_id: str) -> str:
@@ -39,6 +63,10 @@ class ArtifactIndex:
                 "CREATE TABLE artifacts (id TEXT PRIMARY KEY, "
                 "storage_key TEXT UNIQUE NOT NULL, reference BLOB NOT NULL)"
             )
+            self._db.execute(
+                "CREATE TABLE aliases (session_id TEXT, run_id TEXT, name TEXT, "
+                "artifact_id TEXT NOT NULL, PRIMARY KEY (session_id, run_id, name))"
+            )
         except BaseException:
             if hasattr(self, "_db"):
                 self._db.close()
@@ -59,9 +87,12 @@ class ArtifactIndex:
         return None if row is None else self._decode(row[0])
 
     def contains(self, key: str) -> bool:
-        return self._db.execute(
-            "SELECT 1 FROM artifacts WHERE storage_key=?", (key,)
-        ).fetchone() is not None
+        return (
+            self._db.execute(
+                "SELECT 1 FROM artifacts WHERE storage_key=?", (key,)
+            ).fetchone()
+            is not None
+        )
 
     def insert(self, reference: ArtifactRef) -> None:
         self._db.execute(
@@ -77,6 +108,24 @@ class ArtifactIndex:
                 (after, limit),
             )
         )
+
+    def set_alias(self, alias: ArtifactAlias) -> None:
+        if self.get(alias.artifact_id) is None:
+            raise ValueError("artifact alias requires a committed target")
+        self._db.execute(
+            "INSERT OR REPLACE INTO aliases VALUES (?, ?, ?, ?)",
+            (alias.session_id, alias.run_id, alias.name, alias.artifact_id),
+        )
+
+    def resolve_alias(
+        self, session_id: str, run_id: str, name: str
+    ) -> ArtifactRef | None:
+        row = self._db.execute(
+            "SELECT artifact_id FROM aliases "
+            "WHERE session_id=? AND run_id=? AND name=?",
+            (session_id, run_id, name),
+        ).fetchone()
+        return None if row is None else self.get(row[0])
 
     def close(self) -> None:
         self._db.close()

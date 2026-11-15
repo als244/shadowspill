@@ -105,6 +105,7 @@ def test_public_pages_are_saved_scoped_and_do_not_read_the_plan_bundle(
             monkeypatch.setattr(ArtifactStore, "_open", only_metadata)
             results, page = [], 0
             while True:
+                until(lambda: ctx.http_memory.used == (0, 0))
                 result = handle.summary(page=page).result(5)
                 assert result.configuration_sha256 == digest(ctx.config)
                 results.extend(result.rows)
@@ -131,10 +132,12 @@ def test_public_pages_are_saved_scoped_and_do_not_read_the_plan_bundle(
             assert len(ctx.owners) == 1 and len(ctx.phases) == 4
             with pytest.raises(ValueError, match="integer"):
                 handle.summary(page=-1)
+            until(lambda: ctx.http_memory.used == (0, 0))
             with pytest.raises(RemoteError) as missing:
                 handle.summary(page=999).result(5)
             assert missing.value.status == 404
         until(lambda: ctx.service._artifacts.used[1] == 0)
+        until(lambda: ctx.http_memory.used == (0, 0))
         with ServiceClient(address(server), token=OTHER_TOKEN) as other:
             with pytest.raises(RemoteError) as denied:
                 PlansHandle(handle.reference, other).summary().result(5)

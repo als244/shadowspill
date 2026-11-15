@@ -25,6 +25,7 @@ from shadowspill_client.transport.http import HTTPTransport, RemoteError
 @contextmanager
 def endpoint(ctx):
     memory = BufferBudget(HTTP_SCRATCH_BYTES * 2, 2)
+    ctx.http_memory = memory
     client_memory = BufferBudget(HTTP_SCRATCH_BYTES * 2, 2)
 
     def describe(settings):

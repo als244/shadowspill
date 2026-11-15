@@ -129,6 +129,16 @@ The output owner still enforces that exact size. This admits the complete rank
 archive before streaming, including metadata, checksums and padding, without a
 dry-run tensor export or a full-state snapshot.
 
+`ArtifactStore.produce_group` reserves a complete generation's bytes and file
+count before invoking any encoder. It streams files serially into persistent
+storage using one bounded copy buffer, then commits all references and an optional
+run-local alias in the same journal entry group. Reads expose either the complete
+generation or none of it. Updating `latest` preserves earlier immutable files.
+Failed production removes the entire unpublished group; uncertain publication
+disables the writer until recovery establishes the committed result. This storage
+primitive accepts up to 128 files per group and does not validate checkpoint state
+or dispatch workers; those remain the checkpoint coordinator's responsibility.
+
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
 and host-key verification to OpenSSH. Existing masters receive only forward and
