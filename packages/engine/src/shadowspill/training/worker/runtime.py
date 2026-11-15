@@ -19,6 +19,7 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .bindings import BoundWorkerCall, WorkerBindings
+from .checkpoint_writer import WorkerCheckpointWriter
 from .execution import WorkerExecution
 from .initialization import PreparedInitialization, initialize, prepare_initialization
 from .loop import WorkerLoop
@@ -95,6 +96,8 @@ class PreparedWorker:
         runtime: InitializationRuntime,
         resolve: Callable[[ArtifactRef], Path],
         outputs: OutputSink,
+        *,
+        checkpoint_stream: BinaryIO | None = None,
     ) -> Iterator["RunningWorker"]:
         # The agent must have isolated visibility before this import. Each saved
         # process-local compiler ordinal is zero, independent of physical GPU ID.
@@ -123,17 +126,33 @@ class PreparedWorker:
                             "worker spill capacity differs from admission"
                         )
 
+                    execution = WorkerExecution(
+                        executor,
+                        self.bindings,
+                        budget,
+                        outputs.collect,
+                        checkpoints=None
+                        if checkpoint_stream is None
+                        else WorkerCheckpointWriter(
+                            executor,
+                            budget,
+                            checkpoint_stream,
+                            plans=self.startup.bundle,
+                            chunk_bytes=min(
+                                64 << 20, self.initialization.description.chunk_bytes
+                            ),
+                        ),
+                    )
+
                     def bind(command: WorkerCall) -> BoundWorkerCall:
-                        call = self.bindings.bind(command, resolve)
+                        call = execution.prepare(self.bindings.bind(command, resolve))
                         outputs.check(call)
                         return call
 
                     loop = WorkerLoop(
                         self.startup.scope,
                         bind,
-                        WorkerExecution(
-                            executor, self.bindings, budget, outputs.collect
-                        ),
+                        execution,
                         budget,
                     )
                     try:
@@ -156,7 +175,9 @@ class PreparedWorker:
             cleanup.callback(reader.close)
             cleanup.callback(writer.close)
             await_start(self.startup, reader, writer)
-            with self.open(runtime, resolve, outputs) as running:
+            with self.open(
+                runtime, resolve, outputs, checkpoint_stream=writer
+            ) as running:
                 report_ready(self.startup, writer)
                 running.loop.serve(reader, writer)
 

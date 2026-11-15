@@ -93,3 +93,30 @@ def test_metadata_keeps_common_wire_bounds():
                 value, info=replace(value.info, metadata={"large": "x" * (1 << 20)})
             )
         )
+
+
+def test_save_settings_are_owned_and_have_an_intentional_result_reference():
+    from shadowspill_client.protocol.checkpoint_settings import CheckpointSave
+    from shadowspill_client.protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
+    from shadowspill_client.protocol.requests import OperationRequest, RequestIdentity
+    from shadowspill_client.protocol.results import OperationResult
+
+    metadata = {"cursor": [1, 2]}
+    settings = CheckpointSave(name="latest", metadata=metadata, weights="compute")
+    metadata["cursor"].append(3)
+    identity = RequestIdentity("save", "run", 1, "writer", 1, "server")
+    request = OperationRequest(identity, "save", save=settings)
+    assert decode(encode(request)) == request and settings.metadata["cursor"] == (1, 2)
+    ref = ArtifactRef("checkpoint", "f" * 64, 100, CHECKPOINT_MEDIA_TYPE)
+    result = OperationResult(
+        identity, "save", "history", "completed", 9, checkpoint=ref
+    )
+    assert decode(encode(result)) == result
+    with pytest.raises(ValueError, match="only save"):
+        replace(request, operation="close")
+    with pytest.raises(ValueError, match="checkpoint reference"):
+        replace(result, checkpoint=None)
+    with pytest.raises(ValueError, match="compute outputs"):
+        replace(result, outputs={"data": ref})
+    with pytest.raises(ValueError, match="manifest"):
+        replace(result, checkpoint=replace(ref, media_type="application/octet-stream"))

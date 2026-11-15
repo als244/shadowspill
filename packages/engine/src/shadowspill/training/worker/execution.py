@@ -8,6 +8,8 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .bindings import BoundWorkerCall, WorkerBindings
+from .checkpoint_records import RankSaved
+from .checkpoint_writer import WorkerCheckpointWriter
 from .protocol import WorkerOutputError
 
 if TYPE_CHECKING:
@@ -29,13 +31,27 @@ class WorkerExecution:
         bindings: WorkerBindings,
         budget: BufferBudget,
         collect: Callable[[BoundWorkerCall, Any, BufferBudget], ArtifactRef | None],
+        *,
+        checkpoints: WorkerCheckpointWriter | None = None,
     ) -> None:
         self._executor, self._bindings = executor, bindings
         self._budget, self._collect = budget, collect
+        self._checkpoints = checkpoints
 
-    def __call__(self, call: BoundWorkerCall) -> ArtifactRef | None:
+    def prepare(self, call: BoundWorkerCall) -> BoundWorkerCall:
+        if call.command.request.operation == "save":
+            if self._checkpoints is None:
+                raise ValueError("worker has no checkpoint stream")
+            return self._checkpoints.prepare(call)
+        return call
+
+    def __call__(self, call: BoundWorkerCall) -> ArtifactRef | RankSaved | None:
         if call.command.scope != self._bindings.scope:
             raise ValueError("execution call belongs to another worker")
+        if call.command.request.operation == "save":
+            if self._checkpoints is None:
+                raise ValueError("worker has no checkpoint stream")
+            return self._checkpoints(call)
         if call.command.request.operation == "discard":
             self._executor.discard_gradients()
             return None

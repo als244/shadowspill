@@ -300,7 +300,7 @@ def test_shared_node_delivers_once_and_reserves_all_rank_outputs_before_release(
             },
             stop=lambda: None,
         )
-        monkeypatch.setattr(group, "commands", lambda *args: commands)
+        monkeypatch.setattr(group, "commands", lambda *args, **kwargs: commands)
         metadata = BufferBudget(32 << 20)
 
         def run(received):

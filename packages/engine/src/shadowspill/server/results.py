@@ -61,6 +61,11 @@ class ResultPublisher:
             loss: float | int | None = None
             metrics: dict[str, float | int] = {}
             outputs: dict[str, ArtifactRef] = {}
+            checkpoint = None
+            if call.request.operation == "save":
+                if work.checkpoint is None:
+                    raise ValueError("save has no owned checkpoint generation")
+                checkpoint = work.checkpoint.commit()[-1]
             if call.key is not None and call.key.operation != "optim_step":
                 assert call.candidate is not None
                 layout = call.candidate.source.layout.outputs
@@ -101,6 +106,7 @@ class ResultPublisher:
                 grad_scale=call.controls.grad_scale,
                 loss=loss,
                 state_valid=receipt.state_valid,
+                checkpoint=checkpoint,
             )
         finally:
             self._busy.release()

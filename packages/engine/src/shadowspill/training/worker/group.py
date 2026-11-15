@@ -11,6 +11,7 @@ from typing import Self
 from shadowspill.training.session.dispatch import ExecutionNotStarted
 from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.session.state import Transition
+from shadowspill_client.protocol.checkpoints import CheckpointInfo
 
 from .bindings import worker_call
 from .connection import WorkerConnection
@@ -56,14 +57,22 @@ class WorkerGroup:
         return self.run(self.commands(call, transition))
 
     def commands(
-        self, call: PreparedCall, transition: Transition
+        self,
+        call: PreparedCall,
+        transition: Transition,
+        *,
+        checkpoint: CheckpointInfo | None = None,
     ) -> Mapping[int, WorkerCall]:
         """Resolve the next invocation before agents reserve/deliver its files."""
         self._available()
         try:
             commands = {
                 rank: worker_call(
-                    call, transition, connection.scope, connection.next_invocation
+                    call,
+                    transition,
+                    connection.scope,
+                    connection.next_invocation,
+                    checkpoint=checkpoint,
                 )
                 for rank, connection in self.connections.items()
             }

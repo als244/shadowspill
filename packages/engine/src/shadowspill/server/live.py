@@ -23,6 +23,7 @@ from shadowspill_client.protocol.requests import ArtifactRef, identifier
 from shadowspill_client.protocol.service import ServiceError
 
 from .artifacts import ArtifactStore
+from .checkpoints import RunCheckpoints
 from .records.requests import RequestRecords, RunIdentity
 from .results import ResultPublisher
 from .storage import ServiceStorage
@@ -158,12 +159,6 @@ class LiveRun:
             prepared = {
                 rank: worker for n in self._nodes for rank, worker in n.prepared.items()
             }
-            self._workers = WorkerRequests(
-                self._group,
-                prepared,
-                {rank: n.files for n in self._nodes for rank in n.prepared},
-                metadata=self._metadata,
-            )
             self._publisher = ResultPublisher(
                 self._artifacts,
                 session_id=self.identity.session_id,
@@ -171,6 +166,21 @@ class LiveRun:
                 root=self._root,
                 memory=self._publication,
                 disk=self._disk,
+            )
+            publisher = self._publisher
+            self._workers = WorkerRequests(
+                self._group,
+                prepared,
+                {rank: n.files for n in self._nodes for rank in n.prepared},
+                metadata=self._metadata,
+                checkpoints=RunCheckpoints(
+                    self._artifacts,
+                    session_id=self.identity.session_id,
+                    history=lambda: publisher.history_id,
+                    configuration=info.configuration,
+                    plans=self.plans,
+                    world_size=len(prepared),
+                ),
             )
             self._controller = RunController(
                 self._records,

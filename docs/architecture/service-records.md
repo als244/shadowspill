@@ -118,8 +118,8 @@ chunks to a borrowed blocking sink, handles partial writes, and returns the exac
 written manifest. It does not flush, close or commit the destination. File saves
 use this same encoder and retain temporary-file/fsync/rename behavior. The stream
 owner must admit storage and confirm successful rank completion before publishing;
-an incomplete or failed stream is discarded. Global checkpoint coordination and
-cross-layout conversion are still unfinished. Archive metadata inspection can
+an incomplete or failed stream is discarded. Cross-layout conversion remains
+unfinished. Archive metadata inspection can
 import without loading the framework or worker-side tensor I/O.
 
 `checkpoint.checkpoint_size` derives exact archive bytes from the same tensor
@@ -148,8 +148,8 @@ already exist in the authenticated owner's storage. Global metadata bytes are
 admitted exactly before starting any rank. This entry point accepts trusted
 installed writers; uploaded files need separate validation. Its socket tests cover
 multiple rank archives, a missing completion, mismatched identities and preserved
-aliases. Ordered worker-command integration, public checkpoint methods, logical
-cross-layout conversion and RNG restoration remain unfinished.
+aliases. Public checkpoint methods, logical cross-layout conversion and RNG
+restoration remain unfinished.
 
 `stage_checkpoint` uses `ArtifactStore.stage_group` to return completed, private
 files as a `StagedArtifacts` owner. The dispatcher can persist its execution receipt
@@ -167,7 +167,7 @@ the declared bytes still requires the normal ticketed completion reply; the
 persistent artifact owner verifies its digest before publication. A lost stream
 or reply invalidates the channel and cannot authorize replay. Real CPU children
 exercise transfers directly into admitted artifact storage, process loss at both
-boundaries, and consecutive invocations. Save-command binding remains unfinished.
+boundaries, and consecutive invocations.
 
 `WorkerGroup.staged` exposes the existing all-ready boundary to storage admission.
 Ordinary `run` uses that same path. An admission failure aborts every ready worker
@@ -177,6 +177,24 @@ execution stop the group. Two real CPU workers exercise this path through one
 staged persistent artifact group, including insufficient storage and loss of the
 second completion. This is internal invocation ownership, separate from client
 training settings and the server's setup component.
+
+Ordered `save` requests now pass through the same PreparedRequests, dispatcher,
+WorkerRequests and initialized WorkerExecution as training. Save settings contain
+only a friendly name, JSON metadata and authoritative weight selection. The worker
+reports exact archive bytes and state/Program identities while staged, and checks
+both ready and completion envelopes before release. The server admits all files
+before broadcasting execute, then receives native rank archives through the private
+stream. Completed private files remain owned until the dispatcher records effects
+and ResultPublisher commits the generation; later updates wait for that boundary.
+Save results have a dedicated checkpoint reference, separate from tensor outputs.
+Open accumulation is rejected before contacting workers. Admission failure preserves
+state; missing completions stop the group without replay. Assembly failure after
+all completions is a publication failure with known state. CPU subprocess tests
+cover these boundaries and restore the emitted archives. The service currently
+includes frozen tensors; declared base omission, public SDK calls, ordered restore,
+conversion and RNG integration still require implementation. Worker tensor copies
+reuse admitted staging; checkpoint descriptor/manifest peaks are included in the
+deployment's decoded-artifact allowance and still need scale qualification.
 
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration

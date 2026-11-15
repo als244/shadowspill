@@ -49,7 +49,7 @@ def loop(*, stage=None, execute=None):
             if stage:
                 stage(command)
 
-        return SimpleNamespace(command=command, verify_inputs=verify)
+        return SimpleNamespace(command=command, checkpoint=None, verify_inputs=verify)
 
     def run(bound):
         events.append(("execute", bound.command.invocation))

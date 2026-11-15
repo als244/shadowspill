@@ -20,11 +20,14 @@ from shadowspill.checkpoint import checkpoint_size, load_checkpoint, write_check
 from shadowspill.checkpoint.archive import WriteAll, read_manifest
 from shadowspill.checkpoint.identity import state_identity
 from shadowspill.server.checkpoints import (
-    checkpoint_id,
     publish_checkpoint,
     stage_checkpoint,
 )
-from shadowspill.training.worker.checkpoint_records import RankSave, RankSaved
+from shadowspill.training.worker.checkpoint_records import (
+    RankSave,
+    RankSaved,
+    checkpoint_id,
+)
 from shadowspill_client.protocol.checkpoints import CheckpointInfo, CheckpointManifest
 from shadowspill_client.protocol.codec import decode
 

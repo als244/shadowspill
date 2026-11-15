@@ -16,7 +16,9 @@ SIZE = (5 << 16) + 17
 
 
 def bind(command):
-    return SimpleNamespace(command=command, verify_inputs=lambda budget: None)
+    return SimpleNamespace(
+        command=command, checkpoint=None, verify_inputs=lambda budget: None
+    )
 
 
 def execute(bound):

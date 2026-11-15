@@ -17,15 +17,22 @@ from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.session.state import Transition
 from shadowspill.training.session.worker_inputs import ReadyInputLoader
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.protocol.checkpoints import CheckpointInfo
 from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.payload import MEDIA_TYPE
 from shadowspill_client.protocol.requests import STATE_OPERATIONS, ArtifactRef
 
+from .checkpoint_records import RankSave
 from .protocol import CODEC, WorkerCall, WorkerScope
 
 
 def worker_call(
-    call: PreparedCall, transition: Transition, scope: WorkerScope, invocation: int
+    call: PreparedCall,
+    transition: Transition,
+    scope: WorkerScope,
+    invocation: int,
+    *,
+    checkpoint: CheckpointInfo | None = None,
 ) -> WorkerCall:
     """Translate the existing coordinator decision, never recompute training state."""
     if scope.rank not in call.worker_plans(transition):
@@ -49,6 +56,7 @@ def worker_call(
         transition.skipped,
         transition.accumulate_gradients,
         frames,
+        checkpoint,
     )
     # This must succeed before dispatch; receivers enforce the same envelope.
     CODEC.encode(result)
@@ -62,6 +70,7 @@ class BoundWorkerCall:
     controls: CallControls
     hyperparams: Mapping[str, Scalar]
     frames: tuple[tuple[SpooledFrame, OperationBinding], ...]
+    checkpoint: RankSave | None = None
 
     @property
     def input_bytes(self) -> int:

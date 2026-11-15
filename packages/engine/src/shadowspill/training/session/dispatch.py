@@ -4,8 +4,9 @@ from collections.abc import Callable
 from threading import Lock
 from typing import Protocol
 
-from shadowspill_client.protocol.codec import ProtocolError, encode
-from shadowspill_client.protocol.requests import OperationRequest
+from shadowspill_client.protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
+from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, ProtocolError, encode
+from shadowspill_client.protocol.requests import ArtifactRef, OperationRequest
 from shadowspill_client.protocol.results import (
     Acceptance,
     ExecutionReceipt,
@@ -213,6 +214,11 @@ class RequestDispatcher:
             loss_params=request.loss_params,
             grad_scale=request.grad_scale,
             state_valid=after.valid,
+            checkpoint=ArtifactRef(
+                "c" * 128, "0" * 64, MAX_METADATA_BYTES, CHECKPOINT_MEDIA_TYPE
+            )
+            if request.operation == "save"
+            else None,
         )
         encode(ExecutionReceipt.from_result(result))
         encode(

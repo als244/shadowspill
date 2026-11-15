@@ -10,7 +10,9 @@ from shadowspill_client.protocol.requests import ArtifactRef
 
 from .bindings import BoundWorkerCall
 from .channel import read_message, write_message
+from .checkpoint_records import RankSaved, checkpoint_id
 from .protocol import (
+    CODEC,
     WorkerCall,
     WorkerControl,
     WorkerOutputError,
@@ -40,7 +42,7 @@ class WorkerLoop:
         self,
         scope: WorkerScope,
         bind: Callable[[WorkerCall], BoundWorkerCall],
-        execute: Callable[[BoundWorkerCall], ArtifactRef | None],
+        execute: Callable[[BoundWorkerCall], ArtifactRef | RankSaved | None],
         budget: BufferBudget,
     ) -> None:
         self.scope, self._bind, self._execute = scope, bind, execute
@@ -78,6 +80,28 @@ class WorkerLoop:
             if bound.command != command:
                 raise ProtocolError("worker binding changed the received command")
             bound.verify_inputs(self._budget)
+            if (command.request.operation == "save") != (bound.checkpoint is not None):
+                raise ValueError("worker has no prepared checkpoint encoder")
+            ready = WorkerReply(
+                identity, "ready", "not_started", checkpoint=bound.checkpoint
+            )
+            CODEC.encode(ready)
+            if bound.checkpoint is not None:
+                info = command.checkpoint
+                assert info is not None
+                saved = RankSaved("0" * 64, bound.checkpoint.confirmation(info))
+                reference = bound.checkpoint.reference(
+                    f"{checkpoint_id(info)}.rank.{bound.checkpoint.rank}", saved.sha256
+                ).archive
+                CODEC.encode(
+                    WorkerReply(
+                        identity,
+                        "completed",
+                        "completed",
+                        result=reference,
+                        saved=saved,
+                    )
+                )
         except Exception as error:
             # No execution token was exposed. The controller can abort other
             # ready participants and preserve live state after every reply.
@@ -86,7 +110,7 @@ class WorkerLoop:
                 identity, "failed", "not_started", message=_message(error)
             )
         self._pending = identity, bound
-        return WorkerReply(identity, "ready", "not_started")
+        return ready
 
     def _control(self, control: WorkerControl) -> WorkerReply:
         if self._pending is None or self._pending[0] != control.ticket:
@@ -99,12 +123,29 @@ class WorkerLoop:
         if control.action == "abort":
             return WorkerReply(identity, "aborted", "not_started")
         try:
-            result = self._execute(bound)
+            value = self._execute(bound)
+            saved = None
+            result: ArtifactRef | None
+            if isinstance(value, RankSaved):
+                saved = value
+                description, info = bound.checkpoint, bound.command.checkpoint
+                if description is None or info is None:
+                    raise ValueError("worker returned an unprepared checkpoint")
+                description.confirm(info, saved.manifest)
+                result = description.reference(
+                    f"{checkpoint_id(info)}.rank.{description.rank}", saved.sha256
+                ).archive
+            else:
+                if bound.checkpoint is not None:
+                    raise ValueError("worker omitted its checkpoint completion")
+                result = value
             if bound.command.request.operation == "close":
                 # serve writes this final receipt before leaving its normal
                 # installed-worker cleanup scope. No further call can execute.
                 self.invalidate()
-            return WorkerReply(identity, "completed", "completed", result=result)
+            return WorkerReply(
+                identity, "completed", "completed", result=result, saved=saved
+            )
         except WorkerOutputError as error:
             return WorkerReply(identity, "failed", "completed", message=_message(error))
         except Exception as error:

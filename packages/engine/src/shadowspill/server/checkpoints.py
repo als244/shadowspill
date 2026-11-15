@@ -8,11 +8,18 @@ all ranks, the global manifest and a friendly name together.
 """
 
 import hashlib
+import sys
 from collections.abc import Callable, Sequence
 
 from shadowspill.orchestration.launch.publication import OutputSpec, OutputWriter
 from shadowspill.orchestration.launch.staging import COPY_BYTES
-from shadowspill.training.worker.checkpoint_records import RankSave, RankSaved
+from shadowspill.training.session.prepared import PreparedCall
+from shadowspill.training.session.state import Transition
+from shadowspill.training.worker.checkpoint_records import (
+    RankSave,
+    RankSaved,
+    checkpoint_id,
+)
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
     RANK_MEDIA_TYPE,
@@ -28,9 +35,60 @@ from .artifacts import MAX_GROUP_ARTIFACTS, ArtifactStore
 from .records.artifact_index import ArtifactAlias
 
 
-def checkpoint_id(info: CheckpointInfo) -> str:
-    key = "\0".join((info.session_id, info.run_id, info.request_id))
-    return "checkpoint." + hashlib.sha256(key.encode()).hexdigest()
+class RunCheckpoints:
+    """Provide storage/provenance to an already initialized training run."""
+
+    def __init__(
+        self,
+        artifacts: ArtifactStore,
+        *,
+        session_id: str,
+        history: Callable[[], str],
+        configuration: ArtifactRef,
+        plans: ArtifactRef,
+        world_size: int,
+    ) -> None:
+        self.artifacts, self.session_id, self.history = artifacts, session_id, history
+        self.configuration, self.plans, self.world_size = (
+            configuration,
+            plans,
+            world_size,
+        )
+
+    def describe(self, call: PreparedCall, transition: Transition) -> CheckpointInfo:
+        request, settings = call.request, call.request.save
+        if (
+            settings is None
+            or request.operation != "save"
+            or transition.command != "save"
+            or transition.request_id != request.identity.request_id
+            or not transition.before.valid
+            or transition.before.accumulation.open
+        ):
+            raise ValueError("checkpoint requires a valid completed-update boundary")
+        return CheckpointInfo(
+            self.session_id,
+            request.identity.run_id,
+            self.history(),
+            request.identity.request_id,
+            transition.before.completed_updates,
+            self.world_size,
+            self.configuration,
+            self.plans,
+            sys.byteorder,
+            weights=settings.weights,
+            metadata=settings.metadata,
+        )
+
+    def stage(
+        self,
+        info: CheckpointInfo,
+        ranks: Sequence[RankSave],
+        write: Callable[[RankSave, OutputWriter], RankSaved],
+        *,
+        name: str | None,
+    ) -> StagedArtifacts:
+        return stage_checkpoint(self.artifacts, info, ranks, write, name=name)
 
 
 def publish_checkpoint(

@@ -1,11 +1,12 @@
 """Checkpoint descriptions shared by private workers and their coordinator."""
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from shadowspill_client._records import integer
+from shadowspill_client._records import Record, Value, integer, mapping
 from shadowspill_client.protocol.checkpoints import (
     RANK_MEDIA_TYPE,
     CheckpointInfo,
@@ -15,7 +16,7 @@ from shadowspill_client.protocol.requests import ArtifactRef
 
 
 @dataclass(frozen=True)
-class RankSave:
+class RankSave(Record):
     """An exact, quiescent worker description; no exported tensor bytes."""
 
     rank: int
@@ -43,7 +44,18 @@ class RankSave:
         )
 
     def confirm(self, info: CheckpointInfo, manifest: Mapping[str, Any]) -> None:
-        expected = {
+        expected = mapping(self.confirmation(info), "checkpoint confirmation")
+        actual = mapping(
+            {key: manifest.get(key) for key in expected}, "rank completion"
+        )
+        if actual != expected:
+            raise ValueError(
+                f"rank {self.rank} checkpoint completion differs from admission"
+            )
+
+    def confirmation(self, info: CheckpointInfo) -> dict[str, Any]:
+        """Bounded completion fields; the full tensor manifest stays in the archive."""
+        return {
             "format": "shadowspill.checkpoint",
             "version": 2,
             "logical_rank": self.rank,
@@ -55,17 +67,20 @@ class RankSave:
             "frozen_state_id": info.frozen_state_id,
             "metadata": info.rank_metadata(),
         }
-        if any(manifest.get(key) != value for key, value in expected.items()):
-            raise ValueError(
-                f"rank {self.rank} checkpoint completion differs from admission"
-            )
 
 
 @dataclass(frozen=True)
-class RankSaved:
+class RankSaved(Record):
     """Returned only after a rank's writer and required transfer finish."""
 
     sha256: str
-    manifest: Mapping[str, Any]
+    manifest: Mapping[str, Value]
+
+    def __post_init__(self) -> None:
+        ArtifactRef("completion", self.sha256, 0)
+        object.__setattr__(self, "manifest", mapping(self.manifest, "rank completion"))
 
 
+def checkpoint_id(info: CheckpointInfo) -> str:
+    key = "\0".join((info.session_id, info.run_id, info.request_id))
+    return "checkpoint." + hashlib.sha256(key.encode()).hexdigest()

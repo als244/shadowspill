@@ -16,15 +16,22 @@ from shadowspill.orchestration.launch.file_grants import (
     FileGrants,
     resolve_file,
 )
-from shadowspill.orchestration.launch.publication import OutputFile, OutputFiles
+from shadowspill.orchestration.launch.publication import (
+    OutputFile,
+    OutputFiles,
+    OutputWriter,
+)
 from shadowspill.orchestration.launch.staging import FileDelivery
 from shadowspill.training.session.dispatch import ExecutionNotStarted
 from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.session.state import Transition
 from shadowspill_client.buffers import BufferBudget, BufferLease
+from shadowspill_client.protocol.checkpoints import CheckpointInfo
 from shadowspill_client.protocol.codec import MAX_METADATA_BYTES
 from shadowspill_client.protocol.requests import ArtifactRef
 
+from .checkpoint_records import RankSave, RankSaved, checkpoint_id
+from .checkpoint_storage import CheckpointFiles, CheckpointStorage
 from .group import WorkerGroup
 from .output_files import FileOutputs
 from .output_frame import WorkerOutputFrame
@@ -58,6 +65,7 @@ class WorkerRequests:
         nodes: Mapping[int, NodeFiles],
         *,
         metadata: BufferBudget,
+        checkpoints: CheckpointStorage | None = None,
     ) -> None:
         if (
             group.connections.keys() != prepared.keys()
@@ -75,6 +83,7 @@ class WorkerRequests:
             MappingProxyType(dict(nodes)),
         )
         self._metadata = metadata
+        self._checkpoints = checkpoints
         # Bound retained command objects plus a full codec envelope per worker
         # before creating them. Encoding itself remains serial and bounded.
         self._bytes = (4096 + 8 * MAX_METADATA_BYTES) * len(prepared)
@@ -112,7 +121,12 @@ class WorkerRequests:
                 self.closed = result.ready = True
                 return result
             try:
-                commands = self.group.commands(call, transition)
+                checkpoint = None
+                if call.request.operation == "save":
+                    if self._checkpoints is None:
+                        raise ValueError("run has no checkpoint storage")
+                    checkpoint = self._checkpoints.describe(call, transition)
+                commands = self.group.commands(call, transition, checkpoint=checkpoint)
                 self._prepare(result, call, commands)
             except BaseException as error:
                 try:
@@ -147,7 +161,11 @@ class WorkerRequests:
                     raise ExecutionNotStarted(str(error)) from error
                 raise
             try:
-                replies = self.group.run(commands)
+                replies = (
+                    self.group.run(commands)
+                    if checkpoint is None
+                    else self._save(result, commands, checkpoint)
+                )
                 if closing:
                     # Executor close replies precede process/log finalization.
                     # The dispatcher's receipt requires confirmed child exit.
@@ -173,6 +191,70 @@ class WorkerRequests:
             return result
         finally:
             self._busy.release()
+
+    def _save(
+        self,
+        result: WorkerResults,
+        commands: Mapping[int, WorkerCall],
+        info: CheckpointInfo,
+    ) -> Mapping[int, WorkerReply]:
+        assert self._checkpoints is not None
+        with self.group.staged(commands) as invocation:
+            descriptions = []
+            for rank, reply in invocation.ready.items():
+                description = reply.checkpoint
+                if description is None or description.rank != rank:
+                    raise ValueError("worker omitted its checkpoint admission")
+                worker = self.prepared[rank]
+                plans = worker.bindings.prepared.plans[rank]
+                if description.program != plans[
+                    worker.bindings.primary
+                ].program.digest or dict(description.additional_programs) != {
+                    name: plan.program.digest
+                    for name, plan in plans.items()
+                    if name != worker.bindings.primary
+                }:
+                    raise ValueError(
+                        "checkpoint admission differs from prepared Programs"
+                    )
+                descriptions.append(description)
+
+            def write(rank: RankSave, sink: OutputWriter) -> RankSaved:
+                if not invocation.released:
+                    invocation.execute()
+                invocation.connections[rank.rank].receive_stream(
+                    sink, size_bytes=rank.size_bytes
+                )
+                reply = invocation.finish(rank.rank)
+                if (
+                    reply.saved is None
+                    or reply.result
+                    != rank.reference(
+                        f"{checkpoint_id(info)}.rank.{rank.rank}", reply.saved.sha256
+                    ).archive
+                ):
+                    raise ValueError(
+                        "worker omitted its complete checkpoint confirmation"
+                    )
+                return reply.saved
+
+            settings = next(iter(commands.values())).request.save
+            assert settings is not None
+            # Install the owner before the group context finalizer can fail.
+            # WorkerResults remains registered even if cleanup must be retried.
+            try:
+                result.checkpoint = self._checkpoints.stage(
+                    info, descriptions, write, name=settings.name
+                )
+            except Exception as error:
+                if not invocation.complete:
+                    raise
+                # Every rank confirmed completion. Failed metadata/file assembly
+                # is publication failure, not an uncertain worker invocation.
+                result.publication_error = (str(error).strip() or type(error).__name__)[
+                    :1024
+                ]
+            return invocation.results
 
     def _prepare(
         self,
@@ -255,6 +337,8 @@ class WorkerResults:
         self._files: dict[int, OutputFile] = {}
         self.frames: dict[int, WorkerOutputFrame] = {}
         self.replies: Mapping[int, WorkerReply] = {}
+        self.checkpoint: CheckpointFiles | None = None
+        self.publication_error: str | None = None
         self._active = self.ready = self.closed = False
         self._producing: set[int] = set()
         self._lock = RLock()
@@ -279,12 +363,22 @@ class WorkerResults:
         with self._lock:
             if self.closed or not self.ready:
                 raise RuntimeError("worker outputs have no confirmed completion")
+            if self.publication_error is not None:
+                raise OSError(self.publication_error)
             for rank, reply in self.replies.items():
                 if reply.status != "completed":
                     raise OSError(reply.message or "worker output publication failed")
                 file = self._files.get(rank)
                 if file is None:
-                    if reply.result is not None:
+                    if self.checkpoint is not None:
+                        if (
+                            reply.saved is None
+                            or reply.result not in self.checkpoint.references
+                        ):
+                            raise ValueError(
+                                "checkpoint completion differs from owned files"
+                            )
+                    elif reply.result is not None:
                         raise ValueError("skipped worker returned an unexpected output")
                 else:
                     if reply.result is None:
@@ -313,6 +407,9 @@ class WorkerResults:
                 return
             if self._active:
                 raise RuntimeError("worker producers have not confirmed termination")
+            if self.checkpoint is not None:
+                self.checkpoint.close()
+                self.checkpoint = None
             while self._grants:
                 self._grants[-1].close()
                 self._grants.pop()

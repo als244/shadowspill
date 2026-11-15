@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from .._records import Record, integer, names, number, record, text
+from .checkpoints import CHECKPOINT_MEDIA_TYPE
 from .controls import Scalar
 from .requests import (
     OPERATIONS,
@@ -170,6 +171,7 @@ class OperationResult(Record):
     grad_scale: float | None = None
     loss: float | int | None = None
     state_valid: bool = True
+    checkpoint: ArtifactRef | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -180,6 +182,14 @@ class OperationResult(Record):
             "skipped",
         ):
             raise ValueError("unknown result operation or outcome")
+        if self.checkpoint is not None:
+            object.__setattr__(
+                self, "checkpoint", record(ArtifactRef, self.checkpoint, "checkpoint")
+            )
+            if self.checkpoint.media_type != CHECKPOINT_MEDIA_TYPE:
+                raise ValueError("checkpoint result requires a checkpoint manifest")
+        if (self.operation == "save") != (self.checkpoint is not None):
+            raise ValueError("only checkpoint saves return a checkpoint reference")
         identifier(self.history_id, "history ID")
         integer(self.completed_updates, "completed_updates")
         if type(self.state_valid) is not bool:

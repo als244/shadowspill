@@ -142,7 +142,9 @@ def workers(
                 if reject and reject(rank, command):
                     raise OSError("input delivery failed")
 
-            return SimpleNamespace(command=command, verify_inputs=verify)
+            return SimpleNamespace(
+                command=command, checkpoint=None, verify_inputs=verify
+            )
 
         def run(bound):
             events.append((rank, "execute", bound.command.invocation))

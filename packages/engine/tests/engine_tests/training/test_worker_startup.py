@@ -64,7 +64,7 @@ def peers(*, different=None, early=None, lost=None):
 
                 def bind(command):
                     return SimpleNamespace(
-                        command=command, verify_inputs=lambda _: None
+                        command=command, checkpoint=None, verify_inputs=lambda _: None
                     )
 
                 def execute(bound):
@@ -433,7 +433,7 @@ def test_worker_serve_orders_readiness_and_closes_channels(
     incoming.seek(0)
 
     @contextmanager
-    def open_worker(self, runtime, resolve, outputs):
+    def open_worker(self, runtime, resolve, outputs, *, checkpoint_stream=None):
         events.append("open")
         try:
             if failure == "initialize":

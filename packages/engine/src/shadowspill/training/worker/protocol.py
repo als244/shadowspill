@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from shadowspill_client._records import Record, integer, names, record, text
+from shadowspill_client.protocol.checkpoints import CheckpointInfo
 from shadowspill_client.protocol.codec import RecordCodec
 from shadowspill_client.protocol.requests import (
     STATE_OPERATIONS,
@@ -14,6 +15,8 @@ from shadowspill_client.protocol.requests import (
     OperationRequest,
     identifier,
 )
+
+from .checkpoint_records import RankSave, RankSaved
 
 
 class WorkerOutputError(RuntimeError):
@@ -134,6 +137,7 @@ class WorkerCall(Record):
     skipped: bool
     accumulate_gradients: bool
     frames: Sequence[ArtifactRef] = ()
+    checkpoint: CheckpointInfo | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scope", record(WorkerScope, self.scope, "scope"))
@@ -141,6 +145,27 @@ class WorkerCall(Record):
             self, "request", record(OperationRequest, self.request, "request")
         )
         integer(self.invocation, "worker invocation", minimum=1)
+        if self.checkpoint is not None:
+            object.__setattr__(
+                self,
+                "checkpoint",
+                record(CheckpointInfo, self.checkpoint, "checkpoint"),
+            )
+        if (self.request.operation == "save") != (self.checkpoint is not None):
+            raise ValueError(
+                "checkpoint save requires the coordinator's quiescent boundary"
+            )
+        if self.checkpoint is not None:
+            info, settings = self.checkpoint, self.request.save
+            assert settings is not None
+            if (
+                info.run_id != self.scope.run_id
+                or info.request_id != self.request.identity.request_id
+                or self.scope.rank >= info.world_size
+                or info.weights != settings.weights
+                or info.metadata != settings.metadata
+            ):
+                raise ValueError("checkpoint boundary differs from its worker request")
         if self.request.operation in STATE_OPERATIONS:
             if self.candidate is not None or self.skipped or self.accumulate_gradients:
                 raise ValueError("state commands have no compute candidate or flags")
@@ -221,6 +246,8 @@ class WorkerReply(Record):
     effect: Literal["not_started", "completed", "unknown"]
     result: ArtifactRef | None = None
     message: str | None = None
+    checkpoint: RankSave | None = None
+    saved: RankSaved | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "ticket", record(WorkerTicket, self.ticket, "ticket"))
@@ -244,6 +271,20 @@ class WorkerReply(Record):
             )
             if self.status != "completed":
                 raise ValueError("only completed workers return output artifacts")
+        if self.checkpoint is not None:
+            object.__setattr__(
+                self, "checkpoint", record(RankSave, self.checkpoint, "checkpoint")
+            )
+            if self.status != "ready" or self.checkpoint.rank != self.ticket.scope.rank:
+                raise ValueError("only a ready worker describes its checkpoint rank")
+        if self.saved is not None:
+            object.__setattr__(self, "saved", record(RankSaved, self.saved, "saved"))
+            if (
+                self.status != "completed"
+                or self.result is None
+                or self.result.sha256 != self.saved.sha256
+            ):
+                raise ValueError("saved checkpoint requires its completed artifact")
 
 
 CODEC = RecordCodec(
