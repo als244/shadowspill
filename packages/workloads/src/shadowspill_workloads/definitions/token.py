@@ -164,15 +164,23 @@ def outputs(config, *, policy):
     }
 
 
-def forward_logprobs(model, inputs, loss_inputs, loss_params):
-    return {
-        "logprobs": model.target_logprobs(
-            targets=loss_inputs["target_tokens"], **inputs
-        ).float()
-    }
+def forward_logprobs(model, inputs, loss_inputs, loss_params, *, packed=False):
+    values = model.target_logprobs(
+        targets=loss_inputs["target_tokens"], **inputs
+    ).float()
+    return {"logprobs": values.reshape(-1) if packed else values}
 
 
-def compute(model, inputs, loss_inputs, loss_params, *, policy=False, tensors=False):
+def compute(
+    model,
+    inputs,
+    loss_inputs,
+    loss_params,
+    *,
+    policy=False,
+    tensors=False,
+    packed=False,
+):
     import torch
 
     from shadowspill.pytorch.contracts import ObjectiveResult
@@ -197,14 +205,20 @@ def compute(model, inputs, loss_inputs, loss_params, *, policy=False, tensors=Fa
         loss = cross_entropy(current, valid, loss_inputs["weights"])
     values = {"loss_sum": loss.detach(), "valid_tokens": valid.sum()}
     if tensors:
-        values["logprobs"] = torch.where(valid, current, 0.0)
+        output = torch.where(valid, current, 0.0)
+        values["logprobs"] = output.reshape(-1) if packed else output
     return ObjectiveResult(loss, values)
 
 
 def bind(config, key, *, policy):
     if key.operation == "forward" and key.outputs == "logprobs":
-        return forward_logprobs
-    return partial(compute, policy=policy, tensors=key.outputs == "logprobs")
+        return partial(forward_logprobs, packed=config.batching == "pack")
+    return partial(
+        compute,
+        policy=policy,
+        tensors=key.outputs == "logprobs",
+        packed=config.batching == "pack",
+    )
 
 
 def register(registry):

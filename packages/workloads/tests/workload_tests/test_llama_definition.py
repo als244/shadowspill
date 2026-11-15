@@ -77,7 +77,10 @@ def prepared(*, cap=8, length=4, count=4, sizes=(8,), counts=(1,), lora=None):
             }
         ),
         memory=Memory(1, 1),
-        operations={"forward_backward": ["metrics"], "forward": ["logprobs"]},
+        operations={
+            "forward_backward": ["metrics", "logprobs"],
+            "forward": ["logprobs"],
+        },
         prepare=Preparation(
             candidates=BuildCandidates(microbatch_sizes=sizes),
             planning=PlanningOptions(microbatch_counts=counts),
@@ -87,11 +90,11 @@ def prepared(*, cap=8, length=4, count=4, sizes=(8,), counts=(1,), lora=None):
 
 
 @contextmanager
-def bound(setup, layouts, datums, *, forward=False):
+def bound(setup, layouts, datums, *, forward=False, outputs=None):
     key = (
         OperationKey("forward", "logprobs", "evaluation")
         if forward
-        else (OperationKey("forward_backward", "metrics"))
+        else (OperationKey("forward_backward", outputs or "metrics"))
     )
     candidate = layouts.families[key][0]
     binding = candidate.bindings[0, 0]
@@ -330,9 +333,9 @@ def test_forward_capture_accepts_changed_packing_without_rollout_or_loss_fields(
 
             # Capture the target-logprob computation without a training loss.
             def computation(model, inputs, loss_inputs, controls):
-                return setup.objective.computation(binding.contract.key)(
-                    model, inputs, loss_inputs, controls
-                )["logprobs"]
+                return binding.forward(model, inputs, loss_inputs, controls)[1][
+                    "logprobs"
+                ]
 
             if exported is None:
 
@@ -354,8 +357,24 @@ def test_forward_capture_accepts_changed_packing_without_rollout_or_loss_fields(
                     torch.tensor([record.inputs["tokens"]]),
                     torch.tensor([record.loss_inputs["target_tokens"]]),
                 )
-                torch.testing.assert_close(actual[:, start : start + length], expected)
+                torch.testing.assert_close(
+                    actual[start : start + length], expected.reshape(-1)
+                )
                 start += length
+
+
+def test_training_logprobs_use_declared_flat_alignment_after_model_input_views():
+    _, setup, layouts = prepared()
+    model = setup.model.create()
+    with bound(setup, layouts, datums(), outputs="logprobs") as (binding, adapted):
+        args = binding.arguments(adapted)
+        captured = capture_training_objective(model, binding.objective, args)
+        loss, values, loss_sum, count = captured.exported.exported_program.module()(
+            *args
+        )
+        assert values.shape == (8,)
+        assert values[1] == 0 and torch.count_nonzero(values[5:]) == 0
+        assert count == 4 and torch.isfinite(loss) and loss == loss_sum
 
 
 @pytest.mark.parametrize(
