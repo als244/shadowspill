@@ -20,12 +20,11 @@ from shadowspill.checkpoint import checkpoint_size, load_checkpoint, write_check
 from shadowspill.checkpoint.archive import WriteAll, read_manifest
 from shadowspill.checkpoint.identity import state_identity
 from shadowspill.server.checkpoints import (
-    RankSave,
-    RankSaved,
     checkpoint_id,
     publish_checkpoint,
     stage_checkpoint,
 )
+from shadowspill.training.worker.checkpoint_records import RankSave, RankSaved
 from shadowspill_client.protocol.checkpoints import CheckpointInfo, CheckpointManifest
 from shadowspill_client.protocol.codec import decode
 
@@ -251,6 +250,7 @@ class Block(importlib.abc.MetaPathFinder):
             raise AssertionError('framework in checkpoint coordinator: ' + name)
 sys.meta_path.insert(0, Block())
 from shadowspill.server.checkpoints import publish_checkpoint
+from shadowspill.training.worker.checkpoint_records import RankSave, RankSaved
 from shadowspill_client.protocol.checkpoints import CheckpointManifest
 assert 'shadowspill.checkpoint.save' not in sys.modules
 assert 'shadowspill.checkpoint.load' not in sys.modules
