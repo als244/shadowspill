@@ -11,7 +11,7 @@ from weakref import WeakSet
 
 from ._async import CallFuture, ConnectionWork
 from ._records import Record, integer
-from .artifacts import ArtifactHandle
+from .artifacts import ArtifactHandle, ArtifactTransfers
 from .buffers import BufferBudget
 from .captures import NsightCapture, get_nsys
 from .checkpoints import CheckpointHandle
@@ -28,6 +28,7 @@ from .protocol.training import ResolvedTraining
 from .training import TrainingClient
 from .transport.http import HTTP_SCRATCH_BYTES, HTTPTransport
 from .transport.ssh import SSH, SSH_BYTES, SSHTunnel
+from .uploads import UPLOAD_SCRATCH_BYTES
 
 R = TypeVar("R", bound=Record)
 
@@ -62,7 +63,11 @@ class ServiceClient:
         self._handle_lock = Lock()
         self._memory = BufferBudget(
             max_connections
-            * (HTTP_SCRATCH_BYTES + FILE_SCRATCH_BYTES + CHECKPOINT_SCRATCH_BYTES)
+            * (
+                HTTP_SCRATCH_BYTES
+                + max(FILE_SCRATCH_BYTES, UPLOAD_SCRATCH_BYTES)
+                + CHECKPOINT_SCRATCH_BYTES
+            )
             + SSH_BYTES,
             3 * max_connections + 1,
         )
@@ -81,6 +86,7 @@ class ServiceClient:
                 ssl_context=ssl_context,
             )
             self.info = self._request("GET", "/v1/info", ServiceInfo)
+            self.artifacts = ArtifactTransfers(self)
         except BaseException:
             self.close()
             raise

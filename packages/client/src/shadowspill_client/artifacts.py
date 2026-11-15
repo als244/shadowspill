@@ -49,3 +49,29 @@ class ArtifactHandle:
             return destination
 
         return self._service._work.submit(transfer)
+
+
+class ArtifactTransfers:
+    """Explicit transfers into this authenticated service's artifact namespace."""
+
+    def __init__(self, service: ServiceClient) -> None:
+        self._service = service
+
+    def upload(
+        self, path: str | Path, *, reference: ArtifactRef | None = None
+    ) -> CallFuture[ArtifactHandle]:
+        """Register a file or checkpoint directory, resuming verified progress.
+
+        Repeating this call explicitly resumes an incomplete transfer. Exchanges
+        are never retried automatically. Keep local files unchanged until the
+        future finishes. Supply ``reference`` to preserve an existing dependency
+        identity when copying between services. No workers start on upload.
+        """
+        from .uploads import upload
+
+        if reference is not None and not isinstance(reference, ArtifactRef):
+            raise TypeError("upload reference requires an immutable artifact")
+        source = Path(path)
+        return self._service._work.submit(
+            lambda: upload(self._service, source, reference)
+        )

@@ -3,6 +3,7 @@
 import hashlib
 import sys
 from dataclasses import replace
+from typing import BinaryIO
 
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill_client.protocol.checkpoints import (
@@ -18,6 +19,41 @@ from shadowspill_client.protocol.requests import (
 from shadowspill_client.protocol.training import ResolvedTraining
 
 from .artifacts import ArtifactStore
+
+
+def read_checkpoint_manifest(
+    reference: ArtifactRef, stream: BinaryIO
+) -> CheckpointManifest:
+    """Decode only a bounded, checksum-verified portable generation manifest."""
+    if (
+        reference.media_type != CHECKPOINT_MEDIA_TYPE
+        or reference.size_bytes > MAX_METADATA_BYTES
+    ):
+        raise ValueError("checkpoint is not a bounded generation manifest")
+    body = stream.read(reference.size_bytes + 1)
+    if (
+        len(body) != reference.size_bytes
+        or hashlib.sha256(body).hexdigest() != reference.sha256
+    ):
+        raise ValueError("checkpoint manifest differs from its immutable reference")
+    value = decode(body)
+    if not isinstance(value, CheckpointManifest):
+        raise ValueError("artifact is not a checkpoint generation")
+    return value
+
+
+def require_checkpoint_dependencies(
+    artifacts: ArtifactStore, manifest: CheckpointManifest, *, setup: bool = True
+) -> None:
+    """Registration requires all ranks; restore additionally requires its setup."""
+    dependencies = [row.archive for row in manifest.ranks]
+    if setup:
+        dependencies[:0] = [manifest.info.configuration, manifest.info.plans]
+    for dependency in dependencies:
+        if artifacts.get(dependency.id) != dependency:
+            raise ValueError(f"checkpoint dependency is unavailable: {dependency.id}")
+        with artifacts.open(dependency):
+            pass
 
 
 def validate_resume_optimizer(
@@ -93,21 +129,8 @@ class CheckpointResolver:
         """Creation supplies an immutable reference, without a run-local alias."""
         if self.artifacts.get(reference.id) != reference:
             raise ValueError("checkpoint is not in this owner's artifact storage")
-        if (
-            reference.media_type != CHECKPOINT_MEDIA_TYPE
-            or reference.size_bytes > MAX_METADATA_BYTES
-        ):
-            raise ValueError("checkpoint is not a bounded generation manifest")
         with self.artifacts.open(reference) as stream:
-            body = stream.read(reference.size_bytes + 1)
-        if (
-            len(body) != reference.size_bytes
-            or hashlib.sha256(body).hexdigest() != reference.sha256
-        ):
-            raise ValueError("checkpoint manifest differs from its immutable reference")
-        value = decode(body)
-        if not isinstance(value, CheckpointManifest):
-            raise ValueError("artifact is not a checkpoint generation")
+            value = read_checkpoint_manifest(reference, stream)
         info = value.info
         if info.byteorder != sys.byteorder:
             raise ValueError("checkpoint byte order requires explicit conversion")
@@ -115,15 +138,7 @@ class CheckpointResolver:
             raise ValueError("checkpoint ownership requires explicit conversion")
         if info.frozen_state_id is not None:
             raise ValueError("this run has no declared frozen-base checkpoint identity")
-        for dependency in (
-            info.configuration,
-            info.plans,
-            *(rank.archive for rank in value.ranks),
-        ):
-            if self.artifacts.get(dependency.id) != dependency:
-                raise ValueError(
-                    f"checkpoint dependency is unavailable: {dependency.id}"
-                )
+        require_checkpoint_dependencies(self.artifacts, value)
         resolved = ResolvedCheckpoint(reference, value)
         validate_resume_optimizer(self.artifacts, resolved, self.configuration)
         return resolved

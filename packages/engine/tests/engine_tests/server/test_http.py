@@ -50,16 +50,17 @@ def endpoint(
     client_tls=None,
     wrong_scope=False,
     host="127.0.0.1",
+    artifact_bytes=4 << 20,
 ):
     entered = []
     memory = BufferBudget(HTTP_SCRATCH_BYTES * concurrency, concurrency)
-    artifact_memory = BufferBudget(8 << 20, 3)
+    artifact_memory = BufferBudget(8 << 20, 5)
     with ArtifactStore(
         tmp_path / "artifacts",
         owner_id="owner",
         cache_root=tmp_path,
         memory=artifact_memory,
-        max_bytes=4 << 20,
+        max_bytes=artifact_bytes,
         max_artifacts=10,
     ) as artifacts:
 

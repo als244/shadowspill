@@ -11,6 +11,7 @@ from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BufferedIOBase, BufferedReader, RawIOBase
+from pathlib import Path
 from threading import Lock
 from time import monotonic
 from typing import TYPE_CHECKING, Protocol, cast
@@ -19,6 +20,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from shadowspill.training.session.writers import Attachment
 from shadowspill_client._records import Record, number
 from shadowspill_client.buffers import BufferBudget, BufferLease
+from shadowspill_client.protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
 from shadowspill_client.protocol.codec import (
     MAX_METADATA_BYTES,
     ProtocolError,
@@ -39,9 +41,14 @@ from shadowspill_client.protocol.service import (
 )
 from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.protocol.training import ResolvedTraining
+from shadowspill_client.protocol.uploads import ArtifactUpload
 
 from .artifacts import ArtifactStore
 from .authentication import BearerTokens
+from .checkpoint_restore import (
+    read_checkpoint_manifest,
+    require_checkpoint_dependencies,
+)
 from .creation_records import CreationRecord
 from .nsight import missing_manifest, read_manifest
 from .records.artifact_index import ArtifactAlias
@@ -333,6 +340,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:
         self._serve()
 
+    def do_DELETE(self) -> None:
+        self._serve()
+
     def _serve(self) -> None:
         self.close_connection = True
         try:
@@ -411,6 +421,9 @@ class _Handler(BaseHTTPRequestHandler):
             raise ProtocolError("read requests have no body")
         if parts == ("v1", "info") and self.command == "GET" and not query:
             self._reply(ServiceInfo(self.server.incarnation, owner))
+            return
+        if parts[:2] == ("v1", "uploads") and not query:
+            self._uploads(owner, parts[2:], body)
             return
         if (
             parts == ("v1", "training", "describe")
@@ -577,6 +590,65 @@ class _Handler(BaseHTTPRequestHandler):
                     self._reply(status)
                     return
             raise KeyError("route")
+
+    def _uploads(self, owner: str, parts: tuple[str, ...], body: _Body) -> None:
+        """Authenticated artifact registration; never creates or mutates a run."""
+        with self.server.artifacts(owner) as store:
+            if store.owner_id != owner:
+                raise PermissionError("upload crossed artifact owner scope")
+            if not parts and self.command == "POST":
+                if self.headers.get("Content-Type") != CONTROL_MEDIA_TYPE:
+                    raise ProtocolError("upload requires control metadata")
+                request = body.record()
+                if type(request) is not ArtifactUpload:
+                    raise ProtocolError(
+                        "upload requires an immutable artifact reference"
+                    )
+                self._reply(store.uploads.begin(request.reference))
+                return
+            if not parts:
+                raise KeyError("unknown upload route")
+            name = parts[0]
+            status = store.uploads.get(name)
+            if status is None:
+                raise KeyError("unknown upload")
+            if len(parts) == 1 and self.command == "GET":
+                self._reply(status)
+                return
+            if len(parts) == 4 and parts[1] == "chunks" and self.command == "PUT":
+                if (
+                    re.fullmatch(r"0|[1-9][0-9]{0,18}", parts[2]) is None
+                    or self.headers.get("Content-Type") != status.reference.media_type
+                ):
+                    raise ProtocolError("invalid upload chunk offset or media type")
+                self._reply(
+                    store.uploads.chunk(
+                        name, int(parts[2]), body.length, parts[3], body
+                    )
+                )
+                return
+            if body.length:
+                raise ProtocolError("upload action has an unexpected body")
+            if len(parts) == 2 and parts[1] == "complete" and self.command == "POST":
+
+                def validate(path: Path) -> None:
+                    if status.reference.media_type == CHECKPOINT_MEDIA_TYPE:
+                        with path.open("rb") as stream:
+                            manifest = read_checkpoint_manifest(
+                                status.reference, stream
+                            )
+                        # A local backup contains ranks, not implicit copies of
+                        # Plans or frozen bases. Restore checks those separately
+                        # before starting workers, through the same resolver.
+                        require_checkpoint_dependencies(store, manifest, setup=False)
+
+                self._reply(store.uploads.complete(name, validate=validate))
+                return
+            if len(parts) == 1 and self.command == "DELETE":
+                store.uploads.abort(name)
+                self._reply(ArtifactUpload(status.reference))
+                return
+            raise KeyError("unknown upload route")
 
     def _nsys(
         self, identity: RunIdentity, query: dict[str, list[str]], body: _Body

@@ -42,8 +42,8 @@ configures deployment memory, concurrency and storage envelopes. These limits
 belong to the deployment, independently of client training settings.
 Incomplete artifact transfers reserve their declared storage size and expire after
 24 hours without a verified chunk by default (`ServerLimits.upload_ttl_seconds`).
-The service reclaims them on storage access or reopening; saved artifacts do not
-expire under this policy.
+The service reclaims them on new admissions, upload access or reopening; saved
+artifacts do not expire under this policy.
 
 ```python
 from shadowspill_client import SSH, ServiceClient
@@ -221,6 +221,35 @@ a completed manifest is preserved and rejected as a new destination. Default
 copy. File locking currently targets the Linux and macOS client platforms; Linux
 qualification is recorded separately from the outstanding macOS release gate.
 
+Upload a local file or downloaded checkpoint directory with
+`service.artifacts.upload(path).result()`. The returned handle refers to a saved
+artifact; uploading does not start workers or restore training state. File paths
+refer to the laptop. Keep the files unchanged until the future finishes.
+
+Uploads send bounded chunks and retain verified progress on the server. After a
+failed connection, call `upload` again explicitly, including from a new client.
+It verifies the retained prefix and continues from the acknowledged offset;
+exchanges are never retried automatically. A checkpoint directory keeps its exact
+rank references and registers its manifest after every rank is committed. Completed
+files are verified locally on retry and need no second upload.
+
+```python
+copied = other_service.artifacts.upload("./step-50").result()
+
+# Copy setup dependencies explicitly, preserving their recorded identities.
+for reference in (manifest.info.configuration, manifest.info.plans):
+    path = f"./dependencies/{reference.id}"  # Existing local parent directory.
+    service.artifact(reference).download(path).result()
+    other_service.artifacts.upload(path, reference=reference).result()
+```
+
+Use `reference=...` when an existing manifest refers to that immutable artifact
+ID, or to preserve the original checkpoint ID. Without it, standalone files use
+a content-derived ID. Copying a checkpoint alone does not copy configuration,
+Plans or a frozen base. Missing setup dependencies are reported before workers
+start. Upload registration verifies file checksums and the complete rank set;
+normal setup/restore still checks executable Plans and tensor compatibility.
+
 Pass `runtime_trace=True` to a compute call to record that invocation. Its
 `result.traces` contains downloadable ZIP handles, one per participating worker.
 Each archive contains a request/Plan/rank/update association in `manifest.json`,
@@ -262,6 +291,5 @@ The deployment installs Nsight and provides collector host, disk and finalizatio
 allowances through `ServerLimits.creation.nsys`; client settings contain no
 server paths or executable names. Captured timings include profiler overhead.
 
-Service base omission and resumable uploads remain under
-implementation. Qualification evidence and remaining hardware coverage are
-tracked separately from this API contract.
+Service base omission remains under implementation. Qualification evidence and
+remaining hardware coverage are tracked separately from this API contract.
