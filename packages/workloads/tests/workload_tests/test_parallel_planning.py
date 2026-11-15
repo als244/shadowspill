@@ -199,7 +199,7 @@ def test_parallel_workers_preserve_joint_evaluation_admission_and_archives(tmp_p
     evaluation = Plan.load(tmp_path / "plans/evaluation.ssp")
     assert shared_memory(training, {"evaluation": evaluation}).aliases[
         "evaluation"
-    ] == {"weight_storage": "weight_storage"}
+    ] == {"weight_storage": ("", "weight_storage")}
 
 
 def test_all_failed_preparations_remain_diagnostic_rows(tmp_path):

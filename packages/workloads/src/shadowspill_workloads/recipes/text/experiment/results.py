@@ -3,19 +3,20 @@
 import json
 from dataclasses import asdict
 
-from shadowspill.training import _state
+from shadowspill.checkpoint import metadata_values
 from shadowspill.training.observations import MetricSummary, MetricTable
 from shadowspill.training.results import StepResult
 
 
 def save(result, path):
     path.write_text(
-        json.dumps(_state.encode(None if result is None else asdict(result))) + "\n"
+        json.dumps(metadata_values.encode(None if result is None else asdict(result)))
+        + "\n"
     )
 
 
 def load(path):
-    values = _state.decode(json.loads(path.read_text()))
+    values = metadata_values.decode(json.loads(path.read_text()))
     if values is None:
         return None
     summary = values["summary"]
