@@ -1,0 +1,55 @@
+"""Existing allocation settings, independent of model setup or client connections."""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from types import MappingProxyType
+
+from shadowspill.orchestration.launch.admission import NodeAdmission
+from shadowspill.orchestration.launch.node_capacity import discover_capacity
+
+
+@dataclass(frozen=True)
+class Allocation:
+    """A snapshot of the service's assigned environment, never a scheduler request.
+
+    The current deployment adapter serves one local node or assigned single-node
+    Slurm step. Multi-node bootstrap must supply real agents and is not inferred
+    from a controller's visible devices. Construction performs no device probe.
+    """
+
+    environment: Mapping[str, str] = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.environment, Mapping) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in self.environment.items()
+        ):
+            raise TypeError("allocation environment requires string names and values")
+        environment = dict(self.environment)
+        environment.pop("SHADOWSPILL_TOKEN", None)
+        object.__setattr__(self, "environment", MappingProxyType(environment))
+
+    @classmethod
+    def from_environment(cls) -> Allocation:
+        return cls(os.environ)
+
+    def _local_node(self, root: Path, *, controller_host_bytes: int) -> NodeAdmission:
+        # Refuse an incomplete deployment before probing or starting workers.
+        for key in ("SLURM_JOB_NUM_NODES", "SLURM_NNODES"):
+            value = self.environment.get(key)
+            if value is not None and (not value.isdecimal() or int(value) != 1):
+                raise NotImplementedError(
+                    "multi-node service requires allocation-agent bootstrap; "
+                    "the local adapter cannot use only the controller node"
+                )
+        return NodeAdmission(
+            discover_capacity(
+                environment=self.environment,
+                root=root,
+                reserved_host_bytes=controller_host_bytes,
+            )
+        )

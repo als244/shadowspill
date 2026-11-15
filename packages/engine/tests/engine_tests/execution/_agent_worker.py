@@ -33,14 +33,12 @@ from shadowspill.orchestration.launch.host_arena import HostArena  # noqa: E402
 from shadowspill.orchestration.launch.node_capacity import discover_capacity  # noqa: E402
 from shadowspill.orchestration.launch.publication import require_output  # noqa: E402
 from shadowspill.orchestration.launch.staging import FileDelivery  # noqa: E402
+from shadowspill.server import Allocation, Server, ServerLimits  # noqa: E402
 from shadowspill.server.authentication import BearerTokens  # noqa: E402
 from shadowspill.server.http import HTTP_SCRATCH_BYTES, HTTPService, RunAccess  # noqa: E402
 from shadowspill.server.jobs import RunJobs  # noqa: E402
 from shadowspill.server.live import LiveRun  # noqa: E402
-from shadowspill.server.local_creation import (  # noqa: E402
-    LocalCreationFactory,
-    LocalCreationLimits,
-)
+from shadowspill.server.local_creation import LocalCreationLimits  # noqa: E402
 from shadowspill.server.records.requests import RunIdentity  # noqa: E402
 from shadowspill.server.results import ResultPublisher  # noqa: E402
 from shadowspill.server.storage import ServiceStorage  # noqa: E402
@@ -578,32 +576,29 @@ def qualify_allocation_stop():
 qualify_allocation_stop()
 
 
-def qualify_creation_factory():
+def qualify_public_server():
     receipts = []
-    factory_disk = BufferBudget(512 << 20, 200)
-    http_bytes = HTTP_SCRATCH_BYTES * 2
-    fixed_bytes = ((160 + 512) << 20) + http_bytes
-    with (
-        HostArena(admission, 160 << 20, 8) as storage_arena,
-        HostArena(admission, 512 << 20, 1) as job_arena,
-        HostArena(admission, http_bytes, 2) as http_arena,
-        persistent_storage(
-            storage_arena.budget, incarnation="factory-agent"
-        ) as storage,
-        storage.artifacts("owner") as artifacts,
-    ):
-        configured = LocalCreationFactory(
-            storage,
-            admission,
-            packages=packages,
-            root=directory,
-            cache=directory,
-            environment={
+    with Server(
+        allocation=Allocation(
+            {
                 **os.environ,
                 "TORCHINDUCTOR_CACHE_DIR": str(directory / "factory-inductor"),
                 "TRITON_CACHE_DIR": str(directory / "factory-triton"),
-            },
-            limits=LocalCreationLimits(
+            }
+        ),
+        storage_root=directory / "public-service",
+        cache_root=directory / "public-cache",
+        workload_packages=packages,
+        authentication=BearerTokens({token: "owner"}),
+        limits=ServerLimits(
+            max_http_requests=2,
+            max_open_records=1,
+            max_artifact_owners=1,
+            artifact_bytes=256 << 20,
+            artifact_count=400,
+            temporary_disk_bytes=512 << 20,
+            temporary_files=200,
+            creation=LocalCreationLimits(
                 preparation_host_bytes=8 << 30,
                 preparation_disk_bytes=256 << 20,
                 worker=host_allowance,
@@ -612,46 +607,16 @@ def qualify_creation_factory():
                 log_bytes=64 << 10,
                 max_preparation_files=1024,
             ),
-            disk=factory_disk,
-            base_host_bytes=fixed_bytes,
-        )
-        owners = []
-
-        def factory(info):
-            owner = configured(info)
-            owners.append(owner)
-            return owner
-
-        jobs = RunJobs(
-            storage,
-            factory,
-            memory=job_arena.budget,
-            host_bytes=512 << 20,
-            max_runs=1,
-            reap_interval=0.01,
-        )
-        jobs.start()
-
-        def describe(settings):
-            with job_arena.budget.reserve(512 << 20, timeout=0):
-                return configured.describe(settings)
-
-        service = HTTPService(
-            ("127.0.0.1", 0),
-            incarnation="factory-agent",
-            authentication=BearerTokens({token: "owner"}),
-            runs=jobs.access,
-            artifacts=storage.artifacts,
-            jobs=jobs,
-            describe=describe,
-            memory=http_arena.budget,
-            request_timeout=30,
-        )
-        thread = Thread(target=service.serve_forever, kwargs={"poll_interval": 0.01})
-        thread.start()
-        try:
+        ),
+    ) as service:
+        service.start(port=0)
+        # Inspect internal owners only to qualify cleanup; all setup and training
+        # use public APIs on both sides of the connection.
+        jobs, storage = service._jobs, service._storage
+        node, disk = service._node, service._disk
+        with storage.artifacts("owner") as artifacts:
             options = {
-                "port": service.server_port,
+                "port": service.address[1],
                 "token": token,
                 "config": prepared_worker.bindings.setup.config.to_dict(),
                 "oracle": oracle,
@@ -698,12 +663,9 @@ def qualify_creation_factory():
             while jobs.used != (0, 0):
                 assert monotonic() < deadline, jobs.failures()
                 Event().wait(0.01)
-            assert len(owners) == 2 and all(
-                owner.closed and owner.run.closed for owner in owners
-            )
-            assert factory_disk.used == job_arena.budget.used == (0, 0)
-            assert admission.used.host_bytes == fixed_bytes
-            assert not admission.used.devices
+            assert not jobs.failures() and disk.used == (0, 0)
+            assert node.used.host_bytes == service.limits.fixed_host_bytes
+            assert not node.used.devices
             for result in client_receipt["runs"]:
                 mode = result["mode"]
                 identity = RunIdentity("owner", "factory-session", result["run_id"])
@@ -732,19 +694,13 @@ def qualify_creation_factory():
                         "all_run_claims_released": True,
                     }
                 )
-        finally:
-            service.shutdown()
-            service.server_close()
-            thread.join(timeout=5)
-            assert not thread.is_alive() and http_arena.budget.used == (0, 0)
-            jobs.close(timeout=30)
-    assert admission.used.claims == 0 and factory_disk.used == (0, 0)
+    assert service.closed and node.used.claims == 0 and disk.used == (0, 0)
     (directory / "factory-creation.json").write_text(
         json.dumps(receipts, indent=2) + "\n"
     )
 
 
-qualify_creation_factory()
+qualify_public_server()
 (directory / "host-accounting.json").write_text(
     json.dumps(
         {

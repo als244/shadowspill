@@ -6,9 +6,36 @@ require the engine, PyTorch, Triton or the supplied workloads.
 
 `ServiceClient` supports authenticated connections, CPU setup previews, creation,
 reattachment and explicit artifact downloads. `TrainingClient` submits live
-operations. Public server/allocation constructors, checkpoint methods and richer
-Plan inspection are still being implemented. Existing phase and Trainer APIs
-remain available during migration.
+operations. `shadowspill.server.Server` owns startup and the assigned resources.
+Checkpoint methods and richer Plan inspection are still being implemented.
+Existing phase and Trainer APIs remain available during migration.
+
+Start the service on Chicago or another machine with an existing GPU allocation:
+
+```python
+from shadowspill.server import Allocation, Server
+
+# SHADOWSPILL_TOKEN supplies the same credential used by the client.
+server = Server(
+    allocation=Allocation.from_environment(),
+    storage_root="/path/to/service-data",
+    workload_packages=["shadowspill-workloads", "my-workloads"],
+)
+server.serve(host="127.0.0.1", port=8000)
+```
+
+List only installed definition packages. Construction snapshots deployment
+settings; `serve` discovers assigned resources, recovers stored records and starts
+the listener. The current allocation adapter supports a local machine or an
+assigned single-node Slurm step. Multi-node agent bootstrap remains unfinished
+and is rejected explicitly. The server never requests a scheduler allocation.
+
+For embedding, `server.start(...)` returns after opening a background listener;
+`server.address` reports its bound address. `server.close()` stops creation and
+live runs, waits for owned workers and preserves stored records/artifacts. Failed
+cleanup retains its owners for another `close()` attempt. Optional `ServerLimits`
+configures deployment memory, concurrency and storage envelopes. These limits
+belong to the deployment, independently of client training settings.
 
 ```python
 from shadowspill_client import SSH, ServiceClient

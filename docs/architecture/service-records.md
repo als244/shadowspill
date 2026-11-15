@@ -39,9 +39,20 @@ loading a whole artifact. It does not redirect credentials or retry a mutation.
 Reachable listeners require TLS; loopback HTTP also supports SSH forwarding.
 TLS verification, owner isolation, disconnects, incomplete uploads and capacity
 limits have real loopback tests. Ordinary/provider GPU tests use these routes for
-updates, discard, close and downloads after worker exit. Public server constructors,
-SDK training handles, range-resumable transfers and actual
-multi-node deployment remain separate implementation work.
+updates, discard, close and downloads after worker exit. Public server constructors
+and SDK training handles compose these same components. Range-resumable transfers
+and actual multi-node deployment remain separate implementation work.
+
+`server.Server` separates the allocation lifetime from per-run creation and live
+request submission. Construction performs no probes or worker startup. Starting
+validates installed definitions, discovers the assigned local node, reserves
+deployment envelopes, recovers storage, and starts the HTTP service. Description
+has a separate bounded CPU reservation so an active training run does not occupy
+its slot. `LocalCreationFactory` retains all build/profile/plan/initialization and
+worker startup; the public wrapper adds no second execution path. Shutdown joins
+HTTP handlers and creation/run owners before storage and allocation retirement.
+Failed cleanup preserves downstream ownership for retry. Public record imports
+load neither the service runtime nor the SDK training connection.
 
 Creation now uses `POST /v1/runs/{session}/{run}` with the portable
 `TrainingCreation` record, including exact resolved settings, initialization/Plan
