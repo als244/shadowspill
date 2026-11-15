@@ -13,6 +13,7 @@ from .buffers import BufferBudget
 from .captures import NsightCapture
 from .checkpoints import CheckpointHandle
 from .datum import Datum
+from .metrics import MetricQueries
 from .plans import PlansHandle
 from .protocol.checkpoint_settings import SaveSettings
 from .protocol.controls import Scalar
@@ -74,6 +75,7 @@ class TrainingClient:
             else PlansHandle(info.plans, service, info.run_id)
         )
         self.requests = RequestQueries(self)
+        self.metrics = MetricQueries(service, self.session_id, self.run_id)
         self._route = f"/v1/runs/{self.session_id}/{self.run_id}"
         self._submission, self._upload, self._state = Lock(), Condition(), Lock()
         self._next = 1 if writer is None else writer.next_sequence

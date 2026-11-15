@@ -524,6 +524,19 @@ class _Handler(BaseHTTPRequestHandler):
             if run.records.identity != identity:
                 raise PermissionError("run lookup crossed authenticated scope")
             route = parts[4:]
+            if route == ("metrics",) and self.command == "GET":
+                if set(query) - {"after", "through", "limit"}:
+                    raise ProtocolError("unknown metric query field")
+                self._reply(
+                    run.records.metrics(
+                        after=int(query.get("after", ["0"])[0]),
+                        through=None
+                        if "through" not in query
+                        else int(query["through"][0]),
+                        limit=int(query.get("limit", ["100"])[0]),
+                    )
+                )
+                return
             if (
                 len(route) == 2
                 and route[0] == "writers"

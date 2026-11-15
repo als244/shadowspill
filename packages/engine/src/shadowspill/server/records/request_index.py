@@ -25,7 +25,10 @@ class RequestIndex:
             self._db.execute("""CREATE TABLE requests (
                 id TEXT PRIMARY KEY, sequence INTEGER UNIQUE NOT NULL,
                 digest TEXT NOT NULL, request BLOB NOT NULL, status BLOB NOT NULL,
-                state TEXT NOT NULL, execution BLOB)""")
+                state TEXT NOT NULL, execution BLOB, finished_position INTEGER)""")
+            self._db.execute(
+                "CREATE INDEX completed_requests ON requests(finished_position)"
+            )
             self._db.execute(
                 "CREATE TABLE writers (id TEXT PRIMARY KEY, lease BLOB NOT NULL)"
             )
@@ -110,7 +113,7 @@ class RequestIndex:
         self, request: OperationRequest, status: RequestStatus, checksum: str
     ) -> None:
         self._db.execute(
-            "INSERT INTO requests VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            "INSERT INTO requests VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)",
             (
                 request.identity.request_id,
                 request.identity.sequence,
@@ -121,11 +124,29 @@ class RequestIndex:
             ),
         )
 
-    def update(self, status: RequestStatus) -> None:
+    def update(self, status: RequestStatus, *, position: int) -> None:
         self._db.execute(
-            "UPDATE requests SET status=?, state=? WHERE id=?",
-            (encode(status), status.state, status.identity.request_id),
+            "UPDATE requests SET status=?, state=?, finished_position=? WHERE id=?",
+            (
+                encode(status),
+                status.state,
+                position
+                if status.state in ("completed", "skipped", "failed")
+                else None,
+                status.identity.request_id,
+            ),
         )
+
+    def finished(self, after: int, through: int, limit: int) -> list[tuple[int, str]]:
+        return [
+            (int(row[0]), str(row[1]))
+            for row in self._db.execute(
+                """SELECT finished_position, id FROM requests
+                WHERE finished_position > ? AND finished_position <= ?
+                ORDER BY finished_position LIMIT ?""",
+                (after, through, limit),
+            )
+        ]
 
     def pending(self, after: int, limit: int) -> list[str]:
         return [

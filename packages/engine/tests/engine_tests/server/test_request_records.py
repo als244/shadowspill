@@ -174,7 +174,7 @@ def test_index_failure_after_durable_completion_requires_reconciliation(
     records.dispatch("a")
     records.executed(ExecutionReceipt.from_result(result(command)))
 
-    def fail_index(status):
+    def fail_index(status, *, position):
         raise OSError("query cache unavailable")
 
     monkeypatch.setattr(records._index, "update", fail_index)

@@ -13,6 +13,7 @@ from types import TracebackType
 from typing import Any, Self
 
 from shadowspill_client.protocol.codec import digest, encode
+from shadowspill_client.protocol.metrics import MetricPage
 from shadowspill_client.protocol.requests import (
     ArtifactRef,
     OperationRequest,
@@ -169,6 +170,24 @@ class RequestRecords:
             self._usable()
             key = self._index.id_at_sequence(sequence)
             return None if key is None else self._require(key)
+
+    def metrics(
+        self, *, after: int = 0, through: int | None = None, limit: int = 100
+    ) -> MetricPage:
+        """Project committed outcomes; this never touches a worker or appends data."""
+        from .metrics import metric_page
+
+        with self._mutex:
+            self._usable()
+            return metric_page(
+                self._index,
+                session_id=self.identity.session_id,
+                run_id=self.identity.run_id,
+                position=self._journal.position,
+                after=after,
+                through=through,
+                limit=limit,
+            )
 
     def submit(self, request: OperationRequest) -> RequestStatus:
         """Persist metadata/ID reservation; this is explicitly not acceptance."""
@@ -354,7 +373,7 @@ class RequestRecords:
                 and status.result.operation != request.operation
             ):
                 raise ValueError("journal outcome operation differs")
-            self._index.update(status)
+            self._index.update(status, position=record.position)
         else:
             raise ValueError(f"unknown request journal event: {record.kind}")
 

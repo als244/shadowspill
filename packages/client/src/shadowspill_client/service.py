@@ -17,9 +17,11 @@ from .captures import NsightCapture, get_nsys
 from .checkpoints import CheckpointHandle
 from .creation import TrainingFuture, create_training_client, get_training_client
 from .downloads import CHECKPOINT_SCRATCH_BYTES, FILE_SCRATCH_BYTES
+from .metrics import MetricQueries
 from .plans import PlansHandle, get_plans
 from .protocol.checkpoints import CHECKPOINT_MEDIA_TYPE, WEIGHTS_MEDIA_TYPE
 from .protocol.codec import ProtocolError, encode
+from .protocol.metrics import MetricPage
 from .protocol.preview import TrainingPreview
 from .protocol.requests import ArtifactRef, identifier
 from .protocol.service import ServiceInfo
@@ -138,6 +140,19 @@ class ServiceClient:
 
     def create_training_client(self, **setup: Any) -> TrainingFuture:
         return create_training_client(self, **setup)
+
+    def get_metrics(
+        self,
+        run_id: str,
+        *,
+        after: int = 0,
+        through: int | None = None,
+        limit: int = 100,
+    ) -> CallFuture[MetricPage]:
+        """Inspect retained scalar results, including after workers or services exit."""
+        return MetricQueries(self, self.session_id, run_id).query(
+            after=after, through=through, limit=limit
+        )
 
     def get_training_client(
         self, run_id: str, *, read_only: bool = False

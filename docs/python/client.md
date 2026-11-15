@@ -149,6 +149,23 @@ verifies bytes into a new local file. Existing files are preserved; a failed
 transfer removes its partial destination. Tensor data is never implicitly loaded
 by a metadata result.
 
+`training.metrics.query(after=0, limit=100).result()` reads retained scalar outcomes
+without contacting workers. `service.get_metrics(run_id, ...)` provides the same
+inspection after reconnect or service restart, without loading a training client.
+Each record has its request identity, history, completed update count, loss and
+objective metrics. Skipped and failed requests remain visible; failed publication
+retains its confirmed execution effect and counters, with unavailable scalars left
+absent. Queries preserve the values returned by training and perform no averaging.
+
+Pages contain `records`, a fixed journal boundary `through`, and an optional
+`next_cursor`. Follow `next_cursor` while keeping the same `through` to finish that
+snapshot. For a later live poll, start after the completed snapshot's `through`.
+Cursors follow durable completion order, so an earlier submitted request that
+finishes later is still returned. Restored update counters may go backward;
+journal positions remain increasing and histories stay distinct. Page limits are
+1–128 records and the existing metadata byte/node bounds can shorten a page.
+Inputs and tensor outputs are not downloaded or logged by this query.
+
 For large files, use `artifact.download(local_path, resume=True).result()` from
 the first attempt. An interrupted transfer retains bounded progress metadata and
 partial bytes in `<local_path>.shadowspill-download`. After reconnecting, attach

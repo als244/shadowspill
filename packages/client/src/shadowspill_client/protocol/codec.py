@@ -25,6 +25,7 @@ from .creation import TrainingCreation
 from .definitions import DefinitionSource, OutputSet
 from .frozen import FrozenBase
 from .inputs import InputSchema
+from .metrics import MetricPage, MetricRecord
 from .plans import PlanSummaryPage, SavedPlans
 from .preparation import ResolvedPreparation
 from .preview import TrainingPreview
@@ -77,6 +78,8 @@ _KINDS: Mapping[str, type[Record]] = {
     "plans.saved": SavedPlans,
     "checkpoint.manifest": CheckpointManifest,
     "weights.manifest": WeightsManifest,
+    "metrics.page": MetricPage,
+    "metrics.record": MetricRecord,
     "checkpoint.frozen_base": FrozenBase,
     "nsys.manifest": NsightManifest,
     "artifact.upload": ArtifactUpload,
