@@ -19,6 +19,7 @@ from shadowspill_workloads.models.shared.decoder import (
     language_model_loss,
     swiglu,
 )
+from shadowspill_workloads.models.shared.token_head import target_logprobs
 
 from ..config import Config
 
@@ -132,6 +133,21 @@ class Model(nn.Module):
     ) -> torch.Tensor:
         return language_model_loss(
             self.hidden(tokens, seq_lens), self.lm_head, targets, reduction
+        )
+
+    def target_logprobs(
+        self,
+        tokens: torch.Tensor,
+        targets: torch.Tensor,
+        sequence_lengths: SequenceLengths = None,
+        *,
+        head_chunk_size: int | None = None,
+    ) -> torch.Tensor:
+        return target_logprobs(
+            self.hidden(tokens, sequence_lengths),
+            self.lm_head,
+            targets,
+            chunk_size=head_chunk_size,
         )
 
 

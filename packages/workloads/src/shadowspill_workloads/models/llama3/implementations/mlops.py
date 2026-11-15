@@ -18,6 +18,7 @@ from shadowspill_workloads.models.shared.decoder import (
     packed_metadata,
 )
 from shadowspill_workloads.models.shared.norms import RMSNorm
+from shadowspill_workloads.models.shared.token_head import target_logprobs
 
 from ..config import Config
 
@@ -151,6 +152,21 @@ class Model(nn.Module):
             self.hidden(tokens, seq_lens),
             targets,
             reduction=reduction,
+        )
+
+    def target_logprobs(
+        self,
+        tokens: torch.Tensor,
+        targets: torch.Tensor,
+        sequence_lengths: SequenceLengths = None,
+        *,
+        head_chunk_size: int | None = None,
+    ) -> torch.Tensor:
+        return target_logprobs(
+            self.hidden(tokens, sequence_lengths),
+            self.lm_head,
+            targets,
+            chunk_size=head_chunk_size,
         )
 
 

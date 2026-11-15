@@ -78,3 +78,18 @@ declares the same model on `meta`, and the quickstart runs it with
 the [phase benchmark factory](../../recipes/text/benchmark/README.md)
 with `model="llama3-8b"`. The
 [model catalog](../../MODELS.md) covers dtypes, LoRA, inputs and the loss.
+# Target logprobs
+
+Both implementations expose `target_logprobs(tokens, targets, sequence_lengths=None,
+head_chunk_size=None)` for the installed summed token objectives. The result is
+FP32 with the target shape. The head runs in row chunks and accepts arbitrary
+per-token gradients, including signed weights and policy losses. LoRA heads and
+tied embeddings use their ordinary projection modules.
+
+The default bounds each FP32 logits block to 64 MiB or one vocabulary row,
+whichever is larger. `head_chunk_size` is a positive structural row count. This
+is a per-projection bound: the engine must still plan retained activations and
+backward workspace. The existing scalar `loss()` path remains unchanged while
+trainer callers migrate. CPU value, gradient and update checks cover full, tied,
+frozen-head and LoRA-head cases; service/GPU and throughput qualification of the
+new target-logprob path remain outstanding.
