@@ -157,6 +157,59 @@ def test_partial_destination_writes_are_bounded_and_download_digest_is_checked()
         assert destination.getvalue() == PAYLOAD
 
 
+@pytest.mark.parametrize(
+    "fault",
+    [None, "full", "offset", "end", "total", "size", "digest", "truncated", "corrupt"],
+)
+def test_resume_requires_exact_range_headers_and_complete_checksum(fault):
+    offset = 100003
+
+    def patch(status, headers, body):
+        if fault == "full":
+            return status, headers, body
+        headers["Content-Range"] = f"bytes {offset}-{len(body) - 1}/{len(body)}"
+        body = body[offset:]
+        headers["Content-Length"] = str(len(body))
+        if fault in ("offset", "end", "total"):
+            start = offset + (fault == "offset")
+            end = len(PAYLOAD) - 1 - (fault == "end")
+            total = len(PAYLOAD) + (fault == "total")
+            headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+        elif fault == "size":
+            headers["Content-Length"] = str(len(body) + 1)
+        elif fault == "digest":
+            headers["ETag"] = '"' + "a" * 64 + '"'
+        elif fault == "truncated":
+            body = body[:-1]
+        elif fault == "corrupt":
+            body = b"x" + body[1:]
+        return 206, headers, body
+
+    with endpoint(patch=patch) as ctx:
+        destination = io.BytesIO(PAYLOAD[:offset])
+
+        def download():
+            ctx.client.download(
+                "/v1/binary",
+                REFERENCE,
+                destination,
+                offset=offset,
+                prefix_sha256=hashlib.sha256(PAYLOAD[:offset]).hexdigest(),
+            )
+
+        if fault is None:
+            download()
+            assert destination.getvalue() == PAYLOAD
+        else:
+            with pytest.raises((ProtocolError, TransportError)):
+                download()
+            if fault not in ("truncated", "corrupt"):
+                assert destination.getvalue() == PAYLOAD[:offset]
+        assert len(ctx.events) == 1  # No automatic retries of any exchange.
+        assert ctx.events[0][2]["Range"] == f"bytes={offset}-"
+        assert ctx.events[0][2]["If-Match"] == '"' + REFERENCE.sha256 + '"'
+
+
 def test_destination_failure_releases_the_borrowed_view_even_with_retained_exception():
     borrowed = []
 
@@ -201,9 +254,12 @@ def test_http_failure_is_typed_but_does_not_invent_a_training_outcome():
     ],
 )
 def test_malformed_metadata_headers_fail_before_unbounded_body_decoding(change):
-    with endpoint(
-        patch=lambda status, headers, body: (status, {**headers, **change}, body)
-    ) as ctx, pytest.raises(ProtocolError):
+    with (
+        endpoint(
+            patch=lambda status, headers, body: (status, {**headers, **change}, body)
+        ) as ctx,
+        pytest.raises(ProtocolError),
+    ):
         ctx.client.request("GET", "/v1/control")
 
 

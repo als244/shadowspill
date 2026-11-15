@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import re
 import socket
 import ssl
 from collections.abc import Callable
@@ -437,14 +438,51 @@ class _Handler(BaseHTTPRequestHandler):
                 reference = store.get(parts[2])
                 if reference is None:
                     raise KeyError(parts[2])
+                ranges = self.headers.get_all("Range") or []
+                offset = 0
+                if ranges:
+                    if (
+                        len(ranges) != 1
+                        or re.fullmatch(r"bytes=(?:0|[1-9][0-9]{0,18})-", ranges[0])
+                        is None
+                    ):
+                        raise ProtocolError("artifact range requires one start offset")
+                    offset = int(ranges[0][6:-1])
+                matches = self.headers.get_all("If-Match") or []
+                if (ranges or matches) and matches != ['"' + reference.sha256 + '"']:
+                    self._reply(
+                        ServiceError(
+                            "artifact_changed",
+                            "Range requires the exact artifact checksum.",
+                        ),
+                        412,
+                    )
+                    return
+                if ranges and offset >= reference.size_bytes:
+                    self._reply(
+                        ServiceError(
+                            "invalid_range",
+                            "Artifact range starts outside its content.",
+                        ),
+                        416,
+                        content_range=f"bytes */{reference.size_bytes}",
+                    )
+                    return
                 with store.open(reference) as stream:
+                    stream.seek(offset)
                     self._headers(
-                        200,
-                        reference.size_bytes,
+                        206 if ranges else 200,
+                        reference.size_bytes - offset,
                         reference.media_type,
                         etag=reference.sha256,
+                        content_range=(
+                            f"bytes {offset}-{reference.size_bytes - 1}"
+                            f"/{reference.size_bytes}"
+                            if ranges
+                            else None
+                        ),
                     )
-                    remaining = reference.size_bytes
+                    remaining = reference.size_bytes - offset
                     while remaining:
                         self.remaining_time()
                         block = stream.read(min(_CHUNK, remaining))
@@ -692,7 +730,13 @@ class _Handler(BaseHTTPRequestHandler):
         self._reply(info, 202 if pending else 200)
 
     def _headers(
-        self, status: int, length: int, media: str, *, etag: str | None = None
+        self,
+        status: int,
+        length: int,
+        media: str,
+        *,
+        etag: str | None = None,
+        content_range: str | None = None,
     ) -> None:
         if (
             len(media) > 256
@@ -709,12 +753,19 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         if etag is not None:
             self.send_header("ETag", '"' + etag + '"')
+            self.send_header("Accept-Ranges", "bytes")
+        if content_range is not None:
+            self.send_header("Content-Range", content_range)
         self.end_headers()
 
-    def _reply(self, value: Record, status: int = 200) -> None:
+    def _reply(
+        self, value: Record, status: int = 200, *, content_range: str | None = None
+    ) -> None:
         if self._response_started:
             # Never append an error record to a partially written binary body.
             return
         encoded = encode(value)
-        self._headers(status, len(encoded), CONTROL_MEDIA_TYPE)
+        self._headers(
+            status, len(encoded), CONTROL_MEDIA_TYPE, content_range=content_range
+        )
         self.wfile.write(encoded)

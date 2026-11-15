@@ -6,14 +6,14 @@ import hashlib
 import http.client
 import ipaddress
 import ssl
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from io import BufferedReader
 from typing import BinaryIO, cast
 from urllib.parse import urlsplit
 
-from .._records import Record, number
+from .._records import Record, integer, number
 from ..buffers import BufferBudget
 from ..protocol.codec import MAX_METADATA_BYTES, ProtocolError, decode, encode
 from ..protocol.requests import ArtifactRef
@@ -167,6 +167,9 @@ class HTTPTransport:
         path: str,
         size: int,
         media_type: str,
+        *,
+        range_start: int | None = None,
+        if_match: str | None = None,
     ) -> None:
         if (
             method not in ("GET", "POST", "PUT", "DELETE")
@@ -189,6 +192,10 @@ class HTTPTransport:
         connection.putheader("Content-Length", str(size))
         connection.putheader("Accept", CONTROL_MEDIA_TYPE)
         connection.putheader("Connection", "close")
+        if range_start is not None:
+            connection.putheader("Range", f"bytes={range_start}-")
+        if if_match is not None:
+            connection.putheader("If-Match", '"' + if_match + '"')
         connection.endheaders()
 
     @staticmethod
@@ -277,24 +284,87 @@ class HTTPTransport:
                 return self._metadata(response)
 
     def download(
-        self, path: str, reference: ArtifactRef, destination: BinaryIO
+        self,
+        path: str,
+        reference: ArtifactRef,
+        destination: BinaryIO,
+        *,
+        offset: int = 0,
+        prefix_sha256: str | None = None,
+        progress: Callable[[int, str], None] | None = None,
     ) -> None:
-        """Verify identity/length and hash while copying into caller storage."""
+        """Verify the whole immutable file, optionally resuming a verified prefix.
+
+        A resumed destination is readable/seekable and contains exactly ``offset``
+        bytes. Its retained digest is checked before any exchange, then continued
+        while copying the suffix. Progress observes complete writes only. This
+        transport performs no retry or partial-file ownership of its own.
+        """
+        integer(offset, "download offset")
+        if offset > reference.size_bytes or (offset and prefix_sha256 is None):
+            raise ValueError("download offset requires a bounded verified prefix")
         with self._connection() as connection:
-            self._start(connection, "GET", path, 0, CONTROL_MEDIA_TYPE)
+            digest = hashlib.sha256()
+            if prefix_sha256 is not None:
+                destination.seek(0)
+                remaining = offset
+                block = b""
+                try:
+                    while remaining:
+                        block = destination.read(min(remaining, CHUNK_BYTES))
+                        if not block or len(block) > min(remaining, CHUNK_BYTES):
+                            raise ProtocolError("download prefix is truncated")
+                        digest.update(block)
+                        remaining -= len(block)
+                finally:
+                    del block
+                if destination.read(1) or digest.hexdigest() != prefix_sha256:
+                    raise ProtocolError(
+                        "download prefix differs from retained verification"
+                    )
+                destination.seek(offset)
+                if offset == reference.size_bytes:
+                    if digest.hexdigest() != reference.sha256:
+                        raise ProtocolError(
+                            "completed download differs from its reference"
+                        )
+                    return
+            self._start(
+                connection,
+                "GET",
+                path,
+                0,
+                CONTROL_MEDIA_TYPE,
+                range_start=offset if offset else None,
+                if_match=reference.sha256 if offset else None,
+            )
             with connection.getresponse() as response:
-                if response.status != 200:
+                if response.status != (206 if offset else 200):
+                    if 200 <= response.status < 300:
+                        raise ProtocolError(
+                            "binary download returned an unexpected range"
+                        )
                     self._metadata(response)
-                    raise ProtocolError("binary download requires a complete response")
+                    raise ProtocolError(
+                        "binary download requires its requested response"
+                    )
+                expected_range = (
+                    f"bytes {offset}-{reference.size_bytes - 1}/{reference.size_bytes}"
+                    if offset
+                    else None
+                )
                 if (
                     self._length(response, maximum=reference.size_bytes)
-                    != reference.size_bytes
-                    or response.headers.get("ETag") != '"' + reference.sha256 + '"'
-                    or response.headers.get("Content-Type") != reference.media_type
+                    != reference.size_bytes - offset
+                    or response.headers.get_all("ETag")
+                    != ['"' + reference.sha256 + '"']
+                    or response.headers.get_all("Content-Type")
+                    != [reference.media_type]
+                    or (response.headers.get_all("Content-Range") or [])
+                    != ([] if expected_range is None else [expected_range])
                 ):
                     raise ProtocolError("download differs from its immutable reference")
-                digest = hashlib.sha256()
-                remaining = reference.size_bytes
+                remaining = reference.size_bytes - offset
                 scratch = bytearray(CHUNK_BYTES)
                 try:
                     with memoryview(scratch) as view:
@@ -303,20 +373,25 @@ class HTTPTransport:
                                 count = response.readinto(part)
                                 if type(count) is not int or not 0 < count <= len(part):
                                     raise ProtocolError("binary download is truncated")
-                                digest.update(part[:count])
-                                offset = 0
-                                while offset < count:
-                                    with part[offset:count] as write_view:
+                                written_bytes = 0
+                                while written_bytes < count:
+                                    with part[written_bytes:count] as write_view:
                                         written = destination.write(write_view)
                                     if (
                                         type(written) is not int
-                                        or not 0 < written <= count - offset
+                                        or not 0 < written <= count - written_bytes
                                     ):
                                         raise OSError(
                                             "download destination made no progress"
                                         )
-                                    offset += written
+                                    written_bytes += written
+                                digest.update(part[:count])
                                 remaining -= count
+                                if progress is not None:
+                                    progress(
+                                        reference.size_bytes - remaining,
+                                        digest.hexdigest(),
+                                    )
                 finally:
                     del scratch
                 if digest.hexdigest() != reference.sha256:
