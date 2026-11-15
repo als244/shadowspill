@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import shadowspill.orchestration.capture._nsys_trainer as module
+import shadowspill.orchestration.capture._nsys_runtime as module
 from shadowspill.orchestration.capture.nsys import NsysCapture, nsight_trainer
 
 

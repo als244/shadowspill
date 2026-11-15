@@ -1,12 +1,11 @@
 """Worker-only capture boundaries, shared by recipes and Plan benchmarks."""
 
-from contextlib import nullcontext
 from typing import Any, cast
 
-import torch
 import torch.distributed as dist
 
-from ._nsys_runtime import capture_boundary
+from ._nsys_runtime import UpdateCapture
+from .nsys import NsysCapture
 
 
 class NsightTrainerMixin:
@@ -30,22 +29,32 @@ class NsightTrainerMixin:
             raise ValueError("nsys_steps must be a nonnegative integer")
         self.nsys_start_step = nsys_start_step
         self.nsys_steps = nsys_steps
+        self._nsys_capture = (
+            None
+            if nsys_steps == 0
+            else UpdateCapture(
+                NsysCapture(start_step=nsys_start_step, steps=nsys_steps)
+            )
+        )
         cast(Any, super()).__init__(*args, **kwargs)
 
     def step(self, **inputs: Any) -> Any:
+        window = self._nsys_capture
+        if window is None:
+            return cast(Any, super()).step(**inputs)
         number = self.step_count + 1
-        last = self.nsys_start_step + self.nsys_steps - 1
-        captured = self.nsys_steps > 0 and self.nsys_start_step <= number <= last
-        if captured and number == self.nsys_start_step:
-            capture_boundary(torch.cuda.profiler.start)
+        captured = window.begin(number, can_start=True, request_id=f"step-{number}")
         rank = dist.get_rank() if dist.is_initialized() else 0
         label = f"train/step={number}/rank={rank}"
         if captured:
             inputs["profiler_annotations"] = True
-        with torch.cuda.nvtx.range(label) if captured else nullcontext():
-            result = cast(Any, super()).step(**inputs)
+        try:
+            with window.annotation(label):
+                result = cast(Any, super()).step(**inputs)
+        except BaseException:
+            window.failed("Training execution failed during capture.")
+            raise
         # Trainer.step synchronizes execution before returning. Wait for every
         # worker before ending capture, including the final worker's GPU work.
-        if captured and number == last:
-            capture_boundary(torch.cuda.profiler.stop)
+        window.complete(number, request_id=f"step-{number}")
         return result
