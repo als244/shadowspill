@@ -6,15 +6,16 @@ stream retains its exact saved state, while an unmappable stream needs an
 explicitly supported seed initializer. It cannot initialize other state roles.
 """
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from shadowspill.artifacts._values import digest, nonnegative_int
+from shadowspill.artifacts._values import digest, encoded, nonnegative_int
 from shadowspill.artifacts.state import StateId
 
 MAX_STREAM_BYTES = 64 << 10
 MAX_STREAMS = 65536
+MAX_SNAPSHOT_BYTES = 1 << 20
 
 
 def _name(value: str, name: str) -> None:
@@ -54,6 +55,18 @@ class RandomStream:
             "rank": self.rank,
         }
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "RandomStream":
+        if not isinstance(value, Mapping) or set(value) != {
+            "identity",
+            "representation",
+            "rank",
+        }:
+            raise ValueError("invalid random stream declaration")
+        return cls(
+            StateId.from_dict(value["identity"]), value["representation"], value["rank"]
+        )
+
 
 @dataclass(frozen=True)
 class RandomState:
@@ -86,6 +99,53 @@ class RandomState:
             "payload": self.payload,
             "seed": self.seed,
         }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "RandomState":
+        if not isinstance(value, Mapping) or set(value) != {
+            "stream",
+            "payload",
+            "seed",
+        }:
+            raise ValueError("invalid random stream state")
+        return cls(
+            RandomStream.from_dict(value["stream"]), value["payload"], value["seed"]
+        )
+
+
+def snapshot(root_seed: int, states: Sequence[RandomState]) -> dict[str, Any]:
+    """Bound one worker's native-checkpoint metadata before encoding/publication."""
+    nonnegative_int(root_seed, "saved root seed")
+    if (
+        not isinstance(states, (list, tuple))
+        or len(states) > 32
+        or any(not isinstance(state, RandomState) for state in states)
+    ):
+        raise ValueError("RNG snapshot requires at most 32 declared streams")
+    _unique(tuple(state.stream for state in states))
+    result = {
+        "version": 1,
+        "root_seed": root_seed,
+        "streams": [state.to_dict() for state in states],
+    }
+    if len(encoded(result)) > MAX_SNAPSHOT_BYTES:
+        raise ValueError("RNG snapshot exceeds its metadata bound")
+    return result
+
+
+def read_snapshot(value: Mapping[str, Any]) -> tuple[int, tuple[RandomState, ...]]:
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != {"version", "root_seed", "streams"}
+        or type(value["version"]) is not int
+        or value["version"] != 1
+        or not isinstance(value["streams"], (list, tuple))
+        or len(value["streams"]) > 32
+    ):
+        raise ValueError("invalid RNG snapshot version or stream declarations")
+    states = tuple(RandomState.from_dict(row) for row in value["streams"])
+    snapshot(value["root_seed"], states)
+    return value["root_seed"], states
 
 
 @dataclass(frozen=True)
