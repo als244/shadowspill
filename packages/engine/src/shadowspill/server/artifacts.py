@@ -19,6 +19,7 @@ from shadowspill_client._records import integer
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef, identifier
 
+from .artifact_group import StagedArtifacts
 from .artifact_writer import ProducedArtifacts
 from .records.artifact_index import (
     ArtifactAlias,
@@ -252,6 +253,21 @@ class ArtifactStore:
         complete output. A final manifest may reference earlier members. Failures
         before commit reclaim all partials; uncertain commits require recovery.
         """
+        with self.stage_group(specs, write, alias=alias) as group:
+            return group.commit()
+
+    def stage_group(
+        self,
+        specs: Sequence[OutputSpec],
+        write: Callable[[OutputSpec, OutputWriter], ArtifactRef],
+        *,
+        alias: ArtifactAlias | None = None,
+    ) -> StagedArtifacts:
+        """Finish verified files without publishing or releasing their ownership.
+
+        The caller must close the returned owner even if its execution receipt
+        fails. Storage cannot close while that owner awaits commit or discard.
+        """
         if not 1 <= len(specs) <= MAX_GROUP_ARTIFACTS:
             raise ValueError(
                 f"artifact group must contain 1..{MAX_GROUP_ARTIFACTS} files"
@@ -274,9 +290,10 @@ class ArtifactStore:
             pending = self._track(ids, size, producer)
         try:
             references = producer.build(write)
-            return self._commit(pending, references, producer.paths, alias)
-        finally:
+            return StagedArtifacts(self, pending, references, producer.paths, alias)
+        except BaseException:
             self._finish(pending)
+            raise
 
     def _capacity(self, ids: tuple[str, ...], size: int) -> None:
         if self._reserved.intersection(ids):
@@ -336,6 +353,8 @@ class ArtifactStore:
 
     def _finish(self, pending: _Publication) -> None:
         with self._mutex:
+            if self._pending.get(pending.ids[0]) is not pending:
+                return  # Storage shutdown may have retried a failed owner cleanup.
             self._receiving.discard(pending.ids[0])
             try:
                 self._release(pending)

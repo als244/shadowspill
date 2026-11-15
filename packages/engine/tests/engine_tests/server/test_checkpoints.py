@@ -24,6 +24,7 @@ from shadowspill.server.checkpoints import (
     RankSaved,
     checkpoint_id,
     publish_checkpoint,
+    stage_checkpoint,
 )
 from shadowspill_client.protocol.checkpoints import CheckpointInfo, CheckpointManifest
 from shadowspill_client.protocol.codec import decode
@@ -353,3 +354,24 @@ def test_frozen_base_identity_is_retained_without_copying_its_payload(tmp_path):
             written = read_manifest(archive)
             assert written["omitted_parameters"] == ["base", "tied_base"]
             assert "base" not in {entry["name"] for entry in written["tensors"]}
+
+
+def test_completed_checkpoint_can_wait_for_receipt_or_be_discarded(tmp_path):
+    with store(tmp_path) as artifacts:
+        info = boundary(artifacts)
+        executors, ranks = workers(info)
+        before = artifacts.used
+        with stage_checkpoint(
+            artifacts,
+            info,
+            ranks,
+            lambda rank, sink: stream_rank(executors[rank.rank], info, sink),
+            name="latest",
+        ) as pending:
+            assert pending.references[-1].id == checkpoint_id(info)
+            assert artifacts.get(checkpoint_id(info)) is None
+            assert artifacts.resolve_alias("session", "run", "latest") is None
+            assert artifacts.used[1] == before[1] + 3
+        assert artifacts.used == before
+        assert artifacts.get(checkpoint_id(info)) is None
+        assert not list(artifacts._scratch.iterdir())

@@ -26,6 +26,7 @@ from shadowspill_client.protocol.checkpoints import (
 from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.requests import ArtifactRef
 
+from .artifact_group import StagedArtifacts
 from .artifacts import MAX_GROUP_ARTIFACTS, ArtifactStore
 from .records.artifact_index import ArtifactAlias
 
@@ -104,6 +105,23 @@ def publish_checkpoint(
     The supplied description comes from the same worker boundary as its encoder.
     Rank archives retain the existing format and authoritative weight selection.
     """
+    with stage_checkpoint(artifacts, info, ranks, write, name=name) as group:
+        return group.commit()[-1]
+
+
+def stage_checkpoint(
+    artifacts: ArtifactStore,
+    info: CheckpointInfo,
+    ranks: Sequence[RankSave],
+    write: Callable[[RankSave, OutputWriter], RankSaved],
+    *,
+    name: str | None = None,
+) -> StagedArtifacts:
+    """Return completed owned files for the existing dispatcher's publication phase.
+
+    Keep mutation paused through commit or discard. A receipt failure closes this
+    owner without making a checkpoint visible; publication never executes workers.
+    """
     if len(ranks) + 1 > MAX_GROUP_ARTIFACTS:
         raise ValueError("checkpoint rank set exceeds the artifact publication bound")
     ranks = tuple(ranks)
@@ -153,4 +171,4 @@ def publish_checkpoint(
             CHECKPOINT_MEDIA_TYPE,
         )
 
-    return artifacts.produce_group(specs, produce, alias=alias)[-1]
+    return artifacts.stage_group(specs, produce, alias=alias)

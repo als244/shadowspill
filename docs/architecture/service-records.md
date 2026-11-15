@@ -151,6 +151,14 @@ multiple rank archives, a missing completion, mismatched identities and preserve
 aliases. Ordered worker-command integration, public checkpoint methods, logical
 cross-layout conversion and RNG restoration remain unfinished.
 
+`stage_checkpoint` uses `ArtifactStore.stage_group` to return completed, private
+files as a `StagedArtifacts` owner. The dispatcher can persist its execution receipt
+before the publisher calls `commit`; its ordinary cleanup closes this owner on
+every path. An uncommitted close discards the files. Commit and alias visibility
+remain atomic, and an uncertain commit requires recovery. Storage shutdown refuses
+to retire a live staged owner, while failed cleanup remains retryable. This adds
+no execution path: the existing dispatcher still owns ordering and state effects.
+
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
 and host-key verification to OpenSSH. Existing masters receive only forward and
