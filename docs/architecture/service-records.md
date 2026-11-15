@@ -770,8 +770,11 @@ and Plans plus this provenance give conversion a deterministic identity; a
 completed artifact can be reused. Original update/history metadata and weight
 selection remain unchanged. Source code pins do not execute or repin old Plans
 while reading their state descriptions. Target Plans still pass the normal strict
-preparation recheck. GPU training after conversion and the broader release matrix
-require separate qualification.
+preparation recheck. Tubingen-to-Chicago qualification on an RTX 5090 covers
+ordinary/provider classifier conversion from 14 Plans to 5, followed by eager
+reference checks for split backward/optimizer and whole-step updates. It also
+reloads that converted startup checkpoint. These are two implementations of one
+architecture; distributed conversion and the broader release matrix remain open.
 
 New-run checkpoint initialization uses this CPU preflight before the existing
 all-worker startup release, followed by the same bounded checkpoint reader used
