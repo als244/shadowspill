@@ -2,11 +2,11 @@
 
 import json
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from shutil import which
-from typing import Any, cast
+from typing import Any, Self, cast
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,29 @@ class NsysCapture:
             if not isinstance(self.output_dir, (str, Path)) or not str(self.output_dir):
                 raise ValueError("output_dir must be a nonempty path or None")
             object.__setattr__(self, "output_dir", str(self.output_dir))
+
+    @classmethod
+    def from_settings(cls, settings: Mapping[str, object] | None) -> Self | None:
+        """Resolve portable capture choices; executables and paths stay local."""
+        if settings is None:
+            return None
+        if set(settings) - {
+            "start_step",
+            "steps",
+            "gpu_metrics",
+            "gpu_metrics_frequency",
+        }:
+            raise ValueError(
+                "service Nsight settings cannot select paths or executables"
+            )
+        return cls(
+            start_step=cast(int, settings.get("start_step", 2)),
+            steps=cast(int, settings.get("steps", 2)),
+            gpu_metrics=cast(bool, settings.get("gpu_metrics", True)),
+            gpu_metrics_frequency=cast(
+                int, settings.get("gpu_metrics_frequency", 1000)
+            ),
+        )
 
     @property
     def step_numbers(self) -> range:

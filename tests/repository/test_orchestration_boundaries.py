@@ -68,7 +68,8 @@ for module in ('launch.processes', 'launch.rank_device', 'launch.workers',
                'launch.log_files',
                'monitoring.lifecycle',
                'candidates', 'communication',
-               'capture.nsys', 'capture.nsys_worker'):
+               'capture.nsys', 'capture.nsys_worker',
+               'capture.files', 'capture.progress'):
     importlib.import_module('shadowspill.orchestration.' + module)
 for module in ('api', 'configuration', 'phases', 'candidates', 'reuse',
                'plan', 'search', 'execute'):

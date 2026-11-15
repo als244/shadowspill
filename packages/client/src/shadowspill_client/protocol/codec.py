@@ -18,6 +18,7 @@ from ..config import (
     Optimizer,
     Preparation,
 )
+from .captures import NsightManifest
 from .checkpoints import CheckpointManifest
 from .controls import ControlSchema
 from .creation import TrainingCreation
@@ -73,6 +74,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "plans.summary": PlanSummaryPage,
     "plans.saved": SavedPlans,
     "checkpoint.manifest": CheckpointManifest,
+    "nsys.manifest": NsightManifest,
 }
 
 

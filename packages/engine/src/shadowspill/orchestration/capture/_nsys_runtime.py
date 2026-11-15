@@ -2,9 +2,12 @@
 
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
+from typing import Literal
 
 import torch
 import torch.distributed as dist
+
+from shadowspill_client.protocol.captures import NsightWindow
 
 from .nsys import NsysCapture
 
@@ -27,15 +30,49 @@ class UpdateCapture:
     GPU errors propagate to the execution owner; metadata is inspected separately.
     """
 
-    def __init__(self, settings: NsysCapture) -> None:
+    def __init__(
+        self,
+        settings: NsysCapture,
+        *,
+        publish: Callable[[NsightWindow], None] | None = None,
+    ) -> None:
         self.settings = settings
-        self.state = "pending"
+        self.state: Literal[
+            "pending", "running", "complete", "incomplete", "missing"
+        ] = "pending"
         self.history_id: str | None = None
         self.first_request: str | None = None
         self.last_request: str | None = None
         self.completed_updates = 0
         self.error: str | None = None
         self._active = False
+        self._publish = publish
+        self.publication_error: str | None = None
+        self._changed()
+
+    @property
+    def progress(self) -> NsightWindow:
+        return NsightWindow(
+            self.settings.start_step,
+            self.settings.steps,
+            self.state,
+            self.completed_updates,
+            self.history_id,
+            self.first_request,
+            self.last_request,
+            self.error,
+        )
+
+    def _changed(self) -> None:
+        if self._publish is not None:
+            try:
+                self._publish(self.progress)
+            except Exception as error:
+                # Optional host metadata cannot undo a completed update or retain
+                # a callback traceback. Missing/stale evidence fails finalization.
+                self.publication_error = (str(error).strip() or type(error).__name__)[
+                    :1024
+                ].rstrip()
 
     @property
     def active(self) -> bool:
@@ -71,6 +108,7 @@ class UpdateCapture:
             self._active = True
             self.state = "running"
             self.history_id, self.first_request = history_id, request_id
+            self._changed()
         return True
 
     def annotation(self, label: str) -> AbstractContextManager[object]:
@@ -88,6 +126,7 @@ class UpdateCapture:
             capture_boundary(torch.cuda.profiler.stop)
             self._active = False
             self.state = "complete"
+        self._changed()
 
     def interrupt(self, message: str) -> None:
         """End an incomplete window at a known, coordinated execution boundary."""
@@ -98,6 +137,7 @@ class UpdateCapture:
             self._active = False
         self.state = "incomplete" if self.first_request is not None else "missing"
         self.error = message[:1024]
+        self._changed()
 
     def failed(self, message: str) -> None:
         """An uncertain worker cannot enter another distributed capture barrier."""
@@ -105,3 +145,4 @@ class UpdateCapture:
             self.state = "incomplete"
             self.error = message[:1024]
             self._active = False
+            self._changed()

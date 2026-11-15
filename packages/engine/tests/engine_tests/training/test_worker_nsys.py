@@ -9,6 +9,7 @@ from engine_tests.training.test_worker_loop import SCOPE
 from shadowspill.orchestration.capture import _nsys_runtime as module
 from shadowspill.orchestration.capture._nsys_runtime import UpdateCapture
 from shadowspill.orchestration.capture.nsys import NsysCapture
+from shadowspill.orchestration.capture.progress import read_progress, write_progress
 from shadowspill.training.worker.execution import WorkerExecution
 from shadowspill.training.worker.protocol import WorkerOutputError
 from shadowspill_client.buffers import BufferBudget
@@ -38,8 +39,8 @@ def events(monkeypatch):
     return result
 
 
-def worker(events, *, steps=2, fault=None):
-    capture = UpdateCapture(NsysCapture(start_step=2, steps=steps))
+def worker(events, *, steps=2, fault=None, publish=None):
+    capture = UpdateCapture(NsysCapture(start_step=2, steps=steps), publish=publish)
 
     def execute(**options):
         events.append(("execute", options["profiler_annotations"]))
@@ -174,3 +175,30 @@ def test_capture_requires_controller_history_before_worker_release(events):
     with pytest.raises(ValueError, match="coordinator history"):
         execution.prepare(call("step", 1, history=None))
     assert not events
+
+
+@pytest.mark.parametrize("fault", [False, True])
+def test_bounded_progress_file_failures_do_not_change_completed_updates(
+    tmp_path, events, fault
+):
+    path = tmp_path / "window.json"
+
+    def publish(value):
+        if fault and value.state == "complete":
+            raise OSError("capture metadata disk full")
+        write_progress(path, value)
+
+    execution, capture = worker(events, steps=1, publish=publish)
+    assert read_progress(path).state == "pending"
+    execution(call("forward_backward", 1))
+    assert read_progress(path).state == "running"
+    execution(call("optim_step", 1))
+    assert capture.state == "complete" and capture.completed_updates == 1
+    assert events.count("start") == events.count("stop") == 1
+    if fault:
+        assert capture.publication_error == "capture metadata disk full"
+        assert read_progress(path).state == "running"
+    else:
+        assert read_progress(path) == capture.progress
+        assert capture.publication_error is None
+    assert tuple(tmp_path.iterdir()) == (path,)
