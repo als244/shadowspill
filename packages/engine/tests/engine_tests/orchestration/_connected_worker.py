@@ -34,7 +34,7 @@ def record(value):
 
 def bind(command):
     return SimpleNamespace(
-        command=command, checkpoint=None, verify_inputs=lambda _: None
+        command=command, checkpoint=None, restore=None, verify_inputs=lambda _: None
     )
 
 

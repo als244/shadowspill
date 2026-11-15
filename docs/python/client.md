@@ -83,7 +83,7 @@ and `service.get_training_client(run_id).result()`. Writable reattachment fences
 the earlier writer; `read_only=True` permits inspection without takeover.
 
 Runtime methods are `step`, `forward_backward`, `optim_step`, `forward`,
-`discard_gradients`, `save_checkpoint` and ordered `close`, all returning futures. Input arrays and
+`discard_gradients`, `save_checkpoint`, `load_checkpoint` and ordered `close`, all returning futures. Input arrays and
 controls are copied before the submission returns. Bounded staging/pending counts
 apply backpressure, and snapshots that cannot fit fail promptly. Earlier pending
 requests become explicit dependencies, so a rejected backward contribution cannot
@@ -124,6 +124,8 @@ pending = training.save_checkpoint(name="step-50", metadata={"data_cursor": 50})
 checkpoint = pending.result()
 print(checkpoint.id)
 manifest = checkpoint.manifest().result()  # Small verified metadata only.
+restored = training.load_checkpoint(checkpoint.id).result()
+print(restored.metadata["data_cursor"])
 training.close().result()
 checkpoint.download("./step-50").result()  # New local directory, after worker exit.
 ```
@@ -134,11 +136,23 @@ frozen before submission and returned in the manifest. The save future preserves
 its request identity and `.accepted()` observation. Request lookup exposes the
 same handle as `training.requests.get(request_id).result().checkpoint`.
 
+`load_checkpoint` accepts an immutable ID or run-local name. Ordered acceptance
+pins the name to an immutable checkpoint, exposed by the future's
+`accepted().result().checkpoint`; moving the name later cannot retarget the load.
+The server checks the complete rank set and dependencies, verifies delivered files,
+and validates every worker's native state layout before releasing any restore.
+An open accumulation must be optimized or discarded first. A confirmed load
+restores the saved update count and starts a new history while request sequences
+continue increasing. `result.metadata` contains the saved caller metadata.
+Validation failure preserves state; failure after worker release invalidates it.
+Publication failure reports the confirmed restore count and history without replay.
+
 Directory download verifies each immutable rank file, streams serially and writes
 `manifest.json` after the rank files. It does not overwrite existing destinations.
 A failed download leaves the committed server checkpoint available and does not
 repeat training or saving. Plans and frozen-base dependencies are separate
 artifacts; downloading the checkpoint does not implicitly copy them. The current
-service save includes frozen tensors. Ordered restore/new-run resume, service
+service save includes frozen tensors. Restore currently requires compatible native
+state ownership and ready workers. New-run resume, service
 base omission, cross-layout conversion, RNG integration and resumable uploads or
 downloads remain under implementation.

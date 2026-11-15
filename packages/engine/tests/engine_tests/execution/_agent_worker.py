@@ -700,6 +700,25 @@ def qualify_public_server():
                     assert rank_manifest["state"] == row.state_sha256
                     assert rank_manifest["tensors"]
                 assert result["checkpoint_download_after_close"]
+                assert result["post_restore_update_oracle"]
+                with storage.requests(identity) as records:
+                    request, status = records.get(result["restore_request_id"])
+                    assert request.operation == "restore"
+                    assert status.acceptance.checkpoint == checkpoint_ref
+                    assert status.result.checkpoint == checkpoint_ref
+                    assert (
+                        status.result.completed_updates
+                        == result["restored_updates"]
+                        == 1
+                    )
+                    assert status.result.history_id == result["restored_history_id"]
+                    assert (
+                        status.result.history_id != checkpoint_manifest.info.history_id
+                    )
+                    assert (
+                        records.execution(request.identity.request_id).history_id
+                        == status.result.history_id
+                    )
                 manifests = []
                 for ref in artifacts.page(limit=128):
                     if ref.id.startswith("preparation."):
@@ -760,3 +779,4 @@ print("Qualified allocation stop with unresolved GPU gradients and no implicit u
 print("Qualified configured fresh and saved creation through actual GPU retirement")
 
 print("Qualified ordered GPU checkpoints and post-exit downloads from the demo client")
+print("Qualified GPU restore, counter/history rewind and the next optimizer update")

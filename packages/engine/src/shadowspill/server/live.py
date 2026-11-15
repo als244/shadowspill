@@ -24,6 +24,7 @@ from shadowspill_client.protocol.requests import ArtifactRef, identifier
 from shadowspill_client.protocol.service import ServiceError
 
 from .artifacts import ArtifactStore
+from .checkpoint_restore import CheckpointResolver
 from .checkpoints import RunCheckpoints
 from .records.requests import RequestRecords, RunIdentity
 from .results import ResultPublisher
@@ -182,7 +183,15 @@ class LiveRun:
             )
             self._controller = RunController(
                 self._records,
-                PreparedRequests(self._family, cache_root=self._root),
+                PreparedRequests(
+                    self._family,
+                    cache_root=self._root,
+                    checkpoint=CheckpointResolver(
+                        self._artifacts,
+                        session_id=self.identity.session_id,
+                        world_size=len(prepared),
+                    ),
+                ),
                 self._workers,
                 self._publisher,
                 server_incarnation=self.storage.incarnation,

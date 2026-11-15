@@ -13,6 +13,7 @@ from engine_tests.server.test_request_records import store as records_store
 from engine_tests.server.test_service_client import address
 from engine_tests.training.test_prepared_requests import family
 from engine_tests.training.test_worker_checkpoints import running
+from shadowspill.server.checkpoint_restore import CheckpointResolver
 from shadowspill.server.http import RunAccess
 from shadowspill.training.session.controller import RunController
 from shadowspill.training.session.prepared import PreparedRequests
@@ -25,13 +26,19 @@ from shadowspill_client.protocol.runs import RunInfo
 
 
 @contextmanager
-def connected(root):
+def connected(root, *, completed_updates=0):
     with (
         endpoint(root) as http,
         records_store(root) as records,
         running(root, http.artifacts, count=1) as (workers, publisher, _),
     ):
-        prepared = PreparedRequests(family(), cache_root=root)
+        prepared = PreparedRequests(
+            family(),
+            cache_root=root,
+            checkpoint=CheckpointResolver(
+                http.artifacts, session_id="session", world_size=1
+            ),
+        )
         config = prepared.setup.config
         inputs = BufferBudget(
             config.execution.max_staging_bytes, config.execution.max_pending_requests
@@ -43,7 +50,9 @@ def connected(root):
             publisher,
             server_incarnation="server",
             budget=inputs,
-            state=OperationState(history_id="history"),
+            state=OperationState(
+                history_id="history", completed_updates=completed_updates
+            ),
         )
 
         @contextmanager

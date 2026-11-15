@@ -55,6 +55,14 @@ def ready(client, route, *, state="ready"):
         Event().wait(0.05)
 
 
+def split_update(training):
+    training.forward_backward(records(True), loss_params={"temperature": 0.5}).result(
+        120
+    )
+    training.forward_backward(records(True)).result(120)
+    return training.optim_step(optim={"lr": 0.02}, grad_scale=-0.5).result(120)
+
+
 def qualify(client, config, memory, oracle):
     saved, receipts = None, []
     preview = client.describe_training(config=config).result(20)
@@ -120,10 +128,30 @@ def qualify(client, config, memory, oracle):
         assert checkpoint_manifest.info.metadata["data_cursor"] == 3
         assert checkpoint_manifest.info.plans == saved.reference
         assert checkpoint_manifest.info.configuration.sha256 == digest(config)
+
+        assert split_update(training).completed_updates == 2
+        restore_started = monotonic()
+        restore = training.load_checkpoint(
+            "step-1" if mode == "fresh" else checkpoint.id
+        )
+        assert restore.accepted().result(30).checkpoint == checkpoint.reference
+        restored = restore.result(120)
+        restore_seconds = monotonic() - restore_started
+        assert restored.completed_updates == 1
+        assert restored.history_id != result.history_id
+        assert restored.metadata["data_cursor"] == 3
+        assert restored.checkpoint == checkpoint
+        assert training.get_config() == config
         prediction = training.forward(records(False), outputs="predictions").result(120)
         output = prediction.outputs["prediction"]
+        resumed_update = split_update(training)
+        assert resumed_update.completed_updates == 2
+        assert resumed_update.history_id == restored.history_id
+        resumed_prediction = training.forward(
+            records(False), outputs="predictions"
+        ).result(120)
         closed = training.close().result(30)
-        assert closed.completed_updates == 1
+        assert closed.completed_updates == 2
         route = "/v1/runs/factory-session/" + training.run_id
         assert ready(client._transport, route, state="closed").plans == saved.reference
         # Public output handles download only on explicit request, after worker exit.
@@ -137,6 +165,20 @@ def qualify(client, config, memory, oracle):
                 actual = np.stack([rows[str(index)].array() for index in range(3)])
                 np.testing.assert_allclose(
                     actual, oracle["after_step"], rtol=1e-4, atol=1e-5
+                )
+        resumed_output = resumed_prediction.outputs["prediction"]
+        with TemporaryDirectory(prefix="shadowspill-demo-restored-") as directory:
+            path = resumed_output.download(Path(directory) / "predictions.ssp").result(
+                30
+            )
+            with (
+                path.open("rb") as stream,
+                read_payload(stream, resumed_output.reference, memory) as decoded,
+            ):
+                rows = decoded.datums[0].inputs
+                actual = np.stack([rows[str(index)].array() for index in range(3)])
+                np.testing.assert_allclose(
+                    actual, oracle["after_split"], rtol=1e-4, atol=1e-5
                 )
         with TemporaryDirectory(prefix="shadowspill-demo-checkpoint-") as directory:
             copied = checkpoint.download(Path(directory) / "step-1").result(60)
@@ -160,6 +202,10 @@ def qualify(client, config, memory, oracle):
             readonly.requests.get(checkpoint_future.request_id).result(10).checkpoint
             == checkpoint
         )
+        assert (
+            readonly.requests.get(restore.request_id).result(10).record
+            == restored.record
+        )
         receipts.append(
             {
                 "mode": mode,
@@ -176,6 +222,11 @@ def qualify(client, config, memory, oracle):
                 "checkpoint_save_seconds": save_seconds,
                 "checkpoint_weights": checkpoint_manifest.info.weights,
                 "checkpoint_download_after_close": True,
+                "restore_request_id": restore.request_id,
+                "restore_seconds": restore_seconds,
+                "restored_updates": restored.completed_updates,
+                "restored_history_id": restored.history_id,
+                "post_restore_update_oracle": True,
             }
         )
     return receipts

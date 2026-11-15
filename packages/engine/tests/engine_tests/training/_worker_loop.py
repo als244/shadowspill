@@ -15,7 +15,10 @@ rank = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 
 def bind(command):
     return SimpleNamespace(
-        command=command, checkpoint=None, verify_inputs=lambda budget: None
+        command=command,
+        checkpoint=None,
+        restore=None,
+        verify_inputs=lambda budget: None,
     )
 
 

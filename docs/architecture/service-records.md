@@ -190,7 +190,7 @@ Open accumulation is rejected before contacting workers. Admission failure prese
 state; missing completions stop the group without replay. Assembly failure after
 all completions is a publication failure with known state. CPU subprocess tests
 cover these boundaries and restore the emitted archives. The service currently
-includes frozen tensors; declared base omission, ordered restore,
+includes frozen tensors; declared base omission,
 conversion and RNG integration still require implementation. Worker tensor copies
 reuse admitted staging; checkpoint descriptor/manifest peaks are included in the
 deployment's decoded-artifact allowance and still need scale qualification.
@@ -206,6 +206,21 @@ are checked before initialization can mutate state. The internal
 It does not verify tensor contents: immutable delivery must verify the archive
 digest, and the native loader still checks each tensor while reading bounded
 chunks. A failure after initialization begins invalidates execution state.
+
+Ordered restore uses the same queue and initialized workers. Prepared input owns
+the bounded global metadata reservation; its name resolver runs exactly once at
+ordered acceptance. Acceptance records the immutable checkpoint reference while
+the original request and deduplication digest retain the submitted name. The
+resolver verifies manifest bytes, complete rank membership, byte order and owner
+access to configuration, Plans and rank archives. Existing FileDelivery and
+FileGrants checksum and retain each rank archive through worker completion.
+Every worker validates its complete native inventory and generation metadata
+before any execute command is broadcast. Loading delegates to the native loader,
+reserving space for its destination and optional cast chunk. Compatible native
+ownership is required; cross-layout conversion and new-run resume remain pending.
+Preflight rejection preserves all workers. A partial load or missing completion
+invalidates the group; it cannot be replayed on that incarnation. Confirmed restore
+commits its saved update count and new history before result publication.
 
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration

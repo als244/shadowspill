@@ -1,13 +1,13 @@
 """Commit a contiguous prefix of fully validated calls, preserving dependencies."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import RLock
 from typing import Protocol
 
 from shadowspill_client._records import integer
-from shadowspill_client.protocol.requests import OperationRequest
+from shadowspill_client.protocol.requests import ArtifactRef, OperationRequest
 from shadowspill_client.protocol.results import Failure, RequestStatus
 
 from .recovery import RecoverableRequests
@@ -24,7 +24,9 @@ class AcceptanceRecords(RecoverableRequests, Protocol):
         self, sequence: int
     ) -> tuple[OperationRequest, RequestStatus] | None: ...
 
-    def accept(self, request_id: str) -> RequestStatus: ...
+    def accept(
+        self, request_id: str, *, checkpoint: ArtifactRef | None = None
+    ) -> RequestStatus: ...
 
 
 @dataclass(frozen=True)
@@ -59,11 +61,17 @@ class AcceptanceOrder:
         self._next = integer(first_sequence, "first sequence", minimum=1)
         self._retired_before = self._next
         self._ready: dict[str, Rejection | None] = {}
+        self._checkpoints: dict[str, Callable[[], ArtifactRef | None]] = {}
         self._mutex = RLock()
 
-    def validated(self, request_id: str) -> RequestStatus:
+    def validated(
+        self,
+        request_id: str,
+        *,
+        checkpoint: Callable[[], ArtifactRef | None] | None = None,
+    ) -> RequestStatus:
         """The complete upload, controls, preprocessing and coverage have passed."""
-        return self._decide(request_id, None)
+        return self._decide(request_id, None, checkpoint=checkpoint)
 
     @contextmanager
     def synchronized(self) -> Iterator[None]:
@@ -75,6 +83,7 @@ class AcceptanceOrder:
         """An authoritative storage or ownership failure stops further live work."""
         with self._mutex:
             self._state.invalidate()
+            self._checkpoints.clear()
 
     def retire_before(self, sequence: int) -> None:
         """A durable writer fence closes only missing old submission positions."""
@@ -129,13 +138,21 @@ class AcceptanceOrder:
                 self._state.invalidate()
                 raise
 
-    def _decide(self, request_id: str, rejection: Rejection | None) -> RequestStatus:
+    def _decide(
+        self,
+        request_id: str,
+        rejection: Rejection | None,
+        *,
+        checkpoint: Callable[[], ArtifactRef | None] | None = None,
+    ) -> RequestStatus:
         with self._mutex:
             request, status = self._require(request_id)
             if status.state != "uploading":
                 return status
             if not self._next <= request.identity.sequence < self._next + self._maximum:
                 raise TimeoutError("validated request window is full")
+            if checkpoint is not None:
+                self._checkpoints.setdefault(request_id, checkpoint)
             if self._ready.get(request_id) is None:
                 self._ready[request_id] = rejection
             self.advance()
@@ -209,6 +226,7 @@ class AcceptanceOrder:
             request_id = request.identity.request_id
             if status.state != "uploading":
                 self._ready.pop(request_id, None)
+                self._checkpoints.pop(request_id, None)
                 self._next += 1
                 continue
             if request_id not in self._ready:
@@ -218,8 +236,19 @@ class AcceptanceOrder:
                 if not self._reject_suffix(request_id, rejection):
                     break
                 continue
+            checkpoint = None
+            resolve = self._checkpoints.pop(request_id, None)
+            if resolve is not None:
+                try:
+                    checkpoint = resolve()
+                except Exception as error:
+                    self._ready[request_id] = Rejection(
+                        "checkpoint_invalid",
+                        (str(error) or type(error).__name__)[:1024],
+                    )
+                    continue
             try:
-                self._records.accept(request_id)
+                self._records.accept(request_id, checkpoint=checkpoint)
             except PermissionError:
                 self._ready[request_id] = Rejection(
                     "writer_fenced",
@@ -265,6 +294,7 @@ class AcceptanceOrder:
         )
         self._records.fail(request_id, failure)
         self._ready.pop(request_id, None)
+        self._checkpoints.pop(request_id, None)
 
     def _require(self, request_id: str) -> tuple[OperationRequest, RequestStatus]:
         result = self._records.get(request_id)

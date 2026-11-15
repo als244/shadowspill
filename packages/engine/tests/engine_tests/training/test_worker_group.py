@@ -143,7 +143,7 @@ def workers(
                     raise OSError("input delivery failed")
 
             return SimpleNamespace(
-                command=command, checkpoint=None, verify_inputs=verify
+                command=command, checkpoint=None, restore=None, verify_inputs=verify
             )
 
         def run(bound):

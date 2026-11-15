@@ -120,3 +120,35 @@ def test_save_settings_are_owned_and_have_an_intentional_result_reference():
         replace(result, outputs={"data": ref})
     with pytest.raises(ValueError, match="manifest"):
         replace(result, checkpoint=replace(ref, media_type="application/octet-stream"))
+
+
+def test_restore_records_pin_reference_separately_from_submitted_name():
+    from shadowspill_client.protocol.checkpoints import CHECKPOINT_MEDIA_TYPE
+    from shadowspill_client.protocol.requests import OperationRequest, RequestIdentity
+    from shadowspill_client.protocol.results import Acceptance, OperationResult
+
+    identity = RequestIdentity("load", "run", 2, "writer", 1, "server")
+    command = OperationRequest(identity, "restore", restore="latest")
+    reference = ArtifactRef("generation", "a" * 64, 1024, CHECKPOINT_MEDIA_TYPE)
+    acceptance = Acceptance(identity, 3, checkpoint=reference)
+    metadata = {"cursor": [5, 7]}
+    result = OperationResult(
+        identity,
+        "restore",
+        "next-history",
+        "completed",
+        3,
+        checkpoint=reference,
+        metadata=metadata,
+    )
+    metadata["cursor"].append(9)
+    assert result.metadata["cursor"] == (5, 7)
+    for value in (command, acceptance, result):
+        assert decode(encode(value)) == value
+    assert command.restore == "latest"
+    with pytest.raises(ValueError, match="only restore"):
+        replace(command, operation="close")
+    with pytest.raises(ValueError, match="checkpoint reference"):
+        replace(result, checkpoint=None)
+    with pytest.raises(ValueError, match="only restore"):
+        replace(result, operation="save")

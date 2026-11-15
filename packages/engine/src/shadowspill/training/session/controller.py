@@ -73,7 +73,12 @@ class RunController[Work: CompletedWork]:
             records, self._state, max_pending=execution.max_pending_requests
         )
         self.inputs = RequestInputs(
-            records, self._dispatcher.order, execution, prepared, budget=budget
+            records,
+            self._dispatcher.order,
+            execution,
+            prepared,
+            budget=budget,
+            checkpoint=prepared.resolve_checkpoint,
         )
         self._writers = WriterOwnership(records, self._dispatcher.order, self.inputs)
         self._wake, self._changed, self._closing_lock = Event(), Condition(), RLock()
@@ -245,6 +250,7 @@ class RunController[Work: CompletedWork]:
                 lambda transition: self._workers.execute(call, transition),
                 lambda receipt, work: self._publish(call, receipt, work),
                 participates=call.participates,
+                restore=call.restore,
             )
         finally:
             self.inputs.finish(request_id)

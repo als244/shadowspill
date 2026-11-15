@@ -13,9 +13,9 @@ from .controls import Scalar
 
 type ComputeOperation = Literal["step", "forward_backward", "optim_step", "forward"]
 COMPUTE_OPERATIONS = frozenset({"step", "forward_backward", "optim_step", "forward"})
-type StateOperation = Literal["discard", "close", "save"]
+type StateOperation = Literal["discard", "close", "save", "restore"]
 type Operation = ComputeOperation | StateOperation
-STATE_OPERATIONS = frozenset({"discard", "close", "save"})
+STATE_OPERATIONS = frozenset({"discard", "close", "save", "restore"})
 OPERATIONS = COMPUTE_OPERATIONS | STATE_OPERATIONS
 
 
@@ -107,6 +107,7 @@ class OperationRequest(Record):
     runtime_trace: bool = False
     dependencies: Sequence[str] = ()
     save: CheckpointSave | None = None
+    restore: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -118,6 +119,12 @@ class OperationRequest(Record):
             object.__setattr__(self, "save", record(CheckpointSave, self.save, "save"))
         if (self.operation == "save") != (self.save is not None):
             raise ValueError("only save commands require checkpoint save settings")
+        if self.restore is not None:
+            text(self.restore, "checkpoint ID or name")
+            if self.restore != self.restore.strip() or len(self.restore) > 256:
+                raise ValueError("checkpoint ID or name must be trimmed and bounded")
+        if (self.operation == "restore") != (self.restore is not None):
+            raise ValueError("only restore commands require a checkpoint ID or name")
         if self.payload is not None:
             object.__setattr__(
                 self, "payload", record(ArtifactRef, self.payload, "payload")

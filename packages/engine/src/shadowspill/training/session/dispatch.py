@@ -16,6 +16,7 @@ from shadowspill_client.protocol.results import (
 )
 
 from .acceptance import AcceptanceOrder, AcceptanceRecords
+from .checkpoint import ResolvedCheckpoint
 from .state import OperationState, Transition
 
 
@@ -77,6 +78,7 @@ class RequestDispatcher:
         publish: Callable[[ExecutionReceipt, Work], OperationResult],
         *,
         participates: bool | None = None,
+        restore: ResolvedCheckpoint | None = None,
     ) -> RequestStatus:
         """Synchronous worker boundary; the service runs it outside HTTP handlers.
 
@@ -89,7 +91,7 @@ class RequestDispatcher:
             raise RuntimeError("another request is being dispatched")
         try:
             with self.order.synchronized():
-                started = self._start(request_id, participates)
+                started = self._start(request_id, participates, restore)
             if isinstance(started, RequestStatus):
                 return started
             request, transition = started
@@ -127,7 +129,7 @@ class RequestDispatcher:
                 return status
             try:
                 with self.order.synchronized():
-                    receipt = self._confirm(request, transition)
+                    receipt = self._confirm(request, transition, restore)
                 return self._publish(request, receipt, work, publish)
             finally:
                 try:
@@ -140,7 +142,10 @@ class RequestDispatcher:
             self._dispatching.release()
 
     def _start(
-        self, request_id: str, participates: bool | None
+        self,
+        request_id: str,
+        participates: bool | None,
+        restore: ResolvedCheckpoint | None,
     ) -> tuple[OperationRequest, Transition] | RequestStatus:
         row = self._records.get(request_id)
         if row is None:
@@ -148,6 +153,14 @@ class RequestDispatcher:
         request, status = row
         if status.state in ("completed", "skipped", "failed"):
             return status
+        if (request.operation == "restore") != (restore is not None) or (
+            restore is not None
+            and (
+                status.acceptance is None
+                or status.acceptance.checkpoint != restore.reference
+            )
+        ):
+            raise ValueError("dispatch checkpoint differs from its accepted input")
         first = self._records.pending(limit=1)
         if (
             status.state != "accepted"
@@ -175,7 +188,7 @@ class RequestDispatcher:
             )
         try:
             assert status.acceptance is not None
-            self._preflight(request, transition, status.acceptance)
+            self._preflight(request, transition, status.acceptance, restore)
         except ProtocolError:
             self._state.fail(transition, execution_started=False)
             return self.order.reject(
@@ -196,6 +209,7 @@ class RequestDispatcher:
         request: OperationRequest,
         transition: Transition,
         acceptance: Acceptance,
+        restore: ResolvedCheckpoint | None,
     ) -> None:
         """Reserve the contribution-history envelope before a mutating invocation.
 
@@ -203,7 +217,12 @@ class RequestDispatcher:
         This check covers the known counters, request controls and worst-length
         history ID, so growing accumulation cannot overflow the execution receipt.
         """
-        after = self._state.completion(transition)
+        after = self._state.completion(
+            transition,
+            restored_updates=None
+            if restore is None
+            else restore.manifest.info.completed_updates,
+        )
         result = OperationResult(
             request.identity,
             request.operation,
@@ -218,8 +237,9 @@ class RequestDispatcher:
             checkpoint=ArtifactRef(
                 "c" * 128, "0" * 64, MAX_METADATA_BYTES, CHECKPOINT_MEDIA_TYPE
             )
-            if request.operation == "save"
+            if request.operation in ("save", "restore")
             else None,
+            metadata={} if restore is None else restore.manifest.info.metadata,
         )
         encode(ExecutionReceipt.from_result(result))
         encode(
@@ -227,10 +247,18 @@ class RequestDispatcher:
         )
 
     def _confirm(
-        self, request: OperationRequest, transition: Transition
+        self,
+        request: OperationRequest,
+        transition: Transition,
+        restore: ResolvedCheckpoint | None,
     ) -> ExecutionReceipt:
         try:
-            boundary = self._state.complete(transition)
+            boundary = self._state.complete(
+                transition,
+                restored_updates=None
+                if restore is None
+                else restore.manifest.info.completed_updates,
+            )
             receipt = ExecutionReceipt(
                 request.identity,
                 request.operation,

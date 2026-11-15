@@ -60,10 +60,16 @@ class ResultPublisher:
             metrics: dict[str, float | int] = {}
             outputs: dict[str, ArtifactRef] = {}
             checkpoint = None
+            metadata = {}
             if call.request.operation == "save":
                 if work.checkpoint is None:
                     raise ValueError("save has no owned checkpoint generation")
                 checkpoint = work.checkpoint.commit()[-1]
+            if call.request.operation == "restore":
+                if call.restore is None:
+                    raise ValueError("restore has no accepted checkpoint input")
+                checkpoint = call.restore.reference
+                metadata = dict(call.restore.manifest.info.metadata)
             if call.key is not None and call.key.operation != "optim_step":
                 assert call.candidate is not None
                 layout = call.candidate.source.layout.outputs
@@ -105,6 +111,7 @@ class ResultPublisher:
                 loss=loss,
                 state_valid=receipt.state_valid,
                 checkpoint=checkpoint,
+                metadata=metadata,
             )
         finally:
             self._busy.release()

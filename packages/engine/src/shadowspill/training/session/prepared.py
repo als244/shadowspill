@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -25,9 +25,14 @@ from shadowspill_client._records import number
 from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.payload import BatchSnapshot, snapshot_batch
-from shadowspill_client.protocol.requests import STATE_OPERATIONS, OperationRequest
+from shadowspill_client.protocol.requests import (
+    STATE_OPERATIONS,
+    ArtifactRef,
+    OperationRequest,
+)
 from shadowspill_client.protocol.results import RequestStatus
 
+from .checkpoint import CHECKPOINT_METADATA_BYTES, ResolvedCheckpoint
 from .controls import CallControls, call_controls, operation_key
 from .inputs import RequestInputs
 from .state import Transition
@@ -47,6 +52,7 @@ class PreparedCall:
     _empty_snapshot: BatchSnapshot | None = None
     closed: bool = False
     ranks: tuple[int, ...] = ()
+    restore: ResolvedCheckpoint | None = None
 
     def worker_plans(self, transition: Transition) -> Mapping[int, str | None]:
         """Select main/masked/optimizer forms using the existing state decision."""
@@ -88,6 +94,7 @@ class PreparedCall:
             self.spool.close()
             self.spool = None
         self.assignment = None
+        self.restore = None
         if self._workspace is not None:
             self._workspace.close()
             self._workspace = None
@@ -106,10 +113,17 @@ class PreparedRequests:
     a model. Complete CPU preprocessing and spooling precede durable acceptance.
     """
 
-    def __init__(self, prepared: PreparedPlans, *, cache_root: Path) -> None:
+    def __init__(
+        self,
+        prepared: PreparedPlans,
+        *,
+        cache_root: Path,
+        checkpoint: Callable[[OperationRequest], ResolvedCheckpoint] | None = None,
+    ) -> None:
         self.prepared = prepared
         self.setup = prepared.inventory.layouts.setup
         self.cache_root = cache_root
+        self._checkpoint = checkpoint
         self._families = {
             key: tuple(sorted(rows, key=lambda row: (row.duration_seconds, row.id)))
             for key, rows in prepared.families.items()
@@ -171,7 +185,13 @@ class PreparedRequests:
     ) -> RequestStatus:
         """Derive upload limits from preparation, never from submitted byte claims."""
         if request.operation in STATE_OPERATIONS:
-            return inputs.register(request, staging_bytes=1, envelope=None)
+            return inputs.register(
+                request,
+                staging_bytes=CHECKPOINT_METADATA_BYTES
+                if request.operation == "restore"
+                else 1,
+                envelope=None,
+            )
         try:
             key = operation_key(self.setup, request)
         except ValueError as error:
@@ -221,6 +241,9 @@ class PreparedRequests:
                 None,
                 budget,
                 ranks=tuple(self.prepared.plans),
+                _workspace=budget.reserve(CHECKPOINT_METADATA_BYTES, timeout=0)
+                if request.operation == "restore"
+                else None,
             )
         key = operation_key(self.setup, request)
         controls = call_controls(self.setup, request, key)
@@ -285,6 +308,17 @@ class PreparedRequests:
             if empty is not None:
                 empty.close()
             raise
+
+    def resolve_checkpoint(self, call: PreparedCall) -> ArtifactRef | None:
+        """Pin an alias at acceptance without changing request/deduplication bytes."""
+        if call.request.operation != "restore":
+            return None
+        if self._checkpoint is None or call.closed or call._workspace is None:
+            raise ValueError("run has no admitted checkpoint resolver")
+        if call.restore is not None:
+            raise RuntimeError("checkpoint was already resolved for this request")
+        call.restore = self._checkpoint(call.request)
+        return call.restore.reference
 
     def _select(
         self, key: OperationKey, validated: ValidatedBatch

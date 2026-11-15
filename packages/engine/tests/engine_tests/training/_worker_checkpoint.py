@@ -9,8 +9,10 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from engine_tests.execution.test_checkpoint import MemoryExecutor
+from shadowspill.orchestration.launch.file_grants import resolve_file
 from shadowspill.training.session.controls import CallControls
 from shadowspill.training.worker.bindings import BoundWorkerCall
+from shadowspill.training.worker.checkpoint_reader import WorkerCheckpointReader
 from shadowspill.training.worker.checkpoint_writer import WorkerCheckpointWriter
 from shadowspill.training.worker.execution import WorkerExecution
 from shadowspill.training.worker.loop import WorkerLoop
@@ -24,6 +26,14 @@ executor.plan.program.digest = "a" * 64
 executor.logical_rank = rank
 executor.close = lambda: None
 executor.discard_gradients = lambda: None
+executor.synchronize = lambda: None
+if mode == "load_failure":
+
+    def fail_load(*args, **kwargs):
+        executor.values["step"].zero_()
+        raise OSError("restore failed after tensor mutation")
+
+    executor.initialize = fail_load
 scope = WorkerScope("run", "server", f"process-{rank}", rank)
 budget = BufferBudget(64 << 10)
 writer = WorkerCheckpointWriter(
@@ -39,6 +49,15 @@ execution = WorkerExecution(
     budget,
     lambda *args: None,
     checkpoints=writer,
+    restore=None
+    if mode == "no_loader"
+    else WorkerCheckpointReader(
+        executor,
+        budget,
+        lambda ref: resolve_file(Path(sys.argv[4]), ref),
+        chunk_bytes=4 if mode == "small_staging" else 32,
+        world_size=int(sys.argv[5]),
+    ),
 )
 
 
@@ -55,7 +74,9 @@ def execute(bound):
         output.flush()
         os.fsync(output.fileno())
     result = execution(bound)
-    if mode == "lost_completion":
+    if mode == "lost_completion" or (
+        mode == "lost_restore" and bound.command.request.operation == "restore"
+    ):
         os._exit(42)
     return result
 

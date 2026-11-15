@@ -6,13 +6,34 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from shadowspill_client._records import Record, Value, integer, mapping
+from shadowspill_client._records import Record, Value, integer, mapping, record
 from shadowspill_client.protocol.checkpoints import (
+    CHECKPOINT_MEDIA_TYPE,
     RANK_MEDIA_TYPE,
     CheckpointInfo,
     CheckpointRank,
 )
 from shadowspill_client.protocol.requests import ArtifactRef
+
+
+@dataclass(frozen=True)
+class RankRestore(Record):
+    checkpoint: ArtifactRef
+    info: CheckpointInfo
+    rank: CheckpointRank
+
+    def __post_init__(self) -> None:
+        for name, kind in (
+            ("checkpoint", ArtifactRef),
+            ("info", CheckpointInfo),
+            ("rank", CheckpointRank),
+        ):
+            object.__setattr__(self, name, record(kind, getattr(self, name), name))
+        if (
+            self.checkpoint.media_type != CHECKPOINT_MEDIA_TYPE
+            or self.rank.rank >= self.info.world_size
+        ):
+            raise ValueError("restore rank differs from its checkpoint generation")
 
 
 @dataclass(frozen=True)

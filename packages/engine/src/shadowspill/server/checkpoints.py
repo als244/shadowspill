@@ -10,6 +10,8 @@ all ranks, the global manifest and a friendly name together.
 import hashlib
 import sys
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
+from typing import BinaryIO
 
 from shadowspill.orchestration.launch.publication import OutputSpec, OutputWriter
 from shadowspill.orchestration.launch.staging import COPY_BYTES
@@ -53,6 +55,9 @@ class RunCheckpoints:
             plans,
             world_size,
         )
+
+    def open(self, reference: ArtifactRef) -> AbstractContextManager[BinaryIO]:
+        return self.artifacts.open(reference)
 
     def describe(self, call: PreparedCall, transition: Transition) -> CheckpointInfo:
         request, settings = call.request, call.request.save

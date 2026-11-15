@@ -307,7 +307,7 @@ def validate_checkpoint(
     *,
     frozen_state_id: str | None = None,
 ) -> dict[str, Any]:
-    """Validate complete rank geometry before release, without reading tensors.
+    """Return the validated rank manifest, without reading tensor payloads.
 
     The owner separately verifies immutable archive bytes during bounded delivery.
     Load still verifies each tensor while reading; corruption or transfer failure
@@ -318,4 +318,4 @@ def validate_checkpoint(
         omitted = validate_restore(executor, manifest, frozen_state_id)
         chunks = {chunk.name: chunk for chunk in executor.tensor_chunks()}
         _Reader(archive, manifest, chunks, omitted)
-        return dict(manifest["metadata"])
+        return manifest

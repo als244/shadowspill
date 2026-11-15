@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -277,6 +277,16 @@ class WorkerRequests:
                     )
                 if ref.id not in sources or sources[ref.id].reference != ref:
                     raise ValueError("worker input reference is not owned by the call")
+            if command.restore is not None:
+                if (
+                    self._checkpoints is None
+                    or call.restore is None
+                    or command.restore.checkpoint != call.restore.reference
+                ):
+                    raise ValueError("restore has no accepted checkpoint storage")
+                ref = command.restore.rank.archive
+                if references.setdefault(ref.id, ref) != ref:
+                    raise ValueError("checkpoint rank ID has conflicting references")
         for node, references in grouped.items():
             if not references:
                 continue
@@ -287,7 +297,14 @@ class WorkerRequests:
                 memory=node.memory,
             )
             result._deliveries.append(delivery)
-            delivery.receive(lambda ref: sources[ref.id].path.open("rb"))
+
+            def open_source(ref: ArtifactRef) -> AbstractContextManager[BinaryIO]:
+                if ref.id in sources:
+                    return sources[ref.id].path.open("rb")
+                assert self._checkpoints is not None
+                return self._checkpoints.open(ref)
+
+            delivery.receive(open_source)
             result._grants.append(
                 node.grants.lend(delivery, tuple(references.values()))
             )

@@ -49,7 +49,7 @@ with socket.socket(fileno=int(sys.argv[1])) as peer:
         report_ready(launch.startup, stream)
         def bind(command):
             return SimpleNamespace(
-                command=command, checkpoint=None, verify_inputs=lambda _: None
+                command=command, checkpoint=None, restore=None, verify_inputs=lambda _: None
             )
         loop = WorkerLoop(launch.startup.scope, bind, lambda _: None, BufferBudget(1))
         loop.serve(stream, stream)

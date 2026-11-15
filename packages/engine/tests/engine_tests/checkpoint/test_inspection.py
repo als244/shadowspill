@@ -33,7 +33,7 @@ def test_preflight_reads_descriptors_without_exporting_or_initializing(
 
     monkeypatch.setattr(value, "initialize", uncalled)
     monkeypatch.setattr(value, "export_tensors", uncalled)
-    assert validate_checkpoint(value, path) == {"cursor": [1, 2]}
+    assert validate_checkpoint(value, path)["metadata"] == {"cursor": [1, 2]}
     with open_checkpoint(path) as archive:
         assert read_manifest(archive)["metadata"] == {"cursor": [1, 2]}
 

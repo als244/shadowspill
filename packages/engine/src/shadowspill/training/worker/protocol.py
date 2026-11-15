@@ -16,7 +16,7 @@ from shadowspill_client.protocol.requests import (
     identifier,
 )
 
-from .checkpoint_records import RankSave, RankSaved
+from .checkpoint_records import RankRestore, RankSave, RankSaved
 
 
 class WorkerOutputError(RuntimeError):
@@ -138,6 +138,7 @@ class WorkerCall(Record):
     accumulate_gradients: bool
     frames: Sequence[ArtifactRef] = ()
     checkpoint: CheckpointInfo | None = None
+    restore: RankRestore | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scope", record(WorkerScope, self.scope, "scope"))
@@ -145,6 +146,14 @@ class WorkerCall(Record):
             self, "request", record(OperationRequest, self.request, "request")
         )
         integer(self.invocation, "worker invocation", minimum=1)
+        if self.restore is not None:
+            object.__setattr__(
+                self, "restore", record(RankRestore, self.restore, "restore")
+            )
+            if self.restore.rank.rank != self.scope.rank:
+                raise ValueError("restore archive belongs to another logical rank")
+        if (self.request.operation == "restore") != (self.restore is not None):
+            raise ValueError("restore requires its accepted immutable rank archive")
         if self.checkpoint is not None:
             object.__setattr__(
                 self,

@@ -22,7 +22,7 @@ from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.payload import MEDIA_TYPE
 from shadowspill_client.protocol.requests import STATE_OPERATIONS, ArtifactRef
 
-from .checkpoint_records import RankSave
+from .checkpoint_records import RankRestore, RankSave
 from .protocol import CODEC, WorkerCall, WorkerScope
 
 
@@ -57,6 +57,13 @@ def worker_call(
         transition.accumulate_gradients,
         frames,
         checkpoint,
+        None
+        if call.restore is None
+        else RankRestore(
+            call.restore.reference,
+            call.restore.manifest.info,
+            call.restore.manifest.ranks[scope.rank],
+        ),
     )
     # This must succeed before dispatch; receivers enforce the same envelope.
     CODEC.encode(result)
@@ -71,6 +78,7 @@ class BoundWorkerCall:
     hyperparams: Mapping[str, Scalar]
     frames: tuple[tuple[SpooledFrame, OperationBinding], ...]
     checkpoint: RankSave | None = None
+    restore: Path | None = None
 
     @property
     def input_bytes(self) -> int:

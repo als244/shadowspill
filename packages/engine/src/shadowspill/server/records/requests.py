@@ -14,6 +14,7 @@ from typing import Any, Self
 
 from shadowspill_client.protocol.codec import digest, encode
 from shadowspill_client.protocol.requests import (
+    ArtifactRef,
     OperationRequest,
     WriterLease,
     identifier,
@@ -26,7 +27,7 @@ from shadowspill_client.protocol.results import (
     RequestStatus,
 )
 
-from .execution_receipts import validate_outcome, validate_receipt
+from .execution_receipts import validate_acceptance, validate_outcome, validate_receipt
 from .journal import Journal
 from .journal_format import JournalLimits, JournalRecord
 from .request_index import RequestIndex
@@ -190,7 +191,9 @@ class RequestRecords:
             )
             return self._require(request.identity.request_id)[1]
 
-    def accept(self, request_id: str) -> RequestStatus:
+    def accept(
+        self, request_id: str, *, checkpoint: ArtifactRef | None = None
+    ) -> RequestStatus:
         with self._mutex:
             self._usable()
             request, status = self._require(request_id)
@@ -198,8 +201,12 @@ class RequestRecords:
                 return status  # Original acceptance, even after completion.
             if status.state != "uploading":
                 raise ValueError("only a validated pending upload can be accepted")
+            if (request.operation == "restore") != (checkpoint is not None):
+                raise ValueError("restore acceptance requires its immutable checkpoint")
             self._check_writer(request)
-            acceptance = Acceptance(status.identity, self._journal.position + 1)
+            acceptance = Acceptance(
+                status.identity, self._journal.position + 1, checkpoint
+            )
             return self._status(RequestStatus(status.identity, "accepted", acceptance))
 
     def dispatch(self, request_id: str) -> RequestStatus:
@@ -258,9 +265,10 @@ class RequestRecords:
             )
 
     def _status(self, status: RequestStatus) -> RequestStatus:
-        _, before = self._require(status.identity.request_id)
+        request, before = self._require(status.identity.request_id)
         if status == before:
             return before
+        validate_acceptance(request, status)
         _transition(before, status)
         validate_outcome(status, self._index.execution(status.identity.request_id))
         encode(status)  # Validate the bounded portable result before durable mutation.
@@ -283,9 +291,7 @@ class RequestRecords:
 
     def _check_writer(self, request: OperationRequest) -> None:
         if self._writer is None or not self._writer.permits(request.identity):
-            raise WriterFenced(
-                "writer lease is absent or fenced; reattach explicitly"
-            )
+            raise WriterFenced("writer lease is absent or fenced; reattach explicitly")
 
     def _require(self, request_id: str) -> tuple[OperationRequest, RequestStatus]:
         row = self._index.get(identifier(request_id, "request ID"))
@@ -330,6 +336,7 @@ class RequestRecords:
         elif record.kind == "request.status":
             status = RequestStatus.from_dict(record.data)
             request, before = self._require(status.identity.request_id)
+            validate_acceptance(request, status)
             _transition(before, status)
             validate_outcome(status, self._index.execution(status.identity.request_id))
             if (

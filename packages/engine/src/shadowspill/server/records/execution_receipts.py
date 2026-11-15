@@ -4,6 +4,19 @@ from shadowspill_client.protocol.requests import OperationRequest
 from shadowspill_client.protocol.results import ExecutionReceipt, RequestStatus
 
 
+def validate_acceptance(request: OperationRequest, status: RequestStatus) -> None:
+    if status.acceptance is not None:
+        reference = status.acceptance.checkpoint
+        if (request.operation == "restore") != (reference is not None):
+            raise ValueError("restore acceptance requires its immutable checkpoint")
+        if (
+            reference is not None
+            and status.result is not None
+            and status.result.checkpoint != reference
+        ):
+            raise ValueError("restore result differs from its accepted checkpoint")
+
+
 def validate_receipt(
     request: OperationRequest, status: RequestStatus, receipt: ExecutionReceipt
 ) -> None:

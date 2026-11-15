@@ -129,6 +129,7 @@ class TrainingClient:
         mode: Literal["evaluation", "training"] | None = None,
         runtime_trace: bool = False,
         save: CheckpointSave | None = None,
+        restore: str | None = None,
     ) -> OperationFuture[TrainingResult]:
         self._service._work.check()
         if self._writer is None:
@@ -171,6 +172,7 @@ class TrainingClient:
                     runtime_trace=runtime_trace,
                     dependencies=dependencies,
                     save=save,
+                    restore=restore,
                 )
                 if batch is not None:
                     from dataclasses import replace
@@ -356,6 +358,10 @@ class TrainingClient:
             return result.checkpoint
 
         return self._submit("save", save=settings)._mapped(checkpoint)
+
+    def load_checkpoint(self, checkpoint_id: str) -> OperationFuture[TrainingResult]:
+        """Restore an ID or run-local name in order; return saved caller metadata."""
+        return self._submit("restore", restore=checkpoint_id)
 
     def close(self) -> OperationFuture[TrainingResult]:
         return self._submit("close")

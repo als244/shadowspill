@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
 
-from .._records import Record, integer, names, number, record, text
+from .._records import Record, Value, integer, mapping, names, number, record, text
 from .checkpoints import CHECKPOINT_MEDIA_TYPE
 from .controls import Scalar
 from .requests import (
@@ -49,12 +49,19 @@ class Accumulation(Record):
 class Acceptance(Record):
     identity: RequestIdentity
     journal_position: int
+    checkpoint: ArtifactRef | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "identity", record(RequestIdentity, self.identity, "identity")
         )
         integer(self.journal_position, "durable journal position", minimum=1)
+        if self.checkpoint is not None:
+            object.__setattr__(
+                self, "checkpoint", record(ArtifactRef, self.checkpoint, "checkpoint")
+            )
+            if self.checkpoint.media_type != CHECKPOINT_MEDIA_TYPE:
+                raise ValueError("accepted restore requires a checkpoint manifest")
 
 
 @dataclass(frozen=True)
@@ -178,6 +185,7 @@ class OperationResult(Record):
     loss: float | int | None = None
     state_valid: bool = True
     checkpoint: ArtifactRef | None = None
+    metadata: Mapping[str, Value] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -194,8 +202,15 @@ class OperationResult(Record):
             )
             if self.checkpoint.media_type != CHECKPOINT_MEDIA_TYPE:
                 raise ValueError("checkpoint result requires a checkpoint manifest")
-        if (self.operation == "save") != (self.checkpoint is not None):
-            raise ValueError("only checkpoint saves return a checkpoint reference")
+        if (self.operation in ("save", "restore")) != (self.checkpoint is not None):
+            raise ValueError(
+                "only checkpoint save/restore returns a checkpoint reference"
+            )
+        object.__setattr__(
+            self, "metadata", mapping(self.metadata, "checkpoint metadata")
+        )
+        if self.operation != "restore" and self.metadata:
+            raise ValueError("only restore returns checkpoint metadata")
         identifier(self.history_id, "history ID")
         integer(self.completed_updates, "completed_updates")
         if type(self.state_valid) is not bool:

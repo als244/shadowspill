@@ -19,6 +19,7 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .bindings import BoundWorkerCall, WorkerBindings
+from .checkpoint_reader import WorkerCheckpointReader
 from .checkpoint_writer import WorkerCheckpointWriter
 from .execution import WorkerExecution
 from .initialization import PreparedInitialization, initialize, prepare_initialization
@@ -131,6 +132,17 @@ class PreparedWorker:
                         self.bindings,
                         budget,
                         outputs.collect,
+                        restore=WorkerCheckpointReader(
+                            executor,
+                            budget,
+                            resolve,
+                            chunk_bytes=min(
+                                64 << 20,
+                                self.initialization.description.chunk_bytes,
+                                budget.max_bytes // 2,
+                            ),
+                            world_size=len(rank_map),
+                        ),
                         checkpoints=None
                         if checkpoint_stream is None
                         else WorkerCheckpointWriter(

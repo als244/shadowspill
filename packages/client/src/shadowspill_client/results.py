@@ -33,6 +33,7 @@ class TrainingResult:
         self.completed_updates = record.completed_updates
         self.accumulation, self.state_valid = record.accumulation, record.state_valid
         self.loss, self.metrics = record.loss, record.metrics
+        self.metadata = record.metadata
         self.optim, self.loss_params, self.grad_scale = (
             record.optim,
             record.loss_params,

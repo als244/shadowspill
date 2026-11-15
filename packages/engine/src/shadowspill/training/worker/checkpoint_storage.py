@@ -1,7 +1,8 @@
 """Storage dependency supplied by deployment, not imported by training workers."""
 
 from collections.abc import Callable, Sequence
-from typing import Protocol
+from contextlib import AbstractContextManager
+from typing import BinaryIO, Protocol
 
 from shadowspill.orchestration.launch.publication import OutputWriter
 from shadowspill.training.session.prepared import PreparedCall
@@ -22,6 +23,8 @@ class CheckpointFiles(Protocol):
 
 
 class CheckpointStorage(Protocol):
+    def open(self, reference: ArtifactRef) -> AbstractContextManager[BinaryIO]: ...
+
     def describe(
         self, call: PreparedCall, transition: Transition
     ) -> CheckpointInfo: ...

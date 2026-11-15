@@ -10,7 +10,11 @@ from shadowspill_client import Execution
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload import BatchSnapshot
 from shadowspill_client.protocol.payload_io import BufferReader, read_payload
-from shadowspill_client.protocol.requests import OperationRequest, identifier
+from shadowspill_client.protocol.requests import (
+    ArtifactRef,
+    OperationRequest,
+    identifier,
+)
 from shadowspill_client.protocol.results import RequestStatus
 
 from .acceptance import AcceptanceOrder, AcceptanceRecords
@@ -83,8 +87,10 @@ class RequestInputs[Data: PreparedInput]:
         *,
         first_sequence: int = 1,
         budget: BufferBudget | None = None,
+        checkpoint: Callable[[Data], ArtifactRef | None] | None = None,
     ) -> None:
         self._records, self._order, self._prepare = records, order, prepare
+        self._checkpoint = checkpoint
         self.staging = OrderedStaging(
             execution, first_sequence=first_sequence, budget=budget
         )
@@ -187,7 +193,9 @@ class RequestInputs[Data: PreparedInput]:
             with self._order.synchronized():
                 slot.producing = False
                 if not slot.cancelled.is_set():
-                    self._order.validated(request_id)
+                    self._order.validated(
+                        request_id, checkpoint=lambda: self._resolve_checkpoint(slot)
+                    )
                 self.reap()
                 return self._status(request_id)
         except BaseException as error:
@@ -195,6 +203,11 @@ class RequestInputs[Data: PreparedInput]:
             if not isinstance(error, Exception):
                 raise
             return status
+
+    def _resolve_checkpoint(self, slot: _Slot[Data]) -> ArtifactRef | None:
+        # Runs once at ordered acceptance, while the prepared owner is retained.
+        assert slot.data is not None
+        return None if self._checkpoint is None else self._checkpoint(slot.data)
 
     def _failed(self, slot: _Slot[Data], error: BaseException) -> RequestStatus:
         key = slot.request.identity.request_id

@@ -8,6 +8,7 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .bindings import BoundWorkerCall, WorkerBindings
+from .checkpoint_reader import WorkerCheckpointReader
 from .checkpoint_records import RankSaved
 from .checkpoint_writer import WorkerCheckpointWriter
 from .protocol import WorkerOutputError
@@ -33,12 +34,18 @@ class WorkerExecution:
         collect: Callable[[BoundWorkerCall, Any, BufferBudget], ArtifactRef | None],
         *,
         checkpoints: WorkerCheckpointWriter | None = None,
+        restore: WorkerCheckpointReader | None = None,
     ) -> None:
         self._executor, self._bindings = executor, bindings
         self._budget, self._collect = budget, collect
         self._checkpoints = checkpoints
+        self._restore = restore
 
     def prepare(self, call: BoundWorkerCall) -> BoundWorkerCall:
+        if call.command.request.operation == "restore":
+            if self._restore is None:
+                raise ValueError("worker has no checkpoint loader")
+            return self._restore.prepare(call)
         if call.command.request.operation == "save":
             if self._checkpoints is None:
                 raise ValueError("worker has no checkpoint stream")
@@ -48,6 +55,11 @@ class WorkerExecution:
     def __call__(self, call: BoundWorkerCall) -> ArtifactRef | RankSaved | None:
         if call.command.scope != self._bindings.scope:
             raise ValueError("execution call belongs to another worker")
+        if call.command.request.operation == "restore":
+            if self._restore is None:
+                raise ValueError("worker has no checkpoint loader")
+            self._restore(call)
+            return None
         if call.command.request.operation == "save":
             if self._checkpoints is None:
                 raise ValueError("worker has no checkpoint stream")

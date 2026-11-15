@@ -82,6 +82,8 @@ class WorkerLoop:
             bound.verify_inputs(self._budget)
             if (command.request.operation == "save") != (bound.checkpoint is not None):
                 raise ValueError("worker has no prepared checkpoint encoder")
+            if (command.request.operation == "restore") != (bound.restore is not None):
+                raise ValueError("worker has no prepared checkpoint loader")
             ready = WorkerReply(
                 identity, "ready", "not_started", checkpoint=bound.checkpoint
             )

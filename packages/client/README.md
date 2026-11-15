@@ -71,4 +71,7 @@ input validation.
 server persistence completes. `handle.manifest()` inspects its metadata and
 `handle.download(path)` copies rank files into a new local directory, including
 after worker exit. The client performs no build, planning, model initialization
-or worker launch. Restore/resume and resumable transfers are still in development.
+or worker launch. `training.load_checkpoint(id_or_name)` restores through the same
+ordered stream, returns saved caller metadata and starts a new history segment.
+Native state ownership must match. New-run resume, layout conversion and resumable
+transfers are still in development.

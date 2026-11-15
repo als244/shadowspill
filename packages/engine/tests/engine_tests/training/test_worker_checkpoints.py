@@ -40,6 +40,7 @@ from shadowspill_client.protocol.requests import OperationRequest
 def running(root, artifacts, *, mode="normal", count=2):
     children, connections, prepared = [], {}, {}
     metadata, memory, disk = (BufferBudget(32 << 20, 10) for _ in range(3))
+    grants = FileGrants(root=root, memory=memory)
 
     def stop():
         for child in children:
@@ -60,6 +61,8 @@ def running(root, artifacts, *, mode="normal", count=2):
                     str(rank),
                     str(root / f"executions-{rank}"),
                     mode if rank == 1 else "normal",
+                    str(grants.root),
+                    str(count),
                 ],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -99,7 +102,6 @@ def running(root, artifacts, *, mode="normal", count=2):
         )
         with (
             WorkerGroup(connections, stop=stop) as group,
-            FileGrants(root=root, memory=memory) as grants,
             OutputFiles(root=root, disk=disk, memory=memory) as outputs,
             WorkerRequests(
                 group,
@@ -120,9 +122,11 @@ def running(root, artifacts, *, mode="normal", count=2):
             ) as publisher,
         ):
             yield workers, publisher, checkpoints
+        grants.close()
         assert metadata.used == memory.used == disk.used == (0, 0)
     finally:
         stop()
+        grants.close()
         for child in children:
             for stream in (child.stdin, child.stdout, child.stderr):
                 stream.close()
