@@ -710,6 +710,11 @@ def qualify_public_server():
                     converted_manifest = decode(stream.read())
                 assert converted_manifest.info.conversion.source == checkpoint_ref
                 assert converted_manifest.info.plans == converted_info.plans
+                rng_conversion = converted_manifest.info.conversion.randomness
+                assert rng_conversion["root_seed"] == execution.seed
+                assert {row["action"] for row in rng_conversion["target_streams"]} == {
+                    "preserve"
+                }
                 assert (
                     artifacts.resolve_alias(
                         "factory-session", result["run_id"], "step-1"
@@ -723,6 +728,7 @@ def qualify_public_server():
                 assert checkpoint_manifest.info.weights == result["checkpoint_weights"]
                 for row in checkpoint_manifest.ranks:
                     from shadowspill.checkpoint.archive import read_manifest
+                    from shadowspill.checkpoint.random_streams import read_snapshot
 
                     with (
                         artifacts.open(row.archive) as stream,
@@ -735,6 +741,14 @@ def qualify_public_server():
                     )
                     assert rank_manifest["state"] == row.state_sha256
                     assert rank_manifest["tensors"]
+                    seed, streams = read_snapshot(
+                        rank_manifest["metadata"]["randomness"]
+                    )
+                    assert seed == execution.seed and len(streams) == 8
+                    assert all(
+                        state.stream.rank == row.rank and state.payload
+                        for state in streams
+                    )
                 assert result["checkpoint_download_after_close"]
                 assert result["post_restore_update_oracle"]
                 with storage.requests(identity) as records:

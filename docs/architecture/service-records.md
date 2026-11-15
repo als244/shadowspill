@@ -816,5 +816,11 @@ representations and derives newly required streams with versioned SHA-256 seeds.
 stable restore identity and derived seeds. This is bounded CPU preparation; device
 initialization happens only in the assigned worker. CPU tests cover native next
 stochastic updates through both APIs, independent evaluation, 2↔4 stream mapping,
-and rejection without state mutation or target publication. Stochastic GPU
-qualification remains pending.
+and rejection without state mutation or target publication. A NumPy-only Tubingen
+client also qualifies fresh/native/converted runs on Chicago for a stochastic
+two-layer MLP. Downloaded random samples support independent forward/loss/SGD
+derivatives; both step and split calls match the oracle. Repeated restores replay
+training samples exactly despite interposed evaluation and all-masked calls, and
+converted resume preserves the saved seed when the target configuration changes
+it. This covers a single device and default streams; distributed and custom
+generator qualification remain open.
