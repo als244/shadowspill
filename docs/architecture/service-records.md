@@ -122,6 +122,13 @@ an incomplete or failed stream is discarded. Global checkpoint coordination and
 cross-layout conversion are still unfinished. Archive metadata inspection can
 import without loading the framework or worker-side tensor I/O.
 
+`checkpoint.checkpoint_size` derives exact archive bytes from the same tensor
+descriptors, weight selection, manifest encoding and TAR framing, before reading
+tensor data. Metadata and state must stay unchanged between sizing and writing.
+The output owner still enforces that exact size. This admits the complete rank
+archive before streaming, including metadata, checksums and padding, without a
+dry-run tensor export or a full-state snapshot.
+
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
 and host-key verification to OpenSSH. Existing masters receive only forward and

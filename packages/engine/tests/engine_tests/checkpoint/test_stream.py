@@ -14,7 +14,12 @@ import torch
 
 from engine_tests.execution.test_checkpoint import MemoryExecutor
 from engine_tests.server.test_artifacts import store
-from shadowspill.checkpoint import load_checkpoint, save_checkpoint, write_checkpoint
+from shadowspill.checkpoint import (
+    checkpoint_size,
+    load_checkpoint,
+    save_checkpoint,
+    write_checkpoint,
+)
 from shadowspill.checkpoint.archive import WriteAll, read_manifest
 from shadowspill.orchestration.launch.publication import OutputSpec
 from shadowspill_client.protocol.requests import ArtifactRef
@@ -78,11 +83,11 @@ def test_large_sink_failure_joins_hash_work_before_returning():
 def test_socket_stream_commits_only_after_writer_success_and_restores(tmp_path, fail):
     executor = MemoryExecutor()
     expected = {key: value.clone() for key, value in executor.values.items()}
-    # This tiny fixture supplies an exact prior envelope. Service checkpoint
-    # admission must derive its archive size before live export is dispatched.
-    example = io.BytesIO()
-    write_checkpoint(executor, example, metadata={"updates": 9}, chunk_bytes=16)
-    spec = OutputSpec("rank-0", example.tell(), "application/octet-stream")
+    spec = OutputSpec(
+        "rank-0",
+        checkpoint_size(executor, metadata={"updates": 9}),
+        "application/octet-stream",
+    )
     writer_socket, reader_socket = socket.socketpair()
     writer_socket.settimeout(5)
     reader_socket.settimeout(5)

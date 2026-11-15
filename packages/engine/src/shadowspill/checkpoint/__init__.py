@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .load import load_checkpoint as load_checkpoint
+    from .save import checkpoint_size as checkpoint_size
     from .save import (
         save_checkpoint as save_checkpoint,
     )
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
         write_checkpoint as write_checkpoint,
     )
 
-__all__ = ["load_checkpoint", "save_checkpoint", "write_checkpoint"]
+__all__ = ["checkpoint_size", "load_checkpoint", "save_checkpoint", "write_checkpoint"]
 
 
 def __getattr__(name: str) -> Any:

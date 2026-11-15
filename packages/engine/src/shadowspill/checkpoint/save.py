@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Buffer, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,10 +28,18 @@ from .archive import (
 from .frozen import omitted_parameters, validate_identity
 from .identity import state_identity
 from .tensors import byte_view, geometry, region_bytes
-from .weights import WeightRepresentation, select_weights
+from .weights import WeightRepresentation, WeightSelection, select_weights
 
 if TYPE_CHECKING:
     from shadowspill.execution import Executor
+
+
+def _entry(chunk: TensorChunk, index: int) -> dict[str, Any]:
+    return {
+        **geometry(chunk),
+        "member": f"tensors/{index}",
+        "bytes": region_bytes(chunk),
+    }
 
 
 class _Writer:
@@ -69,15 +77,9 @@ class _Writer:
             if chunk.name in self.names:
                 raise ValueError(f"duplicate tensor export: {chunk.name}")
             self.names.add(chunk.name)
-            member = f"tensors/{len(self.entries)}"
-            self.entries.append(
-                {
-                    **geometry(chunk),
-                    "member": member,
-                    "bytes": region_bytes(chunk),
-                }
-            )
-            header(self.archive, member, region_bytes(chunk))
+            entry = _entry(chunk, len(self.entries))
+            self.entries.append(entry)
+            header(self.archive, entry["member"], entry["bytes"])
             self.written, self.active = 0, True
             self.digest.reset(tensor.nbytes)
         if (
@@ -181,16 +183,9 @@ def write_checkpoint(
     On failure, the owner discards the partial stream. Return the exact manifest
     written, so a coordinator need not reread tensor bytes to inspect this rank.
     """
-    raw_metadata = encoded(dict(metadata or {}))
-    if len(raw_metadata) > MANIFEST_LIMIT:
-        raise ValueError("checkpoint metadata exceeds 16 MiB")
-    # Freeze JSON before exporting any borrowed tensor views. A sink or another
-    # caller thread must not change the manifest after metadata validation.
-    saved_metadata = json.loads(raw_metadata)
-    del raw_metadata
-    validate_identity(frozen_state_id)
-    omitted = set() if frozen_state_id is None else omitted_parameters(executor)
-    selection = select_weights(executor, weights)
+    saved_metadata, omitted, selection = _settings(
+        executor, metadata, frozen_state_id, weights
+    )
     target = WriteAll(stream)
     writer = _Writer(target)
 
@@ -208,7 +203,48 @@ def write_checkpoint(
     except BaseException:
         writer.abort()
         raise
-    manifest = {
+    manifest = _manifest(
+        executor,
+        writer.entries,
+        saved_metadata,
+        omitted,
+        selection,
+        frozen_state_id,
+        weights,
+    )
+    finish(target, encoded(manifest))
+    return manifest
+
+
+def _settings(
+    executor: Executor,
+    metadata: Mapping[str, Any] | None,
+    frozen_state_id: str | None,
+    weights: WeightRepresentation,
+) -> tuple[dict[str, Any], set[str], WeightSelection]:
+    raw_metadata = encoded(dict(metadata or {}))
+    if len(raw_metadata) > MANIFEST_LIMIT:
+        raise ValueError("checkpoint metadata exceeds 16 MiB")
+    # Freeze JSON before exporting any borrowed tensor views. A sink or another
+    # caller thread must not change the manifest after metadata validation.
+    saved_metadata = json.loads(raw_metadata)
+    del raw_metadata
+    validate_identity(frozen_state_id)
+    omitted = set() if frozen_state_id is None else omitted_parameters(executor)
+    selection = select_weights(executor, weights)
+    return saved_metadata, omitted, selection
+
+
+def _manifest(
+    executor: Executor,
+    tensors: list[dict[str, Any]],
+    saved_metadata: dict[str, Any],
+    omitted: set[str],
+    selection: WeightSelection,
+    frozen_state_id: str | None,
+    weights: WeightRepresentation,
+) -> dict[str, Any]:
+    return {
         "format": "shadowspill.checkpoint",
         "version": 2,
         "byteorder": sys.byteorder,
@@ -218,7 +254,7 @@ def write_checkpoint(
         "additional_programs": {
             name: plan.program.digest for name, plan in executor.plans.items()
         },
-        "tensors": writer.entries,
+        "tensors": tensors,
         "metadata": saved_metadata,
         "frozen_state_id": frozen_state_id,
         "omitted_parameters": sorted(omitted),
@@ -227,5 +263,57 @@ def write_checkpoint(
         "gathered_tensors": selection.gathered,
         "retained_weight_copies": selection.retained,
     }
-    finish(target, encoded(manifest))
-    return manifest
+
+
+class _Size:
+    def __init__(self) -> None:
+        self.size_bytes = 0
+
+    def write(self, data: Buffer, /) -> int:
+        with memoryview(data) as view:
+            self.size_bytes += view.nbytes
+            return view.nbytes
+
+
+def checkpoint_size(
+    executor: Executor,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+    frozen_state_id: str | None = None,
+    weights: WeightRepresentation = "master",
+) -> int:
+    """Exact rank archive bytes from descriptors, without exporting any tensor.
+
+    Use the same immutable metadata/selection and quiescent state for the write.
+    The caller still owns resource admission and rejects a changed output size.
+    This uses the actual TAR framing and manifest encoder, including hash widths,
+    owned regions, weight reconstruction and frozen-base omissions.
+    """
+    saved_metadata, omitted, selection = _settings(
+        executor, metadata, frozen_state_id, weights
+    )
+    tensors: list[dict[str, Any]] = []
+    seen = set()
+    counter = _Size()
+    for chunk in executor.tensor_chunks():
+        if chunk.name in seen:
+            raise ValueError(f"duplicate tensor export: {chunk.name}")
+        seen.add(chunk.name)
+        if (
+            chunk.name in omitted
+            or chunk.name in selection.derived
+            or chunk.name in selection.gathered
+            or not region_bytes(chunk)
+        ):
+            continue
+        entry = _entry(chunk, len(tensors))
+        entry["blake3"] = "0" * 64  # Content changes the digest, never its byte width.
+        tensors.append(entry)
+        header(counter, entry["member"], entry["bytes"])
+        counter.size_bytes += entry["bytes"]
+        padding(counter, entry["bytes"])
+    manifest = _manifest(
+        executor, tensors, saved_metadata, omitted, selection, frozen_state_id, weights
+    )
+    finish(counter, encoded(manifest))
+    return counter.size_bytes
