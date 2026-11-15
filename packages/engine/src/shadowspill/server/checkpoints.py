@@ -15,6 +15,7 @@ from typing import BinaryIO
 
 from shadowspill.orchestration.launch.publication import OutputSpec, OutputWriter
 from shadowspill.orchestration.launch.staging import COPY_BYTES
+from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.session.state import Transition
 from shadowspill.training.worker.checkpoint_records import (
@@ -30,6 +31,7 @@ from shadowspill_client.protocol.checkpoints import (
     CheckpointRank,
 )
 from shadowspill_client.protocol.codec import encode
+from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .artifact_group import StagedArtifacts
@@ -48,6 +50,7 @@ class RunCheckpoints:
         configuration: ArtifactRef,
         plans: ArtifactRef,
         world_size: int,
+        frozen_base: FrozenBase | None = None,
     ) -> None:
         self.artifacts, self.session_id = artifacts, session_id
         self.configuration, self.plans, self.world_size = (
@@ -55,6 +58,11 @@ class RunCheckpoints:
             plans,
             world_size,
         )
+        self.frozen_base = frozen_base
+
+    def restored(self, source: ResolvedCheckpoint) -> None:
+        """Called only after every worker confirms the ordered restore."""
+        self.frozen_base = source.manifest.info.frozen_base
 
     def open(self, reference: ArtifactRef) -> AbstractContextManager[BinaryIO]:
         return self.artifacts.open(reference)
@@ -82,6 +90,10 @@ class RunCheckpoints:
             sys.byteorder,
             weights=settings.weights,
             metadata=settings.metadata,
+            frozen_base=self.frozen_base,
+            frozen_state_id=None
+            if self.frozen_base is None
+            else self.frozen_base.identity,
         )
 
     def stage(
@@ -136,7 +148,10 @@ def stage_checkpoint(
     # All digests have fixed width, so this is the exact metadata size, not a
     # guessed model envelope. Encode before invoking a rank or reserving disk.
     encoded_size = len(encode(CheckpointManifest(info, placeholders)))
-    for dependency in (info.configuration, info.plans):
+    dependencies = [info.configuration, info.plans]
+    if info.frozen_base is not None and info.frozen_base.artifact is not None:
+        dependencies.append(info.frozen_base.artifact)
+    for dependency in dependencies:
         if artifacts.get(dependency.id) != dependency:
             raise ValueError("checkpoint dependency is not committed for this owner")
     alias = (

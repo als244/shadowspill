@@ -17,6 +17,7 @@ from shadowspill.checkpoint.identity import state_identity
 from shadowspill.checkpoint.state import PlanState
 from shadowspill.ir import AliasGroupSpec, ObjectSpec
 from shadowspill.parallelism import Parallelism
+from shadowspill.parallelism.resolve import ParameterGeometry, resolve_parameters
 from shadowspill.server.checkpoints import publish_checkpoint
 from shadowspill.training.worker.checkpoint_records import RankSave
 from shadowspill_client.protocol.codec import decode
@@ -27,7 +28,7 @@ SECOND = torch.linspace(0.01, 0.4, 48).reshape(4, 12)
 GRADIENT = torch.sin(torch.arange(48).float()).reshape(4, 12)
 
 
-def family(count, dim, *, master=True):
+def family(count, dim, *, master=True, frozen=False):
     shape = (4 // count, 12) if dim == 0 else (4, 12 // count)
     source = shaped(shape, model_spec(tuple(reversed(range(count))), dim))
     elements = shape[0] * shape[1]
@@ -73,6 +74,31 @@ def family(count, dim, *, master=True):
             replace(obj, size_bytes=elements * 2) if obj.alias_group_id == "0" else obj
             for obj in objects
         )
+    if frozen:
+        names = ("base.weight", "base.tied")
+        bindings["registrations"] = [
+            {**row, "trainable": True} for row in bindings["registrations"]
+        ] + [
+            dict(name=name, object_id=names[0], parameter=True, trainable=False)
+            for name in names
+        ]
+        bindings["model_tensor_geometry"] = {
+            **bindings["model_tensor_geometry"],
+            names[0]: {
+                "shape": shape,
+                "stride": (shape[1], 1),
+                "dtype": "torch.float32",
+            },
+        }
+        ownership = resolve_parameters(
+            source.parallelism, (ParameterGeometry(names, shape, False, elements * 4),)
+        )[0]
+        bindings["parameter_ownership"] = [
+            *bindings["parameter_ownership"],
+            ownership.to_dict(),
+        ]
+        aliases = (*aliases, AliasGroupSpec("base", "rank0", elements * 4))
+        objects = (*objects, ObjectSpec(names[0], "base", 0, elements * 4))
     source = replace(source, bindings=bindings, alias_groups=aliases, objects=objects)
     return [PlanState(plan(source), {}, logical_rank=rank) for rank in range(count)]
 

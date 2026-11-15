@@ -96,7 +96,8 @@ still come from the explicit initializer. To resume, supply
 `service.create_training_client(plans=training.plans, checkpoint=checkpoint)`.
 The client reads the saved configuration as bounded metadata; it does not download
 or decode executable Plans. The server validates every rank before initialization
-and loads the checkpoint directly, without opening the old fresh-weight source.
+and loads the checkpoint directly. A partial checkpoint opens only its recorded
+frozen-base source; a full checkpoint does not need the old fresh-weight source.
 The new run starts at the saved update count with a new history and a durable
 parent-checkpoint reference. Setup defaults remain the saved configuration's
 defaults; per-call overrides in the checkpoint do not replace them.
@@ -194,8 +195,14 @@ Directory download verifies each immutable rank file, streams serially and write
 `manifest.json` after the rank files. It does not overwrite existing destinations.
 A failed download leaves the committed server checkpoint available and does not
 repeat training or saving. Plans and frozen-base dependencies are separate
-artifacts; downloading the checkpoint does not implicitly copy them. The current
-service save includes frozen tensors. In-place restore requires compatible native
+artifacts; downloading the checkpoint does not implicitly copy them. Saves omit
+frozen parameters only when every prepared Plan proves their storage unchanged.
+The manifest's `info.frozen_base` records the exact resolved initializer, installed
+model source and optional weights artifact. Trainable weights, persistent buffers
+and mutated frozen storage remain in the rank files. Restore checks this identity
+and required artifacts before starting work, then fills only omitted parameters
+through the installed bounded loader. Later saves use the restored base identity;
+loading a full checkpoint clears omission provenance. In-place restore requires compatible native
 state ownership. New-run resume can convert compatible logical state into a new
 Plan family before starting workers; preparation reports a `converting` stage.
 The run keeps the selected source in `parent_checkpoint` and records the actual

@@ -39,6 +39,7 @@ def serve(
         bundle=launch.startup.bundle,
         rank_map=dict(enumerate(launch.startup.logical_by_worker)),
         restore=launch.restore,
+        weights=launch.weights,
     )
     if prepared.startup != launch.startup:
         raise ProtocolError("worker preflight differs from the admitted startup")

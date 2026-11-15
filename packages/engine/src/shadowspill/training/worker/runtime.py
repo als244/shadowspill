@@ -1,7 +1,7 @@
 """Open one saved worker family through the existing Executor lifecycle."""
 
 import os
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +18,7 @@ from shadowspill.training.inputs.staging import StagingLimitError
 from shadowspill.training.preparation.family_records import PreparedPlans
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.captures import NsightWindow
+from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .bindings import BoundWorkerCall, WorkerBindings
@@ -25,7 +26,14 @@ from .checkpoint_reader import WorkerCheckpointReader, validate_rank
 from .checkpoint_records import RankRestore
 from .checkpoint_writer import WorkerCheckpointWriter
 from .execution import WorkerExecution
-from .initialization import PreparedInitialization, initialize, prepare_initialization
+from .frozen import fresh_base
+from .initialization import (
+    PreparedInitialization,
+    initialize,
+    prepare_frozen_initialization,
+    prepare_initialization,
+    restore_staging,
+)
 from .loop import WorkerLoop
 from .output_files import OutputSink
 from .output_frame import WorkerOutputFrame, prepare_output_frames
@@ -52,9 +60,12 @@ class PreparedWorker:
     outputs: Mapping[tuple[str, str], WorkerOutputFrame]
     traces: Mapping[tuple[str, bool], TraceBudget]
     restore: RankRestore | None = None
+    frozen_base: FrozenBase | None = None
 
     @property
     def chunk_bytes(self) -> int:
+        if self.frozen_base is not None:
+            return restore_staging(self.initialization, self.startup.staging_bytes)[0]
         return min(
             64 << 20,
             self.startup.staging_bytes // 2
@@ -71,6 +82,7 @@ class PreparedWorker:
         bundle: ArtifactRef,
         rank_map: Mapping[int, int] | None = None,
         restore: RankRestore | None = None,
+        weights: Sequence[ArtifactRef] = (),
     ) -> "PreparedWorker":
         bindings = WorkerBindings(prepared, scope)
         NsysCapture.from_settings(bindings.setup.config.execution.nsys)
@@ -86,16 +98,33 @@ class PreparedWorker:
             or restore.info.world_size != len(assignment.logical_by_worker)
         ):
             raise ValueError("checkpoint initialization differs from worker assignment")
+        base = (
+            fresh_base(prepared, weights)
+            if restore is None
+            else restore.info.frozen_base
+        )
+        if (
+            restore is not None
+            and restore.info.frozen_state_id is not None
+            and base is None
+        ):
+            raise ValueError("checkpoint has no declared frozen-base restore identity")
         initial = (
             prepare_initialization(bindings.setup)[scope.rank]
             if restore is None
             else None
+            if base is None
+            else prepare_frozen_initialization(bindings.setup, base, scope.rank)
         )
         initial_bytes = (
             initial.description.peak_bytes
             if initial is not None
             else min(128 << 20, bindings.setup.config.execution.max_staging_bytes)
         )
+        if base is not None:
+            _, initial_bytes = restore_staging(
+                initial, bindings.setup.config.execution.max_staging_bytes
+            )
         if restore is not None and initial_bytes < 2:
             raise StagingLimitError(
                 "checkpoint initialization needs two staging chunks"
@@ -116,11 +145,12 @@ class PreparedWorker:
             primary.memory_budgets.spill_bytes,
             None,
         )
-        if initial is None:
-            assert restore is not None
-            signature = {"checkpoint": restore.to_dict(), "staging_bytes": staging}
-        else:
-            signature = initial.signature()
+        signature = {
+            "checkpoint": None if restore is None else restore.to_dict(),
+            "initializer": None if initial is None else initial.signature(),
+            "frozen_base": None if base is None else base.to_dict(),
+            "staging_bytes": staging,
+        }
         description = WorkerStartup(
             scope,
             bundle,
@@ -131,7 +161,7 @@ class PreparedWorker:
             staging,
             max(trace.host_bytes for trace in traces.values()),
         )
-        return cls(bindings, initial, description, outputs, traces, restore)
+        return cls(bindings, initial, description, outputs, traces, restore, base)
 
     @contextmanager
     def open(
@@ -183,6 +213,9 @@ class PreparedWorker:
                         chunk_bytes=min(self.chunk_bytes, budget.max_bytes // 2),
                         world_size=len(rank_map),
                         randomness=randomness,
+                        setup=self.bindings.setup,
+                        runtime=runtime,
+                        frozen_base=self.frozen_base,
                     )
                     if self.restore is None:
                         assert self.initialization is not None
@@ -224,6 +257,7 @@ class PreparedWorker:
                             plans=self.startup.bundle,
                             chunk_bytes=self.chunk_bytes,
                             randomness=randomness,
+                            frozen_base=lambda: reader.frozen_base,
                         ),
                     )
 

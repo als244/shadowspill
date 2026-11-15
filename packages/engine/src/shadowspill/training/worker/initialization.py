@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +15,9 @@ from shadowspill.training.definitions.initialization import (
 from shadowspill.training.preparation.setup import ResolvedSetup
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.frozen import FrozenBase
+
+from .frozen import validate_base
 
 if TYPE_CHECKING:
     import torch
@@ -59,6 +62,34 @@ def prepare_initialization(
             )
         result[rank] = PreparedInitialization(context, description, setup.model.source)
     return MappingProxyType(result)
+
+
+def prepare_frozen_initialization(
+    setup: ResolvedSetup, base: FrozenBase, rank: int
+) -> PreparedInitialization:
+    """A partial checkpoint, not historical fresh settings, selects its base."""
+    validate_base(base, setup.config)
+    assert base.model.initialize is not None
+    context = InitializationContext(
+        base.model, base.model.initialize, setup.context.parallelism, rank
+    )
+    model = replace(setup.model, settings=base.model)
+    return PreparedInitialization(
+        context, model.describe_initialization(context), base.source
+    )
+
+
+def restore_staging(
+    initial: PreparedInitialization | None, capacity: int, *, limit: int = 64 << 20
+) -> tuple[int, int]:
+    """Bound a retained base loader plus destination and cast/read scratch."""
+    peak = 0 if initial is None else initial.description.peak_bytes
+    chunk = min(limit, (capacity - peak) // 2)
+    if initial is not None:
+        chunk = min(chunk, initial.description.chunk_bytes)
+    if chunk < 1:
+        raise ValueError("checkpoint base and restore chunks exceed admitted staging")
+    return chunk, peak + 2 * chunk
 
 
 def initialize(

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING, BinaryIO
 
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.checkpoints import RANK_MEDIA_TYPE, CheckpointInfo
+from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .binary import WorkerStream
@@ -37,12 +39,14 @@ class WorkerCheckpointWriter:
         plans: ArtifactRef,
         chunk_bytes: int,
         randomness: WorkerRandomness | None = None,
+        frozen_base: Callable[[], FrozenBase | None] = lambda: None,
     ) -> None:
         if type(chunk_bytes) is not int or not 0 < chunk_bytes <= budget.max_bytes:
             raise ValueError("checkpoint chunk exceeds admitted worker staging")
         self.executor, self.budget, self.stream = executor, budget, stream
         self.plans, self.chunk_bytes = plans, chunk_bytes
         self.randomness = randomness
+        self.frozen_base = frozen_base
 
     def _describe(self, info: CheckpointInfo) -> RankSave:
         from shadowspill.checkpoint import checkpoint_size
@@ -50,15 +54,24 @@ class WorkerCheckpointWriter:
 
         if info.plans != self.plans or info.byteorder != sys.byteorder:
             raise ValueError("checkpoint provenance differs from the ready worker")
-        if info.frozen_state_id is not None:
-            raise ValueError("worker has no declared frozen-base checkpoint identity")
+        if info.frozen_base != self.frozen_base() or (
+            info.frozen_state_id is not None and info.frozen_base is None
+        ):
+            raise ValueError(
+                "checkpoint frozen base differs from the initialized worker"
+            )
         randomness = None if self.randomness is None else self.randomness.capture()
         metadata = info.rank_metadata()
         if randomness is not None:
             metadata["randomness"] = randomness
         return RankSave(
             self.executor.logical_rank,
-            checkpoint_size(self.executor, metadata=metadata, weights=info.weights),
+            checkpoint_size(
+                self.executor,
+                metadata=metadata,
+                weights=info.weights,
+                frozen_state_id=info.frozen_state_id,
+            ),
             state_identity(self.executor),
             self.executor.plan.program.digest,
             {name: plan.program.digest for name, plan in self.executor.plans.items()},
@@ -88,6 +101,7 @@ class WorkerCheckpointWriter:
                     metadata=admitted.metadata(info),
                     chunk_bytes=self.chunk_bytes,
                     weights=info.weights,
+                    frozen_state_id=info.frozen_state_id,
                 )
                 admitted.confirm(info, manifest)
                 sink.finish()

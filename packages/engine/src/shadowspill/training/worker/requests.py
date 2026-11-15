@@ -168,6 +168,9 @@ class WorkerRequests:
                     if checkpoint is None
                     else self._save(result, commands, checkpoint)
                 )
+                if call.restore is not None:
+                    assert self._checkpoints is not None
+                    self._checkpoints.restored(call.restore)
                 if closing:
                     # Executor close replies precede process/log finalization.
                     # The dispatcher's receipt requires confirmed child exit.
@@ -286,9 +289,15 @@ class WorkerRequests:
                     or command.restore.checkpoint != call.restore.reference
                 ):
                     raise ValueError("restore has no accepted checkpoint storage")
-                ref = command.restore.rank.archive
-                if references.setdefault(ref.id, ref) != ref:
-                    raise ValueError("checkpoint rank ID has conflicting references")
+                dependencies = [command.restore.rank.archive]
+                base = command.restore.info.frozen_base
+                if base is not None and base.artifact is not None:
+                    dependencies.append(base.artifact)
+                for ref in dependencies:
+                    if references.setdefault(ref.id, ref) != ref:
+                        raise ValueError(
+                            "checkpoint dependency ID has conflicting references"
+                        )
         for node, references in grouped.items():
             missing = []
             for reference in references.values():

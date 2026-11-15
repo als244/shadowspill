@@ -5,6 +5,7 @@ from contextlib import AbstractContextManager
 from typing import BinaryIO, Protocol
 
 from shadowspill.orchestration.launch.publication import OutputWriter
+from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.session.prepared import PreparedCall
 from shadowspill.training.session.state import Transition
 from shadowspill_client.protocol.checkpoints import CheckpointInfo
@@ -23,6 +24,8 @@ class CheckpointFiles(Protocol):
 
 
 class CheckpointStorage(Protocol):
+    def restored(self, source: ResolvedCheckpoint) -> None: ...
+
     def open(self, reference: ArtifactRef) -> AbstractContextManager[BinaryIO]: ...
 
     def describe(

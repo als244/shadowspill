@@ -90,7 +90,12 @@ opaque, owner-granted ID resolved by `InitializationRuntime.artifact`; a request
 never supplies a server filesystem path. Runtime cache paths and loader callbacks
 are worker-local and never enter saved Plans or public wire records. Loader code
 and its dependencies belong to the model definition's source closure. Worker
-startup and the public service still require their separate integration checks.
+checkpoints record that source, the resolved settings and exact weight reference
+when omitting unchanged frozen parameters. The loader must reproduce those weights
+independently of chunk order and rank ownership. On partial restore it receives
+only omitted parameters; trainable state, mutations and buffers come from the
+checkpoint. The worker admits the retained loader peak together with restore
+scratch before opening it. Full checkpoints require no base loader.
 
 Opaque kernels used by prepared operations need an all-value allocation contract.
 `ModelBuild`, `ObjectiveDefinition` and `OptimizerDefinition` accept

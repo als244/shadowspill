@@ -116,6 +116,13 @@ class LiveRun:
                     raise ValueError(
                         "worker initialization differs from run checkpoint"
                     )
+        self._frozen_base = next(iter(nodes[0].prepared.values())).frozen_base
+        if any(
+            worker.frozen_base != self._frozen_base
+            for node in nodes
+            for worker in node.prepared.values()
+        ):
+            raise ValueError("workers disagree on initialized frozen base")
         execution = family.inventory.layouts.setup.config.execution
         self._nsys = NsysCapture.from_settings(execution.nsys)
         if (
@@ -225,6 +232,7 @@ class LiveRun:
                     configuration=info.configuration,
                     plans=self.plans,
                     world_size=len(prepared),
+                    frozen_base=self._frozen_base,
                 ),
             )
             self._controller = RunController(

@@ -88,7 +88,13 @@ def family(inv=None):
                         timeline=SimpleNamespace(makespan_ns=100 + index),
                         summary={"duration_seconds": (100 + index) * 1e-9},
                         program=SimpleNamespace(
-                            bindings={"gradient_scale_control": "scale"}
+                            bindings={
+                                "gradient_scale_control": "scale",
+                                "registrations": [],
+                            },
+                            objects=(),
+                            alias_groups=(),
+                            tasks=(),
                         ),
                     )
             shape = source.layout.candidate.schedule.buffers[0]

@@ -169,6 +169,7 @@ def prepare(request: ConversionRequest) -> PreparedConversion:
                     ),
                 },
                 weights=info.weights,
+                frozen_state_id=info.frozen_state_id,
             ),
             state_identity(state),
             state.plan.program.digest,

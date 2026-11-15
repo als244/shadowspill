@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import BinaryIO
 
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
+from shadowspill.training.worker.frozen import validate_base
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
     CheckpointManifest,
@@ -49,6 +50,9 @@ def require_checkpoint_dependencies(
     dependencies = [row.archive for row in manifest.ranks]
     if setup:
         dependencies[:0] = [manifest.info.configuration, manifest.info.plans]
+        base = manifest.info.frozen_base
+        if base is not None and base.artifact is not None:
+            dependencies.append(base.artifact)
     for dependency in dependencies:
         if artifacts.get(dependency.id) != dependency:
             raise ValueError(f"checkpoint dependency is unavailable: {dependency.id}")
@@ -136,8 +140,10 @@ class CheckpointResolver:
             raise ValueError("checkpoint byte order requires explicit conversion")
         if self.world_size is not None and info.world_size != self.world_size:
             raise ValueError("checkpoint ownership requires explicit conversion")
-        if info.frozen_state_id is not None:
+        if info.frozen_state_id is not None and info.frozen_base is None:
             raise ValueError("this run has no declared frozen-base checkpoint identity")
+        if info.frozen_base is not None:
+            validate_base(info.frozen_base, self.configuration)
         require_checkpoint_dependencies(self.artifacts, value)
         resolved = ResolvedCheckpoint(reference, value)
         validate_resume_optimizer(self.artifacts, resolved, self.configuration)

@@ -34,7 +34,11 @@ from shadowspill.training.preparation.job import BUNDLE_NAME, prepare_job
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.worker.checkpoint_records import RankRestore
-from shadowspill.training.worker.initialization import prepare_initialization
+from shadowspill.training.worker.initialization import (
+    prepare_frozen_initialization,
+    prepare_initialization,
+    restore_staging,
+)
 from shadowspill.training.worker.node import WorkerNode
 from shadowspill.training.worker.protocol import WorkerScope
 from shadowspill.training.worker.resources import WorkerHost
@@ -230,6 +234,12 @@ class LocalCreation:
             # provenance in saved Plans never requires opening that old source.
             if checkpoint is None:
                 prepare_initialization(setup)
+            elif checkpoint.manifest.info.frozen_base is not None:
+                for rank in range(setup.context.parallelism.world_size):
+                    initial_base = prepare_frozen_initialization(
+                        setup, checkpoint.manifest.info.frozen_base, rank
+                    )
+                    restore_staging(initial_base, execution.max_staging_bytes)
             weights = []
             initial = creation.config.model.initialize
             if (
@@ -244,6 +254,10 @@ class LocalCreation:
                         "initial weights are not in this owner's artifact storage"
                     )
                 weights.append(ref)
+            if checkpoint is not None:
+                base = checkpoint.manifest.info.frozen_base
+                if base is not None and base.artifact is not None:
+                    weights.append(base.artifact)
             ranks = setup.context.parallelism.world_size
             needed = int(setup.config.memory.device_gib * (1 << 30))
             if needed < 1:
@@ -360,6 +374,7 @@ class LocalCreation:
                         rank,
                     ),
                     bundle=plans,
+                    weights=weights,
                     restore=None
                     if checkpoint is None
                     else RankRestore(

@@ -56,10 +56,11 @@ from shadowspill.training.worker.randomness import WorkerRandomness
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.checkpoints import CheckpointInfo
 from shadowspill_client.protocol.codec import encode
+from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
 
 
-def bundle(config, count, dim, master, *, missing_default=False):
+def bundle(config, count, dim, master, *, missing_default=False, frozen=False):
     base = plan_program(
         profiled(),
         memory_budgets=MemoryBudgets(100, 64),
@@ -67,7 +68,7 @@ def bundle(config, count, dim, master, *, missing_default=False):
         search_options=options(),
     )
     plans = {}
-    for state in family(count, dim, master=master):
+    for state in family(count, dim, master=master, frozen=frozen):
         program = state.plan.program
         if missing_default:
             program = replace(
@@ -110,10 +111,13 @@ def configured(
     master=True,
     missing_default=False,
     randomness=False,
+    frozen=False,
 ):
     config = configuration()
-    source = bundle(config, source_count, 0, master)
-    target = bundle(config, target_count, 1, master, missing_default=missing_default)
+    source = bundle(config, source_count, 0, master, frozen=frozen)
+    target = bundle(
+        config, target_count, 1, master, missing_default=missing_default, frozen=frozen
+    )
     memory, disk = BufferBudget(64 << 20), BufferBudget(8 << 20)
     with store(tmp_path) as artifacts:
         body = encode(config)
@@ -128,6 +132,11 @@ def configured(
             )
             artifacts.put(ref, lambda _, path=path: path.open("rb"))
             plan_refs.append(ref)
+        base = (
+            FrozenBase(config.model, config.definition_sources["model"])
+            if frozen
+            else None
+        )
         info = CheckpointInfo(
             "session",
             "source-run",
@@ -140,6 +149,8 @@ def configured(
             sys.byteorder,
             weights=weights,
             metadata={"cursor": [9, 11]},
+            frozen_base=base,
+            frozen_state_id=None if base is None else base.identity,
         )
         executors = [
             HostRank(state, initialize=True) for state in plan_states(source.plans)
@@ -183,7 +194,10 @@ def configured(
             RankSave(
                 state.logical_rank,
                 checkpoint_size(
-                    state, metadata=metadata(state.logical_rank), weights=weights
+                    state,
+                    metadata=metadata(state.logical_rank),
+                    weights=weights,
+                    frozen_state_id=info.frozen_state_id,
                 ),
                 state_identity(state),
                 state.plan.program.digest,
@@ -316,6 +330,68 @@ def test_creation_converts_publishes_reuses_and_preserves_next_adam_update(
         before = artifacts.used
         assert execute(artifacts, source, kwargs) == result
         assert artifacts.used == before
+
+
+@pytest.mark.parametrize("counts", [(1, 4), (4, 1), (2, 4)])
+def test_partial_conversion_preserves_base_omission_exact_sizes_and_next_update(
+    tmp_path, counts
+):
+    with configured(
+        tmp_path, source_count=counts[0], target_count=counts[1], frozen=True
+    ) as (artifacts, source, target, kwargs):
+        result = execute(artifacts, source, kwargs)
+        assert result.manifest.info.frozen_base == source.manifest.info.frozen_base
+        expected, _ = adam(WEIGHT, FIRST, SECOND, GRADIENT, 17)
+        for state, row in zip(plan_states(target), result.manifest.ranks, strict=True):
+            path = tmp_path / f"partial-{row.rank}.ssp"
+            with artifacts.open(row.archive) as stream:
+                path.write_bytes(stream.read())
+            assert path.stat().st_size == row.archive.size_bytes
+            with open_checkpoint(path) as archive:
+                manifest = read_manifest(archive)
+            assert manifest["omitted_parameters"] == ["base.tied", "base.weight"]
+            selected = slice(
+                (counts[1] - row.rank - 1) * (12 // counts[1]),
+                (counts[1] - row.rank) * (12 // counts[1]),
+            )
+            frozen = WEIGHT[:, selected].contiguous()
+
+            def fill(chunk, destination, frozen=frozen):
+                assert chunk.name == "base.weight"
+                destination.copy_(
+                    frozen.reshape(-1)[
+                        chunk.offset : chunk.offset + destination.numel()
+                    ]
+                )
+
+            restored = HostRank(state)
+            load_checkpoint(
+                restored,
+                path,
+                chunk_bytes=17,
+                frozen_state_id=result.manifest.info.frozen_state_id,
+                fill_tensor=fill,
+            )
+            torch.testing.assert_close(
+                restored.values["base.weight"].reshape(frozen.shape),
+                frozen,
+                rtol=0,
+                atol=0,
+            )
+            actual, _ = adam(
+                restored.values["master.linear.weight"].reshape(frozen.shape),
+                restored.values["optimizer.linear.weight.exp_avg"].reshape(
+                    frozen.shape
+                ),
+                restored.values["optimizer.linear.weight.exp_avg_sq"].reshape(
+                    frozen.shape
+                ),
+                GRADIENT[:, selected],
+                17,
+            )
+            torch.testing.assert_close(
+                actual, expected[:, selected], rtol=1e-6, atol=1e-7
+            )
 
 
 @pytest.mark.parametrize(

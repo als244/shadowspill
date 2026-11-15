@@ -36,12 +36,28 @@ if mode == "load_failure":
     executor.initialize = fail_load
 scope = WorkerScope("run", "server", f"process-{rank}", rank)
 budget = BufferBudget(64 << 10)
+reader = None
+if mode == "frozen":
+    from engine_tests.training.test_worker_frozen_checkpoint import fixture
+
+    executor, budget, base, reader, _, _ = fixture(marker.parent)
+    executor.close = lambda: None
+    reader.resolve = lambda ref: resolve_file(Path(sys.argv[4]), ref)
+elif mode != "no_loader":
+    reader = WorkerCheckpointReader(
+        executor,
+        budget,
+        lambda ref: resolve_file(Path(sys.argv[4]), ref),
+        chunk_bytes=4 if mode == "small_staging" else 32,
+        world_size=int(sys.argv[5]),
+    )
 writer = WorkerCheckpointWriter(
     executor,
     budget,
     sys.stdout.buffer,
     plans=ArtifactRef("plans", hashlib.sha256(b"plans").hexdigest(), 5),
     chunk_bytes=32,
+    frozen_base=lambda: None if reader is None else reader.frozen_base,
 )
 execution = WorkerExecution(
     executor,
@@ -49,15 +65,7 @@ execution = WorkerExecution(
     budget,
     lambda *args: None,
     checkpoints=writer,
-    restore=None
-    if mode == "no_loader"
-    else WorkerCheckpointReader(
-        executor,
-        budget,
-        lambda ref: resolve_file(Path(sys.argv[4]), ref),
-        chunk_bytes=4 if mode == "small_staging" else 32,
-        world_size=int(sys.argv[5]),
-    ),
+    restore=reader,
 )
 
 

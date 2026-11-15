@@ -60,7 +60,7 @@ def running(root, artifacts, *, mode="normal", count=2):
                     str(Path(__file__).with_name("_worker_checkpoint.py")),
                     str(rank),
                     str(root / f"executions-{rank}"),
-                    mode if rank == 1 else "normal",
+                    mode if rank == 1 or mode == "frozen" else "normal",
                     str(grants.root),
                     str(count),
                 ],
