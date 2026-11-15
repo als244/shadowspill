@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
 from shadowspill.artifacts._values import encoded
 from shadowspill.artifacts.tensors import TensorChunk
 
-from .archive import ContentHash, finish, header, padding
+from .archive import (
+    MANIFEST_LIMIT,
+    ContentHash,
+    WriteAll,
+    WriteSink,
+    finish,
+    header,
+    padding,
+)
 from .frozen import omitted_parameters, validate_identity
 from .identity import state_identity
 from .tensors import byte_view, geometry, region_bytes
@@ -26,7 +35,7 @@ if TYPE_CHECKING:
 
 
 class _Writer:
-    def __init__(self, archive: IO[bytes]):
+    def __init__(self, archive: WriteSink):
         self.archive = archive
         self.entries: list[dict[str, Any]] = []
         self.active = False
@@ -126,12 +135,6 @@ def save_checkpoint(
     compute values. Encoded representations or incompatible owned layouts retain
     both copies, with the reason recorded in ``retained_weight_copies``.
     """
-    # Reject non-JSON metadata before streaming model-sized payloads.
-    if len(encoded(dict(metadata or {}))) > 16 << 20:
-        raise ValueError("checkpoint metadata exceeds 16 MiB")
-    validate_identity(frozen_state_id)
-    omitted = set() if frozen_state_id is None else omitted_parameters(executor)
-    selection = select_weights(executor, weights)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary: str | None = None
@@ -140,45 +143,14 @@ def save_checkpoint(
             dir=destination.parent, prefix=f".{destination.name}.", delete=False
         ) as stream:
             temporary = stream.name
-            writer = _Writer(stream.file)
-
-            def write(chunk: TensorChunk, tensor: torch.Tensor) -> None:
-                if (
-                    chunk.name not in omitted
-                    and chunk.name not in selection.derived
-                    and chunk.name not in selection.gathered
-                ):
-                    writer.write(chunk, tensor)
-
-            try:
-                executor.export_tensors(write, chunk_bytes=chunk_bytes)
-                writer.close()
-            except BaseException:
-                writer.abort()
-                raise
-            manifest = encoded(
-                {
-                    "format": "shadowspill.checkpoint",
-                    "version": 2,
-                    "byteorder": sys.byteorder,
-                    "state": state_identity(executor),
-                    "program": executor.plan.program.digest,
-                    "logical_rank": executor.logical_rank,
-                    "additional_programs": {
-                        name: plan.program.digest
-                        for name, plan in executor.plans.items()
-                    },
-                    "tensors": writer.entries,
-                    "metadata": dict(metadata or {}),
-                    "frozen_state_id": frozen_state_id,
-                    "omitted_parameters": sorted(omitted),
-                    "weights": weights,
-                    "derived_tensors": selection.derived,
-                    "gathered_tensors": selection.gathered,
-                    "retained_weight_copies": selection.retained,
-                }
+            write_checkpoint(
+                executor,
+                stream.file,
+                metadata=metadata,
+                chunk_bytes=chunk_bytes,
+                frozen_state_id=frozen_state_id,
+                weights=weights,
             )
-            finish(stream.file, manifest)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
@@ -191,3 +163,69 @@ def save_checkpoint(
     finally:
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)
+
+
+def write_checkpoint(
+    executor: Executor,
+    stream: WriteSink,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+    chunk_bytes: int = 64 << 20,
+    frozen_state_id: str | None = None,
+    weights: WeightRepresentation = "master",
+) -> dict[str, Any]:
+    """Write the existing uncompressed rank archive to a borrowed blocking sink.
+
+    No seek, full-state snapshot, flush, close or publication is performed. The
+    owner must publish only after this returns and its own durability checks pass.
+    On failure, the owner discards the partial stream. Return the exact manifest
+    written, so a coordinator need not reread tensor bytes to inspect this rank.
+    """
+    raw_metadata = encoded(dict(metadata or {}))
+    if len(raw_metadata) > MANIFEST_LIMIT:
+        raise ValueError("checkpoint metadata exceeds 16 MiB")
+    # Freeze JSON before exporting any borrowed tensor views. A sink or another
+    # caller thread must not change the manifest after metadata validation.
+    saved_metadata = json.loads(raw_metadata)
+    del raw_metadata
+    validate_identity(frozen_state_id)
+    omitted = set() if frozen_state_id is None else omitted_parameters(executor)
+    selection = select_weights(executor, weights)
+    target = WriteAll(stream)
+    writer = _Writer(target)
+
+    def write(chunk: TensorChunk, tensor: torch.Tensor) -> None:
+        if (
+            chunk.name not in omitted
+            and chunk.name not in selection.derived
+            and chunk.name not in selection.gathered
+        ):
+            writer.write(chunk, tensor)
+
+    try:
+        executor.export_tensors(write, chunk_bytes=chunk_bytes)
+        writer.close()
+    except BaseException:
+        writer.abort()
+        raise
+    manifest = {
+        "format": "shadowspill.checkpoint",
+        "version": 2,
+        "byteorder": sys.byteorder,
+        "state": state_identity(executor),
+        "program": executor.plan.program.digest,
+        "logical_rank": executor.logical_rank,
+        "additional_programs": {
+            name: plan.program.digest for name, plan in executor.plans.items()
+        },
+        "tensors": writer.entries,
+        "metadata": saved_metadata,
+        "frozen_state_id": frozen_state_id,
+        "omitted_parameters": sorted(omitted),
+        "weights": weights,
+        "derived_tensors": selection.derived,
+        "gathered_tensors": selection.gathered,
+        "retained_weight_copies": selection.retained,
+    }
+    finish(target, encoded(manifest))
+    return manifest

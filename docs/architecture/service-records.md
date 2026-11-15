@@ -112,6 +112,16 @@ Reading does not import the planner, decode the full archive, require live worke
 or claim a writer. Each page respects the shared byte/JSON bounds and a 32-row
 limit; full bundle downloads remain a separate explicit transfer.
 
+Checkpoint integration reuses `checkpoint.write_checkpoint`, the existing rank
+archive encoder separated from atomic file publication. It writes bounded tensor
+chunks to a borrowed blocking sink, handles partial writes, and returns the exact
+written manifest. It does not flush, close or commit the destination. File saves
+use this same encoder and retain temporary-file/fsync/rename behavior. The stream
+owner must admit storage and confirm successful rank completion before publishing;
+an incomplete or failed stream is discarded. Global checkpoint coordination and
+cross-layout conversion are still unfinished. Archive metadata inspection can
+import without loading the framework or worker-side tensor I/O.
+
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
 and host-key verification to OpenSSH. Existing masters receive only forward and

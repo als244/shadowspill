@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import tarfile
-from typing import IO, Any
+from collections.abc import Buffer
+from typing import Any, Protocol
 
 from blake3 import blake3
 
@@ -12,18 +13,40 @@ BLOCK = 512
 MANIFEST_LIMIT = 16 << 20
 
 
-def header(stream: IO[bytes], name: str, size: int) -> None:
+class WriteSink(Protocol):
+    def write(self, data: Buffer, /) -> int: ...
+
+
+class WriteAll:
+    """A borrowed blocking sink; partial writes never drop checkpoint bytes."""
+
+    def __init__(self, stream: WriteSink):
+        self.stream = stream
+
+    def write(self, data: Buffer, /) -> int:
+        with memoryview(data).cast("B") as view:
+            offset = 0
+            while offset < len(view):
+                with view[offset:] as remaining:
+                    count = self.stream.write(remaining)
+                    if type(count) is not int or not 0 < count <= len(remaining):
+                        raise OSError("checkpoint sink made no valid write progress")
+                    offset += count
+            return offset
+
+
+def header(stream: WriteSink, name: str, size: int) -> None:
     info = tarfile.TarInfo(name)
     info.size = size
     # GNU numeric fields accommodate individual tensors larger than 8 GiB.
     stream.write(info.tobuf(format=tarfile.GNU_FORMAT))
 
 
-def padding(stream: IO[bytes], size: int) -> None:
+def padding(stream: WriteSink, size: int) -> None:
     stream.write(b"\0" * (-size % BLOCK))
 
 
-def finish(stream: IO[bytes], manifest: bytes) -> None:
+def finish(stream: WriteSink, manifest: bytes) -> None:
     if len(manifest) > MANIFEST_LIMIT:
         raise ValueError("checkpoint manifest exceeds 16 MiB")
     for name, data in (
