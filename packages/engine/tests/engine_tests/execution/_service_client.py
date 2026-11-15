@@ -119,7 +119,7 @@ def qualify_conversion(client, config, memory, oracle, checkpoint, saved):
     assert first.completed_updates == 1
     assert split_update(training).completed_updates == 2
     split = training.forward(records(False), outputs="predictions").result(120)
-    restored = training.load_checkpoint(converted).result(120)
+    restored = training.load_checkpoint(converted.id).result(120)
     assert restored.completed_updates == 1 and restored.history_id != first.history_id
     whole = training.step(
         records(True),
@@ -131,6 +131,11 @@ def qualify_conversion(client, config, memory, oracle, checkpoint, saved):
     final = training.forward(records(False), outputs="predictions").result(120)
     plans = training.plans
     training.close().result(30)
+    ready(
+        client._transport,
+        "/v1/runs/factory-session/" + training.run_id,
+        state="closed",
+    )
     for value, expected in (
         (first, "after_step"),
         (split, "after_split"),
@@ -328,6 +333,11 @@ def qualify(client, config, memory, oracle):
         assert updated.completed_updates == 2 and updated.history_id == first.history_id
         final = resumed.forward(records(False), outputs="predictions").result(120)
         resumed.close().result(30)
+        ready(
+            client._transport,
+            "/v1/runs/factory-session/" + resumed.run_id,
+            state="closed",
+        )
         for value, expected in ((first, "after_step"), (final, "after_split")):
             handle = value.outputs["prediction"]
             with TemporaryDirectory(prefix="shadowspill-demo-resumed-") as directory:
