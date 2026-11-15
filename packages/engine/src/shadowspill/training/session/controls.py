@@ -26,16 +26,17 @@ class CallControls:
 def operation_key(setup: ResolvedSetup, request: OperationRequest) -> OperationKey:
     if request.operation not in ("step", "forward_backward", "forward", "optim_step"):
         raise ValueError("state commands do not select a compute capability")
-    key = OperationKey(
-        request.operation,
-        None
-        if request.operation == "optim_step"
-        else request.outputs or setup.objective.definition.default_outputs,
-        request.mode or "training",
-    )
-    if key not in setup.config.operations:
-        raise ValueError("operation/output/mode was not prepared for this client")
-    return key
+    # Caller order defines the default separately for each operation and mode.
+    # The objective's default is used only when resolving omitted setup options;
+    # it may not be prepared at all for this runtime call.
+    for key in setup.config.operations:
+        if (
+            key.operation == request.operation
+            and key.mode == (request.mode or "training")
+            and (request.outputs is None or key.outputs == request.outputs)
+        ):
+            return key
+    raise ValueError("operation/output/mode was not prepared for this client")
 
 
 def call_controls(

@@ -53,6 +53,7 @@ from shadowspill_client import (
     Memory,
     Model,
     Objective,
+    Operation,
     PlanningOptions,
     Preparation,
     Weights,
@@ -239,6 +240,58 @@ def test_real_upload_selects_only_prepared_shapes_and_defaults_are_nonsticky(tmp
             assert data.closed and all(not p.exists() for p in paths)
             assert inputs.staging.used == (0, 0)
         assert state.boundary.completed_updates == 2
+
+
+@pytest.mark.parametrize("output", [None, "predictions"])
+def test_forward_default_selects_the_prepared_output_before_decoding(tmp_path, output):
+    with store(tmp_path) as journal:
+        prepared, state, dispatcher, inputs = queue(journal, tmp_path)
+        command, wire = upload(
+            records(targets=False), operation="forward", outputs=output
+        )
+        assert prepared.register(inputs, command).state == "uploading"
+        assert inputs.receive("a", io.BytesIO(wire)).state == "accepted"
+        data, result = finish(dispatcher, inputs, command)
+        assert data.candidate.operation.outputs == "predictions"
+        assert not data.controls.loss_params
+        assert result.state == "completed" and state.boundary.completed_updates == 0
+        assert data.closed and inputs.staging.used == (0, 0)
+
+
+@pytest.mark.parametrize(
+    "outputs", [("metrics", "predictions"), ("predictions", "metrics")]
+)
+def test_output_defaults_follow_saved_order_within_each_mode(outputs):
+    from shadowspill.training.session.controls import operation_key
+    from shadowspill_client.protocol.codec import decode, encode
+
+    registry = installed()
+    setup = resolve_training(
+        registry,
+        **arguments(),
+        operations={
+            "step": ["metrics"],
+            "forward": [Operation("predictions", "training"), *outputs],
+        },
+    )
+    # Reopening the immutable configuration must preserve the same defaults.
+    setup = resolve_training(registry, config=decode(encode(setup.config)))
+    command = OperationRequest(request().identity, "forward")
+    key = operation_key(setup, command)
+    assert key.outputs == outputs[0] and key.mode == "evaluation"
+    assert (
+        operation_key(setup, replace(command, mode="training")).outputs == "predictions"
+    )
+    assert (
+        operation_key(setup, replace(command, outputs=outputs[1])).outputs == outputs[1]
+    )
+    for bad in (
+        replace(command, outputs="missing"),
+        replace(command, mode="training", outputs="metrics"),
+        OperationRequest(request().identity, "forward_backward"),
+    ):
+        with pytest.raises(ValueError, match="not prepared"):
+            operation_key(setup, bad)
 
 
 def test_empty_masked_and_optimizer_forms_follow_the_single_state_machine(tmp_path):
