@@ -265,7 +265,7 @@ def test_authoritative_failure_invalidates_state_and_requires_reconciliation(
     order = AcceptanceOrder(records, state, max_pending=1)
     records.submit(request())
 
-    def fail_index(status):
+    def fail_index(status, *, position):
         raise OSError("index failure after durable commit")
 
     monkeypatch.setattr(records._index, "update", fail_index)
