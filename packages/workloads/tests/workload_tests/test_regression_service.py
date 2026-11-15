@@ -90,8 +90,17 @@ def test_independent_regression_adamw_oracle_matches_cpu_autograd(dtype):
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("dtype", ["float32", "bfloat16"])
-def test_supplied_regression_public_step_split_and_adamw_resume(tmp_path, dtype):
+@pytest.mark.parametrize(
+    "dtype,master_dtype",
+    [
+        ("float32", None),
+        ("bfloat16", None),
+        ("float32", "float32"),
+    ],
+)
+def test_supplied_regression_public_step_split_and_adamw_resume(
+    tmp_path, dtype, master_dtype
+):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     model = initialized()
@@ -103,6 +112,7 @@ def test_supplied_regression_public_step_split_and_adamw_resume(tmp_path, dtype)
                     for name, value in model.named_parameters()
                 },
                 "gradient_dtype": dtype,
+                "master_dtype": master_dtype,
             }
         )
     )
@@ -126,3 +136,4 @@ def test_supplied_regression_public_step_split_and_adamw_resume(tmp_path, dtype)
     assert receipt["whole_split_equivalence"] and receipt["evaluation_isolation"]
     assert receipt["adamw_resume"] and receipt["zero_lr_preserves_moments"]
     assert len(receipt["runs"]) == 2
+    assert receipt["master_dtype"] == master_dtype

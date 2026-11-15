@@ -52,7 +52,7 @@ def bfloat16(value):
 class Oracle:
     """Explicit SiLU derivatives and AdamW equations, independent of the engine."""
 
-    def __init__(self, initial, gradient_dtype):
+    def __init__(self, initial, gradient_dtype, master_dtype=None):
         self.weights = {
             name: np.asarray(value, dtype=np.float32).copy()
             for name, value in initial.items()
@@ -62,6 +62,7 @@ class Oracle:
             for name, value in self.weights.items()
         }
         self.gradient_dtype = gradient_dtype
+        self.master_dtype = master_dtype
         self.steps = 0
 
     def forward_backward(self, selection=slice(None)):
@@ -139,7 +140,7 @@ def prediction(training, memory):
             return np.stack([rows[str(i)].array() for i in range(len(INPUTS))])
 
 
-def weights(training):
+def weights(training, master_dtype=None):
     handle = training.export_weights().result(120)
     with TemporaryDirectory(prefix="shadowspill-regression-weights-") as directory:
         root = handle.download(Path(directory) / "weights").result(60)
@@ -155,8 +156,12 @@ def weights(training):
                 for row in manifest["tensors"]
             }
             result = {}
+            master_names = set()
             for row in manifest["model_tensors"]:
                 view, identity = row["view"], row["tensor"]["identity"]
+                if identity["role"] == "master":
+                    master_names.add(identity["name"])
+                    assert row["tensor"]["geometry"]["dtype"] == "torch.float32"
                 assert view["shape"] == view["local_shape"] and not any(view["origin"])
                 source = manifest["derived_tensors"].get(row["archive"], row["archive"])
                 value = tensors[source]
@@ -168,11 +173,14 @@ def weights(training):
                     * value.itemsize,
                     strides=tuple(stride * value.itemsize for stride in view["stride"]),
                 ).copy()
+            assert master_names == (
+                result.keys() - {"updates"} if master_dtype is not None else set()
+            )
             return result
 
 
 def check(training, oracle, memory, *, counter=None):
-    actual = weights(training)
+    actual = weights(training, oracle.master_dtype)
     assert actual.keys() == oracle.weights.keys() | {"updates"}
     for name, expected in oracle.weights.items():
         np.testing.assert_allclose(actual[name], expected, rtol=3e-4, atol=3e-6)
@@ -201,14 +209,18 @@ def closed(client, training):
         Event().wait(0.02)
 
 
-def qualify(client, initial, dtype, memory):
+def qualify(client, initial, dtype, memory, master_dtype=None):
     # Setup is separate from the loop; describe never constructs a model/worker.
     preview = client.describe_training(
         model=Model("shadowspill/regression@1", initialize=Weights.random(seed=0)),
         objective=Objective("shadowspill/weighted_squared_error@1"),
         optimizer=Optimizer(
             "mlops/adamw@1",
-            precision={"gradient_dtype": dtype, "opt_state_dtype": "float32"},
+            precision={
+                "gradient_dtype": dtype,
+                "opt_state_dtype": "float32",
+                "master_dtype": master_dtype,
+            },
         ),
         batch=BatchConfig(limits={"max_examples": 8}),
         memory=Memory(device_gib=2, spill_gib=0.0625),
@@ -232,7 +244,7 @@ def qualify(client, initial, dtype, memory):
     for split in (False, True):
         if split:
             training.load_checkpoint(initial_checkpoint.id).result(120)
-        oracle = Oracle(initial, dtype)
+        oracle = Oracle(initial, dtype, master_dtype)
         check(training, oracle, memory, counter=0)
         optim = {
             "lr": 0.003,
@@ -288,7 +300,7 @@ def qualify(client, initial, dtype, memory):
         oracle.update(oracle.forward_backward()[2], optim)
         check(training, oracle, memory)
         observations.append(result.record.to_dict())
-    final = weights(training)
+    final = weights(training, master_dtype)
     closed(client, training)
     resumed = client.create_training_client(
         plans=plans, checkpoint=checkpoint, wait_for_resources=True
@@ -306,6 +318,7 @@ def qualify(client, initial, dtype, memory):
         "runs": [training.run_id, resumed.run_id],
         "observations": observations,
         "gradient_dtype": dtype,
+        "master_dtype": master_dtype,
         "whole_split_equivalence": True,
         "evaluation_isolation": True,
         "adamw_resume": True,
@@ -338,7 +351,13 @@ def main():
     with ServiceClient(
         **connection, token=options["token"], session_id="regression", timeout=30
     ) as client:
-        receipt = qualify(client, options["initial"], options["gradient_dtype"], memory)
+        receipt = qualify(
+            client,
+            options["initial"],
+            options["gradient_dtype"],
+            memory,
+            options["master_dtype"],
+        )
     assert memory.used == client._memory.used == client._work.pending.used == (0, 0)
     receipt.update(
         client_host=socket.gethostname(),
