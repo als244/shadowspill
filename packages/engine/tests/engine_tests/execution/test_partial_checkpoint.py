@@ -122,8 +122,12 @@ def test_missing_mutable_tensor_is_not_delegated_to_base_loader(tmp_path):
     del contents[removed["member"]]
     contents["manifest.json"] = json.dumps(manifest).encode()
     write_contents(path, contents)
+    filled = []
     with pytest.raises(ValueError, match="geometry differs: moving"):
         load_checkpoint(
-            value, path, frozen_state_id="base-v1", fill_tensor=lambda r, t: t.zero_()
+            value,
+            path,
+            frozen_state_id="base-v1",
+            fill_tensor=lambda r, t: filled.append(r),
         )
-    assert not value.initialized
+    assert value.initialized and not filled

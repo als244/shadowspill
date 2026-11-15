@@ -195,6 +195,18 @@ conversion and RNG integration still require implementation. Worker tensor copie
 reuse admitted staging; checkpoint descriptor/manifest peaks are included in the
 deployment's decoded-artifact allowance and still need scale qualification.
 
+Native rank restore now inspects fixed TAR headers before opening the archive
+parser. It rejects extension/link/sparse records, duplicate members, truncated
+payload ranges and invalid end padding without reading tensor data. Metadata is
+bounded to 16 MiB, 65,538 members, 64 JSON nesting levels and 1,048,576 JSON nodes;
+duplicate JSON keys and nonfinite numbers are rejected. The writer observes the
+same manifest limits. Complete tensor inventory, geometry and checksum descriptors
+are checked before initialization can mutate state. The internal
+`checkpoint.load.validate_checkpoint` exposes this preflight to worker staging.
+It does not verify tensor contents: immutable delivery must verify the archive
+digest, and the native loader still checks each tensor while reading bounded
+chunks. A failure after initialization begins invalidates execution state.
+
 The lightweight client's `transport.ssh.SSHTunnel` now owns a loopback OpenSSH
 forward into these same routes. It delegates alias/key/agent/jump configuration
 and host-key verification to OpenSSH. Existing masters receive only forward and

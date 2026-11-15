@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import json
 import tarfile
 from collections.abc import Buffer
-from typing import Any, Protocol
+from typing import Any, BinaryIO, Protocol, cast
 
 from blake3 import blake3
 
-BLOCK = 512
-MANIFEST_LIMIT = 16 << 20
+from shadowspill.artifacts.archive import _json_object
+
+from .inspection import BLOCK, check_headers, check_json
+from .inspection import MANIFEST_LIMIT as MANIFEST_LIMIT
 
 
 class WriteSink(Protocol):
@@ -49,6 +50,7 @@ def padding(stream: WriteSink, size: int) -> None:
 def finish(stream: WriteSink, manifest: bytes) -> None:
     if len(manifest) > MANIFEST_LIMIT:
         raise ValueError("checkpoint manifest exceeds 16 MiB")
+    check_json(manifest)
     for name, data in (
         ("manifest.json", manifest),
         ("manifest.blake3", blake3(manifest).hexdigest().encode("ascii")),
@@ -60,6 +62,7 @@ def finish(stream: WriteSink, manifest: bytes) -> None:
 
 
 def read_manifest(archive: tarfile.TarFile) -> dict[str, Any]:
+    check_headers(cast(BinaryIO, archive.fileobj))
     members = archive.getmembers()
     if len({info.name for info in members}) != len(members) or any(
         not info.isfile() or info.issparse() for info in members
@@ -80,10 +83,8 @@ def read_manifest(archive: tarfile.TarFile) -> dict[str, Any]:
         data = manifest_file.read()
         if blake3(data).hexdigest().encode("ascii") != checksum_file.read():
             raise ValueError("checkpoint manifest checksum differs")
-    result = json.loads(data)
-    if not isinstance(result, dict):
-        raise ValueError("invalid checkpoint manifest")
-    return result
+    check_json(data)
+    return _json_object(data)
 
 
 class ContentHash:

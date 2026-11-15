@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tarfile
 from collections.abc import Callable
@@ -17,7 +18,8 @@ from shadowspill.parallelism import GroupRef
 
 from .archive import ContentHash, read_manifest
 from .frozen import validate_restore
-from .identity import describe_difference, inventory, state_identity
+from .identity import ARCHIVE_KEYS, describe_difference, inventory, state_identity
+from .inspection import open_checkpoint
 from .tensors import byte_view, geometry, region_bytes
 from .weights import select_weights
 
@@ -68,12 +70,18 @@ def checkpoint_metadata(
     executor: Executor, path: str | os.PathLike[str]
 ) -> dict[str, Any]:
     """Read loop compatibility information before restoring any tensors."""
-    with tarfile.open(path, "r:") as archive:
+    with open_checkpoint(path) as archive:
         return dict(_manifest(archive, executor)["metadata"])
 
 
 class _Reader:
-    def __init__(self, archive: tarfile.TarFile, manifest: dict[str, Any]):
+    def __init__(
+        self,
+        archive: tarfile.TarFile,
+        manifest: dict[str, Any],
+        chunks: dict[str, TensorChunk],
+        omitted: set[str],
+    ):
         self.archive = archive
         self.stream = cast(BufferedReader, archive.fileobj)
         entries = manifest["tensors"]
@@ -92,7 +100,42 @@ class _Reader:
             or len(set(members)) != len(members)
         ):
             raise ValueError("invalid checkpoint tensor inventory")
+        expected = (
+            {name for name, chunk in chunks.items() if region_bytes(chunk)}
+            - omitted
+            - set(manifest["derived_tensors"])
+            - set(manifest["gathered_tensors"])
+        )
+        if missing := expected - self.entries.keys():
+            raise ValueError(
+                f"checkpoint tensor geometry differs: {min(missing)} (missing tensor)"
+            )
+        if self.entries.keys() - expected:
+            raise ValueError("invalid checkpoint tensor inventory")
         for entry in entries:
+            chunk = chunks[entry["name"]]
+            expected_geometry = geometry(chunk)
+            if (
+                entry.keys() != expected_geometry.keys() | ARCHIVE_KEYS
+                or any(
+                    type(entry.get(key)) is not type(value)
+                    or entry[key] != value
+                    or (
+                        isinstance(value, list)
+                        and any(type(item) is not int for item in entry[key])
+                    )
+                    for key, value in expected_geometry.items()
+                )
+                or type(entry.get("bytes")) is not int
+                or entry["bytes"] != region_bytes(chunk)
+            ):
+                raise ValueError(f"checkpoint tensor geometry differs: {chunk.name}")
+            checksum = entry.get("blake3")
+            if (
+                not isinstance(checksum, str)
+                or re.fullmatch(r"[0-9a-f]{64}", checksum) is None
+            ):
+                raise ValueError(f"checkpoint tensor checksum is invalid: {chunk.name}")
             info = archive.getmember(entry["member"])
             if info.size != entry["bytes"]:
                 raise ValueError("checkpoint tensor size or encoding differs")
@@ -221,15 +264,15 @@ def load_checkpoint(
     Replicated compute weights are reconstructed collectively from restored
     master shards using bounded CPU transfers. All distributed workers call load.
     """
-    with tarfile.open(path, "r:") as archive:
+    with open_checkpoint(path) as archive:
         manifest = _manifest(archive, executor)
         omitted = validate_restore(executor, manifest, frozen_state_id)
         if omitted and fill_tensor is None:
             raise ValueError(
                 "partial checkpoint requires fill_tensor for the frozen base"
             )
-        reader = _Reader(archive, manifest)
         chunks = {chunk.name: chunk for chunk in executor.tensor_chunks()}
+        reader = _Reader(archive, manifest, chunks, omitted)
         derived = manifest["derived_tensors"]
         gathered = manifest["gathered_tensors"]
 
@@ -255,4 +298,24 @@ def load_checkpoint(
                 for name, item in gathered.items()
             },
         )
+        return dict(manifest["metadata"])
+
+
+def validate_checkpoint(
+    executor: Executor,
+    path: str | os.PathLike[str],
+    *,
+    frozen_state_id: str | None = None,
+) -> dict[str, Any]:
+    """Validate complete rank geometry before release, without reading tensors.
+
+    The owner separately verifies immutable archive bytes during bounded delivery.
+    Load still verifies each tensor while reading; corruption or transfer failure
+    after release invalidates state. This does not authorize unvalidated uploads.
+    """
+    with open_checkpoint(path) as archive:
+        manifest = _manifest(archive, executor)
+        omitted = validate_restore(executor, manifest, frozen_state_id)
+        chunks = {chunk.name: chunk for chunk in executor.tensor_chunks()}
+        _Reader(archive, manifest, chunks, omitted)
         return dict(manifest["metadata"])
