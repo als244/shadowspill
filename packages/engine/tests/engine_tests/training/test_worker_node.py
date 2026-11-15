@@ -11,6 +11,8 @@ from threading import Event
 import pytest
 
 from engine_tests.training.test_worker_startup import prepared_worker
+from shadowspill.orchestration.capture.files import CollectorLimits
+from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.admission import (
     AssignedDevice,
     NodeAdmission,
@@ -111,8 +113,17 @@ def test_stop_during_startup_copy_retains_storage_until_producer_settles(tmp_pat
         arena.close()
 
 
-def configured(tmp_path, *, disk_bytes=16 << 20):
+def configured(tmp_path, *, disk_bytes=16 << 20, capture_limits=None):
     original = prepared_worker()
+    if capture_limits is not None:
+        setup = original.bindings.setup
+        original.bindings.setup = replace(
+            setup,
+            config=replace(
+                setup.config,
+                execution=replace(setup.config.execution, nsys={"gpu_metrics": False}),
+            ),
+        )
     workers = {
         rank: replace(
             original,
@@ -150,6 +161,7 @@ def configured(tmp_path, *, disk_bytes=16 << 20):
         memory=arena.budget,
         environment={**os.environ, "MASTER_ADDR": "127.0.0.1", "MASTER_PORT": "12345"},
         log_limit_bytes=1024,
+        capture_limits=capture_limits,
     )
     return node, admission, arena, disk
 
@@ -161,6 +173,97 @@ def cpu_workers(monkeypatch):
         return [sys.executable, "-c", CHILD, str(arguments[1])]
 
     monkeypatch.setattr(launch_module, "worker_command", command)
+
+
+def collector_workers(monkeypatch, child=CHILD):
+    """CPU sentinel: real child/collector exits, with fabricated capture evidence."""
+    collector = """
+import os, subprocess, sys, time
+from pathlib import Path
+worker = sys.argv[2:]
+descriptor = int(worker[-2])
+assert len(os.environ['CUDA_VISIBLE_DEVICES'].split(',')) == 1
+process = subprocess.Popen(worker, pass_fds=(descriptor,))
+os.close(descriptor)
+status = process.wait()
+time.sleep(.1)  # Final report cannot exist until the worker has exited.
+Path(sys.argv[1]).write_bytes(b'CPU sentinel report')
+raise SystemExit(status)
+"""
+    progress = """
+import os
+from pathlib import Path
+from shadowspill.orchestration.capture.progress import write_progress
+from shadowspill_client.protocol.captures import NsightWindow
+path = Path(sys.argv[2])
+assert path.parent == Path(os.environ['TMPDIR']).parent
+write_progress(path, NsightWindow(2, 2, 'complete', 2, 'history', 'first', 'last'))
+"""
+
+    def command(module, arguments):
+        assert module == "shadowspill.training.worker.bootstrap"
+        assert arguments[-2] == "--nsys-progress"
+        return [
+            sys.executable,
+            "-c",
+            child + progress,
+            str(arguments[1]),
+            str(arguments[-1]),
+        ]
+
+    def capture(self, worker, *, output):
+        return [sys.executable, "-c", collector, str(output) + ".nsys-rep", *worker]
+
+    monkeypatch.setattr(launch_module, "worker_command", command)
+    monkeypatch.setattr(NsysCapture, "command", capture)
+
+
+def test_collectors_reserve_before_spawn_and_finalize_after_worker_exit(
+    tmp_path, monkeypatch
+):
+    collector_workers(monkeypatch)
+    limits = CollectorLimits(
+        host_bytes=1 << 20,
+        disk_bytes=128 << 10,
+        max_files=16,
+        finish_seconds=2,
+        executable="/bin/true",
+    )
+    node, admission, arena, disk = configured(tmp_path, capture_limits=limits)
+    base = sum(
+        WorkerHost(1 << 20, 1 << 20).peak_bytes(worker.startup)
+        for worker in node.prepared.values()
+    )
+    assert node._request.host_bytes == base + 2 * limits.host_bytes
+    original_launch = node_module.launch_worker
+
+    def launch(*args, **kwargs):
+        assert set(node.captures) == {0, 1}
+        assert disk.used[0] >= 4 * limits.disk_bytes
+        return original_launch(*args, **kwargs)
+
+    monkeypatch.setattr(node_module, "launch_worker", launch)
+    try:
+        processes = node.start(lambda _: io.BytesIO(PAYLOAD), startup_timeout=5)
+        with start_processes(processes, stop=node.stop):
+            for rank, capture in node.captures.items():
+                with pytest.raises(RuntimeError, match="termination"):
+                    capture.outcome()
+                with pytest.raises(ValueError, match="another"):
+                    capture.check(node.lease, node.devices[1 - rank])
+        assert all(p.child.process.returncode == 0 for p in processes.values())
+        assert admission.used.claims == 1
+        for capture in node.captures.values():
+            outcome = capture.outcome()
+            assert outcome.status == "ready" and outcome.window.completed_updates == 2
+            with capture.open(outcome.report) as stream:
+                assert stream.read() == b"CPU sentinel report"
+        node.close()
+        assert disk.used == arena.budget.used == (0, 0)
+        assert not list(tmp_path.iterdir())
+    finally:
+        node.close()
+        arena.close()
 
 
 def test_all_startup_files_and_logs_are_reserved_before_any_child(

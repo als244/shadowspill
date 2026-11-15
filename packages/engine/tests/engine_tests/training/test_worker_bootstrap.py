@@ -70,8 +70,9 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
         events.append("bundle")
         return "family"
 
-    def serve(reader, writer, runtime, resolve, outputs, *, traces):
+    def serve(reader, writer, runtime, resolve, outputs, *, traces, capture_progress):
         assert reader is writer is incoming
+        assert capture_progress is None
         assert runtime.cache_root == outputs.root == tmp_path
         assert traces.root == tmp_path and traces.bundle == expected.bundle
         with pytest.raises(ValueError, match="ungranted"):

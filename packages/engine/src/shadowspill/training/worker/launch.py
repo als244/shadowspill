@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from shadowspill.orchestration.capture.files import CaptureFiles
 from shadowspill.orchestration.launch.admission import NodeLease
 from shadowspill.orchestration.launch.connected import ConnectedProcess
 from shadowspill.orchestration.launch.log_files import LogFiles
@@ -35,6 +36,7 @@ def launch_worker(
     logs: LogFiles,
     cwd: Path,
     startup_timeout: float = 120,
+    capture: CaptureFiles | None = None,
 ) -> WorkerProcess:
     """Launch only inside an existing complete resource claim.
 
@@ -44,6 +46,8 @@ def launch_worker(
     """
     CODEC.encode(launch)  # Complete bounded metadata check before any child launch.
     logs.check(lease, device_id)
+    if capture is not None:
+        capture.check(lease, device_id)
     startup = launch.startup
     if (
         lease.request.devices.get(device_id, 0) < startup.device_bytes
@@ -58,9 +62,10 @@ def launch_worker(
         or not 0 < int(environment["MASTER_PORT"]) < 65536
     ):
         raise ValueError("multiple workers require an explicit agent rendezvous")
-    child = lease.launch(
-        device_id,
-        lambda descriptor: worker_command(
+
+    def command(descriptor: int) -> list[str]:
+        extra = () if capture is None else ("--nsys-progress", capture.progress_path)
+        worker = worker_command(
             "shadowspill.training.worker.bootstrap",
             (
                 "--control-fd",
@@ -71,10 +76,17 @@ def launch_worker(
                 outputs,
                 "--cache",
                 cache,
+                *extra,
             ),
-        ),
+        )
+        return worker if capture is None else capture.command(worker)
+
+    child = lease.launch(
+        device_id,
+        command,
         environment={
             **environment,
+            **({} if capture is None else capture.environment),
             "RANK": str(startup.logical_by_worker.index(startup.scope.rank)),
             "WORLD_SIZE": str(world),
             "LOCAL_RANK": "0",
@@ -84,8 +96,11 @@ def launch_worker(
         cwd=cwd,
         log_limit_bytes=logs.limit_bytes,
         startup_timeout=startup_timeout,
+        shutdown_grace_seconds=5 if capture is None else capture.limits.finish_seconds,
     )
     try:
+        if capture is not None:
+            capture.launched(child.process)
         write_message(child.stream, launch)
         return WorkerProcess(
             child, WorkerStartupConnection(startup, child.stream, child.stream)

@@ -2,9 +2,11 @@
 
 import argparse
 import socket
+from functools import partial
 from pathlib import Path
 from typing import BinaryIO, cast
 
+from shadowspill.orchestration.capture.progress import write_progress
 from shadowspill.orchestration.launch.file_grants import resolve_file, verify_file
 from shadowspill.training.definitions import InitializationRuntime, load_registry
 from shadowspill.training.preparation.bundle import TrainingBundle
@@ -17,7 +19,14 @@ from .runtime import PreparedWorker
 from .trace_files import TraceFiles
 
 
-def serve(stream: BinaryIO, *, files: Path, outputs: Path, cache: Path) -> None:
+def serve(
+    stream: BinaryIO,
+    *,
+    files: Path,
+    outputs: Path,
+    cache: Path,
+    nsys_progress: Path | None = None,
+) -> None:
     """CPU preflight the granted bundle before the existing all-worker barrier."""
     launch = read_message(stream)
     if not isinstance(launch, WorkerLaunch):
@@ -62,6 +71,9 @@ def serve(stream: BinaryIO, *, files: Path, outputs: Path, cache: Path) -> None:
         traces=TraceFiles(
             prepared.traces, bundle=prepared.startup.bundle, root=outputs
         ),
+        capture_progress=None
+        if nsys_progress is None
+        else partial(write_progress, nsys_progress),
     )
 
 
@@ -71,6 +83,7 @@ def main() -> None:
     parser.add_argument("--files", required=True, type=Path)
     parser.add_argument("--outputs", required=True, type=Path)
     parser.add_argument("--cache", required=True, type=Path)
+    parser.add_argument("--nsys-progress", type=Path)
     args = parser.parse_args()
     if args.control_fd < 3:
         raise ValueError("worker control requires an inherited private descriptor")
@@ -83,6 +96,7 @@ def main() -> None:
                 files=args.files,
                 outputs=args.outputs,
                 cache=args.cache,
+                nsys_progress=args.nsys_progress,
             )
 
 

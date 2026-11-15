@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Lock, RLock
 from types import MappingProxyType
 from typing import BinaryIO, Self
 
+from shadowspill.orchestration.capture.files import CaptureFiles, CollectorLimits
+from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.admission import NodeAdmission, NodeLease
 from shadowspill.orchestration.launch.file_grants import FileGrant, FileGrants
 from shadowspill.orchestration.launch.host_arena import HostPartition
@@ -59,6 +63,7 @@ class WorkerNode:
         environment: Mapping[str, str],
         log_limit_bytes: int = 64 << 20,
         host_memory: HostPartition | None = None,
+        capture_limits: CollectorLimits | None = None,
     ) -> None:
         if (
             not prepared
@@ -86,6 +91,22 @@ class WorkerNode:
                 for rank, worker in prepared.items()
             }
         )
+        captures = [
+            NsysCapture.from_settings(worker.bindings.setup.config.execution.nsys)
+            for worker in prepared.values()
+        ]
+        self._capture_settings = captures[0]
+        if any(settings != self._capture_settings for settings in captures):
+            raise ValueError("node workers disagree on Nsight settings")
+        if (self._capture_settings is None) != (capture_limits is None):
+            raise ValueError("Nsight workers require explicit collector allowances")
+        self._capture_limits = capture_limits
+        if capture_limits is not None:
+            self._request = replace(
+                self._request,
+                host_bytes=self._request.host_bytes
+                + len(prepared) * capture_limits.host_bytes,
+            )
         self._admission = admission
         self._host_memory = host_memory
         if host_memory is not None:
@@ -110,6 +131,7 @@ class WorkerNode:
         self._grant: FileGrant | None = None
         self._outputs: OutputFiles | None = None
         self._logs: dict[int, LogFiles] = {}
+        self._captures: dict[int, CaptureFiles] = {}
         self._processes: dict[int, WorkerProcess] = {}
         self._files: NodeFiles | None = None
         self._started = self._stopping = self.launched = self.closed = False
@@ -129,6 +151,10 @@ class WorkerNode:
     @property
     def logs(self) -> Mapping[int, LogFiles]:
         return MappingProxyType(dict(self._logs))
+
+    @property
+    def captures(self) -> Mapping[int, CaptureFiles]:
+        return MappingProxyType(dict(self._captures))
 
     def _active(self) -> None:
         with self._lock:
@@ -187,6 +213,21 @@ class WorkerNode:
                     memory=self._memory,
                     limit_bytes=self._log_limit,
                 )
+                if self._capture_settings is not None:
+                    assert self._capture_limits is not None
+                    scope = self.prepared[rank].startup.scope
+                    key = "\0".join((scope.run_id, scope.worker_incarnation, str(rank)))
+                    self._captures[rank] = CaptureFiles(
+                        self._lease,
+                        self._capture_settings,
+                        self._capture_limits,
+                        artifact_id="nsys." + hashlib.sha256(key.encode()).hexdigest(),
+                        root=root,
+                        disk=self._disk,
+                        memory=self._memory,
+                        outputs=self._outputs,
+                        device_id=device,
+                    )
             self._active()
             self._delivery.receive(open_source)
             self._active()
@@ -204,6 +245,7 @@ class WorkerNode:
                     logs=self._logs[rank],
                     cwd=root,
                     startup_timeout=startup_timeout,
+                    capture=self._captures.get(rank),
                 )
             self._active()
             self._files = NodeFiles(
@@ -235,6 +277,7 @@ class WorkerNode:
             for owner in (
                 self._grant,
                 self._delivery,
+                *self._captures.values(),
                 self._outputs,
                 self._grants,
                 *self._logs.values(),

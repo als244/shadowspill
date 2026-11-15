@@ -459,8 +459,16 @@ def test_worker_serve_orders_readiness_and_closes_channels(
 
     @contextmanager
     def open_worker(
-        self, runtime, resolve, outputs, *, checkpoint_stream=None, traces=None
+        self,
+        runtime,
+        resolve,
+        outputs,
+        *,
+        checkpoint_stream=None,
+        traces=None,
+        capture_progress=None,
     ):
+        assert capture_progress is None
         events.append("open")
         try:
             if failure == "initialize":

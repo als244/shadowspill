@@ -84,11 +84,15 @@ class CaptureFiles:
         disk: BufferBudget,
         memory: BufferBudget,
         outputs: OutputFiles,
+        device_id: str | None = None,
     ) -> None:
         if lease.closed:
             raise ValueError("capture requires a live node lease")
+        if device_id is not None and device_id not in lease.request.devices:
+            raise ValueError("collector device is not reserved")
         self.settings = replace(settings, executable=limits.executable, output_dir=None)
         self.limits, self._lease = limits, lease
+        self._device = device_id
         self._memory = memory.reserve(
             4096 + 4 * WINDOW_BYTES + COPY_BYTES + 512 * limits.max_files, timeout=0
         )
@@ -128,6 +132,10 @@ class CaptureFiles:
     @property
     def environment(self) -> Mapping[str, str]:
         return {"TMPDIR": str(self.directory / "tmp")}
+
+    def check(self, lease: NodeLease, device_id: str) -> None:
+        if self.closed or self._lease is not lease or self._device != device_id:
+            raise ValueError("collector belongs to another resource owner or device")
 
     def command(self, worker: Sequence[str]) -> list[str]:
         if self.closed or self._finished:

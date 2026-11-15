@@ -10,12 +10,14 @@ from typing import TYPE_CHECKING, BinaryIO
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.communication.binding.ranks import RankAssignment
+from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.workers import workers
 from shadowspill.planning.spill import spill_configuration
 from shadowspill.training.definitions.initialization import InitializationRuntime
 from shadowspill.training.inputs.staging import StagingLimitError
 from shadowspill.training.preparation.family_records import PreparedPlans
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.protocol.captures import NsightWindow
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .bindings import BoundWorkerCall, WorkerBindings
@@ -71,6 +73,7 @@ class PreparedWorker:
         restore: RankRestore | None = None,
     ) -> "PreparedWorker":
         bindings = WorkerBindings(prepared, scope)
+        NsysCapture.from_settings(bindings.setup.config.execution.nsys)
         assignment = RankAssignment.resolve(
             bindings.setup.context.parallelism.world_size, rank_map
         )
@@ -139,12 +142,18 @@ class PreparedWorker:
         *,
         checkpoint_stream: BinaryIO | None = None,
         traces: TraceFiles | None = None,
+        capture_progress: Callable[[NsightWindow], None] | None = None,
     ) -> Iterator["RunningWorker"]:
         # The agent must have isolated visibility before this import. Each saved
         # process-local compiler ordinal is zero, independent of physical GPU ID.
         visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")
         if len(visible) != 1 or not visible[0].strip() or visible[0].strip() == "-1":
             raise ValueError("worker requires one explicitly assigned visible device")
+        capture_settings = NsysCapture.from_settings(
+            self.bindings.setup.config.execution.nsys
+        )
+        if (capture_settings is None) != (capture_progress is None):
+            raise ValueError("Nsight worker requires its admitted progress file")
         from shadowspill.execution.executor import Executor
 
         from .randomness import WorkerRandomness
@@ -186,6 +195,16 @@ class PreparedWorker:
                             "worker spill capacity differs from admission"
                         )
 
+                    capture = None
+                    if capture_settings is not None:
+                        from shadowspill.orchestration.capture._nsys_runtime import (
+                            UpdateCapture,
+                        )
+
+                        capture = UpdateCapture(
+                            capture_settings, publish=capture_progress
+                        )
+
                     execution = WorkerExecution(
                         executor,
                         self.bindings,
@@ -195,6 +214,7 @@ class PreparedWorker:
                         randomness=randomness,
                         traces=traces,
                         diagnostics=diagnostics,
+                        capture=capture,
                         checkpoints=None
                         if checkpoint_stream is None
                         else WorkerCheckpointWriter(
@@ -224,6 +244,16 @@ class PreparedWorker:
                         yield RunningWorker(executor, loop, budget)
                     finally:
                         loop.invalidate()
+                        if capture is not None and capture.state in (
+                            "pending",
+                            "running",
+                        ):
+                            # EOF or execution failure is not an all-rank boundary;
+                            # never wait in another distributed profiler barrier.
+                            capture.failed(
+                                "Worker exited before the selected capture "
+                                "window completed."
+                            )
                 finally:
                     budget.close()
                     diagnostics.close()
@@ -237,6 +267,7 @@ class PreparedWorker:
         outputs: OutputSink,
         *,
         traces: TraceFiles | None = None,
+        capture_progress: Callable[[NsightWindow], None] | None = None,
     ) -> None:
         """Own the private startup/invocation streams, without an idle timeout."""
         with ExitStack() as cleanup:
@@ -259,7 +290,12 @@ class PreparedWorker:
                 )
             await_start(self.startup, reader, writer)
             with self.open(
-                runtime, resolve, outputs, checkpoint_stream=writer, traces=traces
+                runtime,
+                resolve,
+                outputs,
+                checkpoint_stream=writer,
+                traces=traces,
+                capture_progress=capture_progress,
             ) as running:
                 report_ready(self.startup, writer)
                 running.loop.serve(reader, writer)
