@@ -187,6 +187,10 @@ class TextExecutionChunks:
                 axes[index] = ChunkAxis(1)
             elif len(shape) == 4 and shape[0] == batch and shape[2] == sequence:
                 axes[index] = ChunkAxis(2)
+            elif len(shape) == 3 and shape[0] == batch * sequence:
+                # Packed attention returns [tokens, heads, width]. Its head
+                # width can equal the token extent without changing that order.
+                axes[index] = ChunkAxis(0, before=batch)
             else:
                 dims = [
                     dim for dim, size in enumerate(shape) if size == batch * sequence
