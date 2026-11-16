@@ -143,7 +143,11 @@ with Server(
             ),
         ]
     client = subprocess.run(
-        command, input=json.dumps(options), text=True, capture_output=True, timeout=660
+        command,
+        input=json.dumps(options),
+        text=True,
+        capture_output=True,
+        timeout=options.get("client_timeout", 660),
     )
     (root / "client.stderr").write_text(client.stderr)
     assert client.returncode == 0, client.stdout + client.stderr

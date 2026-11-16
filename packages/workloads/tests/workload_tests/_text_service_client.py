@@ -214,8 +214,8 @@ def close(client, training):
         Event().wait(0.02)
 
 
-def qualify(client, options, budget):
-    settings = dict(
+def training_settings(options):
+    return dict(
         model=Model.from_dict(options["model"]),
         objective=Objective.from_dict(options["objective"]),
         optimizer=Optimizer(
@@ -228,9 +228,13 @@ def qualify(client, options, budget):
             },
         ),
         batch=BatchConfig(
-            limits={"token_capacity": 8, "max_sequence_length": 4, "max_sequences": 4}
+            limits=options.get(
+                "batch_limits",
+                {"token_capacity": 8, "max_sequence_length": 4, "max_sequences": 4},
+            )
         ),
         memory=Memory(options.get("device_gib", 2), 0.125),
+        parallelism=options.get("parallelism"),
         operations={
             "step": ["metrics"],
             "forward_backward": ["metrics"],
@@ -249,8 +253,14 @@ def qualify(client, options, budget):
             ),
         ),
     )
+
+
+def qualify(client, options, budget):
+    settings = training_settings(options)
     preview = client.describe_training(**settings).result(30)
-    training = client.create_training_client(config=preview.config).result(480)
+    training = client.create_training_client(config=preview.config).result(
+        options.get("preparation_timeout", 480)
+    )
     plans = training.plans
     initial = training.save_checkpoint(name="initial").result(120)
     records = [Datum(**row) for row in options["records"]]
@@ -430,10 +440,11 @@ def main():
                 raise AssertionError("framework or engine import in client: " + name)
 
     sys.meta_path.insert(0, Block())
-    # Aligned-rank LoRA includes independent whole/split parameter trajectories.
+    # EP has minimum aligned widths and includes every logical expert's weights
+    # in both trajectories. This private fixture is larger than service inputs.
     # This bounds test-fixture input, independently of service request limits.
-    raw = sys.stdin.buffer.read((8 << 20) + 1)
-    assert len(raw) <= 8 << 20
+    raw = sys.stdin.buffer.read((64 << 20) + 1)
+    assert len(raw) <= 64 << 20
     options = json.loads(raw)
     connection = (
         {"ssh": SSH(options["ssh_host"], options["port"])}
