@@ -33,12 +33,17 @@ class Workers:
 
 @contextmanager
 def workers(
-    world_size: int, *, rank_map: Mapping[int | str, int] | None = None
+    world_size: int,
+    *,
+    rank_map: Mapping[int | str, int] | None = None,
+    init_method: str | None = None,
 ) -> Iterator[Workers]:
     """Own a Gloo control group; reject invalid bindings before rendezvous.
 
     Clients pass the saved artifact's participant count and optional launcher
     to logical rank mapping. CUDA/NCCL resources belong to the phase APIs.
+    ``init_method`` selects an explicitly owned rendezvous; omission keeps the
+    launcher's ordinary environment rendezvous.
     """
     from shadowspill.communication.binding.ranks import RankAssignment
 
@@ -55,7 +60,13 @@ def workers(
         return
     import torch.distributed as dist
 
-    dist.init_process_group("gloo", timeout=timedelta(seconds=7200))
+    dist.init_process_group(
+        "gloo",
+        timeout=timedelta(seconds=7200),
+        init_method=init_method,
+        rank=int(os.environ.get("RANK", "-1")),
+        world_size=world_size,
+    )
     try:
         yield Workers(dist.get_rank(), mapping)
     finally:

@@ -38,6 +38,9 @@ settings; `serve` discovers assigned resources, recovers stored records and star
 the listener. The current allocation adapter supports a local machine or an
 assigned single-node Slurm step. Multi-node agent bootstrap remains unfinished
 and is rejected explicitly. The server never requests a scheduler allocation.
+For multiple GPUs on one host, the service supplies the complete worker mapping
+and a separate local rendezvous for each run. Callers do not configure worker
+ranks, ports or rendezvous files.
 
 For embedding, `server.start(...)` returns after opening a background listener;
 `server.address` reports its bound address. `server.close()` stops creation and

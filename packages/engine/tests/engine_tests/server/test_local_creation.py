@@ -6,6 +6,7 @@ import os
 import sys
 from contextlib import contextmanager
 from dataclasses import replace
+from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ import pytest
 from engine_tests.server.test_jobs import until
 from engine_tests.server.test_live import CHILD
 from engine_tests.server.test_storage import IDENTITY
+from engine_tests.training.test_preparation_templates import inventory
 from engine_tests.training.test_setup_resolution import installed
 from engine_tests.training.test_worker_startup import prepared_worker
 from shadowspill.orchestration.launch.admission import (
@@ -24,6 +26,7 @@ from shadowspill.orchestration.launch.admission import (
 )
 from shadowspill.orchestration.launch.host_arena import HostArena
 from shadowspill.orchestration.launch.phases import PhaseInvocation
+from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
 from shadowspill.server import local_creation as module
 from shadowspill.server.creation_records import CreationRecord
 from shadowspill.server.jobs import RunJobs
@@ -51,8 +54,22 @@ def configured(
     saved=False,
     fault=None,
     limits_change=lambda limits: limits,
+    ranks=1,
 ):
-    family = prepared_worker().bindings.prepared
+    inv = inventory()
+    if ranks > 1:
+        fields = [
+            InputFieldPlacement(tuple(field.path))
+            for field in inv.layouts.setup.config.inputs.fields
+        ]
+        inv = inventory(
+            parallelism=Parallelism.dp(
+                ranks_per_replica=ranks,
+                num_replicas=1,
+                inputs=InputPlacement.independent(ranks, fields=fields),
+            )
+        )
+    family = prepared_worker(inv).bindings.prepared
     config = change(family.inventory.layouts.setup.config)
     family = replace(
         family,
@@ -65,7 +82,14 @@ def configured(
         ),
     )
     node = NodeAdmission(
-        NodeCapacity("local", (AssignedDevice("gpu", "0", 4 << 30),), 16 << 30)
+        NodeCapacity(
+            "local",
+            tuple(
+                AssignedDevice("gpu" if rank == 0 else f"gpu{rank}", str(rank), 4 << 30)
+                for rank in range(ranks)
+            ),
+            16 << 30,
+        )
     )
     disk = BufferBudget(128 << 20, 100)
     phases, owners = [], []
@@ -73,7 +97,15 @@ def configured(
     monkeypatch.setattr(
         launch_module,
         "worker_command",
-        lambda module, args: [sys.executable, "-c", CHILD, str(args[1])],
+        lambda module, args: (
+            [sys.executable, "-c", CHILD, str(args[1])]
+            if ranks == 1
+            else [
+                sys.executable,
+                str(Path(__file__).with_name("_distributed_creation_child.py")),
+                str(args[1]),
+            ]
+        ),
     )
     payload = b"CPU sentinel bundle; GPU fixture uses actual compiled Plans"
     reference = ArtifactRef(
@@ -203,15 +235,20 @@ def submit(ctx, **options):
 
 
 @pytest.mark.parametrize("saved", [False, True])
+@pytest.mark.parametrize("ranks", [1, 2])
 def test_factory_owns_preparation_and_persistent_child_without_a_recipe_loop(
-    tmp_path, monkeypatch, saved
+    tmp_path, monkeypatch, saved, ranks
 ):
-    with configured(tmp_path, monkeypatch, saved=saved) as ctx:
+    with configured(tmp_path, monkeypatch, saved=saved, ranks=ranks) as ctx:
         submit(ctx)
         until(lambda: ctx.service.catalog.get(IDENTITY).state != "preparing")
         assert ctx.service.catalog.get(IDENTITY).state == "ready", ctx.jobs.failures()
         until(lambda: next(iter(ctx.jobs._jobs.values())).live)
         owner = ctx.owners[0]
+        assert all(
+            worker.startup.logical_by_worker == tuple(range(ranks))
+            for worker in owner._node.prepared.values()
+        )
         assert ctx.phases == (
             [] if saved else ["build", "profile", "communicate", "plan"]
         )

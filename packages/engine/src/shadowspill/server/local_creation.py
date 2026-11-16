@@ -404,6 +404,7 @@ class LocalCreation:
                         rank,
                     ),
                     bundle=plans,
+                    rank_map={worker: worker for worker in range(ranks)},
                     weights=weights,
                     restore=None
                     if checkpoint is None
@@ -441,7 +442,13 @@ class LocalCreation:
                 cache=factory.cache,
                 disk=factory.disk,
                 memory=transfers,
-                environment=factory.environment,
+                # This adapter owns all ranks on one host. A fresh, run-owned
+                # file rendezvous avoids sharing the allocation's launcher port
+                # with preparation phases or another live training group.
+                environment={
+                    **factory.environment,
+                    "SHADOWSPILL_RENDEZVOUS": (root / "rendezvous").as_uri(),
+                },
                 log_limit_bytes=limits.log_bytes,
                 host_memory=worker_host,
                 capture_limits=None if capture is None else limits.nsys,

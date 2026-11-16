@@ -3,6 +3,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from shadowspill.orchestration.capture.files import CaptureFiles
 from shadowspill.orchestration.launch.admission import NodeLease
@@ -56,10 +57,25 @@ def launch_worker(
     ):
         raise ValueError("worker pools/staging exceed the existing node claim")
     world = len(startup.logical_by_worker)
-    if world > 1 and (
-        not environment.get("MASTER_ADDR")
-        or not environment.get("MASTER_PORT", "").isdecimal()
-        or not 0 < int(environment["MASTER_PORT"]) < 65536
+    rendezvous = environment.get("SHADOWSPILL_RENDEZVOUS")
+    if rendezvous:
+        parsed = urlsplit(rendezvous)
+        if (
+            parsed.scheme != "file"
+            or parsed.netloc
+            or not parsed.path.startswith("/")
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("local worker rendezvous requires an absolute file URI")
+    if (
+        world > 1
+        and not rendezvous
+        and (
+            not environment.get("MASTER_ADDR")
+            or not environment.get("MASTER_PORT", "").isdecimal()
+            or not 0 < int(environment["MASTER_PORT"]) < 65536
+        )
     ):
         raise ValueError("multiple workers require an explicit agent rendezvous")
 

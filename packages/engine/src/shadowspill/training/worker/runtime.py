@@ -192,6 +192,7 @@ class PreparedWorker:
         with workers(
             len(rank_map),
             rank_map={rank: logical for rank, logical in rank_map.items()},
+            init_method=os.environ.get("SHADOWSPILL_RENDEZVOUS"),
         ) as assignment:
             if assignment.logical_rank != self.startup.scope.rank:
                 raise ValueError("launcher rank differs from the admitted worker")

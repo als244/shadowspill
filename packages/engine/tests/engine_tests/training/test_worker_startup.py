@@ -196,8 +196,8 @@ def test_worker_refuses_foreign_release_before_any_mutable_state():
         await_start(description(0), incoming, outgoing)
 
 
-def prepared_worker():
-    prepared = family()
+def prepared_worker(inv=None):
+    prepared = family(inv)
     # These CPU startup tests use sentinel Plans, so supply synthetic compiler
     # views matching their real prepared output declarations. GPU tests use the
     # actual saved compiler artifacts and independently verify result bytes.
@@ -287,12 +287,15 @@ def prepared_worker():
     prepared = replace(
         prepared,
         memory={
-            0: SimpleNamespace(
+            rank: SimpleNamespace(
                 spill_bytes=100, fixed_slice_bytes=128, execution_bytes=256
             )
+            for rank in prepared.plans
         },
     )
-    return PreparedWorker.resolve(prepared, SCOPE, bundle=BUNDLE)
+    return PreparedWorker.resolve(
+        prepared, SCOPE, bundle=BUNDLE, rank_map={rank: rank for rank in prepared.plans}
+    )
 
 
 def test_cpu_worker_description_reuses_spill_margin_and_rejects_ordinal_changes():
