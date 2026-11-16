@@ -35,7 +35,7 @@ class Retention:
 
 
 def chunks(config):
-    from shadowspill_workloads.models.shared.execution_policies import chunks
+    from shadowspill_workloads.policies.text import chunks
 
     return chunks(
         sequence_length=config.token_capacity,
@@ -46,7 +46,7 @@ def chunks(config):
 
 
 def retention(config):
-    from shadowspill_workloads.models.shared.execution_policies import retention
+    from shadowspill_workloads.policies.text import retention
 
     return retention(**asdict(config))
 
@@ -55,10 +55,10 @@ def register(registry):
     source = definition_source(
         (
             "definitions/text_policies.py",
-            "models/shared/execution_policies.py",
-            "models/shared/execution.py",
-            "models/shared/chunking.py",
-            "models/shared/retention.py",
+            "policies/text/__init__.py",
+            "policies/text/execution.py",
+            "policies/text/chunking.py",
+            "policies/text/retention.py",
         ),
         providers=("mlops",),
     )

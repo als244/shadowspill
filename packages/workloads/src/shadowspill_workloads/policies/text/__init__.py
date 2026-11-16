@@ -1,8 +1,8 @@
 """Explicit workload choices using generic compiler and provider contracts."""
 
 from shadowspill.integrations.mlops import operator_chunk_rules, sonicmoe_chunk_rules
-from shadowspill_workloads.models.shared.execution import text_execution_chunks
-from shadowspill_workloads.models.shared.retention import graph_pair_policy
+from shadowspill_workloads.policies.text.execution import text_execution_chunks
+from shadowspill_workloads.policies.text.retention import graph_pair_policy
 
 
 def retention(name, *, chunked):

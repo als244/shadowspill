@@ -7,7 +7,7 @@ import mlops
 import torch
 
 from shadowspill import Parallelism
-from shadowspill_workloads.models.shared.preparation import operator_preparations
+from shadowspill_workloads.providers import operator_preparations
 from shadowspill_workloads.recipes.text.precision import Precision
 
 from .initialize import Initialize

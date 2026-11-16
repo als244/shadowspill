@@ -11,7 +11,7 @@ from shadowspill.pytorch.capture.artifacts import GraphArtifact, TensorGeometry
 from shadowspill.pytorch.chunking import AxisChunks, ChunkAxis, StageInfo
 from shadowspill.pytorch.chunking.transform import chunk_artifact
 from shadowspill.task.inputs import TaskInputRole
-from shadowspill_workloads.models.shared.chunking import TextAxisChunks, is_barrier
+from shadowspill_workloads.policies.text.chunking import TextAxisChunks, is_barrier
 
 
 @pytest.mark.parametrize("provider", ["fla", "fla_ieee", "cula"])

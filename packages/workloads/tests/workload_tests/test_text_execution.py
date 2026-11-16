@@ -13,7 +13,7 @@ from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProven
 from shadowspill.pytorch.capture.gradients import accumulate_gradient_outputs
 from shadowspill.pytorch.chunking.regions import region_artifact
 from shadowspill.task.inputs import TaskInputRole
-from shadowspill_workloads.models.shared.execution import (
+from shadowspill_workloads.policies.text.execution import (
     TextExecutionBoundaries,
     text_execution_chunks,
 )

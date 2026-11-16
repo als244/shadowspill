@@ -94,7 +94,7 @@ def test_complete_packed_cases_keep_geometry_policy_sources_and_scheduled_cap():
 @pytest.mark.parametrize("name", ["cost-input", "cost-attention", "attention-input"])
 @pytest.mark.parametrize("chunked", [False, True])
 def test_retention_definition_keeps_existing_recipe_choices(name, chunked):
-    from shadowspill_workloads.models.shared.execution_policies import build_options
+    from shadowspill_workloads.policies.text import build_options
 
     registry = load_registry(["shadowspill-workloads"])
     policy = registry.resolve_policy(

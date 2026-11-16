@@ -13,8 +13,8 @@ from shadowspill.pytorch.capture.export import capture_forward
 from shadowspill.pytorch.chunking.regions import region_artifact
 from shadowspill.pytorch.partition import partition_export
 from shadowspill_workloads.models.shared.decoder import packed_metadata
-from shadowspill_workloads.models.shared.execution import text_execution_chunks
 from shadowspill_workloads.models.shared.token_head import target_logprobs
+from shadowspill_workloads.policies.text.execution import text_execution_chunks
 
 
 @pytest.mark.parametrize("lengths", [(7, 0, 10), (1, 15, 1), (17, 0, 0)])

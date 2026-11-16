@@ -9,7 +9,7 @@ from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
 from shadowspill.pytorch.chunking.regions import region_artifact
 from shadowspill.task.inputs import TaskInputRole
-from shadowspill_workloads.models.shared.execution_policies import chunks
+from shadowspill_workloads.policies.text import chunks
 
 
 @pytest.mark.parametrize("save", [False, True])

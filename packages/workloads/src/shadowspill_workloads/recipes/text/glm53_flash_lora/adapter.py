@@ -45,7 +45,7 @@ def setup(options, *, rank=0):
 
     from shadowspill import Parallelism
     from shadowspill.training.preparation.contracts import BuildSetup
-    from shadowspill_workloads.models.shared.preparation import operator_preparations
+    from shadowspill_workloads.providers import operator_preparations
     from shadowspill_workloads.recipes.text.precision import Precision
 
     from .inputs import loss

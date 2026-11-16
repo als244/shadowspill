@@ -70,7 +70,7 @@ def setup(options, *, rank=0):
     from shadowspill_workloads.models.construction import build_on_meta
     from shadowspill_workloads.models.qwen35moe.config import from_huggingface
     from shadowspill_workloads.models.qwen35moe.implementations.mlops import Model
-    from shadowspill_workloads.models.shared.preparation import operator_preparations
+    from shadowspill_workloads.providers import operator_preparations
     from shadowspill_workloads.recipes.text.objectives import (
         normalized_next_token_prediction,
     )

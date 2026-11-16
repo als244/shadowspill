@@ -16,7 +16,7 @@ import torch
 
 from qualification.precision import dtype_overrides
 from shadowspill.pytorch.accelerator import DEVICE_TYPE
-from shadowspill_workloads.models.shared.training import LEARNING_RATE
+from shadowspill_workloads.recipes.defaults import LEARNING_RATE
 
 from . import kernel_selection
 from .metrics import cpu_state, state_digest

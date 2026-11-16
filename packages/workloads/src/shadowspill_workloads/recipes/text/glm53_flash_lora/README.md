@@ -208,7 +208,7 @@ outside token loops. Larger expert chunks can contain smaller projection/mHC
 regions, without creating a sequence-sized intermediate between their children.
 The fused mHC path requires sequence and chunk sizes divisible by32; invalid
 tails fail at capture. See [the policy](policies.py) for the explicit provider
-contracts and [the text helper](../../../models/shared/execution.py) for the
+contracts and [the text helper](../../../policies/text/execution.py) for the
 region selector. Advanced callers can provide their own policies to the builders.
 
 The full-model measurements below include a combined search across unchunked and
