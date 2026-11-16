@@ -107,14 +107,24 @@ def _check(context):
 def defaults(context, *, preset):
     partitions = _check(context)
     sizes = set()
+    capacities = []
     for batch in context.batches:
         cap = batch.limits["token_capacity"]
         full = max(1, cap // partitions)
-        sizes.update((max(1, full // 2), full))
+        capacities.append(full)
+        unit = min(batch.limits["max_sequence_length"], full)
+        sizes.update(min(unit * multiple, full) for multiple in (1, 2, 4))
+    # Compare full-capacity updates at each shape, plus a single microbatch for
+    # small calls. Expansion rejects cross-products exceeding the global cap;
+    # packing still checks the actual complete sequences against each layout.
+    counts = {
+        1,
+        *(full // size for full in capacities for size in sizes if size <= full),
+    }
     return Preparation(
         preset=preset,
         candidates=BuildCandidates(microbatch_sizes=sorted(sizes)),
-        planning=PlanningOptions(microbatch_counts=[1, 2]),
+        planning=PlanningOptions(microbatch_counts=sorted(counts)),
     )
 
 

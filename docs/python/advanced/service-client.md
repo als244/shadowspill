@@ -152,6 +152,43 @@ the earlier writer; `read_only=True` permits inspection without takeover.
 
 ## Preparation and local planning
 
+Defaults come from the installed workload's preparation preset. For built-in
+packed text, the microbatch token capacities are 1, 2 and 4 times the maximum
+sequence length, capped by the per-worker share of the global token limit.
+Duplicate sizes are removed. An 8K sequence limit and 128K global limit on one
+GPU therefore prepare 8K, 16K and 32K shapes. Each shape can pack multiple shorter
+sequences; a microbatch size is a token capacity, not a sequence count.
+
+The preset tries counts that fill each worker's token allowance, rounded down,
+plus one microbatch for smaller calls. Over-cap combinations are rejected before
+building; scheduled padding counts toward the limit. For each eligible count,
+planning compares every depth/breadth factorization, from microbatch-major to
+layer-major execution. Counts and orderings reuse the same shape captures.
+Actual batch packing must fit an available prepared layout.
+
+Chunking is disabled by default. The standard `cost-input` retention policy
+provides saved-state and recomputation alternatives; planning selects among them
+using measured costs. It does not search other chunking or retention policies
+unless requested. Inspect all resolved choices before building with
+`service.describe_training(...).result().config.preparation`.
+
+Override the candidate sizes and counts explicitly when needed:
+
+```python
+from shadowspill_client import BuildCandidates, PlanningOptions, Preparation
+
+prepare = Preparation(
+    candidates=BuildCandidates(microbatch_sizes=[8192, 16384, 32768]),
+    planning=PlanningOptions(microbatch_counts=[1, 4, 8, 16]),
+)
+# Include prepare=prepare in describe_training or create_training_client.
+```
+
+`BuildOptions` fixes a chunking or retention policy; `BuildCandidates` can compare
+several. Shape-dependent policies use complete `BuildCase` records so each policy
+names its matching microbatch geometry. These are advanced controls, independent
+of the batch's sequence boundaries and input placement.
+
 For measured inputs without starting a training run, use the same setup with
 `service.prepare_training(**setup).result()`. Initialization can be omitted.
 This runs the existing build, profiling and communication phases, and releases
