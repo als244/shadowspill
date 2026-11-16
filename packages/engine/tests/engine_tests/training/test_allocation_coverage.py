@@ -81,21 +81,35 @@ def test_measured_bytes_cannot_supply_missing_all_value_allocation_evidence():
         allocation_coverage(template, replace(captured, bindings={}))
 
 
-@pytest.mark.parametrize("matmul", ["extern_kernels.mm", "extern_kernels.mm_dtype"])
+@pytest.mark.parametrize(
+    "operator, contract",
+    [
+        (name, "shadowspill/aten-dense-matmul-allocation@1")
+        for name in ("extern_kernels.mm", "extern_kernels.mm_dtype")
+    ]
+    + [
+        (name, "shadowspill/gradient-storage-allocation@1")
+        for name in (
+            "torch.ops.shadowspill.materialize_gradient.default",
+            "torch.ops.shadowspill.pad_storage.default",
+        )
+    ],
+)
 def test_opaque_contracts_are_explicit_source_owned_and_never_cover_unknown_wrappers(
-    matmul,
+    operator,
+    contract,
 ):
     _, prepared = prepare(model_contract())
     template = next(iter(prepared.templates.values()))
-    captured = compiler_fixture(template, opaque=["provider.call", matmul])
+    captured = compiler_fixture(template, opaque=["provider.call", operator])
     saved = certify(template, captured)
     validate_allocation_coverage(template, saved)
     task = saved.bindings["allocation_coverage"]["tasks"]["update_impl"]
     assert task["contracts"]["provider.call"] == "fixture/allocate-like-input@1"
-    assert task["contracts"][matmul] == "shadowspill/aten-dense-matmul-allocation@1"
+    assert task["contracts"][operator] == contract
     with pytest.raises(ValueError, match="missing all-value"):
         allocation_coverage(
-            template, compiler_fixture(template, opaque=[matmul + "_wrapper"])
+            template, compiler_fixture(template, opaque=[operator + "_wrapper"])
         )
     with pytest.raises(ValueError, match="unresolved allocation behavior"):
         allocation_coverage(

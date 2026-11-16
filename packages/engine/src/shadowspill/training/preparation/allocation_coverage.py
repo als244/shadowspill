@@ -38,6 +38,15 @@ _BUILTIN = {
     "torch.ops.shadowspill.accumulate_matmul_.default": (
         "shadowspill/accumulate-matmul-allocation@1"
     ),
+    # Task-boundary gradient storage uses an input-shaped clone or a captured
+    # padded element count plus an input-shaped view. Neither reads values to
+    # choose allocation extents; the implementation is part of the engine pin.
+    "torch.ops.shadowspill.materialize_gradient.default": (
+        "shadowspill/gradient-storage-allocation@1"
+    ),
+    "torch.ops.shadowspill.pad_storage.default": (
+        "shadowspill/gradient-storage-allocation@1"
+    ),
     # Inductor RandomSeeds writes a captured count of int64 seeds into its
     # preallocated output. ATen's out/random kernel uses only that fixed extent,
     # dtype and scalar range; previous output values and RNG state cannot change

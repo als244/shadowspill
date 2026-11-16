@@ -4,6 +4,8 @@ Dropless routed experts allocate T*K assignment rows, E+1 offsets and fixed
 expert banks. Sorting changes row order only. Grouped GEMMs allocate full row
 outputs and E+1 tile-prefix entries; the device-side counts change execution,
 never allocation. LoRA uses those same bounded operators and fixed factor sizes.
+The trace-visible MoE provider splits the same operations into prepare/finish
+regions, with the same assignment, expert-bank and tile-prefix extents.
 
 Partial RoPE writes input-sized outputs. FLA norm outputs/partials depend on
 rows, widths and device geometry. Packed convolution and DeltaNet always receive
@@ -28,6 +30,8 @@ CONTRACTS = {
         for name in (
             "partial_rope_builtin_triton",
             "moe_builtin_grouped_gemm",
+            "moe_builtin_grouped_gemm_prepare",
+            "moe_builtin_grouped_gemm_finish",
             "causal_conv_silu_fla",
             "l2_norm_fla",
             "gated_rms_norm_fla",
