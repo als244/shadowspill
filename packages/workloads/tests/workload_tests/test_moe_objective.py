@@ -9,6 +9,7 @@ from torch.nn import functional as F
 
 from shadowspill.pytorch.capture.objective import capture_training_objective
 from shadowspill.training.definitions import InputAdapter, ModelDefinition, Registry
+from shadowspill.training.preparation.operations import OperationContract
 from shadowspill_client import Objective
 from shadowspill_client.protocol.definitions import DefinitionSource
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
@@ -273,6 +274,29 @@ def test_each_geometry_matches_independent_loss_all_gradients_and_two_updates(
             torch.testing.assert_close(actual, expected, atol=3e-6, rtol=5e-4)
     assert len(calls) == 2 * len(batches)
     hook.remove()
+
+
+@pytest.mark.parametrize("include_padding", [False, True])
+def test_forward_metrics_keeps_composed_loss_against_independent_oracle(
+    model, include_padding
+):
+    inputs, fields = physical([1, 2, 3, 4, 5], [3, 2], weighted=True)
+    _, _, objective = resolve(model, include_padding=include_padding)
+    key = OperationKey("forward", "metrics", "evaluation")
+    contract = OperationContract(key, objective)
+    controls = {
+        name: torch.tensor(value)
+        for name, value in contract.loss_params({"balance.weight": 0.07}).items()
+    }
+    model.eval()
+    with torch.no_grad():
+        actual = objective.computation(key)(model, inputs, fields, controls)
+        expected, _, _ = independent(
+            model, inputs, fields, 0.07, include_padding=include_padding
+        )
+    torch.testing.assert_close(actual.loss, expected, atol=4e-6, rtol=3e-5)
+    assert set(actual.metrics) == set(contract.outputs.metrics)
+    assert all(parameter.grad is None for parameter in model.parameters())
 
 
 def test_explicit_legacy_option_matches_existing_model_loss_and_gradients(model):

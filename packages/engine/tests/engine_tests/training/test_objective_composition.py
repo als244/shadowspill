@@ -15,6 +15,7 @@ from shadowspill.training.definitions import (
     ObjectiveEvaluation,
     Registry,
 )
+from shadowspill.training.preparation.operations import OperationContract
 from shadowspill_client import Objective
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.definitions import (
@@ -230,6 +231,79 @@ def test_output_only_forward_needs_no_targets_or_coefficients_and_runs_once():
     assert set(values) == {"squared.prediction", "absolute.prediction"}
     assert len(calls) == 1
     hook.remove()
+
+
+def test_forward_metrics_preserves_weighted_loss_and_call_local_coefficients():
+    _, description, _, objective = fixture()
+    model = description.create()
+    key = OperationKey("forward", "metrics", "evaluation")
+    contract = OperationContract(key, objective)
+    compute = objective.computation(key)
+    inputs = {"features": torch.randn(3, 2)}
+    fields = {
+        "target": torch.tensor([[0.3], [-1.2], [float("nan")]]),
+        "valid": torch.tensor([True, True, False]),
+    }
+    calls = []
+    hook = model.register_forward_hook(lambda *args: calls.append(1))
+    with torch.no_grad():
+        difference = (
+            torch.nn.functional.linear(inputs["features"][:2], model.weight, model.bias)
+            - fields["target"][:2]
+        )
+        for overrides, weight in (
+            (None, 0.3),
+            ({"absolute.weight": -0.5}, -0.5),
+            (None, 0.3),
+        ):
+            controls = {
+                name: torch.tensor(value)
+                for name, value in contract.loss_params(overrides).items()
+            }
+            result = compute(model, inputs, fields, controls)
+            assert isinstance(result, ObjectiveResult)
+            expected = ((difference - 0.2).square() + weight * difference.abs()).sum()
+            torch.testing.assert_close(result.loss, expected)
+            assert set(result.metrics) == set(contract.outputs.metrics)
+    assert len(calls) == 3
+    assert all(parameter.grad is None for parameter in model.parameters())
+    hook.remove()
+
+
+def test_forward_metrics_does_not_report_a_partial_loss_for_output_only_child():
+    def prediction_metric(prediction, inputs, fields, controls):
+        return {"mean": prediction.mean()}
+
+    def second(definition):
+        original = definition.bind
+        return replace(
+            definition,
+            outputs={
+                **definition.outputs,
+                "metrics": replace(
+                    definition.outputs["metrics"],
+                    forward=OutputSet(
+                        model_inputs=(("features",),), metrics={"mean": "sum"}
+                    ),
+                ),
+            },
+            bind=lambda config, key: (
+                prediction_metric
+                if key.operation == "forward" and key.outputs == "metrics"
+                else original(config, key)
+            ),
+        )
+
+    _, description, _, objective = fixture(second=second)
+    key = OperationKey("forward", "metrics", "evaluation")
+    contract = OperationContract(key, objective)
+    result = objective.computation(key)(
+        description.create(),
+        {"features": torch.ones(2, 2)},
+        {"target": torch.zeros(2, 1), "valid": torch.ones(2, dtype=torch.bool)},
+        {name: torch.tensor(value) for name, value in contract.loss_params().items()},
+    )
+    assert isinstance(result, dict) and set(result) == set(contract.outputs.metrics)
 
 
 def test_normalized_setup_roundtrip_and_child_source_change_are_checked():

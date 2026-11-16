@@ -71,7 +71,10 @@ def _evaluation(
 
 
 def _outputs(
-    selected: Mapping[str, tuple[ResolvedObjective, OperationKey]], *, forward: bool
+    selected: Mapping[str, tuple[ResolvedObjective, OperationKey]],
+    *,
+    forward: bool,
+    aggregate: bool,
 ) -> OutputSet:
     model_inputs: set[tuple[str, ...]] = set()
     loss_inputs: set[tuple[str, ...]] = set()
@@ -83,7 +86,7 @@ def _outputs(
         model_inputs.update(tuple(p) for p in output.model_inputs)
         loss_inputs.update(tuple(p) for p in output.loss_inputs)
         controls.extend(f"{name}.{control}" for control in output.controls)
-        if not forward:
+        if aggregate:
             controls.append(f"{name}.weight")
         metrics.update(
             {f"{name}.{metric}": value for metric, value in output.metrics.items()}
@@ -102,6 +105,7 @@ def _outputs(
 
 def _bind(terms: Mapping[str, ResolvedObjective], key: OperationKey) -> Computation:
     selected = _selection(terms, key)
+    aggregate = key.operation != "forward" or key.outputs == "metrics"
     evaluation = _evaluation(selected)
     reducers = {name: term.reducer(child) for name, (term, child) in selected.items()}
     contracts = {
@@ -119,6 +123,7 @@ def _bind(terms: Mapping[str, ResolvedObjective], key: OperationKey) -> Computat
 
         values = evaluation.compute(model, inputs, loss_inputs, evaluation.requests)
         total, results = None, {}
+        complete = True
         for name, reducer in reducers.items():
             controls = {
                 control: loss_params[f"{name}.{control}"]
@@ -127,9 +132,10 @@ def _bind(terms: Mapping[str, ResolvedObjective], key: OperationKey) -> Computat
             result = reducer(values, inputs, loss_inputs, controls)
             if key.operation == "forward" and isinstance(result, Mapping):
                 metrics = result
+                complete = False
             else:
                 loss, metrics = normalize_objective_result(result, require_grad=False)
-                if key.operation != "forward":
+                if aggregate:
                     weighted = loss * loss_params[f"{name}.weight"]
                     total = weighted if total is None else total + weighted
             expected = set(contracts[name].metrics) | set(contracts[name].tensors)
@@ -140,6 +146,13 @@ def _bind(terms: Mapping[str, ResolvedObjective], key: OperationKey) -> Computat
                 {f"{name}.{metric}": value for metric, value in metrics.items()}
             )
         if key.operation == "forward":
+            # A metrics evaluation retains the complete weighted objective when
+            # every child supplies a loss. Output-only children cannot supply a
+            # complete objective; keep their declared values without inventing
+            # a partial loss. Prediction-only requests need no coefficients.
+            if aggregate and complete:
+                assert total is not None
+                return ObjectiveResult(total, results)
             return results
         assert total is not None
         results["loss_sum"] = total.detach()
@@ -241,8 +254,10 @@ def resolve_sum(
             _evaluation(selected)  # Reject incompatibility on CPU, before capture.
         _evaluation(_selection(terms, OperationKey("forward", output, "evaluation")))
         outputs[output] = replace(
-            _outputs(selections["step"], forward=False),
-            forward=_outputs(selections["forward"], forward=True),
+            _outputs(selections["step"], forward=False, aggregate=True),
+            forward=_outputs(
+                selections["forward"], forward=True, aggregate=output == "metrics"
+            ),
         )
 
     def bind(configured: Any, key: OperationKey) -> Computation:

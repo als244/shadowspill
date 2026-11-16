@@ -390,6 +390,12 @@ The balancing value is scaled by the supervised-token count; primary token
 weights do not scale balancing. The caller chooses its coefficient through
 `balance.weight`. All-masked prediction supervision still skips the update.
 
+For a composed objective, `forward(..., outputs="metrics")` returns the weighted
+loss when every child returns a scalar loss. Its namespaced coefficients follow
+the same setup-default and call-local override rules as training. If a child
+provides only outputs, the result contains the declared child metrics and no
+partial combined loss. Prediction-only output sets need no loss coefficients.
+
 The default `layer_reduction="combined"` combines counts/probability sums across
 layers before computing balancing, with `normalize_top_k=False`, matching Qwen's
 aggregation. `layer_reduction="sum", normalize_top_k=True` uses OLMoE's existing
