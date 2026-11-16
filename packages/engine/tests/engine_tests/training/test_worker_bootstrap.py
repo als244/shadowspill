@@ -216,6 +216,45 @@ def test_launch_rejects_unadmitted_pools_and_missing_rendezvous_before_spawn(
         )
 
 
+@pytest.mark.parametrize("world", [1, 2])
+@pytest.mark.parametrize("async_errors", [None, "0", "2"])
+def test_worker_launch_preserves_calibrated_nccl_error_handling(
+    tmp_path, world, async_errors
+):
+    startup = replace(prepared_worker().startup, logical_by_worker=tuple(range(world)))
+    environment = {"MASTER_ADDR": "127.0.0.1", "MASTER_PORT": "29500"}
+    if async_errors is not None:
+        environment["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = async_errors
+    original = dict(environment)
+    launched = []
+
+    def spawn(device, command, **options):
+        launched.append(options["environment"])
+        return SimpleNamespace(stream=io.BytesIO())
+
+    lease = SimpleNamespace(
+        request=ResourceRequest({"gpu": 2 << 30}, 1 << 30), launch=spawn
+    )
+    launch_worker(
+        lease,
+        "gpu",
+        WorkerLaunch(startup, ()),
+        environment=environment,
+        files=tmp_path,
+        outputs=tmp_path,
+        cache=tmp_path,
+        logs=SimpleNamespace(
+            check=lambda *_: None, directory=tmp_path, limit_bytes=64 << 10
+        ),
+        cwd=tmp_path,
+    )
+    # Preparation's torchrun workers default to 1. The direct service launcher
+    # must use that same default while preserving explicit backend settings.
+    expected = "1" if world > 1 and async_errors is None else async_errors
+    assert launched[0].get("TORCH_NCCL_ASYNC_ERROR_HANDLING") == expected
+    assert environment == original
+
+
 def test_agent_launch_imports_without_framework_provider_or_workloads():
     result = subprocess.run(
         [

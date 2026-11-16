@@ -97,17 +97,22 @@ def launch_worker(
         )
         return worker if capture is None else capture.command(worker)
 
+    child_environment = {
+        **environment,
+        **({} if capture is None else capture.environment),
+        "RANK": str(startup.logical_by_worker.index(startup.scope.rank)),
+        "WORLD_SIZE": str(world),
+        "LOCAL_RANK": "0",
+        "LOCAL_WORLD_SIZE": "1",
+    }
+    if world > 1:
+        # Match torchrun's default used by preparation and communication
+        # calibration. Explicit settings must still agree with the saved Plan.
+        child_environment.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
     child = lease.launch(
         device_id,
         command,
-        environment={
-            **environment,
-            **({} if capture is None else capture.environment),
-            "RANK": str(startup.logical_by_worker.index(startup.scope.rank)),
-            "WORLD_SIZE": str(world),
-            "LOCAL_RANK": "0",
-            "LOCAL_WORLD_SIZE": "1",
-        },
+        environment=child_environment,
         directory=logs.directory,
         cwd=cwd,
         log_limit_bytes=logs.limit_bytes,

@@ -82,3 +82,9 @@ def test_a_plan_without_collectives_takes_no_backend_setup(monkeypatch):
     assert distributed_worker.backend_differs(
         backend, calibrated({**backend, "nccl_version": [2, 28, 0]})
     )
+    assert distributed_worker.backend_differs(
+        backend,
+        calibrated(
+            {**backend, "environment": {"TORCH_NCCL_ASYNC_ERROR_HANDLING": "1"}}
+        ),
+    )
