@@ -33,7 +33,9 @@ from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
 
 
-def fixture(tmp_path, *, artifact=False, capacity=256, peak=128, fail=False):
+def fixture(
+    tmp_path, *, artifact=False, capacity=256, peak=128, fail=False, disk_bytes=0
+):
     value, files, events = executor(), {}, []
     value.plan.program.digest = "a" * 64
     value.synchronize = lambda: None
@@ -67,7 +69,9 @@ def fixture(tmp_path, *, artifact=False, capacity=256, peak=128, fail=False):
                 assert budget.used == (peak + 24, 1)
                 events.append("close")
 
-        return ModelInitialization(peak_bytes=peak, chunk_bytes=16, open=open_loader)
+        return ModelInitialization(
+            peak_bytes=peak, chunk_bytes=16, open=open_loader, disk_bytes=disk_bytes
+        )
 
     setup = preparation(describe)
     base = FrozenBase(setup.config.model, setup.model.source)
@@ -200,11 +204,13 @@ def test_restore_switches_base_and_full_restore_clears_omission_provenance(tmp_p
 
 
 @pytest.mark.parametrize(
-    "failure", ["source", "model", "staging", "missing_artifact", "no_hook"]
+    "failure", ["source", "model", "staging", "disk", "missing_artifact", "no_hook"]
 )
 def test_base_preflight_rejects_before_opening_or_mutating(tmp_path, failure):
     value, budget, base, reader, files, events = fixture(
-        tmp_path, artifact=failure == "missing_artifact"
+        tmp_path,
+        artifact=failure == "missing_artifact",
+        disk_bytes=128 if failure == "disk" else 0,
     )
     source, _ = save(tmp_path, reader, info(base), files)
     expected = {name: tensor.clone() for name, tensor in value.values.items()}
@@ -216,6 +222,8 @@ def test_base_preflight_rejects_before_opening_or_mutating(tmp_path, failure):
         reader.budget = BufferBudget(128)
     elif failure == "missing_artifact":
         files.pop(base.artifact)
+    elif failure == "disk":
+        pass  # The live runtime has no disk allowance for this new base loader.
     else:
         reader.setup = None
     source = replace(

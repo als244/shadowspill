@@ -18,6 +18,7 @@ from .bindings import BoundWorkerCall
 from .checkpoint_records import RankRestore
 from .initialization import (
     PreparedInitialization,
+    check_disk,
     open_initialization,
     prepare_frozen_initialization,
     restore_staging,
@@ -118,6 +119,7 @@ class WorkerCheckpointReader:
             initial = prepare_frozen_initialization(
                 self.setup, base, self.executor.logical_rank
             )
+            check_disk(initial, self.runtime)
             if base.artifact is not None:
                 self.resolve(base.artifact)
         chunk, peak = restore_staging(

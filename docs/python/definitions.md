@@ -234,6 +234,13 @@ host staging before launching workers. Inspection and preparation may omit initi
 weights; fresh creation requires explicit weights and a bounded installed loader,
 or a compatible checkpoint restore.
 
+An initializer that downloads or extracts files also declares `disk_bytes`
+(default zero). The node reserves the sum for its workers before opening sources
+or launching children. Workers share a private initialization cache within that
+reservation; it survives for frozen-base restores and is removed after workers
+stop. Cleanup releases the disk claim only after removing those owned files.
+Existing user caches can be read without modifying or deleting them.
+
 The worker reserves the peak before entering `open(InitializationRuntime)`.
 That context manager yields `fill(TensorChunk, flat_cpu_destination)` and releases
 its resources before the reservation ends, including on failure. The existing

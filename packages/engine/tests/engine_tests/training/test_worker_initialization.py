@@ -19,6 +19,7 @@ from shadowspill.training.definitions import (
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.worker.initialization import (
     initialize,
+    open_initialization,
     prepare_initialization,
 )
 from shadowspill_client import Execution, Weights
@@ -38,6 +39,37 @@ def runtime(tmp_path):
         tmp_path,
         lambda _: pytest.fail("random initialization opened an artifact"),
     )
+
+
+def test_initialization_disk_bounds_are_validated_and_enter_startup_identity():
+    setup = preparation()
+    initial = prepare_initialization(setup)[0]
+    assert initial.description.disk_bytes == 0
+    changed = replace(
+        initial, description=replace(initial.description, disk_bytes=1 << 20)
+    )
+    assert changed.signature() != initial.signature()
+    assert changed.signature()["disk_bytes"] == 1 << 20
+    for invalid in (-1, True, 0.5):
+        with pytest.raises((ValueError, TypeError), match="initialization disk bytes"):
+            replace(initial.description, disk_bytes=invalid)
+
+
+def test_a_larger_loader_cannot_open_beyond_the_live_disk_allowance(tmp_path):
+    initial = prepare_initialization(preparation())[0]
+    initial = replace(
+        initial,
+        description=replace(
+            initial.description,
+            disk_bytes=1024,
+            open=lambda _: pytest.fail("opened before checking disk allowance"),
+        ),
+    )
+    with (
+        pytest.raises(ValueError, match="admitted worker disk allowance"),
+        open_initialization(initial, runtime(tmp_path)),
+    ):
+        pytest.fail("opened unadmitted loader")
 
 
 def test_cpu_preflight_never_imports_framework_catalog_or_opens_loader():

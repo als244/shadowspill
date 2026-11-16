@@ -44,7 +44,9 @@ class WorkerNode:
     output/input owners before ``close`` removes this node's startup/file services.
     Request deliveries use the caller's scratch root, so a partially prepared
     request cannot be deleted by cleanup of this node's private startup directory.
-    The caller also owns the node-backed memory budget and persistent cache.
+    The caller also owns the node-backed memory budget and cache parent. This
+    owner reserves initialization disk space before launching any child and
+    retains the private cache until all workers stop and cleanup completes.
     """
 
     def __init__(
@@ -126,6 +128,8 @@ class WorkerNode:
         self._lease: NodeLease | None = None
         self._metadata: BufferLease | None = None
         self._directory: TemporaryDirectory[str] | None = None
+        self._initial_cache: TemporaryDirectory[str] | None = None
+        self._initial_disk: BufferLease | None = None
         self._delivery: FileDelivery | None = None
         self._grants: FileGrants | None = None
         self._grant: FileGrant | None = None
@@ -185,6 +189,16 @@ class WorkerNode:
                 host=self._host_memory,
             )
             self._active()
+            initial_bytes = sum(
+                worker.initialization.description.disk_bytes
+                for worker in self.prepared.values()
+                if worker.initialization is not None
+            )
+            if initial_bytes:
+                self._initial_disk = self._disk.reserve(initial_bytes, timeout=0)
+            self._initial_cache = TemporaryDirectory(
+                prefix="initialization-", dir=self._cache
+            )
             self._metadata = self._memory.reserve(
                 4096 + 8 * MAX_METADATA_BYTES * len(self._launches), timeout=0
             )
@@ -241,7 +255,7 @@ class WorkerNode:
                     environment=self._environment,
                     files=self._grants.root,
                     outputs=self._outputs.root,
-                    cache=self._cache,
+                    cache=Path(self._initial_cache.name),
                     logs=self._logs[rank],
                     cwd=root,
                     startup_timeout=startup_timeout,
@@ -293,6 +307,10 @@ class WorkerNode:
                 )
             if self._directory is not None:
                 self._directory.cleanup()
+            if self._initial_cache is not None:
+                self._initial_cache.cleanup()
+            if self._initial_disk is not None:
+                self._initial_disk.close()
             if self._metadata is not None:
                 self._metadata.close()
             self.closed = True

@@ -113,8 +113,20 @@ def test_stop_during_startup_copy_retains_storage_until_producer_settles(tmp_pat
         arena.close()
 
 
-def configured(tmp_path, *, disk_bytes=16 << 20, capture_limits=None):
+def configured(
+    tmp_path, *, disk_bytes=16 << 20, capture_limits=None, initialization_disk_bytes=0
+):
     original = prepared_worker()
+    original = replace(
+        original,
+        initialization=replace(
+            original.initialization,
+            description=replace(
+                original.initialization.description,
+                disk_bytes=initialization_disk_bytes,
+            ),
+        ),
+    )
     if capture_limits is not None:
         setup = original.bindings.setup
         original.bindings.setup = replace(
@@ -173,6 +185,68 @@ def cpu_workers(monkeypatch):
         return [sys.executable, "-c", CHILD, str(arguments[1])]
 
     monkeypatch.setattr(launch_module, "worker_command", command)
+
+
+def test_initialization_disk_is_reserved_before_sources_or_children(
+    tmp_path, monkeypatch
+):
+    node, admission, arena, disk = configured(
+        tmp_path, disk_bytes=16 << 20, initialization_disk_bytes=9 << 20
+    )
+    monkeypatch.setattr(
+        node_module, "launch_worker", lambda *a, **k: pytest.fail("launched a child")
+    )
+    try:
+        with pytest.raises(ValueError, match="staging bytes"):
+            node.start(lambda _: pytest.fail("opened a source"))
+    finally:
+        node.close()
+        arena.close()
+    assert admission.used.claims == 0
+    assert disk.used == (0, 0)
+    assert not list(tmp_path.glob("initialization-*"))
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_initialization_cache_is_private_reserved_and_removed_after_stop(
+    tmp_path, monkeypatch, fail
+):
+    cpu_workers(monkeypatch)
+    node, admission, arena, disk = configured(
+        tmp_path, initialization_disk_bytes=1 << 20
+    )
+    existing = tmp_path / "existing-user-cache"
+    existing.write_bytes(b"preserve")
+    caches = []
+    original_launch = node_module.launch_worker
+
+    def launch(*args, **kwargs):
+        cache = kwargs["cache"]
+        caches.append(cache)
+        assert cache.parent == tmp_path and cache != tmp_path
+        assert disk.used[0] >= 2 << 20
+        (cache / "download").write_bytes(b"owned initialization bytes")
+        if fail:
+            raise RuntimeError("initialization startup failure")
+        return original_launch(*args, **kwargs)
+
+    monkeypatch.setattr(node_module, "launch_worker", launch)
+    try:
+        if fail:
+            with pytest.raises(RuntimeError, match="startup failure"):
+                node.start(lambda _: io.BytesIO(PAYLOAD), startup_timeout=5)
+        else:
+            processes = node.start(lambda _: io.BytesIO(PAYLOAD), startup_timeout=5)
+            with start_processes(processes, stop=node.stop):
+                assert len(caches) == 2 and caches[0] == caches[1]
+        assert caches[0].is_dir()  # Keep the disk claim until node cleanup succeeds.
+        assert disk.used[0] >= 2 << 20
+    finally:
+        node.close()
+        arena.close()
+    assert not caches[0].exists()
+    assert existing.read_bytes() == b"preserve"
+    assert admission.used.claims == 0 and disk.used == (0, 0)
 
 
 def collector_workers(monkeypatch, child=CHILD, *, fault=None):

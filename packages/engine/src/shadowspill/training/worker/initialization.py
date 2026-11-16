@@ -40,6 +40,7 @@ class PreparedInitialization:
             "model_source": self.source.to_dict(),
             "peak_bytes": self.description.peak_bytes,
             "chunk_bytes": self.description.chunk_bytes,
+            "disk_bytes": self.description.disk_bytes,
         }
 
 
@@ -109,11 +110,19 @@ def initialize(
         executor.initialize(fill, chunk_bytes=description.chunk_bytes)
 
 
+def check_disk(
+    prepared: PreparedInitialization, runtime: InitializationRuntime
+) -> None:
+    if prepared.description.disk_bytes > runtime.disk_bytes:
+        raise ValueError("initializer exceeds the admitted worker disk allowance")
+
+
 @contextmanager
 def open_initialization(
     prepared: PreparedInitialization, runtime: InitializationRuntime
 ) -> Iterator[TensorInitializer]:
     """Borrow the existing validated loader under the caller's host reservation."""
+    check_disk(prepared, runtime)
     description = prepared.description
     with description.open(runtime) as fill:
         if not callable(fill):

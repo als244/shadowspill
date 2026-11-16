@@ -66,7 +66,13 @@ def serve(
     prepared.serve(
         stream,
         stream,
-        InitializationRuntime(cache, artifact),
+        InitializationRuntime(
+            cache,
+            artifact,
+            0
+            if prepared.initialization is None
+            else prepared.initialization.description.disk_bytes,
+        ),
         lambda reference: resolve_file(files, reference),
         FileOutputs(prepared.outputs, root=outputs),
         traces=TraceFiles(

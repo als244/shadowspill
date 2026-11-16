@@ -42,11 +42,17 @@ class InitializationRuntime:
 
     The resolver checks ownership and immutable content before returning a local
     path. A request's artifact ID is never interpreted directly as a file path.
-    Neither this context nor an open loader enters a saved Plan or wire record.
+    ``cache_root`` is private to the worker group and removed after its workers
+    stop. Writes must fit the loader's declared disk allowance. Neither this
+    context nor an open loader enters a saved Plan or wire record.
     """
 
     cache_root: Path
     artifact: Callable[[str], Path]
+    disk_bytes: int = 0
+
+    def __post_init__(self) -> None:
+        integer(self.disk_bytes, "runtime initialization disk bytes")
 
 
 class TensorInitializer(Protocol):
@@ -59,6 +65,9 @@ class ModelInitialization:
 
     ``peak_bytes`` includes retained loader state, all temporary CPU work and the
     maximum destination chunk. ``open`` runs only after reserving that bound.
+    ``disk_bytes`` bounds downloaded/extracted files in the private cache,
+    including incomplete transfers. Its reservation lasts until worker cleanup,
+    so later frozen-base restores may reuse those files.
     Installed definitions own initialization semantics; generic routing never
     guesses distributions, parameter names, missing buffers or weight formats.
     """
@@ -66,10 +75,12 @@ class ModelInitialization:
     peak_bytes: int
     chunk_bytes: int
     open: Callable[[InitializationRuntime], AbstractContextManager[TensorInitializer]]
+    disk_bytes: int = 0
 
     def __post_init__(self) -> None:
         integer(self.peak_bytes, "initialization peak bytes", minimum=1)
         integer(self.chunk_bytes, "initialization chunk bytes", minimum=1)
+        integer(self.disk_bytes, "initialization disk bytes")
         if self.chunk_bytes > self.peak_bytes:
             raise ValueError("initialization peak must include its maximum chunk")
         if not callable(self.open):
