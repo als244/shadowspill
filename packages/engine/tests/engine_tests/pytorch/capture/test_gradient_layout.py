@@ -8,6 +8,48 @@ from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
 from shadowspill.pytorch.graph_pairs.artifacts import GraphPairVariant
 from shadowspill.task.inputs import TaskInputRole
+from shadowspill.task.storage import StorageRootKind
+
+
+@pytest.mark.parametrize("role", [TaskInputRole.ACTIVATION, TaskInputRole.PARAMETER])
+def test_single_prefix_gradient_does_not_transfer_its_larger_input_storage(role):
+    """A prefix at offset zero is dense but cannot own the whole input lease."""
+    first = torch.randn(4, requires_grad=True)
+    second = torch.randn(4)
+
+    def function(a, b):
+        return torch.cat((a, b))
+
+    pair = capture_graph_pair(
+        make_fx(function)(first, second),
+        (first, second),
+        original_output=function(first, second),
+        input_provenance=(
+            TaskInputProvenance(role),
+            TaskInputProvenance(TaskInputRole.ACTIVATION),
+        ),
+    )
+    prepared = GraphPairVariant("save", 1.0, pair).with_gradient_dtype(None).pair
+    forward = prepared.forward.graph_module(first, second)
+    tangent = torch.randn_like(forward[0])
+    arguments = (*forward[1:], tangent)
+    result = prepared.backward.graph_module(*arguments)[0]
+    torch.testing.assert_close(result, tangent[:4])
+    assert result.untyped_storage().data_ptr() != tangent.untyped_storage().data_ptr()
+    assert result.untyped_storage().nbytes() == 4 * result.element_size()
+    view = prepared.backward.storage_contract.output_views[0]
+    assert (
+        prepared.backward.storage_contract.roots[view.root_id].kind
+        is StorageRootKind.FRESH
+    )
+
+    from shadowspill.build.compilation import compile_task
+    from shadowspill.pytorch.executable import restore_executable
+
+    compiled = compile_task(prepared.backward)
+    actual = restore_executable(compiled.payload)(*arguments)[0]
+    torch.testing.assert_close(actual, result)
+    assert actual.untyped_storage().nbytes() == 4 * actual.element_size()
 
 
 @pytest.mark.parametrize("role", [TaskInputRole.ACTIVATION, TaskInputRole.PARAMETER])
