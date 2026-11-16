@@ -108,7 +108,7 @@ def _readers(path: Path) -> list[Path]:
             "../phases",
             PREPARATION,
         ),
-        ROOT / "examples/train_qwen35_lora.py": (ROOT / "examples/training/qwen",),
+        ROOT / "examples/training/qwen/cli.py": (ROOT / "examples/training/qwen",),
         CATALOG / "recipes/text/glm53_flash_lora/arguments.py": (
             ".",
             "../phases",
