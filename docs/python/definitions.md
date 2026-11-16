@@ -67,7 +67,7 @@ default. `Model.precision` accepts `compute_dtype`, `grad_dtype` and `lora_dtype
 selects a named `preset` (default `tiny`) and optional `architecture` overrides.
 LoRA uses the family's existing targets unless supplied explicitly; its current
 provider supports zero dropout. Initialization uses explicit random weights or a
-native training checkpoint; pretrained reference resolution remains to migrate.
+native training checkpoint; the bounded pretrained worker loader remains to migrate.
 
 The Llama batch declares `token_capacity`, `max_sequence_length` and
 `max_sequences`. An optional `typical={"sequence_length": ...}` affects timing
@@ -211,6 +211,17 @@ pins a model definition and immutable weight revision. It may fill missing field
 inside nested configuration or precision mappings. Every explicit value remains
 fixed, including nulls and complete sequences; changed or removed values are
 rejected. The same resolved settings are rechecked when creating a training run.
+
+The supplied `shadowspill/huggingface@1` resolver accepts Hub repository IDs for
+Llama 3, Qwen3 MoE, the Qwen3.5 MoE text decoder and OLMoE. It fetches only a bounded
+`config.json`, pins the immutable Hub commit and uses the existing catalog parsers.
+It imports no tensor framework and executes no repository Python. An explicit
+`config={"architecture": {"max_seq_len": ...}}` replaces the metadata's context
+capacity; overrides that change stored tensor geometry are rejected. Other model
+settings, including explicit precision and LoRA targets, remain caller-owned.
+Installed compute/gradient precision defaults apply independently of the stored
+weight dtype. Metadata resolution is available; pretrained worker loading is a
+separate migration requirement.
 
 Fresh worker initialization uses an optional
 `initialization(config, InitializationContext)` hook. It describes the pinned
