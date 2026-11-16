@@ -106,6 +106,9 @@ and resource limits, then retains a new immutable bundle recording that source;
 the original Plans remain available. This performs no build, profiling or search.
 To resume, supply
 `service.create_training_client(plans=training.plans, checkpoint=checkpoint)`.
+Full training and LoRA are qualified from a NumPy-only remote client with
+pretrained weights, reuse of the same computation Plans with a new random seed,
+whole/split updates and bitwise checkpoint continuation.
 The client reads the saved configuration as bounded metadata; it does not download
 or decode executable Plans. The server validates every rank before initialization
 and loads the checkpoint directly. A partial checkpoint opens only its recorded
