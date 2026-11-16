@@ -10,7 +10,7 @@ from functools import partial
 import pytest
 
 from shadowspill.training.definitions import InitializationRuntime
-from shadowspill_workloads.initialization import hub_files
+from shadowspill_workloads.initialization import hub_files, weight_files
 from workload_tests._hub_server import serve_hub
 from workload_tests.test_pretrained_metadata import REVISION
 
@@ -21,7 +21,7 @@ def declaration(name, data, *, git=False):
         if git
         else hashlib.sha256(data)
     )
-    return hub_files.HubFile(name, len(data), digest.hexdigest())
+    return weight_files.WeightFile(name, len(data), digest.hexdigest())
 
 
 @contextmanager
@@ -54,10 +54,10 @@ def test_bounded_http_download_and_cached_content_hash(tmp_path, monkeypatch, gi
     with http_stream(monkeypatch, (data[:12345], data[12345:])):
         hub_files.download("fixture/model", REVISION, file, path)
     assert path.read_bytes() == data
-    hub_files.verify(path, file)
+    weight_files.verify(path, file)
     path.write_bytes(b"changed" + data[7:])
     with pytest.raises(ValueError, match="checksum"):
-        hub_files.verify(path, file)
+        weight_files.verify(path, file)
 
 
 @pytest.mark.parametrize("mode", ["oversize", "truncated", "corrupt", "encoded"])
@@ -103,7 +103,7 @@ def test_snapshot_reuses_verified_cache_and_cleans_owned_files(
     private = tmp_path / "private"
     private.mkdir()
     runtime = InitializationRuntime(
-        private, lambda _: pytest.fail("artifact"), hub_files.disk_bytes(manifest)
+        private, lambda _: pytest.fail("artifact"), weight_files.disk_bytes(manifest)
     )
     monkeypatch.setattr(
         provider, "try_to_load_from_cache", lambda ref, name, **k: str(source / name)
@@ -142,25 +142,27 @@ def test_snapshot_reuses_verified_cache_and_cleans_owned_files(
 )
 def test_manifests_reject_paths_outside_the_supported_format(name):
     with pytest.raises(ValueError, match="file name"):
-        hub_files.HubFile(name, 10, "a" * 64)
+        weight_files.WeightFile(name, 10, "a" * 64)
 
 
 def test_index_and_manifest_bounds_reject_before_payload_access(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="metadata byte limit"):
-        hub_files.HubFile(hub_files.INDEX, hub_files.INDEX_BYTES + 1, "a" * 64)
-    path = tmp_path / hub_files.INDEX
+        weight_files.WeightFile(
+            weight_files.INDEX, weight_files.INDEX_BYTES + 1, "a" * 64
+        )
+    path = tmp_path / weight_files.INDEX
     path.write_text(json.dumps({"weight_map": {"weight": "../escape.safetensors"}}))
     with pytest.raises(ValueError, match="invalid tensor or shard"):
-        hub_files.read_index(path)
+        weight_files.read_index(path)
     metadata = declaration("config.json", b"{}")
     with pytest.raises(ValueError, match="unique names"):
-        hub_files.files([asdict(metadata), asdict(metadata)])
-    monkeypatch.setattr(hub_files, "MAX_SHARDS", 1)
+        weight_files.files([asdict(metadata), asdict(metadata)])
+    monkeypatch.setattr(weight_files, "MAX_SHARDS", 1)
     path.write_text(
         json.dumps({"weight_map": {"a": "a.safetensors", "b": "b.safetensors"}})
     )
     with pytest.raises(ValueError, match="shard count"):
-        hub_files.read_index(path)
+        weight_files.read_index(path)
 
 
 @pytest.mark.parametrize("sharded", [False, True])
@@ -178,7 +180,7 @@ def test_real_http_metadata_describes_without_fetching_weight_payloads(
     name = "part.safetensors" if sharded else "model.safetensors"
     (source / name).write_bytes(b"weight payload")
     if sharded:
-        (source / hub_files.INDEX).write_text(
+        (source / weight_files.INDEX).write_text(
             json.dumps({"weight_map": {"weight": name}})
         )
     monkeypatch.setattr(provider, "try_to_load_from_cache", lambda *a, **k: None)
@@ -187,10 +189,10 @@ def test_real_http_metadata_describes_without_fetching_weight_payloads(
             provider, "hf_hub_url", partial(provider.hf_hub_url, endpoint=endpoint)
         )
         assert hub.config("fixture/llama", REVISION)[1] == {"model_type": "llama"}
-        manifest = hub_files.files(hub_files.describe("fixture/llama", REVISION))
+        manifest = weight_files.files(hub_files.describe("fixture/llama", REVISION))
         assert ("HEAD", name) in requests and ("GET", name) not in requests
         runtime = InitializationRuntime(
-            cache, lambda _: pytest.fail("artifact"), hub_files.disk_bytes(manifest)
+            cache, lambda _: pytest.fail("artifact"), weight_files.disk_bytes(manifest)
         )
         with hub_files.snapshot(
             "fixture/llama", REVISION, manifest, runtime

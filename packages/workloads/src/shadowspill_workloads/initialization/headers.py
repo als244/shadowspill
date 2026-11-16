@@ -6,7 +6,7 @@ import struct
 from shadowspill.checkpoint.inspection import check_json
 
 from .hub import read_config
-from .hub_files import INDEX, MAX_TENSORS, read_index, shard_name
+from .weight_files import INDEX, MAX_TENSORS, read_index, shard_name
 
 HEADER_BYTES = 4 << 20
 

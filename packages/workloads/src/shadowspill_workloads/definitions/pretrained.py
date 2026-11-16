@@ -118,6 +118,7 @@ def register(registry):
                 "definitions/pretrained.py",
                 "initialization/hub.py",
                 "initialization/hub_files.py",
+                "initialization/weight_files.py",
                 "models/llama3/config.py",
                 "models/olmoe/config.py",
                 "models/qwen3moe/config.py",

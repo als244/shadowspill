@@ -5,7 +5,7 @@ from dataclasses import asdict
 
 from shadowspill.training.definitions import ModelInitialization
 
-from . import hub_files
+from . import hub_files, weight_files
 from .hub import immutable_revision
 
 
@@ -37,7 +37,7 @@ def describe(family, config, context):
         raise ValueError("catalog initialization requires random or pinned Hub weights")
     if set(weights.metadata) != {"files"}:
         raise ValueError("pinned Hub weights require a resolved file manifest")
-    manifest = hub_files.files(weights.metadata["files"])
+    manifest = weight_files.files(weights.metadata["files"])
 
     @contextmanager
     def open_pretrained(runtime):
@@ -58,6 +58,6 @@ def describe(family, config, context):
     return ModelInitialization(
         peak_bytes=(224 << 20) + 32 * width,
         chunk_bytes=1 << 20,
-        disk_bytes=hub_files.disk_bytes(manifest),
+        disk_bytes=weight_files.disk_bytes(manifest),
         open=open_pretrained,
     )

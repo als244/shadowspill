@@ -18,7 +18,7 @@ from shadowspill.training.definitions import (
     load_registry,
 )
 from shadowspill_client import LoRA, Model, Weights
-from shadowspill_workloads.initialization import headers, hub, hub_files
+from shadowspill_workloads.initialization import headers, hub, hub_files, weight_files
 from shadowspill_workloads.initialization.text import Initialize
 from workload_tests.test_checkpoints import huggingface_state
 from workload_tests.test_llama_definition import settings as llama_settings
@@ -93,7 +93,7 @@ def checkpoint(directory, family, model):
         index[name] = f"weights-{shard}.safetensors"
     for number, shard in enumerate(shards):
         save_file(shard, directory / f"weights-{number}.safetensors")
-    (directory / hub_files.INDEX).write_text(json.dumps({"weight_map": index}))
+    (directory / weight_files.INDEX).write_text(json.dumps({"weight_map": index}))
     manifest = [
         {
             "name": path.name,
@@ -168,8 +168,8 @@ def test_pretrained_chunks_reproduce_weights_rotary_and_fresh_lora(
                 tensor, reference.to(tensor.dtype), rtol=0, atol=0
             )
     assert not list(cache.iterdir())
-    for file in hub_files.files(manifest):
-        hub_files.verify(source / file.name, file)
+    for file in weight_files.files(manifest):
+        weight_files.verify(source / file.name, file)
 
 
 @pytest.mark.parametrize("fault", ["length", "dimensions", "extra", "index"])
@@ -184,12 +184,14 @@ def test_header_preflight_rejects_before_the_tensor_reader(tmp_path, fault):
     length = headers.HEADER_BYTES + 1 if fault == "length" else len(payload)
     shard = tmp_path / "model.safetensors"
     shard.write_bytes(struct.pack("<Q", length) + payload + bytes(4))
-    manifest = [hub_files.HubFile("model.safetensors", shard.stat().st_size, "a" * 64)]
+    manifest = [
+        weight_files.WeightFile("model.safetensors", shard.stat().st_size, "a" * 64)
+    ]
     if fault == "index":
-        (tmp_path / hub_files.INDEX).write_text(
+        (tmp_path / weight_files.INDEX).write_text(
             json.dumps({"weight_map": {"weight": "other.safetensors"}})
         )
-        manifest.append(hub_files.HubFile(hub_files.INDEX, 100, "b" * 64))
+        manifest.append(weight_files.WeightFile(weight_files.INDEX, 100, "b" * 64))
     with pytest.raises(
         ValueError, match=r"(byte limit|dimensions|declaration|shard manifest)"
     ):

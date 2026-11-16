@@ -7,7 +7,8 @@ from tempfile import TemporaryDirectory
 
 from shadowspill.checkpoint.inspection import check_json
 
-from .hub_files import CONFIG_BYTES, HubFile, fetch
+from .hub_files import fetch
+from .weight_files import CONFIG_BYTES, WeightFile
 
 
 def immutable_revision(value):
@@ -68,7 +69,7 @@ def config(reference, revision):
         path = fetch(
             reference,
             info.commit_hash,
-            HubFile("config.json", info.size, info.etag),
+            WeightFile("config.json", info.size, info.etag),
             Path(cache),
         )
         metadata = read_config(path)
