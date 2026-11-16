@@ -21,6 +21,11 @@ def _reads(program: Program) -> tuple[set[str], set[str]]:
     hosts: set[str] = set()
     for entry in program.bindings["entrypoints"]:
         task = tasks[entry["task_id"]]
+        if task.profile_id in program.bindings.get("collective_tasks", {}):
+            # Lowered weight/gradient collectives have a native buffer ABI, not
+            # an FX graph or captured input provenance. They cannot establish
+            # that a caller coefficient is consumed by the model/optimizer.
+            continue
         provenance = program.bindings["task_inputs"][task.profile_id]["provenance"]
         for kind, name, target in (
             ("input_slots", "object_id", objects),
