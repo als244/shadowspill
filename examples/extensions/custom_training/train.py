@@ -3,6 +3,7 @@
 import argparse
 
 from shadowspill_client import (
+    SSH,
     BatchConfig,
     Datum,
     Memory,
@@ -18,11 +19,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ssh-host", help="SSH alias of the running server")
     args = parser.parse_args()
-    connection = (
-        {"ssh_host": args.ssh_host, "server_port": 8000}
-        if args.ssh_host
-        else {"base_url": "http://127.0.0.1:8000"}
-    )
     data = [
         Datum(
             {"features": row},
@@ -35,7 +31,11 @@ def main():
             ([0, 0, 0, 1.0], 0.5),
         )
     ]
-    with ServiceClient(**connection) as service:
+    if args.ssh_host:
+        service = ServiceClient(ssh=SSH(args.ssh_host, server_port=8000))
+    else:
+        service = ServiceClient(base_url="http://127.0.0.1:8000")
+    with service:
         training = service.create_training_client(
             model=Model(
                 "linear_regressor",
