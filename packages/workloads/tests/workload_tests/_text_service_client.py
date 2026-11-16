@@ -171,7 +171,7 @@ def qualify(client, options, budget):
             "mlops/adamw@1",
             defaults=options["optim"],
             precision={
-                "gradient_dtype": "float32",
+                "gradient_dtype": options.get("gradient_dtype", "float32"),
                 "opt_state_dtype": "float32",
                 "master_dtype": "float32",
             },
@@ -351,6 +351,7 @@ def qualify(client, options, budget):
         runs.extend((fresh.run_id, continued.run_id))
     return {
         "runs": runs,
+        "plans": plans.reference.to_dict(),
         "observations": observations,
         "whole_split_equivalence": options.get("whole_split_equivalence", True),
         "independent_geometry_oracles": "oracles" in options,

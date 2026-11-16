@@ -17,7 +17,7 @@ from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.inputs.text import preparation as inputs
 from shadowspill_workloads.models.olmoe.config import PRESETS, Config
 
-from .moe_allocations import CONTRACTS
+from . import moe_provider
 from .source import definition_source
 
 PRESET = "shadowspill/olmoe_packed@1"
@@ -116,7 +116,10 @@ def create(config):
 
 def build(config, context):
     return ModelBuild(
-        asdict(config), grad_dtype=config.grad_dtype, allocation_invariants=CONTRACTS
+        asdict(config),
+        grad_dtype=config.grad_dtype,
+        operator_preparation=moe_provider.preparations(config.compute_dtype),
+        allocation_invariants=moe_provider.allocations(config.compute_dtype),
     )
 
 
@@ -138,6 +141,7 @@ def register(registry):
         (
             "definitions/olmoe.py",
             "definitions/moe_allocations.py",
+            "definitions/moe_provider.py",
             "definitions/text_allocations.py",
             "inputs/text/preparation.py",
             "initialization",
@@ -155,6 +159,7 @@ def register(registry):
             "httpcore",
             "httpx2",
             "httpcore2",
+            *moe_provider.PROVIDERS,
         ),
     )
     registry.add_preparation(

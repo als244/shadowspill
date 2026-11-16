@@ -237,14 +237,22 @@ def test_public_moe_description_is_framework_and_implementation_free():
 import importlib.abc, json, sys
 class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, *args):
-        if fullname.split('.')[0] in {'torch', 'triton', 'fla', 'mlops'}:
+        if fullname.split('.')[0] in {
+            'torch', 'triton', 'fla', 'mlops', 'quack', 'sonicmoe', 'cutlass'
+        }:
             # find_spec provider discovery is permitted; imports are checked below.
             return None
         if '.implementations.' in fullname:
             raise AssertionError(fullname)
 sys.meta_path.insert(0, Block())
 from shadowspill.training.definitions import load_registry
-from shadowspill_client import Model, Objective
+from shadowspill.training.preparation.setup import resolve_training
+from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.templates import capture_inventory
+from shadowspill_client import (
+    Model, Objective, Weights, BatchConfig, Memory, Preparation,
+    BuildCandidates, PlanningOptions,
+)
 registry = load_registry(['shadowspill-workloads'])
 for family in ('qwen3moe', 'qwen35moe', 'olmoe'):
     model = registry.resolve_model('shadowspill/'+family+'@1')
@@ -255,7 +263,20 @@ for family in ('qwen3moe', 'qwen35moe', 'olmoe'):
     resolved = registry.resolve_objective(objective.definition,
         model=model, config=objective.config, defaults=objective.defaults)
     assert resolved.definition.padding_safe
-    assert not any(n in sys.modules for n in ('torch', 'triton', 'mlops', 'fla'))
+    setup = resolve_training(registry,
+        model=Model('shadowspill/'+family+'@1', initialize=Weights.random(seed=0)),
+        objective=objective,
+        operations={'forward_backward': ['metrics'], 'forward': ['logprobs']},
+        batch=BatchConfig(limits={
+            'token_capacity': 8, 'max_sequence_length': 4, 'max_sequences': 4,
+        }), memory=Memory(1, 1),
+        prepare=Preparation(candidates=BuildCandidates(microbatch_sizes=[8]),
+                            planning=PlanningOptions(microbatch_counts=[1])))
+    inventory = capture_inventory(prepare_layouts(setup))
+    for template in inventory.templates.values():
+        assert len(template.model_build.operator_preparation) == 1
+    assert not any(n in sys.modules for n in (
+        'torch', 'triton', 'mlops', 'fla', 'quack', 'sonicmoe', 'cutlass'))
 print(json.dumps({'families': 3, 'padding_excluded': True}))
 """
     result = subprocess.run(

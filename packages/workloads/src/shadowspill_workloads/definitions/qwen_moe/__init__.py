@@ -5,6 +5,7 @@ from functools import partial
 from shadowspill.training.definitions import ModelDefinition, PreparationDefinition
 from shadowspill_workloads.inputs.text import preparation as inputs
 
+from ..moe_provider import PROVIDERS
 from ..source import definition_source
 from . import configuration
 
@@ -17,6 +18,7 @@ def register(registry):
             (
                 "definitions/qwen_moe",
                 "definitions/moe_allocations.py",
+                "definitions/moe_provider.py",
                 "definitions/text_allocations.py",
                 "inputs/text/preparation.py",
                 "initialization",
@@ -35,6 +37,7 @@ def register(registry):
                 "httpcore",
                 "httpx2",
                 "httpcore2",
+                *PROVIDERS,
             ),
         )
         registry.add_preparation(

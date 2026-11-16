@@ -15,7 +15,7 @@ from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.models.qwen3moe import config as qwen3
 from shadowspill_workloads.models.qwen35moe import config as qwen35
 
-from ..moe_allocations import CONTRACTS
+from .. import moe_provider
 
 
 @dataclass(frozen=True)
@@ -145,7 +145,10 @@ def create(config):
 
 def build(config, context):
     return ModelBuild(
-        asdict(config), grad_dtype=config.grad_dtype, allocation_invariants=CONTRACTS
+        asdict(config),
+        grad_dtype=config.grad_dtype,
+        operator_preparation=moe_provider.preparations(config.compute_dtype),
+        allocation_invariants=moe_provider.allocations(config.compute_dtype),
     )
 
 
