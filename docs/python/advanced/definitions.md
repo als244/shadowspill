@@ -1,4 +1,7 @@
-# Custom models, objectives and optimizers
+# Model, objective and optimizer hook reference
+
+Start with the [step-by-step extension guide](custom-definitions.md) for a complete
+package you can install and train. This page describes the detailed contracts.
 
 Register custom definitions through `shadowspill.training.definitions`.
 Install the engine's `training` extra on the server to use these hooks. Portable
@@ -233,6 +236,8 @@ it needs their declared forward fields/controls and returns their prefixed
 outputs. Forward returns per-term metrics without a total training loss or
 requiring composition coefficients.
 
+### Geometry-aware model builds
+
 Models that need geometry-dependent construction or provider resources can supply
 `build(config, ModelBuildContext)`. This CPU hook returns `ModelBuild` with complete
 constructor settings, existing `Resource` descriptions and optional
@@ -314,6 +319,8 @@ changes only newly generated adapter factors; base weights and rotary buffers
 are unchanged. Native resumable checkpoints preserve trained adapters and
 optimizer state through the engine's checkpoint path.
 
+### Bounded model initialization
+
 Fresh worker initialization uses an optional
 `initialization(config, InitializationContext)` hook. It describes the pinned
 `Weights`, complete model settings, parallelism and logical rank on CPU, without
@@ -393,6 +400,8 @@ These are source-pinned semantic guarantees, like padding safety; sampled peaks
 cannot supply them. Wildcards, conflicting declarations and unresolved compiler
 geometry are rejected. Value-dependent allocation needs a separate maximum-bound
 mechanism and currently cannot qualify a prepared family through this contract.
+
+### Input adapters
 
 Each `TensorField` describes one path in a Datum's input or loss-input tree:
 dtype, per-example shape, padding and optional default, and stacking, packing or

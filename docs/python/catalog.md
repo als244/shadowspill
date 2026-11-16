@@ -7,13 +7,15 @@ same `Model`, `Optimizer` and `Objective` settings.
 
 These architectures are supplied by `shadowspill-workloads`:
 
-| Name | Architecture |
-| --- | --- |
-| `llama3` | Llama decoder with grouped-query attention. |
-| `qwen3moe` | Qwen3 mixture-of-experts decoder. |
-| `qwen35moe` | Qwen3.5 mixture-of-experts decoder with hybrid attention. |
-| `olmoe` | OLMoE mixture-of-experts decoder. |
-| `regression` | Small feed-forward model used in the [split-update example](advanced/training-workflow.md). |
+| Name | Architecture | Common presets |
+| --- | --- | --- |
+| `llama3` | Llama decoder with grouped-query attention. | `tiny`, `1b`, `8b` |
+| `qwen3` | Qwen3 dense text decoder. | `tiny`, `1.7b`, `8b`, `32b` |
+| `qwen35` | Qwen3.5 dense text decoder with hybrid attention. | `tiny`, `2b`, `9b`, `27b` |
+| `qwen3moe` | Qwen3 mixture-of-experts text decoder. | `tiny`, `30b-a3b` |
+| `qwen35moe` | Qwen3.5 mixture-of-experts text decoder with hybrid attention. | `tiny`, `35b-a3b` |
+| `olmoe` | OLMoE mixture-of-experts decoder. | `tiny`, `7b-a1b` |
+| `regression` | Small feed-forward model used in the [split-update example](advanced/training-workflow.md). | — |
 
 For a text model, choose a preset and override architecture settings as needed:
 
@@ -61,7 +63,7 @@ see the [client setup example](client.md#create-a-training-run). Optional
 | `moe_balance` | Router load-balancing loss for a model exposing router statistics. |
 | `weighted_squared_error` | Weighted squared error for the supplied regression model. |
 
-Combine compatible objectives explicitly. For example, Qwen and OLMoE can use
+Combine compatible objectives explicitly. For example, Qwen MoE and OLMoE can use
 cross entropy with a secondary router-balancing loss:
 
 ```python

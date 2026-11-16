@@ -9,7 +9,7 @@ These guides cover optional controls, custom definitions and detailed diagnostic
 | --- | --- |
 | Accumulate gradients, evaluate and resume | [Complete workflow](training-workflow.md) |
 | Tune preparation, reuse Plans or reconnect | [Service client reference](service-client.md) |
-| Supply a model, objective or optimizer | [Definition hooks](definitions.md) |
+| Supply a model, objective or optimizer | [Step-by-step guide](custom-definitions.md), [hook reference](definitions.md) |
 | Work directly with build/profile/plan/execute | [Phase guide](../phases.md), [custom models](../custom-models.md) |
 
 ## Tune training and search
