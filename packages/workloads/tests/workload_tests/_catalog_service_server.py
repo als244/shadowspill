@@ -31,7 +31,7 @@ from shadowspill.server.authentication import BearerTokens  # noqa: E402
 
 root = Path(sys.argv[1])
 options = json.loads((root / "setup.json").read_text())
-if options.get("fresh_saved_plans"):
+if options.get("fresh_saved_plans") or options.get("weights_initialization"):
     import shadowspill.server.local_creation as creation
 
     original_prepare = creation.prepare_job

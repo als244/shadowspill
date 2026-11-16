@@ -5,6 +5,7 @@ import json
 import socket
 import sys
 import tarfile
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -25,6 +26,7 @@ from shadowspill_client import (
     Preparation,
     ProfilingOptions,
     ServiceClient,
+    Weights,
 )
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload_io import read_payload
@@ -101,7 +103,7 @@ def logprobs(training, records, budget, output_name="logprobs"):
             return [fields[str(index)].array().copy() for index in range(len(records))]
 
 
-def check(training, options, index, budget):
+def check(training, options, index, budget, *, expected_initial=None):
     expected = options["oracle"][index]
     initial = options["oracle"][0]["weights"]
     actual = exported(
@@ -112,7 +114,9 @@ def check(training, options, index, budget):
     )
     for name, value in expected["weights"].items():
         value = np.asarray(value, dtype=np.float32)
-        if index == 0 or name not in options["trainable"]:
+        if index == 0 and expected_initial is not None:
+            np.testing.assert_array_equal(actual[name], expected_initial[name])
+        elif index == 0 or name not in options["trainable"]:
             np.testing.assert_array_equal(actual[name], value)
         else:
             # Compare updates, so large unchanged weights cannot hide missing or
@@ -247,6 +251,10 @@ def qualify(client, options, budget):
                     actual[name], whole[name], rtol=1e-4, atol=3e-6, err_msg=name
                 )
     checkpoint = training.save_checkpoint(name="after-one").result(120)
+    weights_artifact = None
+    source_weights = actual
+    if base_options.get("weights_initialization") is not None:
+        weights_artifact = training.export_weights().result(120)
     masked = [
         Datum(
             row.inputs,
@@ -278,26 +286,56 @@ def qualify(client, options, budget):
             )
     close(client, resumed)
     runs = [training.run_id, resumed.run_id]
-    fresh_options = base_options.get("fresh_saved_plans")
+    fresh_options = base_options.get("fresh_saved_plans") or base_options.get(
+        "weights_initialization"
+    )
     if fresh_options is not None:
+        model = Model.from_dict(fresh_options["model"])
+        expected_initial = None
+        if weights_artifact is not None:
+            model = replace(model, initialize=Weights.artifact(weights_artifact.id))
+            expected_initial = source_weights
         fresh = client.create_training_client(
             plans=plans,
-            **{**settings, "model": Model.from_dict(fresh_options["model"])},
+            **{**settings, "model": model},
         ).result(240)
         assert fresh.plans.reference != plans.reference
-        assert (
-            fresh.get_config().model.initialize
-            == Model.from_dict(fresh_options["model"]).initialize
-        )
-        check(fresh, fresh_options, 0, budget)
-        for subset in (records[:1], records[1:]):
-            fresh.forward_backward(
-                subset, loss_params=fresh_options["controls"]
-            ).result(120)
-        result = fresh.optim_step(grad_scale=0.25).result(120)
-        assert result.completed_updates == 1
-        check(fresh, fresh_options, 1, budget)
+        assert fresh.get_config().model.initialize == model.initialize
+        fresh_initial = fresh.save_checkpoint(name="fresh-initial").result(120)
+        assert fresh_initial.manifest().result().info.completed_updates == 0
+        for split in (True, False) if weights_artifact is not None else (True,):
+            if not split:
+                fresh.load_checkpoint(fresh_initial.id).result(120)
+            check(fresh, fresh_options, 0, budget, expected_initial=expected_initial)
+            if split:
+                for part, subset in enumerate((records[:1], records[1:])):
+                    result = fresh.forward_backward(
+                        subset, loss_params=fresh_options["controls"]
+                    ).result(120)
+                    np.testing.assert_allclose(
+                        result.loss,
+                        fresh_options["loss_parts"][part],
+                        rtol=fresh_options.get("loss_rtol", 0.003),
+                        atol=fresh_options.get("loss_atol", 0.008),
+                    )
+                    check_logprobs(fresh, fresh_options, 0, budget)
+                result = fresh.optim_step(grad_scale=0.25).result(120)
+            else:
+                result = fresh.step(
+                    records, loss_params=fresh_options["controls"], grad_scale=0.25
+                ).result(120)
+                np.testing.assert_allclose(
+                    result.loss,
+                    sum(fresh_options["loss_parts"]),
+                    rtol=fresh_options.get("loss_rtol", 0.003),
+                    atol=fresh_options.get("loss_atol", 0.008),
+                )
+            assert result.completed_updates == 1
+            check(fresh, fresh_options, 1, budget)
         saved = fresh.save_checkpoint(name="fresh-after-one").result(120)
+        skipped = fresh.step(masked, loss_params=fresh_options["controls"]).result(120)
+        assert skipped.outcome == "skipped" and skipped.completed_updates == 1
+        check(fresh, fresh_options, 1, budget)
         fresh.step(records, loss_params=fresh_options["controls"]).result(120)
         expected = check(fresh, fresh_options, 2, budget)
         close(client, fresh)
@@ -322,6 +360,7 @@ def qualify(client, options, budget):
         "same_dtype_master_reuse": not options.get("separate_fp32_masters", True),
         "exact_resume": options.get("exact_resume", False),
         "fresh_saved_plans": fresh_options is not None,
+        "weights_initialization": weights_artifact is not None,
     }
 
 

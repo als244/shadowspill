@@ -20,7 +20,7 @@ from workload_tests._llama_oracle import WeightGradients
 from workload_tests.test_llama_definition import settings
 
 
-def options(policy=False, *, seed=17):
+def options(policy=False, *, seed=17, initial_weights=None):
     requested = replace(
         settings(lora=LoRA(2, targets=["blocks.*.attn.wq"]) if policy else None),
         precision={"compute_dtype": "bfloat16", "lora_dtype": "bfloat16"},
@@ -39,6 +39,10 @@ def options(policy=False, *, seed=17):
                 TensorChunk(name, tuple(value.shape), value.dtype, 0, value.numel()),
                 value.reshape(-1),
             )
+        if initial_weights is not None:
+            assert set(initial_weights) == dict(model.named_parameters()).keys()
+            for name, value in model.named_parameters():
+                value.copy_(torch.tensor(initial_weights[name], dtype=value.dtype))
     mask = "response_mask" if policy else "loss_mask"
     records = []
     for tokens, targets, active, weights, advantages, old in (
@@ -100,7 +104,11 @@ def options(policy=False, *, seed=17):
         name: value for name, value in model.named_parameters() if value.requires_grad
     }
     masters = {
-        name: torch.nn.Parameter(value.detach().float().clone())
+        name: torch.nn.Parameter(
+            value.detach().float().clone()
+            if initial_weights is None
+            else torch.tensor(initial_weights[name], dtype=torch.float32)
+        )
         for name, value in trained.items()
     }
     optim = {
