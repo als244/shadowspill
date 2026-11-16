@@ -16,11 +16,11 @@ from shadowspill.training.inputs.materialize import (
     buffer_size,
     materialize_contents,
 )
-from shadowspill.training.inputs.packing import atomic_groups
 from shadowspill.training.inputs.routing import route_buffer
-from shadowspill.training.inputs.validation import Path
-from shadowspill.training.inputs.values import ValidatedTensor, validate_values
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.packing import atomic_groups
+from shadowspill_client.inputs.validation import Path
+from shadowspill_client.inputs.values import ValidatedTensor, validate_values
 from shadowspill_client.protocol.tensors import TensorPayload, storage_dtype
 
 

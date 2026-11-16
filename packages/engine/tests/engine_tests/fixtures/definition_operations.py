@@ -8,15 +8,15 @@ from shadowspill.parallelism import InputFieldPlacement, InputPlacement
 from shadowspill.training.definitions import OptimizerDefinition, Registry
 from shadowspill.training.inputs.adapters import InputLayout
 from shadowspill.training.inputs.materialize import materialize_buffer
-from shadowspill.training.inputs.packing import pack_batch
 from shadowspill.training.inputs.routing import route_buffer
-from shadowspill.training.inputs.shapes import BufferShape, PackingSchedule
-from shadowspill.training.inputs.validation import combined_schema, validate_batch
 from shadowspill.training.outputs import OutputLayout
 from shadowspill.training.preparation.binding import OperationBinding
 from shadowspill.training.preparation.operations import OperationContract
 from shadowspill_client import BatchConfig, Datum
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.packing import pack_batch
+from shadowspill_client.inputs.shapes import BufferShape, PackingSchedule
+from shadowspill_client.inputs.validation import combined_schema, validate_batch
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
 from shadowspill_client.protocol.operations import OperationKey

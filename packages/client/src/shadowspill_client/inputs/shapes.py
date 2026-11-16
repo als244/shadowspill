@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from shadowspill.parallelism import InputPlacement
 from shadowspill_client import BatchConfig
 from shadowspill_client._records import number
+from shadowspill_client.placement import InputPlacement
 from shadowspill_client.protocol.inputs import InputSchema, TensorField
 
 from .validation import Path

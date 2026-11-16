@@ -11,13 +11,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from shadowspill_client.buffers import BufferBudget, BufferLease
+from shadowspill_client.inputs.packing import PackedAssignment
+from shadowspill_client.inputs.shapes import BufferShape
+from shadowspill_client.inputs.validation import Path
+from shadowspill_client.inputs.values import VALIDATION_SCRATCH_BYTES, ValidatedTensor
 from shadowspill_client.protocol.inputs import InputSchema
 from shadowspill_client.protocol.tensors import storage_dtype, tensor_bytes
-
-from .packing import PackedAssignment
-from .shapes import BufferShape
-from .validation import Path
-from .values import VALIDATION_SCRATCH_BYTES, ValidatedTensor
 
 
 @dataclass(frozen=True)

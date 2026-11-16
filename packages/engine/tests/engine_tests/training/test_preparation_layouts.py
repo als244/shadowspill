@@ -18,13 +18,13 @@ from shadowspill.parallelism import (
     Parallelism,
 )
 from shadowspill.training.inputs.adapters import InputAdapter
-from shadowspill.training.inputs.coverage_bounds import CoverageError
 from shadowspill.training.preparation.layouts import (
     LayoutCoverageError,
     prepare_layouts,
 )
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client import BatchConfig, Execution
+from shadowspill_client.inputs.coverage_bounds import CoverageError
 from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
 from shadowspill_client.protocol.inputs import TensorField
 

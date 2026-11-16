@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-from .groups import GroupRef
-from .inputs import InputPlacement
+from shadowspill_client.placement.groups import GroupRef
+from shadowspill_client.placement.inputs import InputPlacement
+
 from .placements import (
     Placement,
     Replicated,

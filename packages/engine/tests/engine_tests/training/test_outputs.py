@@ -10,12 +10,12 @@ import pytest
 from engine_tests.training.test_packing import batch, limits, schema, shape
 from shadowspill.parallelism import GroupRef, InputPlacement, OutputPlacement
 from shadowspill.training.inputs.materialize import materialize_buffer
-from shadowspill.training.inputs.packing import pack_batch
-from shadowspill.training.inputs.shapes import BufferShape, PackingSchedule
-from shadowspill.training.inputs.validation import validate_batch
 from shadowspill.training.outputs import OutputLayout
 from shadowspill_client import BatchConfig, Datum
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.packing import pack_batch
+from shadowspill_client.inputs.shapes import BufferShape, PackingSchedule
+from shadowspill_client.inputs.validation import validate_batch
 from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import snapshot_batch

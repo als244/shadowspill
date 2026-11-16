@@ -7,14 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 
-from shadowspill.training.inputs.packing import (
-    PackedAssignment,
-    PackingError,
-    pack_batch,
-)
 from shadowspill.training.inputs.spool import InputSpool
-from shadowspill.training.inputs.validation import ValidatedBatch, validate_batch
-from shadowspill.training.inputs.values import VALIDATION_SCRATCH_BYTES
 from shadowspill.training.preparation.family_records import (
     PlannedCandidate,
     PreparedPlans,
@@ -23,6 +16,13 @@ from shadowspill.training.preparation.operations import OperationContract
 from shadowspill_client import BatchConfig
 from shadowspill_client._records import number
 from shadowspill_client.buffers import BufferBudget, BufferLease
+from shadowspill_client.inputs.packing import (
+    PackedAssignment,
+    PackingError,
+    pack_batch,
+)
+from shadowspill_client.inputs.validation import ValidatedBatch, validate_batch
+from shadowspill_client.inputs.values import VALIDATION_SCRATCH_BYTES
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.payload import BatchSnapshot, snapshot_batch
 from shadowspill_client.protocol.requests import (

@@ -9,14 +9,14 @@ import pytest
 
 from engine_tests.training.test_packing import batch, limits, schedule, schema
 from shadowspill.parallelism import GroupRef, InputPlacement
-from shadowspill.training.inputs.coverage import CoverageCertificate, certify_coverage
-from shadowspill.training.inputs.coverage_bounds import CoverageError
 from shadowspill.training.inputs.materialize import materialize_buffer
-from shadowspill.training.inputs.packing import PackingError
-from shadowspill.training.inputs.shapes import BufferShape, PackingSchedule
-from shadowspill.training.inputs.validation import validate_batch
 from shadowspill_client import BatchConfig, Datum
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.coverage import CoverageCertificate, certify_coverage
+from shadowspill_client.inputs.coverage_bounds import CoverageError
+from shadowspill_client.inputs.packing import PackingError
+from shadowspill_client.inputs.shapes import BufferShape, PackingSchedule
+from shadowspill_client.inputs.validation import validate_batch
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import snapshot_batch
 
@@ -100,7 +100,7 @@ def test_exhaustive_small_domain_constructs_without_heuristic_or_repair(kind):
 
 
 def test_guaranteed_construction_survives_bounded_search_failure(monkeypatch):
-    from shadowspill.training.inputs import coverage
+    from shadowspill_client.inputs import coverage
 
     bound = limits(6, 2, records=3)
     choice = schedule("slots", 2, count=3, slots=3)

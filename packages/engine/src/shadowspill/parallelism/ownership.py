@@ -4,7 +4,8 @@ from dataclasses import asdict, dataclass
 from math import prod
 from typing import Any
 
-from .groups import GroupRef
+from shadowspill_client.placement.groups import GroupRef
+
 from .storage import Component
 
 

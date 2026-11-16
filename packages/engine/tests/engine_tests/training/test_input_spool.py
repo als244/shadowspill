@@ -11,13 +11,13 @@ from engine_tests.fixtures.definition_operations import records
 from engine_tests.training.test_input_staging import classifier_staging
 from shadowspill.training.inputs.adapters import InputBinding
 from shadowspill.training.inputs.frames import FRAME_CHUNK_BYTES, InputFrame
-from shadowspill.training.inputs.packing import pack_batch
 from shadowspill.training.inputs.spool import InputSpool
 from shadowspill.training.inputs.staging import admit_input_staging
-from shadowspill.training.inputs.validation import validate_batch
-from shadowspill.training.inputs.values import VALIDATION_SCRATCH_BYTES
 from shadowspill_client import Execution
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.packing import pack_batch
+from shadowspill_client.inputs.validation import validate_batch
+from shadowspill_client.inputs.values import VALIDATION_SCRATCH_BYTES
 from shadowspill_client.protocol.codec import ProtocolError
 from shadowspill_client.protocol.payload import snapshot_batch
 from shadowspill_client.protocol.payload_io import read_payload

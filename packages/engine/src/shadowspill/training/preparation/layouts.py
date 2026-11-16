@@ -8,8 +8,6 @@ from types import MappingProxyType
 from typing import Any
 
 from shadowspill.training.inputs.adapters import InputBinding, InputLayout
-from shadowspill.training.inputs.coverage import CoverageCertificate, certify_coverage
-from shadowspill.training.inputs.coverage_bounds import CoverageError
 from shadowspill.training.inputs.staging import (
     InputStaging,
     StagingLimitError,
@@ -17,6 +15,8 @@ from shadowspill.training.inputs.staging import (
     combine_input_staging,
 )
 from shadowspill.training.outputs import OutputLayout
+from shadowspill_client.inputs.coverage import CoverageCertificate, certify_coverage
+from shadowspill_client.inputs.coverage_bounds import CoverageError
 from shadowspill_client.protocol.operations import OperationKey
 
 from .binding import OperationBinding

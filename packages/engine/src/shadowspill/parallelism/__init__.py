@@ -1,7 +1,12 @@
 """Portable logical groups, parameter placement and storage declarations."""
 
-from .groups import GroupRef
-from .inputs import InputFieldPlacement, InputPlacement, OutputPlacement
+from shadowspill_client.placement.groups import GroupRef
+from shadowspill_client.placement.inputs import (
+    InputFieldPlacement,
+    InputPlacement,
+    OutputPlacement,
+)
+
 from .placements import Replicated, Sharded
 from .spec import Parallelism
 from .storage import ParameterStorage

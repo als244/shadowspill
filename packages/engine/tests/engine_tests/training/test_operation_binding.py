@@ -10,7 +10,6 @@ import torch
 from engine_tests.fixtures.definition_operations import definitions, example, records
 from shadowspill.parallelism import GroupRef, InputFieldPlacement, InputPlacement
 from shadowspill.pytorch.capture.objective import capture_training_objective
-from shadowspill.training.inputs.validation import combined_schema
 from shadowspill.training.preparation.binding import control_tensors
 from shadowspill.training.preparation.operation_build import build_operation
 from shadowspill.training.preparation.operations import (
@@ -18,6 +17,7 @@ from shadowspill.training.preparation.operations import (
     resolve_operations,
 )
 from shadowspill_client import Operation
+from shadowspill_client.inputs.validation import combined_schema
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.operations import OperationKey
 

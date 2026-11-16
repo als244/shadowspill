@@ -9,9 +9,9 @@ from typing import Any, ClassVar, Literal, cast
 
 from shadowspill.artifacts.archive import Artifact
 from shadowspill.errors import PlanInfeasibleError
-from shadowspill.training.inputs.coverage import certify_coverage
-from shadowspill.training.inputs.coverage_bounds import CoverageError
 from shadowspill_client._records import text
+from shadowspill_client.inputs.coverage import certify_coverage
+from shadowspill_client.inputs.coverage_bounds import CoverageError
 
 from .family_identity import candidate_identity
 from .family_records import PlanRejection

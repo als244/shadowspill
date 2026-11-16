@@ -23,8 +23,6 @@ from shadowspill.training.definitions import (
     RepresentativeSample,
 )
 from shadowspill.training.inputs.adapters import InputAdapter
-from shadowspill.training.inputs.packing import PackingError
-from shadowspill.training.inputs.shapes import BufferShape
 from shadowspill.training.inputs.staging import (
     InputEnvelope,
     InputStaging,
@@ -59,6 +57,8 @@ from shadowspill_client import (
     Weights,
 )
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.packing import PackingError
+from shadowspill_client.inputs.shapes import BufferShape
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.definitions import OutputSet
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField

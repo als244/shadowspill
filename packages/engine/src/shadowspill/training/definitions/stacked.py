@@ -4,13 +4,14 @@ from collections.abc import Sequence
 from functools import lru_cache
 from hashlib import sha256
 from importlib.metadata import version
+from importlib.resources import files
 from math import ceil, floor
 from pathlib import Path
 
-from shadowspill.training.inputs.coverage_bounds import input_bounds
-from shadowspill.training.inputs.shapes import BufferShape
-from shadowspill.training.inputs.validation import Path as FieldPath
 from shadowspill_client import BuildCandidates, PlanningOptions, Preparation
+from shadowspill_client.inputs.coverage_bounds import input_bounds
+from shadowspill_client.inputs.shapes import BufferShape
+from shadowspill_client.inputs.validation import Path as FieldPath
 from shadowspill_client.protocol.definitions import DefinitionSource
 
 from .preparation import (
@@ -105,11 +106,12 @@ def builtin_preparation() -> ResolvedPreparationDefinition:
     for name in (
         "definitions/stacked.py",
         "definitions/samples.py",
-        "inputs/coverage_bounds.py",
-        "inputs/shapes.py",
     ):
         digest.update(name.encode())
         digest.update((root / name).read_bytes())
+    for name in ("inputs/coverage_bounds.py", "inputs/shapes.py"):
+        digest.update(("shadowspill_client/" + name).encode())
+        digest.update((files("shadowspill_client") / name).read_bytes())
     return ResolvedPreparationDefinition(
         PreparationDefinition(STACKED_PRESET, defaults, buffers, representative),
         DefinitionSource("shadowspill", version("shadowspill"), digest.hexdigest()),

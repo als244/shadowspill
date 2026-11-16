@@ -13,6 +13,13 @@ from numpy.typing import NDArray
 
 from shadowspill.parallelism import InputPlacement
 from shadowspill_client.buffers import BufferBudget, BufferLease
+from shadowspill_client.inputs.shapes import BufferShape
+from shadowspill_client.inputs.validation import Path
+from shadowspill_client.inputs.values import (
+    VALIDATION_SCRATCH_BYTES,
+    ValidatedTensor,
+    validate_values,
+)
 from shadowspill_client.protocol.inputs import InputSchema, TensorField
 from shadowspill_client.protocol.payload import BatchSnapshot
 from shadowspill_client.protocol.tensors import (
@@ -23,9 +30,6 @@ from shadowspill_client.protocol.tensors import (
 
 from .frames import InputFrame
 from .routing import RoutedBuffer
-from .shapes import BufferShape
-from .validation import Path
-from .values import VALIDATION_SCRATCH_BYTES, ValidatedTensor, validate_values
 
 
 @dataclass(frozen=True)

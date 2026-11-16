@@ -9,12 +9,12 @@ from typing import Any, Literal
 
 from shadowspill.parallelism import InputPlacement, OutputPlacement
 from shadowspill_client._records import plain
+from shadowspill_client.inputs.packing import PackedAssignment
+from shadowspill_client.inputs.shapes import PackingSchedule
 from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
 from shadowspill_client.protocol.inputs import InputSchema, TensorField
 
 from .inputs.materialize import field_regions
-from .inputs.packing import PackedAssignment
-from .inputs.shapes import PackingSchedule
 
 type Reduction = Literal["sum", "min", "max", "identical"]
 

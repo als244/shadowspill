@@ -10,6 +10,10 @@ from typing import Any, Self
 from shadowspill.parallelism import InputPlacement
 from shadowspill_client import BatchConfig, Execution
 from shadowspill_client.buffers import BufferBudget, BufferLease
+from shadowspill_client.inputs.coverage_bounds import CoverageError, input_bounds
+from shadowspill_client.inputs.shapes import PackingSchedule
+from shadowspill_client.inputs.validation import Path
+from shadowspill_client.inputs.values import VALIDATION_SCRATCH_BYTES
 from shadowspill_client.protocol.inputs import DTYPES, InputSchema
 from shadowspill_client.protocol.payload_sizes import (
     MAX_TREE_DEPTH,
@@ -21,11 +25,7 @@ from shadowspill_client.protocol.payload_sizes import (
 from shadowspill_client.protocol.tensors import storage_dtype
 
 from .adapters import InputBinding
-from .coverage_bounds import CoverageError, input_bounds
 from .materialize import buffer_size
-from .shapes import PackingSchedule
-from .validation import Path
-from .values import VALIDATION_SCRATCH_BYTES
 
 
 class StagingLimitError(CoverageError):

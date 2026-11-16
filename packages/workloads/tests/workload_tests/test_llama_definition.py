@@ -17,9 +17,7 @@ from shadowspill.training.definitions.initialization import (
     InitializationRuntime,
 )
 from shadowspill.training.inputs.materialize import materialize_buffer
-from shadowspill.training.inputs.packing import pack_batch, select_schedule
 from shadowspill.training.inputs.routing import route_buffer
-from shadowspill.training.inputs.validation import validate_batch
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import capture_inventory
@@ -36,6 +34,8 @@ from shadowspill_client import (
     Weights,
 )
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.packing import pack_batch, select_schedule
+from shadowspill_client.inputs.validation import validate_batch
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.payload import snapshot_batch
 from shadowspill_workloads.models.llama3.config import Config

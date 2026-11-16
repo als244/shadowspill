@@ -17,7 +17,6 @@ from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Paralle
 from shadowspill.planning.shared import SharedMemory
 from shadowspill.step.ordering import StepDataOrdering
 from shadowspill.training.definitions import ModelReferenceDefinition
-from shadowspill.training.inputs.coverage_bounds import CoverageError
 from shadowspill.training.preparation import bundle_validation, family, family_selection
 from shadowspill.training.preparation.bundle import TrainingBundle
 from shadowspill.training.preparation.bundle_manifest import manifest
@@ -37,6 +36,7 @@ from shadowspill_client import (
     Preparation,
     Weights,
 )
+from shadowspill_client.inputs.coverage_bounds import CoverageError
 
 
 @pytest.fixture

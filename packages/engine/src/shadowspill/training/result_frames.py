@@ -10,12 +10,12 @@ from tempfile import TemporaryDirectory
 from typing import BinaryIO
 
 from shadowspill_client.buffers import BufferBudget, BufferLease
+from shadowspill_client.inputs.packing import PackedAssignment
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.tensors import tensor_bytes
 
 from .inputs.frame_reader import FrameReader
 from .inputs.frames import FRAME_CHUNK_BYTES, BufferWriter, InputFrame
-from .inputs.packing import PackedAssignment
 from .outputs import OutputLayout
 from .result_tensors import write_tensor_region
 from .worker.output_frame import WorkerOutputFrame

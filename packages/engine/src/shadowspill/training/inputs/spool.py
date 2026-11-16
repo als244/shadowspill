@@ -11,6 +11,7 @@ from typing import Self
 from uuid import uuid4
 
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.packing import PackedAssignment
 from shadowspill_client.protocol.codec import ProtocolError
 from shadowspill_client.protocol.payload import BatchSnapshot
 from shadowspill_client.protocol.payload_io import read_payload
@@ -19,7 +20,6 @@ from shadowspill_client.protocol.requests import ArtifactRef
 from .adapters import InputBinding
 from .frames import InputFrame
 from .materialize import materialize_buffer
-from .packing import PackedAssignment
 from .routing import route_buffer
 
 

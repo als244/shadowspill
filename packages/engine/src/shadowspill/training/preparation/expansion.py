@@ -10,10 +10,10 @@ from shadowspill.training.definitions.preparation import (
     PreparationContext,
     ResolvedPreparationDefinition,
 )
-from shadowspill.training.inputs.coverage import CoverageCertificate, certify_coverage
-from shadowspill.training.inputs.shapes import PackingSchedule
-from shadowspill.training.inputs.validation import Path
 from shadowspill_client._records import integer, number
+from shadowspill_client.inputs.coverage import CoverageCertificate, certify_coverage
+from shadowspill_client.inputs.shapes import PackingSchedule
+from shadowspill_client.inputs.validation import Path
 from shadowspill_client.protocol.preparation import ResolvedPreparation
 
 

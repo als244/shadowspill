@@ -6,8 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from shadowspill.parallelism import InputPlacement
 from shadowspill_client import BatchConfig
+from shadowspill_client.placement import InputPlacement
 from shadowspill_client.protocol.inputs import InputSchema
 
 from .shapes import PackingSchedule, packed_paths

@@ -8,12 +8,12 @@ import pytest
 from engine_tests.training.test_frame_reader import encoded
 from shadowspill.training.inputs.frame_reader import FrameReader
 from shadowspill.training.inputs.frames import FRAME_CHUNK_BYTES
-from shadowspill.training.inputs.values import _convert
 from shadowspill.training.result_tensors import (
     REDUCTION_SCRATCH_BYTES,
     write_tensor_region,
 )
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.values import _convert
 
 
 def pieces(value):

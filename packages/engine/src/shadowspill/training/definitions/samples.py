@@ -7,11 +7,11 @@ from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any
 
-from shadowspill.training.inputs.packing import atomic_groups
-from shadowspill.training.inputs.shapes import BufferShape
-from shadowspill.training.inputs.validation import Path
-from shadowspill.training.inputs.values import ValidatedTensor
 from shadowspill_client._records import integer, number, text
+from shadowspill_client.inputs.packing import atomic_groups
+from shadowspill_client.inputs.shapes import BufferShape
+from shadowspill_client.inputs.validation import Path
+from shadowspill_client.inputs.values import ValidatedTensor
 from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.inputs import InputSchema
 

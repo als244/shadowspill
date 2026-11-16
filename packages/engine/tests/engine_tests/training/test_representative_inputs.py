@@ -20,8 +20,6 @@ from shadowspill.training.definitions import (
 )
 from shadowspill.training.inputs.adapters import InputBinding
 from shadowspill.training.inputs.materialize import buffer_size
-from shadowspill.training.inputs.shapes import BufferShape
-from shadowspill.training.inputs.validation import combined_schema
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.representative import representative_inputs
 from shadowspill.training.preparation.setup import resolve_training
@@ -32,6 +30,8 @@ from shadowspill_client import (
     PlanningOptions,
     Preparation,
 )
+from shadowspill_client.inputs.shapes import BufferShape
+from shadowspill_client.inputs.validation import combined_schema
 from shadowspill_client.protocol.inputs import InputSchema, TensorField
 
 

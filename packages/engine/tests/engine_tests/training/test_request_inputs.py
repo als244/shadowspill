@@ -10,12 +10,12 @@ import pytest
 
 from engine_tests.server.test_request_records import request, store
 from shadowspill.training.inputs.staging import input_envelope
-from shadowspill.training.inputs.validation import validate_batch
 from shadowspill.training.session.dispatch import RequestDispatcher
 from shadowspill.training.session.inputs import RequestInputs
 from shadowspill.training.session.state import OperationState
 from shadowspill_client import BatchConfig, Datum, Execution
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.validation import validate_batch
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch
 from shadowspill_client.protocol.requests import ArtifactRef

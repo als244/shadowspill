@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from shadowspill.parallelism import Parallelism
     from shadowspill.pytorch.capture.gradients import GradientDestinationRule
     from shadowspill.training.inputs.adapters import InputAdapter, InputLayout
-    from shadowspill.training.inputs.validation import ValidatedBatch
+    from shadowspill_client.inputs.validation import ValidatedBatch
 
     from .build import ModelBuild, ModelBuildContext
     from .initialization import InitializationContext, ModelInitialization

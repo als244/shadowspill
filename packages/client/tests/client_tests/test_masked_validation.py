@@ -5,10 +5,10 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from engine_tests.training.test_input_validation import validated
-from shadowspill.training.inputs.validation import combined_schema
-from shadowspill.training.inputs.values import CHUNK_ELEMENTS
+from client_tests.test_input_validation import validated
 from shadowspill_client import BatchConfig, Datum
+from shadowspill_client.inputs.validation import combined_schema
+from shadowspill_client.inputs.values import CHUNK_ELEMENTS
 from shadowspill_client.protocol.codec import decode, encode
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 

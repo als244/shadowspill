@@ -13,13 +13,13 @@ import torch
 
 from shadowspill import Parallelism
 from shadowspill.training.definitions import load_registry
-from shadowspill.training.inputs.packing import pack_batch
-from shadowspill.training.inputs.validation import validate_batch
 from shadowspill.training.preparation.bundle import TrainingBundle
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client import Datum
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.packing import pack_batch
+from shadowspill_client.inputs.validation import validate_batch
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.payload import snapshot_batch
 from workload_tests._expert_oracle import (

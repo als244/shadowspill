@@ -7,8 +7,8 @@ from typing import Any
 
 from shadowspill.training.definitions.registry import ResolvedModel
 from shadowspill.training.inputs.adapters import AdaptedInputs, InputBinding
-from shadowspill.training.inputs.validation import combined_schema
 from shadowspill.training.outputs import OutputLayout
+from shadowspill_client.inputs.validation import combined_schema
 from shadowspill_client.protocol.controls import ControlSchema, Scalar
 
 from .operations import OperationContract

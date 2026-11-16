@@ -12,11 +12,11 @@ from engine_tests.training.test_packing import batch, limits, schema, shape
 from shadowspill.parallelism import GroupRef, InputPlacement, OutputPlacement
 from shadowspill.training.inputs.frames import InputFrame
 from shadowspill.training.inputs.materialize import materialize_buffer
-from shadowspill.training.inputs.packing import pack_batch
-from shadowspill.training.inputs.shapes import PackingSchedule
 from shadowspill.training.outputs import OutputLayout
 from shadowspill.training.result_frames import ResultFrames
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.packing import pack_batch
+from shadowspill_client.inputs.shapes import PackingSchedule
 from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
 from shadowspill_client.protocol.payload_io import read_payload
 

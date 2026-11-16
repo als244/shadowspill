@@ -8,9 +8,9 @@ from typing import Any
 from numpy.typing import NDArray
 
 from shadowspill.parallelism import InputPlacement
+from shadowspill_client.inputs.validation import Path
 
 from .materialize import PackedBuffer
-from .validation import Path
 
 
 @dataclass(frozen=True)

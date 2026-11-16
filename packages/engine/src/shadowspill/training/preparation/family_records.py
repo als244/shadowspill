@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from shadowspill.artifacts.plan import Plan
 from shadowspill.planning.shared import SharedMemory
 from shadowspill.step.ordering import StepDataOrdering
-from shadowspill.training.inputs.coverage import CoverageCertificate
+from shadowspill_client.inputs.coverage import CoverageCertificate
 from shadowspill_client.protocol.operations import OperationKey
 
 from .templates import TemplateCandidate, TemplateInventory

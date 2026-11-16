@@ -13,10 +13,10 @@ from shadowspill.artifacts.program import Program
 from shadowspill.training.definitions.build import ModelBuild, ModelBuildContext
 from shadowspill.training.definitions.samples import RepresentativePattern
 from shadowspill.training.inputs.adapters import InputLayout
-from shadowspill.training.inputs.shapes import PackingSchedule
 from shadowspill.training.outputs import OutputLayout
 from shadowspill_client import BuildOptions
 from shadowspill_client._records import number, plain
+from shadowspill_client.inputs.shapes import PackingSchedule
 from shadowspill_client.protocol.operations import OperationKey
 
 from .binding import OperationBinding

@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from .groups import GroupRef
+from shadowspill_client.placement.groups import GroupRef
 
 if TYPE_CHECKING:
     from shadowspill.artifacts.program import Program

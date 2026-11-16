@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any
 
 from shadowspill.artifacts._values import plain
 from shadowspill.step.ordering import StepDataOrdering
-from shadowspill.training.inputs.coverage import CoverageCertificate
 from shadowspill_client._records import integer, text
+from shadowspill_client.inputs.coverage import CoverageCertificate
 from shadowspill_client.protocol.operations import OperationKey
 
 from .bundle_manifest import candidate_value, manifest

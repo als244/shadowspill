@@ -7,9 +7,9 @@ from contextlib import contextmanager
 import numpy as np
 import pytest
 
-from shadowspill.training.inputs.validation import combined_schema, validate_batch
 from shadowspill_client import BatchConfig, Datum
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.validation import combined_schema, validate_batch
 from shadowspill_client.protocol.definitions import Participation
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import snapshot_batch
@@ -224,7 +224,7 @@ def test_input_validation_imports_without_torch_catalog_or_operator_library():
 import sys
 for name in ('torch', 'shadowspill_workloads', 'mlops', 'triton'):
     sys.modules[name] = None
-from shadowspill.training.inputs.validation import validate_batch
+from shadowspill_client.inputs.validation import validate_batch
 from shadowspill_client import BatchConfig, Datum
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField

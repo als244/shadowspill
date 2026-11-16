@@ -11,8 +11,8 @@ from typing import Literal, cast
 from shadowspill.artifacts.plan import Plan
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.planning.shared import SharedMemory, shared_memory
-from shadowspill.training.inputs.coverage import CoverageCertificate, certify_coverage
-from shadowspill.training.inputs.coverage_bounds import CoverageError
+from shadowspill_client.inputs.coverage import CoverageCertificate, certify_coverage
+from shadowspill_client.inputs.coverage_bounds import CoverageError
 from shadowspill_client.protocol.operations import OperationKey
 
 from .family_identity import execution_names

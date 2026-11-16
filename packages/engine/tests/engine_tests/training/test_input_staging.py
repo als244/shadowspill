@@ -14,16 +14,16 @@ import pytest
 from engine_tests.fixtures.definition_operations import definitions, records
 from shadowspill.parallelism import GroupRef, InputFieldPlacement, InputPlacement
 from shadowspill.training.inputs.adapters import InputAdapter, InputBinding, InputLayout
-from shadowspill.training.inputs.coverage_bounds import CoverageError
 from shadowspill.training.inputs.materialize import materialize_buffer
-from shadowspill.training.inputs.packing import pack_batch
 from shadowspill.training.inputs.routing import route_buffer
-from shadowspill.training.inputs.shapes import BufferShape, PackingSchedule
 from shadowspill.training.inputs.staging import admit_input_staging, input_envelope
-from shadowspill.training.inputs.validation import combined_schema, validate_batch
-from shadowspill.training.inputs.values import VALIDATION_SCRATCH_BYTES
 from shadowspill_client import BatchConfig, Datum, Execution
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.coverage_bounds import CoverageError
+from shadowspill_client.inputs.packing import pack_batch
+from shadowspill_client.inputs.shapes import BufferShape, PackingSchedule
+from shadowspill_client.inputs.validation import combined_schema, validate_batch
+from shadowspill_client.inputs.values import VALIDATION_SCRATCH_BYTES
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch
 from shadowspill_client.protocol.payload_io import read_payload

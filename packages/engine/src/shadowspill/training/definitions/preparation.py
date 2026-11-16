@@ -15,8 +15,8 @@ from .contracts import versioned_id
 from .samples import RepresentativePattern
 
 if TYPE_CHECKING:
-    from shadowspill.training.inputs.shapes import BufferShape
-    from shadowspill.training.inputs.validation import Path
+    from shadowspill_client.inputs.shapes import BufferShape
+    from shadowspill_client.inputs.validation import Path
 
     from .registry import ResolvedModel
 

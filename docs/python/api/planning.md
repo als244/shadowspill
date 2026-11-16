@@ -108,7 +108,7 @@ declared batch limit. Registered model mutation and RNG ordering constraints
 remain in force.
 
 The input-preparation primitives also expose `certify_coverage` in
-`shadowspill.training.inputs.coverage`. It derives a conservative geometry proof
+`shadowspill_client.inputs.coverage`. It derives a conservative geometry proof
 from an `InputSchema`, `BatchConfig`, `InputPlacement` and explicitly requested
 `PackingSchedule` records. Its two constructions are a buffer large enough for
 the entire allowed call, or reserved worst-case slots for independent Datums.

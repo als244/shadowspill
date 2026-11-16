@@ -8,8 +8,8 @@ from shadowspill.training.definitions import (
     RepresentativePattern,
     RepresentativeSample,
 )
-from shadowspill.training.inputs.shapes import BufferShape
 from shadowspill_client import BuildCandidates, PlanningOptions, Preparation
+from shadowspill_client.inputs.shapes import BufferShape
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 
 TOKENS = ("inputs", "tokens")

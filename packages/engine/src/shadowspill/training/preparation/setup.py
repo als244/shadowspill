@@ -20,7 +20,6 @@ from shadowspill.training.definitions.registry import (
 )
 from shadowspill.training.definitions.stacked import STACKED_PRESET
 from shadowspill.training.inputs.staging import input_envelope
-from shadowspill.training.inputs.validation import combined_schema
 from shadowspill_client import (
     BatchConfig,
     Execution,
@@ -32,6 +31,7 @@ from shadowspill_client import (
     Preparation,
 )
 from shadowspill_client._records import plain
+from shadowspill_client.inputs.validation import combined_schema
 from shadowspill_client.protocol.codec import encode
 from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.definitions import DefinitionSource

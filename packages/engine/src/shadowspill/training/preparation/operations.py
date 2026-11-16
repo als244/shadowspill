@@ -6,8 +6,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from shadowspill.training.definitions.registry import ResolvedObjective
-from shadowspill.training.inputs.validation import Path
 from shadowspill_client.config.operations import Operation
+from shadowspill_client.inputs.validation import Path
 from shadowspill_client.protocol.controls import ControlSchema, Scalar
 from shadowspill_client.protocol.definitions import OutputSet
 from shadowspill_client.protocol.operations import OperationKey

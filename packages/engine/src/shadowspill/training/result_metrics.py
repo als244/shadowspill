@@ -6,10 +6,10 @@ from typing import BinaryIO, cast
 
 from shadowspill_client._records import number
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.values import numeric_values
 from shadowspill_client.protocol.tensors import TensorPayload
 
 from .inputs.frame_reader import FrameReader
-from .inputs.values import numeric_values
 from .outputs import OutputLayout
 from .worker.output_frame import WorkerOutputFrame
 

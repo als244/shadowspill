@@ -8,11 +8,11 @@ from numpy.typing import NDArray
 
 from shadowspill_client._records import integer
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.values import _convert
 from shadowspill_client.protocol.tensors import storage_dtype, tensor_bytes
 
 from .inputs.frame_reader import FrameRegion
 from .inputs.frames import FRAME_CHUNK_BYTES
-from .inputs.values import _convert
 
 type Reduction = Literal["sum", "min", "max", "identical"]
 REDUCTION_SCRATCH_BYTES = 2 << 20

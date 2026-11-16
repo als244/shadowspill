@@ -23,9 +23,6 @@ from shadowspill.training.definitions import (
 )
 from shadowspill.training.definitions.preparation import ResolvedPreparationDefinition
 from shadowspill.training.definitions.stacked import STACKED_PRESET
-from shadowspill.training.inputs.coverage_bounds import CoverageError
-from shadowspill.training.inputs.shapes import BufferShape
-from shadowspill.training.inputs.validation import combined_schema
 from shadowspill.training.preparation.expansion import expand_schedules
 from shadowspill.training.preparation.resolution import resolve_preparation
 from shadowspill_client import (
@@ -37,6 +34,9 @@ from shadowspill_client import (
     Policy,
     Preparation,
 )
+from shadowspill_client.inputs.coverage_bounds import CoverageError
+from shadowspill_client.inputs.shapes import BufferShape
+from shadowspill_client.inputs.validation import combined_schema
 from shadowspill_client.protocol.codec import decode, encode
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 

@@ -20,7 +20,6 @@ from shadowspill.training.definitions import (
     RepresentativePattern,
     RepresentativeSample,
 )
-from shadowspill.training.inputs.shapes import BufferShape
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import (
@@ -34,6 +33,7 @@ from shadowspill_client import (
     PlanningOptions,
     Preparation,
 )
+from shadowspill_client.inputs.shapes import BufferShape
 from shadowspill_client.protocol.operations import OperationKey
 
 

@@ -9,10 +9,10 @@ import pytest
 from engine_tests.training.test_packing import schema, shape
 from shadowspill.parallelism import GroupRef, InputPlacement
 from shadowspill.training.inputs.frames import InputFrame
-from shadowspill.training.inputs.shapes import PackingSchedule
 from shadowspill.training.outputs import OutputLayout
 from shadowspill.training.result_metrics import result_metrics
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.shapes import PackingSchedule
 from shadowspill_client.protocol.definitions import OutputSet
 
 

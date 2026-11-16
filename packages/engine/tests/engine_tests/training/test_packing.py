@@ -16,16 +16,16 @@ from shadowspill.parallelism import (
     OutputPlacement,
 )
 from shadowspill.training.inputs.materialize import materialize_buffer
-from shadowspill.training.inputs.packing import (
+from shadowspill.training.inputs.routing import route_buffer
+from shadowspill_client import BatchConfig, Datum
+from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.packing import (
     PackingError,
     pack_batch,
     select_schedule,
 )
-from shadowspill.training.inputs.routing import route_buffer
-from shadowspill.training.inputs.shapes import BufferShape, PackingSchedule
-from shadowspill.training.inputs.validation import combined_schema, validate_batch
-from shadowspill_client import BatchConfig, Datum
-from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs.shapes import BufferShape, PackingSchedule
+from shadowspill_client.inputs.validation import combined_schema, validate_batch
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import snapshot_batch
 
