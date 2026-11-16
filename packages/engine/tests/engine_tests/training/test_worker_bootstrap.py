@@ -74,6 +74,7 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
         assert reader is writer is incoming
         assert capture_progress is None
         assert runtime.cache_root == outputs.root == tmp_path
+        assert runtime.disk_bytes == 17
         assert traces.root == tmp_path and traces.bundle == expected.bundle
         with pytest.raises(ValueError, match="ungranted"):
             runtime.artifact("unknown")
@@ -93,6 +94,7 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
             if issue == "preflight"
             else expected,
             initialization=SimpleNamespace(
+                description=SimpleNamespace(disk_bytes=17),
                 context=SimpleNamespace(
                     weights=SimpleNamespace(kind="artifact", reference="missing")
                     if issue == "weights"
