@@ -11,7 +11,13 @@ from shadowspill_client.text import text_datum
 
 class TokenBatches:
     def __init__(
-        self, directory, sequence_length, sequences_per_step, *, split="train"
+        self,
+        directory,
+        sequence_length,
+        sequences_per_step,
+        *,
+        split="train",
+        normalize=True,
     ):
         if min(sequence_length, sequences_per_step) < 1 or split not in {
             "train",
@@ -36,6 +42,9 @@ class TokenBatches:
         self.tokens = np.memmap(path, dtype=np.uint32, mode="r")
         self.length, self.count = sequence_length, sequences_per_step
         self.positions = sequence_length * sequences_per_step
+        if type(normalize) is not bool:
+            raise TypeError("normalize must be boolean")
+        self.weight = 1 / self.positions if normalize else 1.0
         self.identity = {
             "path": str(path),
             "size_bytes": facts.st_size,
@@ -54,12 +63,12 @@ class TokenBatches:
         if type(index) is not int or not 0 <= index < len(self):
             raise IndexError("update lies outside the corpus")
         start = index * self.positions
-        # Each Datum attends independently. Weighting once by the entire update
-        # preserves the previous example's mean loss for whole or split calls.
+        # Each Datum attends independently. Composed objectives can use unit
+        # weights and apply their common normalization at the optimizer instead.
         return [
             text_datum(
                 self.tokens[offset : offset + self.length + 1],
-                weights=1 / self.positions,
+                weights=self.weight,
             )
             for offset in range(start, start + self.positions, self.length)
         ]

@@ -27,11 +27,10 @@ def test_step_size_must_be_a_positive_integer(count):
         batch_sizes(dict(sequences_per_step=count, microbatch_sizes=[1]))
 
 
-@pytest.mark.parametrize("name", ["train_qwen3_distributed", "train_qwen35_lora"])
 def test_qwen_cli_preserves_exact_candidates_and_rejects_shape_changes(
-    tmp_path, monkeypatch, name
+    tmp_path, monkeypatch
 ):
-    recipe = importlib.import_module(f"examples.{name}")
+    recipe = importlib.import_module("examples.train_qwen3_distributed")
     launches = []
     launcher = importlib.import_module("shadowspill.training.preparation.api")
     monkeypatch.setattr(launcher, "run_phases", lambda *a, **k: launches.append((a, k)))
@@ -50,13 +49,6 @@ def test_qwen_cli_preserves_exact_candidates_and_rejects_shape_changes(
         "2",
         "4",
     ]
-    if name == "train_qwen35_lora":
-        build += [
-            "--checkpoint",
-            str(tmp_path / "base"),
-            "--frozen-state-id",
-            "fixture",
-        ]
     recipe.main(build)
     path = root / "config.json"
     saved = json.loads(path.read_text())

@@ -1,10 +1,12 @@
 # Training recipes
 
-The installed trainer lives in `shadowspill.training`. Its public interface
-takes a saved Plan and runs through Executor. Build accepts ordinary PyTorch
-models and objectives; profiling and planning are separate. The library does
-not import `workloads`, text data utilities, model catalogs or qualification
-policies.
+The Llama, regression and Qwen3.5 LoRA applications use the
+[lightweight training client](../../docs/python/client.md), with setup separate
+from their runtime loops. The service prepares saved Plans and runs them through
+the existing Executor. Build accepts ordinary PyTorch models and objectives;
+profiling and planning remain separate. The generic library does not import a
+model catalog or application data code. Other saved-phase recipes below remain
+in migration.
 
 - [Example model catalog](../../packages/workloads/src/shadowspill_workloads/MODELS.md): architectures, dimensions,
   precision, trainable parameters, and expert parallelism.
@@ -17,8 +19,8 @@ policies.
 - [Shared Python recipes](../../packages/workloads/src/shadowspill_workloads/recipes/README.md): `Model`, `LoRA` and
   `train` with explicit microbatch/chunk/retention candidates for Qwen35, GLM and
   Qwen3 MoE. Includes short scripts and DP/EP preparation requirements.
-- [Qwen3.5 MoE LoRA](qwen35_lora.md): bounded HF initialization, independent
-  phases, batch/ordering selection, held-out evaluation and frozen-base resume.
+- [Qwen3.5 MoE LoRA](qwen35_lora.md): remote client, bounded checkpoint loading,
+  chunk/ordering selection, composed objectives, evaluation and frozen-base resume.
 
 This directory holds example configs and launchers for the optional
 `shadowspill_workloads.recipes.text` recipe. Text packing and its token-normalized objective

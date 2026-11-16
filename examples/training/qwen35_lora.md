@@ -1,80 +1,92 @@
-# Qwen3.5 MoE LoRA through saved phases
+# Qwen3.5 MoE LoRA from a training client
 
-The [Python recipe](../qwen35_lora.py) defaults to 32K-token
-sequences, eight sequences per update, rank/alpha 32, BF16 compute weights and
-FP32 adapter masters, gradients and Adam moments. It loads a local Hugging Face
-base and uses prepared `train.bin`, `val.bin` and `meta.json` token files.
+The [Python application](../qwen35_lora.py) and
+[CLI](../train_qwen35_lora.py) connect to an existing ShadowSpill service. The
+client needs NumPy and `shadowspill-client`; it does not load the engine, Torch,
+model code or checkpoint files. Tokenized `train.bin`, `val.bin` and `meta.json`
+live on the client. An absolute base-checkpoint path is interpreted on the server;
+a supported Hugging Face repository name also works.
 
-```python
-from shadowspill_workloads.recipes import LoRA, Model, train
-
-model = Model.from_checkpoint("/checkpoints/Qwen3.5-35B-A3B", lora=LoRA())
-train(
-    model,
-    {
-        "data": "/data/tokenized-corpus",
-        "frozen_state_id": "qwen-base-revision-and-config",
-        "run_dir": "runs/qwen35-lora",
-        "microbatch_sizes": [1, 2, 4, 8],
-    },
-)
+```bash
+python -m examples.train_qwen35_lora \
+  --ssh chicago --server-port 8000 \
+  --data /data/fineweb-qwen35 \
+  --checkpoint /checkpoints/Qwen3.5-35B-A3B \
+  --run-dir runs/qwen35-lora \
+  --sequence-length 32768 --sequences-per-step 8 \
+  --microbatch-sizes 1 2 4 8 \
+  --execution-gib 28 --spill-gib 144
 ```
 
-Each phase runs in a fresh process. Build constructs one training Program and
-one evaluation Program for every explicitly requested microbatch size, crossed
-with any chunk and retention candidates. Each size must divide the sequence
-count. See [search controls](../../packages/workloads/src/shadowspill_workloads/recipes/configuration.md#search-and-saved-phases).
-Profiling uses
-the ordinary PyTorch allocator. CPU planning compares batch sizes and depth /
-breadth orderings, including joint memory admission for training and evaluation.
-Execution loads only the chosen Plans and initializes Executor-provided buffers.
+Authenticate using the service's `SHADOWSPILL_TOKEN`. Use `--server` for a direct
+HTTP(S) connection. The service runs inside an existing GPU allocation and owns
+build, profiling, planning, bounded initialization and execution workers.
 
-The default execution allowance is 28 GiB, including overhead; spill capacity is
-144 GiB. These are recipe settings, not a guarantee that every checkpoint or
-sequence geometry fits. Use `--execution-gib` and `--spill-gib` to change them.
+The default LoRA rank and alpha are 32. Compute weights and adapters use BF16;
+gradients, masters and AdamW moments use FP32. `--seed` selects fresh adapters and
+runtime RNG. Loaded base weights retain their exact content identity. The server
+pins local checkpoint checksums automatically; no caller-supplied frozen-base ID
+is needed. `--compute-dtype float32` also selects FP32 adapters.
 
-Phases can also run separately. Later phases read the saved configuration:
+`--sequences-per-step` is the **global** sequence count, including distributed
+runs. It must divide evenly across `--ranks` in this fixed-window application.
+`--microbatch-sizes` lists sequences per physical worker microbatch, each dividing
+that worker's sequence count. Repeated choices are built once. Changing the number
+of workers does not implicitly enlarge the global batch. The scheduled token cap
+is sequence length times the global sequence count, including padding. For example,
+a 128K cap cannot execute three 64K microbatches.
 
-```python
-# Start with the configuration above and phase="build", then:
-saved = {"run_dir": "runs/qwen35-lora"}
-train(model, saved, phase="profile")
-train(model, {**saved, "execution_gib": 40}, phase="plan")
-train(model, saved, phase="execute")
+The application combines cross-entropy with the reusable `shadowspill/moe_balance@1`
+objective around one model evaluation. Balancing excludes artificial padding by
+default and uses the checkpoint's auxiliary coefficient; `--balance-weight` overrides
+that coefficient. Input weights are one. A single `grad_scale=1/global_tokens`
+normalizes the complete objective before each optimizer update, and reported
+losses use the same normalization. `--backward-pieces` submits separate
+`forward_backward()` contributions followed by `optim_step()`. Router balancing
+can differ between those contributions and a whole `step()`; each describes its
+own microbatch statistic.
+
+[Settings](qwen35_lora/settings.py) contain portable training choices.
+[Setup](qwen35_lora/setup.py) resolves model metadata and search controls and returns
+a ready client. The [runtime loop](qwen35_lora/loop.py) accepts that client and owns
+only batches, schedules, evaluation and checkpoint cadence. Setup can run in a
+separate component without changing the runtime loop. The installed engine's
+build/profile/plan/execute phases and generic parallelism remain the same.
+
+Chunk and retention candidates are explicit:
+
+```text
+--chunk-sizes 8192 --moe-chunk-sizes 8192 32768
+--graph-pair-policies cost-input cost-attention attention-input
+--resolution-options 0 1/4 1/2 3/4 1 --tail-save-counts 0 1 2 4
 ```
 
-| Output | Contents |
-| --- | --- |
-| `programs/`, `profiles/`, `profiled/`, `communication/` | Separate archives for each batch size and training/evaluation |
-| `search.json`, `selected.json` | Candidate outcomes and chosen geometry/ordering |
-| `plans/` | Chosen Plans and each successful candidate pair |
-| `reports/` | Selected simulated timelines and memory reports |
-| `logs/` | Build, profile, plan and execute process logs |
-| `training/` | Training/evaluation JSONL and periodic checkpoint archives |
+These reuse the installed text policies and PressureFit search. Each complete
+build case carries its physical token capacity. Dense-attention retention and the
+hybrid model's full-sequence linear-attention boundaries keep their existing
+meaning. Defaults use one unchunked cost/input policy. Memory budgets are per
+execution worker and do not guarantee that a requested checkpoint or context fits.
 
-Validation uses two held-out updates every two training updates and at the final
-update. Each evaluation starts from the same held-out windows. Training preserves
-the resumable corpus position, warmup/cosine schedule and optional `--wandb-project`.
-The default run has five updates; use `--steps` for a longer run.
+Training defaults to five updates with a ten-update warmup/cosine schedule. It
+validates two fixed held-out updates every two training updates and at the final
+update. `--eval-every 0` requires no validation file. `--checkpoint-every 0` disables
+periodic saves. Optional `--wandb-project` uses the caller's installed W&B package;
+ordinary operation has no W&B dependency.
 
-Checkpoint archives omit unchanged frozen parameters and reference the supplied
-base identity. They retain buffers, trainable compute weights, FP32 masters,
-optimizer tensors, data position and RNG state. Resume supplies the same base
-through the bounded loader; no full-model snapshot is created:
+Each new run directory contains `run.json`, resolved `setup.json`, `plans.json`,
+training/evaluation JSONL, checkpoint-reference JSON files and `training.html`.
+The server retains checkpoints and Plans. Resume through a saved reference:
 
-```python
-train(
-    model,
-    {
-        **saved,
-        "resume": "runs/qwen35-lora/training/checkpoints/step_00000002.ssp",
-    },
-    phase="execute",
-)
+```bash
+python -m examples.train_qwen35_lora --ssh chicago \
+  --run-dir runs/qwen35-resumed \
+  --resume runs/qwen35-lora/checkpoints/step-00000002.json
 ```
 
-The loader preserves checkpoint values, copies transformed projections directly
-into requested chunks, and initializes only fresh adapters and derived RoPE
-tables. Adapter initialization uses fixed-size RNG blocks, so chunk size and
-callback order do not change the values; its distributions match the modules,
-but its RNG stream differs from whole-module `reset_parameters`.
+Resume verifies saved settings, both corpus identities, checkpoint progress and
+Plan identity before starting workers. It restores weights, optimizer state and
+RNG, then continues at the next corpus window with the original schedule. Frozen
+base parameters are omitted from native checkpoints and reconstructed from the
+pinned source through the bounded loader. Each resume uses a fresh local output
+directory. Saved measurement reuse and independent planning are service API
+operations.
