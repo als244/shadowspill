@@ -69,6 +69,7 @@ def measured(tmp_path, monkeypatch, request):
         prepare=Preparation(
             candidates=BuildCandidates(microbatch_sizes=[4]),
             planning=PlanningOptions(microbatch_counts=[1, 2]),
+            external_headroom_bytes=0,  # Static CPU allocation fixture.
         ),
     )
     root = tmp_path / "measured"
@@ -159,6 +160,9 @@ def measured(tmp_path, monkeypatch, request):
                     "profiling_scenario": template.signature()["scenario"],
                     "profiling_options": (
                         inv.layouts.setup.config.preparation.profiling.to_dict()
+                    ),
+                    "external_headroom_bytes": (
+                        inv.layouts.setup.config.preparation.external_headroom_bytes
                     ),
                 },
             ),

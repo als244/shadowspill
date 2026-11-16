@@ -150,7 +150,11 @@ def _select(
     common = inventory.templates.keys() & captures.keys()
     if not common:
         raise ValueError("measurement export has no compatible requested captures")
-    profiles = original.preparation.profiling == requested.preparation.profiling
+    profiles = (
+        original.preparation.profiling == requested.preparation.profiling
+        and original.preparation.external_headroom_bytes
+        == requested.preparation.external_headroom_bytes
+    )
     calibration = (
         profiles
         and inventory.templates.keys() == captures.keys()

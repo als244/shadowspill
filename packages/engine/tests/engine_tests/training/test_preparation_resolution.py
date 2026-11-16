@@ -161,6 +161,33 @@ def test_explicit_lists_replace_presets_and_fixed_none_keeps_unchunked():
     )
 
 
+@pytest.mark.parametrize(
+    "inherited,explicit,expected,origin",
+    [
+        (None, None, 512 << 20, "engine_default"),
+        (768 << 20, None, 768 << 20, "preset"),
+        (768 << 20, 0, 0, "explicit"),
+        (None, 1024 << 20, 1024 << 20, "explicit"),
+    ],
+)
+def test_worker_headroom_resolves_without_changing_task_timing_policy(
+    inherited, explicit, expected, origin
+):
+    installed = preset(
+        Preparation(
+            candidates=BuildCandidates(microbatch_sizes=[1]),
+            external_headroom_bytes=inherited,
+        )
+    )
+    resolved = resolve_preparation(
+        installed, token_context(), Preparation(external_headroom_bytes=explicit)
+    )
+    assert decode(encode(resolved)) == resolved
+    assert resolved.external_headroom_bytes == expected
+    assert resolved.origins["external_headroom_bytes"] == origin
+    assert resolved.origins["profiling"] == "engine_default"
+
+
 def test_builtin_preserves_coverage_for_each_explicit_batch_option():
     context = stacked_context()
     context = replace(

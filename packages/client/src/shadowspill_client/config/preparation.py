@@ -175,8 +175,11 @@ class Preparation(Record):
     planning: PlanningOptions = field(default_factory=PlanningOptions)
     preset: str | None = None
     reuse: Mapping[str, Value] = field(default_factory=dict)
+    external_headroom_bytes: int | None = None
 
     def __post_init__(self) -> None:
+        if self.external_headroom_bytes is not None:
+            integer(self.external_headroom_bytes, "external_headroom_bytes")
         for name, kind in (
             ("build", BuildOptions),
             ("candidates", BuildCandidates),

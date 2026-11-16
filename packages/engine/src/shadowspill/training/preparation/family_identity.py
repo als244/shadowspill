@@ -26,6 +26,8 @@ def validate_profile(
         != template.signature()["scenario"]
         or plain(source.metadata.get("profiling_options"))
         != inventory.layouts.setup.config.preparation.profiling.to_dict()
+        or source.metadata.get("external_headroom_bytes")
+        != inventory.layouts.setup.config.preparation.external_headroom_bytes
     ):
         raise ValueError(
             "saved profiling policy/scenario differs from the prepared template"

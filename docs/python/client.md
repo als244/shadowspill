@@ -142,11 +142,17 @@ only NumPy to download and inspect the manifest; native planning requires the
 optional engine installation. The export also describes the operation/count
 variants for CPU planning without installing the model package.
 
+`Preparation(external_headroom_bytes=768 << 20)` reserves additional GPU memory
+for each worker, using the existing profiler's headroom control. This reserve is
+included in fixed device overhead and the total device budget. Omission inherits
+the installed preset, then the engine default of 512 MiB; explicit zero is kept.
+The resolved setup records the value and its origin.
+
 Pass `Preparation(reuse=prepared.reuse, ...)` with the desired preparation settings
 to reuse compatible measured cases in a new preparation or training run. For
 example, change device/spill budgets or schedule counts and initialize training
 from the original captures. Exact capture identities select reusable builds;
-profiling controls must also match to reuse task measurements. Communication and
+profiling controls and worker headroom must also match to reuse measurements. Communication and
 overlap additionally require the same complete capture inventory and physical
 assignment within the same service allocation. Changed cases are prepared through
 the ordinary phases. The new run records its source and copied file checksums;

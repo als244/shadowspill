@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
 
-from .._records import Record, Value, mapping, record, text
+from .._records import Record, Value, integer, mapping, record, text
 from ..config.preparation import BuildCase, PlanningOptions, ProfilingOptions
 from .definitions import DefinitionSource
 
@@ -21,9 +21,11 @@ class ResolvedPreparation(Record):
     planning: PlanningOptions
     origins: Mapping[str, Literal["explicit", "preset", "engine_default"]]
     reuse: Mapping[str, Value] = field(default_factory=dict)
+    external_headroom_bytes: int = 512 << 20
 
     def __post_init__(self) -> None:
         text(self.preset, "preset")
+        integer(self.external_headroom_bytes, "external_headroom_bytes")
         for name, kind in (
             ("source", DefinitionSource),
             ("profiling", ProfilingOptions),

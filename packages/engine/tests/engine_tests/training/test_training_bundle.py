@@ -45,6 +45,9 @@ def saved_family(monkeypatch):
 
 
 def make_bundle(monkeypatch, **settings):
+    # This static CPU fixture admits a 100-byte device and has no CUDA overhead.
+    prepare = replace(settings.get("prepare", Preparation()), external_headroom_bytes=0)
+    settings = {**settings, "prepare": prepare}
     prepared = inventory(**settings)
     base = profiled()
     profiling = prepared.layouts.setup.config.preparation.profiling.to_dict()
@@ -61,6 +64,9 @@ def make_bundle(monkeypatch, **settings):
                 "preparation_template": key,
                 "profiling_scenario": template.signature()["scenario"],
                 "profiling_options": profiling,
+                "external_headroom_bytes": (
+                    prepared.layouts.setup.config.preparation.external_headroom_bytes
+                ),
             },
         )
         for key, template in prepared.templates.items()

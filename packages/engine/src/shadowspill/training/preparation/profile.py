@@ -46,6 +46,9 @@ def profile_template(
             inventory.layouts.setup.config.preparation.profiling.to_dict()
         ),
         cache=cache,
+        external_headroom_bytes=(
+            inventory.layouts.setup.config.preparation.external_headroom_bytes
+        ),
     )
     profiles.metadata["preparation_template"] = template.id
     return apply_profiles(program, profiles)

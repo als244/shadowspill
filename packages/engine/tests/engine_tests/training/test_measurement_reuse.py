@@ -102,7 +102,7 @@ def test_budget_changes_reuse_all_measured_cases_with_original_bytes(
         assert json.loads(archive.read(REUSE_NAME)) == receipt
 
 
-@pytest.mark.parametrize("change", ["profiling", "placement", "subset"])
+@pytest.mark.parametrize("change", ["profiling", "headroom", "placement", "subset"])
 def test_changed_policy_or_assignment_only_reuses_compatible_phases(
     exported, tmp_path, change
 ):
@@ -115,6 +115,8 @@ def test_changed_policy_or_assignment_only_reuses_compatible_phases(
             prep = replace(
                 prep, profiling=replace(prep.profiling, measurement_seconds=0.5)
             )
+        if change == "headroom":
+            prep = replace(prep, external_headroom_bytes=768 << 20)
         if change == "subset":
             prep = replace(prep, cases=prep.cases[-1:])
         return replace(config, preparation=prep)
@@ -128,7 +130,9 @@ def test_changed_policy_or_assignment_only_reuses_compatible_phases(
     )
     assert not receipt["calibration_reused"]
     assert {name.split("/")[0] for name in receipt["files"]} == (
-        {"programs"} if change == "profiling" else {"programs", "profiled"}
+        {"programs"}
+        if change in {"profiling", "headroom"}
+        else {"programs", "profiled"}
     )
     assert {
         name.split("/")[1][:-4] for name in receipt["files"]

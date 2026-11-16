@@ -27,11 +27,13 @@ def test_preparation_roundtrip_keeps_explicit_unchunked_choices_and_counts():
         ),
         planning=PlanningOptions(microbatch_counts=[1, 2, 4]),
         profiling=ProfilingOptions(),
+        external_headroom_bytes=768 << 20,
     )
     restored = decode(encode(value))
     assert restored == value
     assert restored.candidates.chunking[0] is None
     assert restored.planning.microbatch_counts == (1, 2, 4)
+    assert restored.external_headroom_bytes == 768 << 20
 
 
 def test_fixed_unchunked_and_unspecified_options_remain_distinct():
@@ -73,6 +75,9 @@ def test_complete_cases_express_coupled_choices_without_cross_expansion():
         lambda: PlanningOptions(microbatch_counts=[0]),
         lambda: ProfilingOptions(minimum_samples=4, maximum_samples=3),
         lambda: ProfilingOptions(measurement_seconds=float("nan")),
+        lambda: Preparation(external_headroom_bytes=-1),
+        lambda: Preparation(external_headroom_bytes=True),
+        lambda: Preparation(external_headroom_bytes=0.5),
         lambda: Preparation(
             build=BuildOptions(chunking=None),
             candidates=BuildCandidates(
@@ -116,6 +121,8 @@ def test_resolved_preparation_is_portable_immutable_and_complete():
         {"cases": [*value.cases, *value.cases]},
         {"origins": {"setting": "guessed"}},
         {"planning": PlanningOptions(microbatch_counts=[1], search={})},
+        {"external_headroom_bytes": -1},
+        {"external_headroom_bytes": True},
     ):
         with pytest.raises(ValueError):
             replace(value, **change)
@@ -124,3 +131,5 @@ def test_resolved_preparation_is_portable_immutable_and_complete():
 def test_omitted_workers_is_distinct_from_explicit_all_cpus():
     assert PlanningOptions().workers is None
     assert PlanningOptions(workers=0).workers == 0
+    assert Preparation().external_headroom_bytes is None
+    assert Preparation(external_headroom_bytes=0).external_headroom_bytes == 0

@@ -191,6 +191,14 @@ def resolve_preparation(
         else (ProfilingOptions(), "engine_default")
     )
     origins["profiling"] = origin
+    headroom, origin = (
+        (supplied.external_headroom_bytes, "explicit")
+        if supplied.external_headroom_bytes is not None
+        else (preset.external_headroom_bytes, "preset")
+        if preset.external_headroom_bytes is not None
+        else (512 << 20, "engine_default")
+    )
+    origins["external_headroom_bytes"] = origin
     # Reuse identities are caller input, never a server-local cache path hidden
     # in a default. A preset may only describe repeatable phase choices.
     if preset.reuse:
@@ -203,4 +211,5 @@ def resolve_preparation(
         PlanningOptions(**planning),
         origins,
         supplied.reuse,
+        headroom,
     )
