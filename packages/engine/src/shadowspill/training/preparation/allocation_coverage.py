@@ -25,6 +25,10 @@ _BUILTIN = {
     **dict.fromkeys(
         (
             "extern_kernels.mm",
+            # aten.mm.dtype_out uses the same dense addmm implementation with
+            # beta=0, alpha=1 and a captured output dtype. Its output/copies and
+            # BLAS workspace depend on geometry/layout, never tensor values.
+            "extern_kernels.mm_dtype",
             "extern_kernels.addmm",
             "extern_kernels.bmm",
             "extern_kernels.baddbmm",

@@ -81,14 +81,22 @@ def test_measured_bytes_cannot_supply_missing_all_value_allocation_evidence():
         allocation_coverage(template, replace(captured, bindings={}))
 
 
-def test_opaque_contracts_are_explicit_source_owned_and_never_cover_unknown_wrappers():
+@pytest.mark.parametrize("matmul", ["extern_kernels.mm", "extern_kernels.mm_dtype"])
+def test_opaque_contracts_are_explicit_source_owned_and_never_cover_unknown_wrappers(
+    matmul,
+):
     _, prepared = prepare(model_contract())
     template = next(iter(prepared.templates.values()))
-    captured = compiler_fixture(template, opaque=["provider.call", "extern_kernels.mm"])
+    captured = compiler_fixture(template, opaque=["provider.call", matmul])
     saved = certify(template, captured)
     validate_allocation_coverage(template, saved)
     task = saved.bindings["allocation_coverage"]["tasks"]["update_impl"]
     assert task["contracts"]["provider.call"] == "fixture/allocate-like-input@1"
+    assert task["contracts"][matmul] == "shadowspill/aten-dense-matmul-allocation@1"
+    with pytest.raises(ValueError, match="missing all-value"):
+        allocation_coverage(
+            template, compiler_fixture(template, opaque=[matmul + "_wrapper"])
+        )
     with pytest.raises(ValueError, match="unresolved allocation behavior"):
         allocation_coverage(
             template,
