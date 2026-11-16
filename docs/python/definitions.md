@@ -117,6 +117,15 @@ objectives, all gradients and initialization checks pass. Public full-training a
 LoRA calls also pass independent whole/split update oracles and exact checkpoint
 continuation from a NumPy-only remote client.
 
+The three MoE definitions also describe `implementation="mlops_ep"` for the
+existing Quack expert provider. Setup uses generic parameter/input placement,
+BF16 compute and bounded random initialization. Each prepared physical token
+size has a distinct communication resource; operations at the same size share
+it, and parameter state remains common across sizes. This setup is CPU-qualified.
+EP allocation contracts and public distributed training are still being qualified;
+it is not yet an admitted training path. EP LoRA and pretrained loading are not
+advertised by these definitions.
+
 Definition provenance hashes provider Python and installed extension binaries
 without importing their implementations in the controller. Each controller or
 worker treats that installed provider snapshot as immutable for its lifetime.

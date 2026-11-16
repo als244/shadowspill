@@ -17,7 +17,7 @@ from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.inputs.text import preparation as inputs
 from shadowspill_workloads.models.olmoe.config import PRESETS, Config
 
-from . import moe_provider
+from . import expert_parallel, moe_provider
 from .source import definition_source
 
 PRESET = "shadowspill/olmoe_packed@1"
@@ -33,6 +33,7 @@ class Settings:
     lora_dtype: str = "bfloat16"
     lora: dict | None = None
     lora_seed: int | None = None
+    expert_options: dict | None = None
 
     def __post_init__(self):
         if self.preset not in PRESETS:
@@ -59,8 +60,10 @@ class Settings:
         config = replace(PRESETS[self.preset], **self.architecture)
         if config.head_dim % 2:
             raise ValueError("OLMoE rotary head width must be even")
-        if self.implementation != "mlops":
-            raise ValueError("the installed packed OLMoE definition requires mlops")
+        if self.implementation not in ("mlops", "mlops_ep"):
+            raise ValueError(
+                "the installed OLMoE definition requires mlops or mlops_ep"
+            )
         for name in ("compute_dtype", "grad_dtype", "lora_dtype"):
             if getattr(self, name) not in ("float32", "bfloat16"):
                 raise ValueError(f"unsupported OLMoE {name}")
@@ -74,6 +77,7 @@ class Settings:
             if self.lora is None:
                 raise ValueError("lora_seed requires LoRA")
         object.__setattr__(self, "architecture", asdict(config))
+        expert_parallel.validate(self)
 
 
 def configure(model):
@@ -99,6 +103,17 @@ def create(config):
 
     from shadowspill_workloads.models.olmoe.implementations.mlops import Model
 
+    if config.implementation == "mlops_ep":
+        from shadowspill_workloads.models.shared.expert_parallel import resources
+
+        if config.expert_options is None:
+            raise ValueError("EP model construction requires a described ModelBuild")
+        return resources.construct(
+            Model,
+            Config(**config.architecture),
+            resources.configuration(config.expert_options["config"]),
+            config.expert_options["layers"],
+        )
     previous = torch.get_default_dtype()
     try:
         torch.set_default_dtype(getattr(torch, config.compute_dtype))
@@ -120,6 +135,10 @@ def create(config):
 
 
 def build(config, context):
+    if config.implementation == "mlops_ep":
+        return expert_parallel.build(
+            config, Config(**config.architecture), "olmoe", context
+        )
     return ModelBuild(
         asdict(config),
         grad_dtype=config.grad_dtype,
@@ -138,6 +157,10 @@ def capture_context(config):
 
 
 def initialization(config, context):
+    if config.implementation == "mlops_ep":
+        return expert_parallel.initialization(
+            config, Config(**config.architecture), "olmoe", context
+        )
     return describe("olmoe", Config(**config.architecture), context)
 
 
@@ -145,6 +168,7 @@ def register(registry):
     source = definition_source(
         (
             "definitions/olmoe.py",
+            "definitions/expert_parallel.py",
             "definitions/moe_allocations.py",
             "definitions/moe_provider.py",
             "definitions/text_allocations.py",
@@ -165,6 +189,7 @@ def register(registry):
             "httpx2",
             "httpcore2",
             *moe_provider.PROVIDERS,
+            "moonep",
         ),
     )
     registry.add_preparation(

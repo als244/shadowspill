@@ -17,6 +17,7 @@ def register(registry):
         source = definition_source(
             (
                 "definitions/qwen_moe",
+                "definitions/expert_parallel.py",
                 "definitions/moe_allocations.py",
                 "definitions/moe_provider.py",
                 "definitions/text_allocations.py",
@@ -38,6 +39,7 @@ def register(registry):
                 "httpx2",
                 "httpcore2",
                 *PROVIDERS,
+                "moonep",
             ),
         )
         registry.add_preparation(

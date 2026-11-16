@@ -32,11 +32,21 @@ def initialize(*, name, device, groups, options):
 
 
 def model(entry, config, options, precision):
+    precision.apply()
+    return construct(
+        entry.model_class("mlops"),
+        config,
+        options,
+        [f"blocks.{index}.moe.experts" for index in range(config.n_layers)],
+    )
+
+
+def construct(model_class, config, options, layer_names):
+    """Construct meta tensors; named resources are opened by the existing engine."""
     from mlops.expert_parallel import QuackMoE
 
-    precision.apply()
-    names = iter(f"blocks.{index}.moe.experts" for index in range(config.n_layers))
-    return entry.model_class("mlops")(
+    names = iter(layer_names)
+    return model_class(
         config,
         parameter_device="meta",
         dtype=torch.bfloat16,

@@ -15,7 +15,7 @@ from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.models.qwen3moe import config as qwen3
 from shadowspill_workloads.models.qwen35moe import config as qwen35
 
-from .. import moe_provider
+from .. import expert_parallel, moe_provider
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,7 @@ class Settings:
     lora_dtype: str = "bfloat16"
     lora: dict | None = None
     lora_seed: int | None = None
+    expert_options: dict | None = None
 
     def __post_init__(self):
         if self.preset not in self.catalog.PRESETS:
@@ -75,8 +76,8 @@ class Settings:
             if type(values[name]) is not bool:
                 raise ValueError(f"Qwen {name} must be boolean")
         config = replace(self.catalog.PRESETS[self.preset], **self.architecture)
-        if self.implementation != "mlops":
-            raise ValueError("the installed packed Qwen definitions require mlops")
+        if self.implementation not in ("mlops", "mlops_ep"):
+            raise ValueError("the installed Qwen definitions require mlops or mlops_ep")
         for name in ("compute_dtype", "grad_dtype", "lora_dtype"):
             if getattr(self, name) not in ("float32", "bfloat16"):
                 raise ValueError(f"unsupported Qwen {name}")
@@ -90,6 +91,7 @@ class Settings:
             if self.lora is None:
                 raise ValueError("lora_seed requires LoRA")
         object.__setattr__(self, "architecture", asdict(config))
+        expert_parallel.validate(self)
 
 
 class Qwen3Settings(Settings):
@@ -126,6 +128,17 @@ def create(config):
     model_class = import_module(
         f"shadowspill_workloads.models.{config.family}.implementations.mlops"
     ).Model
+    if config.implementation == "mlops_ep":
+        from shadowspill_workloads.models.shared.expert_parallel import resources
+
+        if config.expert_options is None:
+            raise ValueError("EP model construction requires a described ModelBuild")
+        return resources.construct(
+            model_class,
+            config.catalog.Config(**config.architecture),
+            resources.configuration(config.expert_options["config"]),
+            config.expert_options["layers"],
+        )
     previous = torch.get_default_dtype()
     try:
         # Match existing catalog construction: explicit FP32 decay parameters
@@ -149,6 +162,10 @@ def create(config):
 
 
 def build(config, context):
+    if config.implementation == "mlops_ep":
+        return expert_parallel.build(
+            config, config.catalog.Config(**config.architecture), config.family, context
+        )
     return ModelBuild(
         asdict(config),
         grad_dtype=config.grad_dtype,
@@ -167,6 +184,10 @@ def capture_context(config):
 
 
 def initialization(config, context):
+    if config.implementation == "mlops_ep":
+        return expert_parallel.initialization(
+            config, config.catalog.Config(**config.architecture), config.family, context
+        )
     return describe(
         config.family,
         config.catalog.Config(**config.architecture),
