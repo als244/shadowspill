@@ -82,15 +82,23 @@ preparation contract. They expose target logprobs and router statistics, so the
 caller explicitly chooses token-only training or a composed balancing objective.
 Settings select `preset`, architecture overrides, precision and optional LoRA;
 Qwen3.5 recurrent decay parameters retain FP32 storage with BF16 projections.
-Initialization accepts random weights or a training checkpoint. Both families
+Initialization accepts random, pinned pretrained or exported weights, and exact
+training checkpoint resume. Both families
 pass public full-training and LoRA checks from a NumPy-only remote client: whole
 and split calls match separate independent CPU trajectories, evaluation preserves
 pending gradients, masked updates skip, and checkpoint continuation is bitwise
 identical. The strict FP32 oracle test uses IEEE Triton products; production
-provider defaults are unchanged, and BF16 provider captures are checked separately.
-The supplied
-allocation contracts cover the fixed-geometry builtin MoE and FLA operators;
-SonicMoE and expert-parallel providers require separate admission evidence.
+provider defaults are unchanged. Qwen3 BF16 full/LoRA public training also passes
+independent CPU update checks and bitwise checkpoint continuation on Chicago's
+fallback provider. Its numerical checks compare each parameter's update norm,
+including signed token contributions, with FP32 master weights and AdamW moments.
+
+BF16 MoE definitions request the existing provider preparation lifecycle and pin
+Quack, SonicMoE and Cutlass sources. The provider selects supported kernels during
+build and restores the saved choices during execution. Allocation contracts cover
+ordinary unquantized BF16 Sonic calls and their prepared activation wrapper;
+H100 execution qualification remains pending. FP8, expert parallelism and fused
+gradient-destination variants require separate contracts and qualification.
 
 `shadowspill/olmoe@1` uses that same packed preparation, precision/LoRA settings
 and bounded random initializer. Its model exposes the same router-statistics
