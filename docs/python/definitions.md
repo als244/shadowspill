@@ -206,6 +206,12 @@ it enables the existing master-parameter capture. Both choices enter capture
 identity. The ordinary builder retains one compute/optimizer/gradient inventory;
 backward and optimizer-only Plans derive from the same step capture.
 
+An installed `ModelReferenceDefinition` resolves pretrained metadata on CPU and
+pins a model definition and immutable weight revision. It may fill missing fields
+inside nested configuration or precision mappings. Every explicit value remains
+fixed, including nulls and complete sequences; changed or removed values are
+rejected. The same resolved settings are rechecked when creating a training run.
+
 Fresh worker initialization uses an optional
 `initialization(config, InitializationContext)` hook. It describes the pinned
 `Weights`, complete model settings, parallelism and logical rank on CPU, without

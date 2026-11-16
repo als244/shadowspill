@@ -1,11 +1,22 @@
 """Installed CPU metadata resolvers for immutable pretrained model references."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from shadowspill_client import Model
+from shadowspill_client._records import Value
 
 from .contracts import versioned_id
+
+
+def _preserves(explicit: Value, resolved: Value) -> bool:
+    """Mappings may gain defaults; supplied leaves and sequences remain fixed."""
+    if isinstance(explicit, Mapping):
+        return isinstance(resolved, Mapping) and all(
+            key in resolved and _preserves(value, resolved[key])
+            for key, value in explicit.items()
+        )
+    return explicit == resolved
 
 
 @dataclass(frozen=True)
@@ -47,10 +58,8 @@ class ModelReferenceDefinition:
             and getattr(requested, name) != getattr(resolved, name)
             for name in ("lora", "implementation", "trainable")
         ) or any(
-            key not in getattr(resolved, field)
-            or getattr(resolved, field)[key] != value
+            not _preserves(getattr(requested, field), getattr(resolved, field))
             for field in ("config", "precision")
-            for key, value in getattr(requested, field).items()
         ):
             raise ValueError("reference resolver changed explicit model settings")
         if (
