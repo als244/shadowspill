@@ -131,7 +131,6 @@ from shadowspill_client import LoRA
 model = Model.from_pretrained("Qwen/Qwen3.5-35B-A3B", lora=LoRA(rank=16))
 ```
 
-Use `Memory(device_gib=24, spill_gib=96)` and `optim={"lr": 0.0001}` for this run.
 The server loads the text decoder's checkpoint and trains adapters; the client
 submits variable-length conversations with loss only on assistant tokens. The same report,
 checkpoint and cleanup calls apply.
