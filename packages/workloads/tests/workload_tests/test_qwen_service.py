@@ -12,18 +12,17 @@ import torch
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.training.definitions import load_registry
 from shadowspill_client import Objective
-from shadowspill_workloads.models.qwen3moe.config import Config
 from shadowspill_workloads.recipes.text.initialization import Initialize
 from workload_tests.test_moe_objective import independent
 from workload_tests.test_qwen_definition import settings
 
 
-def options(*, lora=False):
-    requested = settings("qwen3moe", lora=lora)
+def options(family="qwen3moe", *, lora=False):
+    requested = settings(family, lora=lora)
     registry = load_registry(["shadowspill-workloads"])
     description = registry.resolve_model(requested.definition, settings=requested)
     initial = description.create()
-    fill = Initialize("qwen3moe", Config(**requested.config["architecture"]), seed=17)
+    fill = Initialize(family, initial.config, seed=17)
     with torch.no_grad():
         for name, tensor in (*initial.named_parameters(), *initial.named_buffers()):
             fill(
@@ -146,6 +145,9 @@ def options(*, lora=False):
         "output_name": "tokens.logprobs",
         "microbatch_sizes": [8],
         "microbatch_counts": [1],
+        # The IEEE FLA kernels retain 4.7 GiB in the Chicago measurement. Honor
+        # that admission result instead of lowering the recorded overhead.
+        "device_gib": 6 if family == "qwen35moe" else 2,
         "weight_rtol": 0.003,
         "weight_atol": 2e-6,
         "logprob_rtol": 1e-5,
@@ -156,7 +158,7 @@ def options(*, lora=False):
         "exact_resume": True,
         "client_script": "_text_service_client.py",
         "model_description": (
-            "public Qwen3 MoE, FP32 compute/gradients/masters, "
+            f"public {family}, FP32 compute/gradients/masters, "
             "composed CE and padding-excluded balancing"
         )
         + (", LoRA" if lora else ", full training"),
@@ -168,8 +170,11 @@ def options(*, lora=False):
 
 
 @pytest.mark.parametrize("lora", [False, True])
-def test_qwen_service_oracles_preserve_frozen_weights_and_distinguish_geometries(lora):
-    value = options(lora=lora)
+@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
+def test_qwen_service_oracles_preserve_frozen_weights_and_distinguish_geometries(
+    family, lora
+):
+    value = options(family, lora=lora)
     assert json.loads(json.dumps(value)) == value
     assert abs(value["whole_loss"] - sum(value["loss_parts"])) > 1e-5
     trained = set(value["trainable"])
@@ -188,12 +193,18 @@ def test_qwen_service_oracles_preserve_frozen_weights_and_distinguish_geometries
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("lora", [False, True])
+@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
 def test_public_qwen_step_split_and_checkpoint_resume_match_independent_oracles(
-    tmp_path, lora
+    tmp_path, monkeypatch, family, lora
 ):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    (tmp_path / "setup.json").write_text(json.dumps(options(lora=lora)))
+    # Match the independent CPU oracle's FP32 products. FLA's default TF32
+    # products change small recurrent gradients even in ordinary eager execution.
+    # This scopes arithmetic for qualification; production provider defaults and
+    # the separate BF16 capture checks remain unchanged.
+    monkeypatch.setenv("TRITON_F32_DEFAULT", "ieee")
+    (tmp_path / "setup.json").write_text(json.dumps(options(family, lora=lora)))
     server = subprocess.run(
         [
             sys.executable,

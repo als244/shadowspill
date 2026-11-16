@@ -175,7 +175,7 @@ def qualify(client, options, budget):
         batch=BatchConfig(
             limits={"token_capacity": 8, "max_sequence_length": 4, "max_sequences": 4}
         ),
-        memory=Memory(2, 0.125),
+        memory=Memory(options.get("device_gib", 2), 0.125),
         operations={
             "step": ["metrics"],
             "forward_backward": ["metrics"],

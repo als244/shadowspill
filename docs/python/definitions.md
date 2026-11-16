@@ -3,8 +3,9 @@
 The trainer refactor adds public definition hooks under
 `shadowspill.training.definitions` and portable schema records under
 `shadowspill_client.protocol`. Install the engine's `training` extra to use these
-hooks. They support CPU inspection and operation binding through the existing
-capture/build path. Service execution and full preparation remain under construction.
+hooks. They support CPU inspection, preparation and public service execution
+through the existing capture/build path. Caller migration and distributed release
+qualification remain in progress.
 
 A model definition describes an ordinary factory, validated configuration and
 input schema. An optional `capture_context(config)` context manager scopes
@@ -56,9 +57,10 @@ definitions migrate as their preparation paths become available.
 
 `shadowspill/llama3@1` now has an installed packed preparation definition. Its
 CPU setup and capture checks cover sequence isolation, empty sequences, masked
-targets, full and LoRA gradients and the scheduled token cap. Public GPU text
-training, allocation bounds for selected providers and checkpoint resume remain
-under qualification; this is not yet a replacement for the existing Llama recipe.
+targets, full and LoRA gradients and the scheduled token cap. Full and LoRA GPU
+training pass independent update oracles through the public API from a NumPy-only
+remote client, including split accumulation, evaluation isolation and checkpoint
+continuation. The supplied Llama application uses this setup/runtime interface.
 The initial installed path uses MLOps with BF16 compute and FP32 gradients by
 default. `Model.precision` accepts `compute_dtype`, `grad_dtype` and `lora_dtype`
 (FP32 or BF16); optimizer masters are a separate optimizer setting. `config`
@@ -80,9 +82,13 @@ preparation contract. They expose target logprobs and router statistics, so the
 caller explicitly chooses token-only training or a composed balancing objective.
 Settings select `preset`, architecture overrides, precision and optional LoRA;
 Qwen3.5 recurrent decay parameters retain FP32 storage with BF16 projections.
-Initialization accepts random weights or a training checkpoint. CPU setup,
-packing, initialization and objective/provider captures are checked; complete
-public-service admission and training remain under qualification. The supplied
+Initialization accepts random weights or a training checkpoint. Both families
+pass public full-training and LoRA checks from a NumPy-only remote client: whole
+and split calls match separate independent CPU trajectories, evaluation preserves
+pending gradients, masked updates skip, and checkpoint continuation is bitwise
+identical. The strict FP32 oracle test uses IEEE Triton products; production
+provider defaults are unchanged, and BF16 provider captures are checked separately.
+The supplied
 allocation contracts cover the fixed-geometry builtin MoE and FLA operators;
 SonicMoE and expert-parallel providers require separate admission evidence.
 
