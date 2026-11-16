@@ -35,10 +35,11 @@ from shadowspill_workloads.definitions.expert_parallel import ownership
 FAMILIES = ("qwen3moe", "qwen35moe", "olmoe")
 
 
-def settings(family):
+def settings(family, *, grad_dtype="float32"):
     return Model(
         f"shadowspill/{family}@1",
         implementation="mlops_ep",
+        precision={"grad_dtype": grad_dtype},
         config={
             "architecture": dict(
                 n_layers=2,
@@ -57,7 +58,7 @@ def settings(family):
     )
 
 
-def prepared(family, *, parallelism=None):
+def prepared(family, *, parallelism=None, grad_dtype="float32"):
     registry = load_registry(["shadowspill", "shadowspill-workloads"])
     parallelism = ownership(2, 1) if parallelism is None else parallelism
     parallelism = replace(
@@ -78,7 +79,7 @@ def prepared(family, *, parallelism=None):
     )
     setup = resolve_training(
         registry,
-        model=settings(family),
+        model=settings(family, grad_dtype=grad_dtype),
         objective=Objective.sum(
             {
                 "tokens": Objective("shadowspill/cross_entropy@1"),
@@ -134,12 +135,15 @@ def test_exact_shapes_have_distinct_resources_and_operations_reuse_them(family):
 
 
 @pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("grad_dtype", ["float32", "bfloat16"])
 def test_model_construction_keeps_state_names_and_uses_matching_resource(
-    family, monkeypatch
+    family, grad_dtype, monkeypatch
 ):
     from mlops.expert_parallel.quack.registry import resource_handle
 
-    setup, inventory = prepared(family)
+    from shadowspill.pytorch.representations import tensor_components
+
+    setup, inventory = prepared(family, grad_dtype=grad_dtype)
 
     def forbidden(*args, **kwargs):
         raise AssertionError("meta construction requested a live GPU/group")
@@ -158,6 +162,24 @@ def test_model_construction_keeps_state_names_and_uses_matching_resource(
             geometries.append(
                 {n: (tuple(p.shape), p.dtype) for n, p in model.named_parameters()}
             )
+            components = {
+                (name, path): (parameter, leaf)
+                for name, parameter in model.named_parameters()
+                for path, leaf in tensor_components(parameter)
+                if path
+            }
+            assert {
+                (layout.parameter, layout.component_path)
+                for layout in build.component_layouts
+            } == components.keys()
+            for layout in build.component_layouts:
+                parameter, leaf = components[(layout.parameter, layout.component_path)]
+                assert leaf.dtype == torch.bfloat16
+                assert parameter.dtype == torch.float32
+                assert tuple(leaf.shape) == tuple(
+                    parameter.shape[a] for a in layout.axes
+                )
+                assert layout.encoding == "mlops/bf16-compute@1"
             options = build.config["expert_options"]
             size = options["config"]["tokens_per_rank"]
             handles[size] = tuple(block.moe.experts._handle for block in model.blocks)

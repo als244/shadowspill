@@ -6,7 +6,7 @@ from math import isfinite
 
 from shadowspill import Parallelism, ParameterStorage, Replicated, Resource, Sharded
 from shadowspill.parallelism.selectors import select
-from shadowspill.training.definitions import ModelBuild
+from shadowspill.training.definitions import ComponentLayout, ModelBuild
 from shadowspill_client._records import plain
 
 from .expert_allocations import CONTRACTS as EXPERT_CONTRACTS
@@ -155,6 +155,26 @@ def build(config, architecture, family, context):
         # No Sonic preparation is attached to Quack EP. Its resource owns fixed
         # GEMM choices; the exact BF16 calls have separate allocation contracts.
         allocation_invariants={**CONTRACTS, **EXPERT_CONTRACTS},
+        component_layouts=component_layouts(architecture, family, config.grad_dtype),
+    )
+
+
+def component_layouts(architecture, family, grad_dtype):
+    """BF16ComputeWeight stores one same-coordinate BF16 payload per parameter."""
+    if grad_dtype == "bfloat16":
+        return ()
+    fields = {"experts.gate_up_weight": 3, "experts.down_weight": 3}
+    if family != "olmoe":
+        fields["experts.router_weight"] = 2
+    return tuple(
+        ComponentLayout(
+            f"blocks.{layer}.moe.{field}",
+            ("_data",),
+            tuple(range(rank)),
+            "mlops/bf16-compute@1",
+        )
+        for layer in range(architecture.n_layers)
+        for field, rank in fields.items()
     )
 
 
