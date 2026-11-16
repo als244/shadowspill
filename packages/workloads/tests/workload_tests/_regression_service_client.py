@@ -65,9 +65,11 @@ class Oracle:
         self.master_dtype = master_dtype
         self.steps = 0
 
-    def forward_backward(self, selection=slice(None)):
-        x, target = INPUTS[selection], TARGETS[selection]
-        weights = (WEIGHTS * VALID)[selection]
+    def forward_backward(
+        self, selection=slice(None), *, inputs=INPUTS, targets=TARGETS, weights=None
+    ):
+        x, target = inputs[selection], targets[selection]
+        weights = (WEIGHTS * VALID if weights is None else weights)[selection]
         w = self.weights
         z = x @ w["network.0.weight"].T + w["network.0.bias"]
         sigmoid = 1 / (1 + np.exp(-z))

@@ -14,8 +14,3 @@ class Regression(nn.Module):
         if self.training:
             self.updates.add_(1)
         return self.network(value)
-
-
-def objective(model, inputs, *, targets, ranks):
-    # Each rank contributes to a global mean. Gradient reductions use SUM.
-    return (model(inputs) - targets).square().sum() / (ranks * targets.numel())

@@ -389,3 +389,8 @@ server paths or executable names. Captured timings include profiler overhead.
 
 Service base omission remains under implementation. Qualification evidence and
 remaining hardware coverage are tracked separately from this API contract.
+
+The [regression application](../../examples/training/regression/README.md) supplies
+global NumPy batches to one or more service workers, with whole or split updates
+and explicit checkpoint resume. Its setup module owns the generic DP declaration;
+the training loop needs only a ready client, inputs and results.

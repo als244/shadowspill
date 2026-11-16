@@ -1,30 +1,17 @@
-"""The non-text distributed recipe uses the public phase boundaries."""
+"""The public regression application, bounded initialization and exact resume."""
 
 import json
 import math
-import os
 import subprocess
 import sys
-import tarfile
+from pathlib import Path
 
 import pytest
 import torch
 
 from shadowspill.execution.tensors import TensorChunk
 from shadowspill_workloads.models.regression.initialization import fill_tensor
-from shadowspill_workloads.recipes.regression.data import Inputs
-
-
-def test_regression_input_cursor_preserves_rank_local_examples():
-    first, other = Inputs(0), Inputs(1)
-    assert not torch.equal(first.example()["args"][0][0], other.example()["args"][0][0])
-    next(first)
-    state = first.state_dict()
-    resumed = Inputs(0)
-    resumed.load_state_dict(state)
-    torch.testing.assert_close(next(first), next(resumed))
-    with pytest.raises(ValueError, match="another rank"):
-        other.load_state_dict(state)
+from workload_tests.test_regression_service import initialized
 
 
 def test_regression_initialization_agrees_across_shards_and_chunk_sizes():
@@ -43,82 +30,49 @@ def test_regression_initialization_agrees_across_shards_and_chunk_sizes():
         torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 
 
-def test_recipe_planning_entrypoint_does_not_import_torch(tmp_path):
-    script = """
-import importlib.abc, sys
-class NoGPU(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'torch' or fullname.startswith('shadowspill.runtime'):
-            raise AssertionError(f'CPU planning imported {fullname}')
-sys.meta_path.insert(0, NoGPU())
-import shadowspill_workloads.recipes.regression.plan
-"""
-    child = subprocess.run(
-        [sys.executable, *(["-S"] if sys.flags.no_site else []), "-c", script],
-        capture_output=True,
-        text=True,
-    )
-    assert child.returncode == 0, child.stdout + child.stderr
-
-
 @pytest.mark.cuda
-def test_distributed_regression_runs_through_saved_artifacts(tmp_path):
-    if torch.cuda.device_count() < 2:
-        pytest.skip("requires two distinct GPUs")
-    pytest.importorskip("mlops")
-    root = tmp_path / "regression"
-    command = [
-        sys.executable,
-        *(["-S"] if sys.flags.no_site else []),
-        "-m",
-        "examples.regression_training",
-        "--run-dir",
-        str(root),
-        "--ranks",
-        "2",
-        "--steps",
-        "3",
-        "--execution-gib",
-        "4",
-        "--spill-gib",
-        "0.125",
-        "--warmup-seconds",
-        "0.001",
-        "--measure-seconds",
-        "0.002",
-        "--no-plots",
-    ]
+@pytest.mark.slow
+@pytest.mark.parametrize("ranks", [1, 2])
+@pytest.mark.parametrize("pieces", [1, 3])
+def test_regression_client_example_matches_oracle_and_resumes(tmp_path, ranks, pieces):
+    if torch.cuda.device_count() < ranks:
+        pytest.skip(f"requires {ranks} distinct GPUs")
+    model = initialized()
+    (tmp_path / "setup.json").write_text(
+        json.dumps(
+            {
+                "client_script": "_regression_example_client.py",
+                "ranks": ranks,
+                "pieces": pieces,
+                "initial": {
+                    name: value.detach().tolist()
+                    for name, value in model.named_parameters()
+                },
+                "model_description": f"Regression application, {ranks} DP workers",
+                "oracle_description": (
+                    "independent NumPy SiLU/AdamW loss and parameter deltas; "
+                    "exact native resume"
+                ),
+            }
+        )
+    )
     child = subprocess.run(
-        command,
-        env={**os.environ, "OMP_NUM_THREADS": "1"},
+        [
+            sys.executable,
+            str(Path(__file__).with_name("_catalog_service_server.py")),
+            str(tmp_path),
+        ],
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=900,
     )
-    logs = "\n".join(path.read_text() for path in (root / "logs").glob("*.log"))
-    assert child.returncode == 0, child.stdout + child.stderr + logs
-    assert (root / "report/index.html").is_file()
-    for artifact in ("program", "profiles", "profiled", "communication", "plan"):
-        assert (root / f"{artifact}.ssp").is_file()
-    counters = []
-    for rank in range(2):
-        directory = root / f"training/rank-{rank:05d}"
-        records = [
-            json.loads(row)
-            for row in (directory / "metrics.jsonl").read_text().splitlines()
-        ]
-        assert [row["step"] for row in records] == [1, 2, 3]
-        assert all(math.isfinite(row["train/loss"]) for row in records)
-        checkpoint = directory / "checkpoints/step_00000003.ssp"
-        with tarfile.open(checkpoint) as archive:
-            manifest = json.loads(archive.extractfile("manifest.json").read())
-            for tensor in manifest["tensors"]:
-                if tensor["name"] == "updates" and tensor["bytes"]:
-                    counters.append(
-                        int.from_bytes(
-                            archive.extractfile(tensor["member"]).read(), "little"
-                        )
-                    )
-    # The counter is logically one INT64: padding occupies the other rank's
-    # physical shard, but only the actual counter belongs in the checkpoint.
-    assert counters == [3]
+    (tmp_path / "server.stdout").write_text(child.stdout)
+    (tmp_path / "server.stderr").write_text(child.stderr)
+    assert child.returncode == 0, child.stdout + child.stderr
+    receipt = json.loads((tmp_path / "receipt.json").read_text())
+    assert receipt["actual_example"] and receipt["exact_checkpoint_continuation"]
+    assert (
+        receipt["independent_loss_and_weights"]
+        and receipt["all_server_claims_released"]
+    )
+    assert receipt["ranks"] == ranks and receipt["pieces"] == pieces

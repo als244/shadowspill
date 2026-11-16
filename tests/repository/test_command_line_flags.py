@@ -118,7 +118,9 @@ def _readers(path: Path) -> list[Path]:
             "../phases",
             PREPARATION,
         ),
-        ROOT / "examples/regression_training.py": (CATALOG / "recipes/regression",),
+        ROOT / "examples/regression_training.py": (
+            ROOT / "examples/training/regression",
+        ),
     }
     if path in recipe_packages:
         readers = [

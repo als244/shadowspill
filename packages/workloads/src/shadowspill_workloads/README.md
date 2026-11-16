@@ -71,9 +71,10 @@ inputs. See the [commented script](../../../../examples/train_text.py). The stan
 public service client, with setup separate from its input and training loop.
 The [configured text runner](recipes/text/experiment) follows the same phases,
 preserving document packing, runtime norm logging, held-out evaluation and resume.
-The [distributed regression example](recipes/regression) uses the same driver
-and adds a separate communication-calibration phase. Build and task measurement
-use one GPU; only calibration and execution launch all ranks.
+The [regression application](../../../../examples/training/regression/README.md)
+also uses the public client, with one global batch, mean squared-error
+normalization and explicit sharded-DP input placement. The service owns all
+preparation and worker startup.
 
 The catalog separates its entry type, preset rows, and lookup functions.
 The [shared GLM recipes](recipes/text/glm) own quickstart configuration,

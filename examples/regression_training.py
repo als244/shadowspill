@@ -1,67 +1,84 @@
-"""Sharded-DP regression: independent build/profile/communication/plan/execute."""
+"""Train a small regression model through an existing local or remote service."""
 
 import argparse
-import json
+import warnings
+from dataclasses import fields, replace
 from pathlib import Path
 
-from shadowspill import ProfilingOptions
-from shadowspill.training.preparation.phases import run_phases
+from examples.training.regression.data import SyntheticBatches
+from examples.training.regression.loop import export_wandb, train
+from examples.training.regression.setup import Settings, read_resume, start
+from shadowspill_client import SSH, ServiceClient
+
+
+def arguments(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    connection = parser.add_mutually_exclusive_group()
+    connection.add_argument("--server", help="Existing HTTP(S) service URL")
+    connection.add_argument("--ssh", help="SSH host alias of an existing service")
+    parser.add_argument("--server-port", type=int, default=8000)
+    parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--resume", type=Path, help="Saved checkpoint reference JSON")
+    for name in (
+        "ranks",
+        "steps",
+        "samples-per-rank",
+        "backward-pieces",
+        "checkpoint-every",
+        "seed",
+    ):
+        parser.add_argument(f"--{name}", type=int, default=argparse.SUPPRESS)
+    for name in ("execution-gib", "spill-gib", "warmup-seconds", "measure-seconds"):
+        parser.add_argument(f"--{name}", type=float, default=argparse.SUPPRESS)
+    parser.add_argument("--wandb-project")
+    parser.add_argument("--wandb-mode", choices=("online", "offline"), default="online")
+    return parser.parse_args(argv)
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-dir", type=Path, required=True)
-    parser.add_argument(
-        "--phase",
-        choices=["all", "build", "profile", "communicate", "plan", "execute"],
-        default="all",
-    )
-    parser.add_argument("--ranks", type=int, default=2)
-    parser.add_argument("--steps", type=int, default=10)
-    parser.add_argument("--execution-gib", type=float)
-    parser.add_argument("--spill-gib", type=float)
-    parser.add_argument(
-        "--warmup-seconds", type=float, default=ProfilingOptions().conditioning_seconds
-    )
-    parser.add_argument(
-        "--measure-seconds", type=float, default=ProfilingOptions().measurement_seconds
-    )
-    parser.add_argument("--no-plots", dest="plots", action="store_false")
-    parser.add_argument("--wandb-project")
-    parser.add_argument("--wandb-mode", choices=("online", "offline"), default="online")
-    args = parser.parse_args(argv)
-    root = args.run_dir.resolve()
-    config = root / "config.json"
-    if args.phase in {"all", "build"}:
-        if config.exists():
-            parser.error("use a fresh directory for a new build")
-        if args.ranks < 2 or args.steps < 1:
-            parser.error("use at least two ranks and a positive step count")
-        options = vars(args).copy()
-        options["run_dir"] = str(root)
-        options["execution_gib"] = (
-            4 if args.execution_gib is None else args.execution_gib
-        )
-        options["spill_gib"] = 1 if args.spill_gib is None else args.spill_gib
-        root.mkdir(parents=True, exist_ok=True)
+    args = arguments(argv)
+    requested = {
+        field.name: vars(args)[field.name]
+        for field in fields(Settings)
+        if field.name in vars(args)
+    }
+    if args.resume is None:
+        settings, resume = Settings(**requested), None
     else:
-        if not config.exists():
-            parser.error("run the build phase first")
-        options = json.loads(config.read_text())
-        for name in ("execution_gib", "spill_gib"):
-            if getattr(args, name) is not None:
-                if args.phase != "plan":
-                    parser.error("changed budgets require --phase plan")
-                options[name] = getattr(args, name)
-    if min(options["execution_gib"], options["spill_gib"]) <= 0:
-        parser.error("memory budgets must be positive")
-    config.write_text(json.dumps(options, indent=2) + "\n")
-    run_phases(
-        "shadowspill_workloads.recipes.regression",
-        root,
-        args.phase,
-        ranks=options["ranks"],
+        resume, settings = read_resume(args.resume)
+        if replace(settings, **requested) != settings:
+            raise ValueError("resume requires the saved training settings")
+    source = SyntheticBatches(
+        ranks=settings.ranks,
+        samples_per_rank=settings.samples_per_rank,
+        seed=settings.seed,
     )
+    root = args.run_dir.resolve()
+    root.mkdir(parents=True)
+    connection = (
+        {"ssh": SSH(args.ssh, args.server_port)}
+        if args.ssh
+        else {"base_url": args.server or f"http://127.0.0.1:{args.server_port}"}
+    )
+    with ServiceClient(**connection) as service:
+        training, cursor = start(service, settings, source, root, resume=resume)
+        try:
+            train(training, settings, source, root, cursor=cursor)
+        except BaseException as error:
+            try:
+                training.close().result()
+            except BaseException as cleanup:
+                error.add_note(f"Training close also failed: {cleanup}")
+            raise
+        else:
+            training.close().result()
+    if args.wandb_project:
+        try:
+            export_wandb(root, project=args.wandb_project, mode=args.wandb_mode)
+        except Exception as error:
+            warnings.warn(
+                f"Training completed; optional W&B export failed: {error}", stacklevel=1
+            )
     return 0
 
 
