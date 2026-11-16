@@ -3,7 +3,7 @@
 import json
 import subprocess
 import sys
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
@@ -35,6 +35,20 @@ def test_settings_own_nested_inputs_and_return_independent_json_values():
     exported = model.to_dict()
     exported["config"]["layers"].append(7)
     assert model.config["layers"] == (2, 3)
+
+
+def test_resolved_weight_metadata_is_owned_and_roundtrips_with_the_model():
+    from shadowspill_client.protocol.codec import decode, encode
+
+    metadata = {"files": [{"name": "weights", "checksum": "abc"}]}
+    weights = replace(Weights.pretrained("org/model"), metadata=metadata)
+    metadata["files"][0]["checksum"] = "changed"
+    model = Model("external/regressor@1", initialize=weights)
+    restored = decode(encode(model))
+    assert restored == model
+    assert restored.initialize.metadata["files"][0]["checksum"] == "abc"
+    with pytest.raises(TypeError):
+        restored.initialize.metadata["files"][0]["checksum"] = "changed"
 
 
 @pytest.mark.parametrize(
@@ -80,6 +94,7 @@ def test_nonportable_configuration_is_refused(value):
         lambda: LoRA(1, alpha=float("nan")),
         lambda: LoRA(1, dropout=1),
         lambda: Weights("random", seed=2, reference="other"),
+        lambda: Weights("random", seed=2, metadata={"files": []}),
         lambda: Weights.random(seed=-1),
         lambda: Weights("artifact", reference="artifact", revision="v1"),
         lambda: BatchConfig(limits={}),

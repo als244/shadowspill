@@ -9,20 +9,10 @@ from . import hub_files
 from .hub import immutable_revision
 
 
-def normalize_files(values):
-    return (
-        None if values is None else [asdict(file) for file in hub_files.files(values)]
-    )
-
-
-def describe(family, config, context, weight_files):
+def describe(family, config, context):
     weights = context.weights
     width = getattr(config, "rotary_width", config.head_dim)
     if weights.kind == "random":
-        if weight_files is not None:
-            raise ValueError(
-                "random initialization cannot name pretrained weight files"
-            )
 
         @contextmanager
         def open_random(runtime):
@@ -37,7 +27,9 @@ def describe(family, config, context, weight_files):
         )
     if weights.kind != "pretrained" or not immutable_revision(weights.revision):
         raise ValueError("catalog initialization requires random or pinned Hub weights")
-    manifest = hub_files.files(weight_files)
+    if set(weights.metadata) != {"files"}:
+        raise ValueError("pinned Hub weights require a resolved file manifest")
+    manifest = hub_files.files(weights.metadata["files"])
 
     @contextmanager
     def open_pretrained(runtime):

@@ -11,7 +11,7 @@ from typing import ClassVar
 from shadowspill.training.definitions import ModelBuild
 from shadowspill_client import LoRA
 from shadowspill_client._records import plain
-from shadowspill_workloads.initialization.pretrained import describe, normalize_files
+from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.models.qwen3moe import config as qwen3
 from shadowspill_workloads.models.qwen35moe import config as qwen35
 
@@ -29,7 +29,6 @@ class Settings:
     grad_dtype: str = "float32"
     lora_dtype: str = "bfloat16"
     lora: dict | None = None
-    weight_files: list[dict] | None = None
 
     def __post_init__(self):
         if self.preset not in self.catalog.PRESETS:
@@ -86,7 +85,6 @@ class Settings:
                 raise ValueError("the installed Qwen LoRA provider requires dropout=0")
             object.__setattr__(self, "lora", lora.to_dict())
         object.__setattr__(self, "architecture", asdict(config))
-        object.__setattr__(self, "weight_files", normalize_files(self.weight_files))
 
 
 class Qwen3Settings(Settings):
@@ -165,5 +163,4 @@ def initialization(config, context):
         config.family,
         config.catalog.Config(**config.architecture),
         context,
-        config.weight_files,
     )

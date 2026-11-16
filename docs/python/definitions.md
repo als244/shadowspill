@@ -217,6 +217,11 @@ Llama 3, Qwen3 MoE, the Qwen3.5 MoE text decoder and OLMoE. It reads bounded
 config/index metadata and shard sizes/checksums, pins the immutable Hub commit and
 uses the existing catalog parsers. Tensor payloads are fetched only after worker
 resources are reserved.
+The resolved manifest belongs to `Weights.metadata`, separate from model
+configuration. Selecting another compatible weight source or fresh random weights
+does not change the model computation. Explicit pinned metadata is rechecked and
+cannot be silently replaced. Clients and servers use protocol version 2; older
+versions are rejected explicitly.
 It imports no tensor framework and executes no repository Python. An explicit
 `config={"architecture": {"max_seq_len": ...}}` replaces the metadata's context
 capacity; overrides that change stored tensor geometry are rejected. Other model

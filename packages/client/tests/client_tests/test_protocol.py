@@ -212,7 +212,8 @@ def test_objective_loss_and_custom_metric_named_loss_remain_distinct():
 
 def test_decoder_rejects_unknown_versions_types_fields_and_duplicate_keys():
     for patch, match in (
-        ({"version": 2}, "unsupported protocol version"),
+        ({"version": 1}, "unsupported protocol version"),
+        ({"version": 3}, "unsupported protocol version"),
         ({"version": True}, "unsupported protocol version"),
         ({"kind": "os.system"}, "unknown protocol record"),
         ({"value": {"definition": "x", "unknown": 1}}, "unknown fields"),
@@ -222,10 +223,10 @@ def test_decoder_rejects_unknown_versions_types_fields_and_duplicate_keys():
         with pytest.raises(ProtocolError, match=match):
             decode(json.dumps(encoded).encode())
     with pytest.raises(ProtocolError, match="duplicate JSON field"):
-        decode(b'{"version":1,"version":1,"kind":"config.model","value":{}}')
+        decode(b'{"version":2,"version":2,"kind":"config.model","value":{}}')
     with pytest.raises(ProtocolError, match="nonfinite"):
         decode(
-            b'{"version":1,"kind":"config.model","value":{"definition":"x","config":{"x":NaN}}}'
+            b'{"version":2,"kind":"config.model","value":{"definition":"x","config":{"x":NaN}}}'
         )
     with pytest.raises(ProtocolError, match="unregistered"):
         encode(Datum(inputs={"pixels": [[1, 2]]}))
@@ -241,7 +242,7 @@ def test_metadata_is_bounded_and_does_not_expand_binary_payloads():
     with pytest.raises(ProtocolError, match="exceeds 10 bytes"):
         encode(request, max_bytes=10)
     nested = (
-        b'{"version":1,"kind":"config.model","value":'
+        b'{"version":2,"kind":"config.model","value":'
         + b"[" * 70
         + b"0"
         + b"]" * 70
@@ -314,7 +315,7 @@ def test_private_codec_owns_its_allowlist_and_uses_the_same_strict_envelope():
     with pytest.raises(ProtocolError, match="exceeds 10"):
         codec.decode(encoded, max_bytes=10)
     with pytest.raises(ProtocolError, match="duplicate JSON"):
-        codec.decode(encoded.replace(b'"version":1', b'"version":1,"version":1'))
+        codec.decode(encoded.replace(b'"version":2', b'"version":2,"version":2'))
 
 
 @pytest.mark.parametrize(

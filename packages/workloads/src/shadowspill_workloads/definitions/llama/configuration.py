@@ -8,7 +8,7 @@ from math import isfinite
 from shadowspill.training.definitions import ModelBuild
 from shadowspill_client import LoRA
 from shadowspill_client._records import plain
-from shadowspill_workloads.initialization.pretrained import describe, normalize_files
+from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.models.llama3.config import PRESETS, Config
 
 from ..text_allocations import CONTRACTS
@@ -23,7 +23,6 @@ class Settings:
     grad_dtype: str = "float32"
     lora_dtype: str = "bfloat16"
     lora: dict | None = None
-    weight_files: list[dict] | None = None
 
     def __post_init__(self):
         if self.preset not in PRESETS:
@@ -60,7 +59,6 @@ class Settings:
                 raise ValueError("the installed Llama LoRA provider requires dropout=0")
             object.__setattr__(self, "lora", lora.to_dict())
         object.__setattr__(self, "architecture", asdict(config))
-        object.__setattr__(self, "weight_files", normalize_files(self.weight_files))
 
 
 def configure(model):
@@ -119,6 +117,4 @@ def capture_context(config):
 
 
 def initialization(config, context):
-    return describe(
-        "llama3", Config(**config.architecture), context, config.weight_files
-    )
+    return describe("llama3", Config(**config.architecture), context)

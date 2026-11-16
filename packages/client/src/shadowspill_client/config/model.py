@@ -11,16 +11,22 @@ from .._records import Record, Value, integer, mapping, names, number, record, t
 
 @dataclass(frozen=True)
 class Weights(Record):
+    """An initialization source with metadata pinned by its installed resolver."""
+
     kind: Literal["random", "pretrained", "artifact"]
     seed: int | None = None
     reference: str | None = None
     revision: str | None = None
+    metadata: Mapping[str, Value] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", mapping(self.metadata, "weight metadata"))
         if self.kind == "random":
             integer(self.seed, "seed")
             if self.reference is not None or self.revision is not None:
                 raise ValueError("random initialization has no reference or revision")
+            if self.metadata:
+                raise ValueError("random initialization has no referenced metadata")
         elif self.kind in ("pretrained", "artifact"):
             text(self.reference, "reference")
             if self.seed is not None:

@@ -4,7 +4,6 @@ from dataclasses import asdict, replace
 from importlib import import_module
 
 from shadowspill.training.definitions import ModelReferenceDefinition
-from shadowspill_client import Weights
 from shadowspill_client._records import plain
 from shadowspill_workloads.initialization import hub, hub_files
 
@@ -102,12 +101,12 @@ def resolve(requested):
     return replace(
         requested,
         definition=f"shadowspill/{family}@1",
-        config={
-            **config,
-            "architecture": values,
-            "weight_files": hub_files.describe(weights.reference, revision),
-        },
-        initialize=Weights.pretrained(weights.reference, revision=revision),
+        config={**config, "architecture": values},
+        initialize=replace(
+            weights,
+            revision=revision,
+            metadata={"files": hub_files.describe(weights.reference, revision)},
+        ),
     )
 
 

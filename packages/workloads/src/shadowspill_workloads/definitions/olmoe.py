@@ -13,7 +13,7 @@ from shadowspill.training.definitions import (
 )
 from shadowspill_client import LoRA
 from shadowspill_client._records import plain
-from shadowspill_workloads.initialization.pretrained import describe, normalize_files
+from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.inputs.text import preparation as inputs
 from shadowspill_workloads.models.olmoe.config import PRESETS, Config
 
@@ -32,7 +32,6 @@ class Settings:
     grad_dtype: str = "float32"
     lora_dtype: str = "bfloat16"
     lora: dict | None = None
-    weight_files: list[dict] | None = None
 
     def __post_init__(self):
         if self.preset not in PRESETS:
@@ -70,7 +69,6 @@ class Settings:
                 raise ValueError("the installed OLMoE LoRA provider requires dropout=0")
             object.__setattr__(self, "lora", lora.to_dict())
         object.__setattr__(self, "architecture", asdict(config))
-        object.__setattr__(self, "weight_files", normalize_files(self.weight_files))
 
 
 def configure(model):
@@ -132,9 +130,7 @@ def capture_context(config):
 
 
 def initialization(config, context):
-    return describe(
-        "olmoe", Config(**config.architecture), context, config.weight_files
-    )
+    return describe("olmoe", Config(**config.architecture), context)
 
 
 def register(registry):

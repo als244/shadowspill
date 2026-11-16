@@ -10,7 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from shadowspill.training.definitions import load_registry
+from shadowspill.parallelism import Parallelism
+from shadowspill.training.definitions import InitializationContext, load_registry
 from shadowspill_client import LoRA, Model, Weights
 from shadowspill_workloads.definitions import pretrained
 from shadowspill_workloads.initialization import hub, hub_files
@@ -87,7 +88,10 @@ def test_public_resolution_pins_metadata_preserves_overrides_and_rechecks(
     resolved, definition, _ = registry.resolve_model_reference(requested)
     assert definition == "shadowspill/huggingface@1"
     assert resolved.definition == f"shadowspill/{family}@1"
-    assert resolved.initialize == Weights.pretrained("fixture/model", revision=REVISION)
+    assert resolved.initialize == replace(
+        Weights.pretrained("fixture/model", revision=REVISION),
+        metadata={"files": FILES},
+    )
     assert resolved.config["architecture"]["max_seq_len"] == 32
     assert resolved.config["architecture"]["n_layers"] == 2
     assert resolved.config["architecture"]["d_model"] == 32
@@ -244,3 +248,52 @@ assert resolved.config['architecture']['max_seq_len'] == 128
 assert not any(name in sys.modules for name in blocked)
 """
     subprocess.run([sys.executable, "-c", code], check=True, timeout=60)
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+def test_weight_sources_do_not_change_model_configuration(monkeypatch, family):
+    monkeypatch.setattr(hub, "config", lambda *a: (REVISION, metadata(family)))
+    monkeypatch.setattr(
+        hub_files,
+        "describe",
+        lambda reference, revision: [
+            FILES[0],
+            {**FILES[1], "checksum": ("c" if reference.endswith("a") else "d") * 64},
+        ],
+    )
+    registry = load_registry(["shadowspill-workloads"])
+    models = []
+    for name in ("a", "b"):
+        pinned, _, _ = registry.resolve_model_reference(
+            Model.from_pretrained(f"fixture/{name}")
+        )
+        models.append(registry.resolve_model(pinned.definition, settings=pinned))
+    assert models[0].settings.initialize != models[1].settings.initialize
+    assert models[0].config == models[1].config
+    assert (
+        replace(models[0].settings, initialize=models[1].settings.initialize)
+        == models[1].settings
+    )
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+def test_pretrained_model_settings_can_select_fresh_random_weights(monkeypatch, family):
+    monkeypatch.setattr(hub, "config", lambda *a: (REVISION, metadata(family)))
+    monkeypatch.setattr(hub_files, "describe", lambda *a: FILES)
+    registry = load_registry(["shadowspill-workloads"])
+    pinned, _, _ = registry.resolve_model_reference(
+        Model.from_pretrained("fixture/model")
+    )
+    resolved = registry.resolve_model(pinned.definition, settings=pinned)
+    settings = replace(resolved.settings, initialize=Weights.random(seed=5))
+    fresh = registry.resolve_model(settings.definition, settings=settings)
+    description = fresh.describe_initialization(
+        InitializationContext(
+            fresh.settings,
+            fresh.settings.initialize,
+            Parallelism(),
+            0,
+        )
+    )
+    assert description.disk_bytes == 0
+    assert description.peak_bytes < 64 << 20

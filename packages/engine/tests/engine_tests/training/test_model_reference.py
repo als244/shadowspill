@@ -65,3 +65,23 @@ def test_metadata_cannot_replace_remove_or_extend_explicit_values(
     requested = Model.from_pretrained("fixture://classifier", **{field: explicit})
     with pytest.raises(ValueError, match="changed explicit model settings"):
         resolver(field, resolved).pin(requested)
+
+
+def test_reference_resolution_pins_and_rechecks_weight_metadata():
+    requested = Model.from_pretrained("fixture://classifier")
+    metadata = {"files": [{"name": "weights", "checksum": "abc"}]}
+    definition = ModelReferenceDefinition(
+        "external/metadata@1",
+        lambda _: True,
+        lambda model: replace(
+            model,
+            definition="external/classifier@1",
+            initialize=replace(model.initialize, revision="b" * 40, metadata=metadata),
+        ),
+    )
+    pinned = definition.pin(requested)
+    assert pinned.initialize.to_dict()["metadata"] == metadata
+    assert definition.pin(Model.from_dict(pinned.to_dict())) == pinned
+    metadata["files"][0]["checksum"] = "changed"
+    with pytest.raises(ValueError, match="changed explicit weight metadata"):
+        definition.pin(pinned)

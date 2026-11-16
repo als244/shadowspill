@@ -62,6 +62,8 @@ class ModelReferenceDefinition:
             for field in ("config", "precision")
         ):
             raise ValueError("reference resolver changed explicit model settings")
+        if not _preserves(weights.metadata, resolved.initialize.metadata):
+            raise ValueError("reference resolver changed explicit weight metadata")
         if (
             requested.definition is not None
             and resolved.definition != requested.definition
