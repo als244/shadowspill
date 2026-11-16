@@ -72,3 +72,10 @@ class TokenBatches:
             )
             for offset in range(start, start + self.positions, self.length)
         ]
+
+
+def validate_vocabulary(preview, *sources):
+    """Check token corpora before preparation or worker acquisition."""
+    vocabulary = preview.config.model.config["architecture"]["vocab_size"]
+    if any(source is not None and source.vocab_size > vocabulary for source in sources):
+        raise ValueError("corpus vocabulary exceeds model vocabulary")

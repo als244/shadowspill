@@ -3,9 +3,11 @@
 from pathlib import Path
 
 from examples.training.application.loop import train
+from examples.training.application.records import data_identity
+from examples.training.application.setup import close_after, start
 from examples.training.qwen.settings import Settings
-from examples.training.qwen.setup import start
-from examples.training.text_data import TokenBatches
+from examples.training.qwen.setup import resolve
+from examples.training.text_data import TokenBatches, validate_vocabulary
 from shadowspill_client import SSH, ServiceClient
 
 settings = Settings(
@@ -45,10 +47,16 @@ if __name__ == "__main__":
         normalize=False,
     )
     with ServiceClient(ssh=SSH("chicago", 8000)) as service:
-        training, cursor = start(service, settings, source, validation, directory)
-        try:
+        preview = resolve(service, settings)
+        validate_vocabulary(preview, source, validation)
+        training, cursor = start(
+            service,
+            settings,
+            directory,
+            data=data_identity(source, validation),
+            preview=preview,
+        )
+        with close_after(training):
             # This loop accepts an already initialized client; it owns only data,
             # schedules, step/backward calls, evaluation and checkpoint cadence.
             train(training, settings, source, validation, directory, cursor=cursor)
-        finally:
-            training.close().result()

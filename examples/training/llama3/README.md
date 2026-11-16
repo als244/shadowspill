@@ -33,8 +33,9 @@ attends independently, and its targets are the next tokens. Weights normalize by
 the complete update's token count, preserving this application's mean-loss
 behavior. The installed objective itself sums caller-weighted losses.
 
-[`setup.py`](setup.py) resolves model, objective, optimizer, batch and memory
-settings, then asks the server for a ready client. The server owns the existing
+[`setup.py`](setup.py) supplies model, objective, optimizer, batch and memory
+settings. [Shared setup](../application/setup.py) creates or resumes the ready
+client and validates saved progress. The server owns the existing
 build/profile/plan phases and worker initialization. [`loop.py`](loop.py) receives
 that client and deals only with inputs, training settings and results. No model
 factory, executor, partition or worker configuration appears in the loop.

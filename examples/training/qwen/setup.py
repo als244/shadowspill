@@ -1,25 +1,8 @@
-"""Resolve model/search settings and acquire workers before the training loop."""
+"""Resolve text model and search choices using metadata-only service previews."""
 
-import json
 from dataclasses import replace
-from pathlib import Path
 
-from examples.training.application.records import data_identity, record
-from shadowspill_client.protocol.requests import ArtifactRef
-
-from .settings import Settings, objective
-
-
-def read_resume(path):
-    with Path(path).open("rb") as stream:
-        raw = stream.read((64 << 10) + 1)
-    if len(raw) > 64 << 10:
-        raise ValueError("resume record exceeds 64 KiB")
-    value = json.loads(raw)
-    settings = Settings(**value["settings"])
-    if value["application"] != settings.application:
-        raise ValueError("resume record belongs to another application")
-    return value, settings
+from .settings import objective
 
 
 def resolve(service, settings):
@@ -52,54 +35,3 @@ def resolve(service, settings):
         request["model"] = preview.config.model
         preview = service.describe_training(**request).result()
     return preview
-
-
-def start(service, settings, source, validation, directory, *, resume=None):
-    cursor = 0
-    if resume is None:
-        preview = resolve(service, settings)
-        if (
-            max(source.vocab_size, 0 if validation is None else validation.vocab_size)
-            > (preview.config.model.config["architecture"]["vocab_size"])
-        ):
-            raise ValueError("corpus vocabulary exceeds model vocabulary")
-        print(preview.summary(), flush=True)
-        (directory / "setup.json").write_text(
-            json.dumps(preview.config.to_dict(), indent=2) + "\n"
-        )
-        creation = service.create_training_client(config=preview.config)
-    else:
-        checkpoint = service.artifact(ArtifactRef.from_dict(resume["checkpoint"]))
-        info = checkpoint.manifest().result().info
-        metadata = info.to_dict()["metadata"]
-        if (
-            metadata.get("application") != settings.application
-            or metadata["settings"] != record(settings)
-            or metadata["data"] != data_identity(source, validation)
-            or metadata["next_update"] != info.completed_updates
-            or info.plans != ArtifactRef.from_dict(resume["plans"])
-        ):
-            raise ValueError("checkpoint settings, corpus or progress differ")
-        cursor = info.completed_updates
-        if not 0 <= cursor <= settings.steps:
-            raise ValueError("checkpoint progress lies outside requested training")
-        creation = service.create_training_client(
-            plans=info.plans, checkpoint=checkpoint
-        )
-    (directory / "run.json").write_text(
-        json.dumps(
-            {
-                "application": settings.application,
-                "settings": record(settings),
-                "session_id": creation.session_id,
-                "run_id": creation.run_id,
-            },
-            indent=2,
-        )
-        + "\n"
-    )
-    training = creation.result()
-    (directory / "plans.json").write_text(
-        json.dumps(training.plans.reference.to_dict(), indent=2) + "\n"
-    )
-    return training, cursor

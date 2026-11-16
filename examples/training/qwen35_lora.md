@@ -47,8 +47,9 @@ can differ between those contributions and a whole `step()`; each describes its
 own microbatch statistic.
 
 [Settings](qwen/settings.py) contain portable training choices.
-[Setup](qwen/setup.py) resolves model metadata and search controls and returns
-a ready client. The [runtime loop](application/loop.py) accepts that client and owns
+[Metadata resolution](qwen/setup.py) resolves model metadata and search controls.
+[Shared setup](application/setup.py) creates or resumes a ready client, using the
+same lifecycle as Llama and regression. The [runtime loop](application/loop.py) owns
 only batches, schedules, evaluation and checkpoint cadence. Setup can run in a
 separate component without changing the runtime loop. The installed engine's
 build/profile/plan/execute phases and generic parallelism remain the same.

@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 
 from examples.train_llama3 import arguments, main
-from examples.training.llama3.setup import APPLICATION, Settings, read_resume, start
+from examples.training.application.setup import read_resume, start
+from examples.training.llama3.setup import APPLICATION, Settings
 from examples.training.text_data import TokenBatches
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.layouts import prepare_layouts
@@ -101,7 +102,9 @@ def test_restore_rejects_changed_data_or_progress_before_starting_workers(
         next_update=1,
     )
     metadata[change] = 2 if change == "next_update" else {}
-    info = SimpleNamespace(metadata=metadata, completed_updates=1, plans=reference)
+    info = SimpleNamespace(
+        to_dict=lambda: {"metadata": metadata}, completed_updates=1, plans=reference
+    )
     service = SimpleNamespace(
         artifact=lambda _: SimpleNamespace(
             manifest=lambda: SimpleNamespace(result=lambda: SimpleNamespace(info=info))
@@ -115,10 +118,10 @@ def test_restore_rejects_changed_data_or_progress_before_starting_workers(
     }
     path = tmp_path / "resume.json"
     path.write_text(json.dumps(record))
-    assert read_resume(path) == (record, settings)
+    assert read_resume(path, Settings) == (record, settings)
     # This service has no create method: rejecting after startup would fail.
-    with pytest.raises(ValueError, match="settings, corpus or progress"):
-        start(service, settings, source, tmp_path, resume=record)
+    with pytest.raises(ValueError, match="settings, inputs or progress"):
+        start(service, settings, tmp_path, data=source.identity, resume=record)
 
 
 def test_application_imports_and_cli_need_no_engine_or_framework():

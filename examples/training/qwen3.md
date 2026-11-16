@@ -52,10 +52,10 @@ preparation still defaults to 512 MiB. External/whole-process memory overruns
 are reported by default. `--reject-overbudget` opts into strict rejection.
 Pool bounds and planned memory admission always apply.
 
-[Settings](qwen/settings.py), [setup](qwen/setup.py) and the
-[runtime loop](application/loop.py) are shared with the Qwen3.5 LoRA application.
-Setup resolves model metadata, explicit chunk/retention/search choices and
-workers; the loop only handles data, schedules, training calls and results.
+[Settings](qwen/settings.py) and [metadata resolution](qwen/setup.py) are shared
+with the Qwen3.5 LoRA application. [Shared setup](application/setup.py) creates
+or resumes the ready client using the same lifecycle as Llama and regression.
+The [runtime loop](application/loop.py) handles data, schedules, calls and results.
 Advanced measurement reuse and CPU planning use the service APIs described in
 the [client guide](../../docs/python/client.md).
 

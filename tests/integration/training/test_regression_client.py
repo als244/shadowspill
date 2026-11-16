@@ -10,8 +10,9 @@ import numpy as np
 import pytest
 
 from examples.regression_training import main
+from examples.training.application.setup import start
 from examples.training.regression.data import SyntheticBatches
-from examples.training.regression.setup import APPLICATION, Settings, parallelism, start
+from examples.training.regression.setup import APPLICATION, Settings, parallelism
 from shadowspill.parallelism import Parallelism
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.layouts import prepare_layouts
@@ -73,18 +74,20 @@ def test_resume_validates_settings_generator_and_cursor_before_creation(
         next_update=1,
     )
     metadata[change] = 2 if change == "next_update" else {}
-    info = SimpleNamespace(metadata=metadata, plans=reference, completed_updates=1)
+    info = SimpleNamespace(
+        to_dict=lambda: {"metadata": metadata}, plans=reference, completed_updates=1
+    )
     service = SimpleNamespace(
         artifact=lambda _: SimpleNamespace(
             manifest=lambda: SimpleNamespace(result=lambda: SimpleNamespace(info=info))
         )
     )
-    with pytest.raises(ValueError, match="settings, input generator or progress"):
+    with pytest.raises(ValueError, match="settings, inputs or progress"):
         start(
             service,
             settings,
-            source,
             tmp_path,
+            data=source.identity,
             resume={"checkpoint": reference.to_dict(), "plans": reference.to_dict()},
         )
 

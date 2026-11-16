@@ -21,8 +21,9 @@ one `optim_step()` with the same complete-update normalization. The model's
 integer buffer counts training forwards, so split execution can increment it
 more often than a whole step.
 
-[setup.py](setup.py) owns portable settings, explicit parallelism, description,
-creation and resume validation. [data.py](data.py) creates deterministic NumPy
+[setup.py](setup.py) supplies portable settings and input/parallelism declarations.
+[Shared setup](../application/setup.py) owns client creation and resume validation.
+[data.py](data.py) creates deterministic NumPy
 PCG64 batches indexed by update. [loop.py](loop.py) receives a ready client and
 owns only inputs, training calls and completed results. Model code and bounded
 initialization live in the [installed catalog](../../../packages/workloads/src/shadowspill_workloads/models/regression).

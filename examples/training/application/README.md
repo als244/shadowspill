@@ -1,8 +1,17 @@
 # Shared client application code
 
-These helpers consume an already initialized training client. They import no
-engine, model catalog or accelerator framework. Setup owns model configuration,
-initialization, preparation and worker acquisition.
+These helpers import no engine, model catalog or accelerator framework. Setup
+and runtime are separate: setup returns a ready client; the loop consumes it.
+
+[setup.py](setup.py) validates saved settings, input identity, progress and Plans
+before resuming, creates the client and saves reconnect IDs before waiting for
+initialization. A fresh run may supply an inspected setup preview. The service
+owns preparation and worker initialization. The same lifecycle serves text and
+non-text applications. Its cleanup context preserves the original error if
+closing the client also fails.
+
+[cli.py](cli.py) handles HTTP/SSH connection options and exact saved-settings
+checks. Application entry points supply their configuration and data choices.
 
 [loop.py](loop.py) provides one `update()` function for whole `step()` calls or
 split `forward_backward()` contributions followed by `optim_step()`. The caller
@@ -19,8 +28,8 @@ can compose the shared update helper in their own loop.
 
 [records.py](records.py) serializes application settings and data identities and
 publishes a checkpoint reference after the server confirms the checkpoint commit.
-The same helper writes Qwen, Llama and regression checkpoint records. Model-specific
-setup validates its settings and source before restoring that checkpoint.
+The same helper writes Qwen, Llama and regression checkpoint records. Shared
+setup validates their settings and input identities before restoring a checkpoint.
 
 The application owns loop policy; the installed engine remains the sole owner
 of execution, accumulation, optimizer updates and checkpoint state.

@@ -11,14 +11,10 @@ import pytest
 
 from examples.train_qwen35_lora import arguments, main
 from examples.training.application.loop import update
+from examples.training.application.records import data_identity, record
+from examples.training.application.setup import read_resume, start
 from examples.training.qwen.settings import Settings, qwen3_settings
-from examples.training.qwen.setup import (
-    data_identity,
-    read_resume,
-    record,
-    resolve,
-    start,
-)
+from examples.training.qwen.setup import resolve
 from examples.training.text_data import TokenBatches
 from shadowspill.parallelism import Parallelism
 from shadowspill.training.definitions import load_registry
@@ -179,7 +175,7 @@ assert request['model'].initialize.kind == 'random'
     path.write_text(
         json.dumps({"application": settings.application, "settings": record(settings)})
     )
-    assert read_resume(path)[1] == settings
+    assert read_resume(path, Settings)[1] == settings
     with pytest.raises(ValueError, match="another application"):
         main(["--run-dir", str(tmp_path / "run"), "--resume", str(path)])
 
@@ -277,9 +273,15 @@ def test_resume_rejects_changed_corpus_settings_and_progress_before_workers(
     }
     path = tmp_path / "resume.json"
     path.write_text(json.dumps(saved))
-    assert read_resume(path) == (saved, settings)
-    with pytest.raises(ValueError, match="settings, corpus or progress"):
-        start(service, settings, source, validation, tmp_path, resume=saved)
+    assert read_resume(path, Settings) == (saved, settings)
+    with pytest.raises(ValueError, match="settings, inputs or progress"):
+        start(
+            service,
+            settings,
+            tmp_path,
+            data=data_identity(source, validation),
+            resume=saved,
+        )
 
 
 @pytest.mark.parametrize(
