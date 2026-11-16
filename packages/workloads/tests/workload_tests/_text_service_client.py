@@ -1,4 +1,4 @@
-"""Client-only Llama training checks; eager reference values arrive as data."""
+"""Client-only text training checks; independent reference values arrive as data."""
 
 import importlib.abc
 import json
@@ -30,7 +30,7 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload_io import read_payload
 
 
-def exported(training, trained, initial):
+def exported(training, trained, initial, *, separate_masters=True):
     handle = training.export_weights().result(120)
     with TemporaryDirectory(prefix="shadowspill-llama-weights-") as directory:
         root = handle.download(Path(directory) / "weights").result(60)
@@ -74,18 +74,23 @@ def exported(training, trained, initial):
                     * array.itemsize,
                     strides=tuple(s * array.itemsize for s in view["stride"]),
                 ).copy()
-            assert masters == set(trained), (masters, trained)
+            assert masters == (set(trained) if separate_masters else set()), (
+                masters,
+                trained,
+            )
+            if not separate_masters:
+                assert all(values[name].dtype == np.float32 for name in trained)
             return values
 
 
-def logprobs(training, records, budget):
+def logprobs(training, records, budget, output_name="logprobs"):
     values = [
         Datum(row["inputs"], {"target_tokens": row["loss_inputs"]["target_tokens"]})
         for row in records
     ]
     result = training.forward(values, outputs="logprobs").result(120)
     assert result.loss is None
-    handle = result.outputs["logprobs"]
+    handle = result.outputs[output_name]
     with TemporaryDirectory(prefix="shadowspill-llama-logprobs-") as directory:
         path = handle.download(Path(directory) / "output.ssp").result(60)
         with (
@@ -99,7 +104,12 @@ def logprobs(training, records, budget):
 def check(training, options, index, budget):
     expected = options["oracle"][index]
     initial = options["oracle"][0]["weights"]
-    actual = exported(training, options["trainable"], initial)
+    actual = exported(
+        training,
+        options["trainable"],
+        initial,
+        separate_masters=options.get("separate_fp32_masters", True),
+    )
     for name, value in expected["weights"].items():
         value = np.asarray(value, dtype=np.float32)
         if index == 0 or name not in options["trainable"]:
@@ -112,8 +122,8 @@ def check(training, options, index, budget):
             np.testing.assert_allclose(
                 actual[name] - baseline,
                 value - baseline,
-                rtol=0.03,
-                atol=1e-5,
+                rtol=options.get("weight_rtol", 0.03),
+                atol=options.get("weight_atol", 1e-5),
                 err_msg=name,
             )
     check_logprobs(training, options, index, budget)
@@ -122,11 +132,18 @@ def check(training, options, index, budget):
 
 def check_logprobs(training, options, index, budget):
     for actual_row, expected_row in zip(
-        logprobs(training, options["records"], budget),
+        logprobs(
+            training, options["records"], budget, options.get("output_name", "logprobs")
+        ),
         options["oracle"][index]["logprobs"],
         strict=True,
     ):
-        np.testing.assert_allclose(actual_row, expected_row, rtol=0.003, atol=0.008)
+        np.testing.assert_allclose(
+            actual_row,
+            expected_row,
+            rtol=options.get("logprob_rtol", 0.003),
+            atol=options.get("logprob_atol", 0.008),
+        )
 
 
 def close(client, training):
@@ -165,8 +182,12 @@ def qualify(client, options, budget):
             "forward": ["logprobs"],
         },
         prepare=Preparation(
-            candidates=BuildCandidates(microbatch_sizes=[4, 8]),
-            planning=PlanningOptions(microbatch_counts=[1, 2]),
+            candidates=BuildCandidates(
+                microbatch_sizes=options.get("microbatch_sizes", [4, 8])
+            ),
+            planning=PlanningOptions(
+                microbatch_counts=options.get("microbatch_counts", [1, 2])
+            ),
             profiling=ProfilingOptions(
                 conditioning_seconds=0.001, measurement_seconds=0.002
             ),
@@ -177,7 +198,14 @@ def qualify(client, options, budget):
     initial = training.save_checkpoint(name="initial").result(120)
     records = [Datum(**row) for row in options["records"]]
     observations, whole = [], None
+    base_options = options
     for split in (False, True):
+        options = base_options
+        if "oracles" in base_options:
+            options = {
+                **base_options,
+                "oracle": base_options["oracles"]["split" if split else "whole"],
+            }
         if split:
             training.load_checkpoint(initial.id).result(120)
         check(training, options, 0, budget)
@@ -187,7 +215,10 @@ def qualify(client, options, budget):
                     subset, loss_params=options["controls"]
                 ).result(120)
                 np.testing.assert_allclose(
-                    result.loss, options["loss_parts"][part], rtol=0.003, atol=0.008
+                    result.loss,
+                    options["loss_parts"][part],
+                    rtol=options.get("loss_rtol", 0.003),
+                    atol=options.get("loss_atol", 0.008),
                 )
                 observations.append(result.record.to_dict())
                 # Export/checkpoint is intentionally forbidden while gradients
@@ -199,14 +230,17 @@ def qualify(client, options, budget):
                 records, loss_params=options["controls"], grad_scale=0.25
             ).result(120)
             np.testing.assert_allclose(
-                result.loss, sum(options["loss_parts"]), rtol=0.003, atol=0.008
+                result.loss,
+                options.get("whole_loss", sum(options["loss_parts"])),
+                rtol=options.get("loss_rtol", 0.003),
+                atol=options.get("loss_atol", 0.008),
             )
         assert result.outcome == "completed" and result.completed_updates == 1
         observations.append(result.record.to_dict())
         actual = check(training, options, 1, budget)
         if whole is None:
             whole = actual
-        else:
+        elif options.get("whole_split_equivalence", True):
             for name in options["trainable"]:
                 np.testing.assert_allclose(
                     actual[name], whole[name], rtol=1e-4, atol=3e-6, err_msg=name
@@ -235,17 +269,23 @@ def qualify(client, options, budget):
     observations.append(result.record.to_dict())
     actual = check(resumed, options, 2, budget)
     for name in options["trainable"]:
-        np.testing.assert_allclose(
-            actual[name], final[name], rtol=1e-4, atol=3e-6, err_msg=name
-        )
+        if options.get("exact_resume", False):
+            np.testing.assert_array_equal(actual[name], final[name], err_msg=name)
+        else:
+            np.testing.assert_allclose(
+                actual[name], final[name], rtol=1e-4, atol=3e-6, err_msg=name
+            )
     close(client, resumed)
     return {
         "runs": [training.run_id, resumed.run_id],
         "observations": observations,
-        "whole_split_equivalence": True,
+        "whole_split_equivalence": options.get("whole_split_equivalence", True),
+        "independent_geometry_oracles": "oracles" in options,
         "evaluation_isolation": True,
         "adamw_resume": True,
-        "separate_fp32_masters": True,
+        "separate_fp32_masters": options.get("separate_fp32_masters", True),
+        "same_dtype_master_reuse": not options.get("separate_fp32_masters", True),
+        "exact_resume": options.get("exact_resume", False),
     }
 
 
