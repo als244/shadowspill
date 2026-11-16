@@ -15,16 +15,24 @@ def objective(model, x):
 
 @pytest.mark.cuda
 @pytest.mark.parametrize(
-    "weight_dtype,master_dtype,gradient_dtype",
+    "weight_dtype,master_dtype,gradient_dtype,weights_initialization",
     [
-        (torch.bfloat16, torch.float32, None),
-        (torch.bfloat16, torch.float32, torch.float32),
-        (torch.float32, torch.float64, torch.float64),
+        (torch.bfloat16, torch.float32, None, None),
+        (torch.bfloat16, torch.float32, torch.float32, None),
+        (torch.float32, torch.float64, torch.float64, None),
+        (torch.bfloat16, torch.float32, torch.float32, "master"),
+        (torch.bfloat16, torch.float32, torch.float32, "compute"),
     ],
-    ids=["bf16_native_grad", "bf16_fp32_grad", "fp32_fp64_master"],
+    ids=[
+        "bf16_native_grad",
+        "bf16_fp32_grad",
+        "fp32_fp64_master",
+        "native_master_weights",
+        "native_compute_weights",
+    ],
 )
 def test_mixed_precision_master_update_and_checkpoint(
-    tmp_path, weight_dtype, master_dtype, gradient_dtype
+    tmp_path, weight_dtype, master_dtype, gradient_dtype, weights_initialization
 ):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -60,6 +68,7 @@ def test_mixed_precision_master_update_and_checkpoint(
     opt = torch.optim.AdamW([master], lr=0.001, foreach=False)
     initial = {"weight": reference.weight.detach().clone()}
     expected, parameter_metrics = [], []
+    fresh_state = None
     for index in range(3):
         gradient = torch.zeros_like(
             reference.weight, dtype=gradient_dtype or weight_dtype
@@ -98,6 +107,19 @@ def test_mixed_precision_master_update_and_checkpoint(
             },
         }
         expected.append((outputs, state))
+        if index == 0 and weights_initialization is not None:
+            if weights_initialization == "compute":
+                with torch.no_grad():
+                    master.copy_(reference.weight)
+            fresh_state = {
+                "weight": reference.weight.detach().clone(),
+                "master.weight": master.detach().clone(),
+                **{
+                    f"optimizer.weight.{name}": torch.zeros_like(value)
+                    for name, value in opt.state[master].items()
+                },
+            }
+            opt = torch.optim.AdamW([master], lr=0.001, foreach=False)
     torch.save(
         dict(
             initial=initial,
@@ -107,6 +129,8 @@ def test_mixed_precision_master_update_and_checkpoint(
             accumulate=[False] * 3,
             restore=False,
             parameter_metrics=parameter_metrics,
+            weights_initialization=weights_initialization,
+            fresh_state=fresh_state,
         ),
         tmp_path / "oracle.pt",
     )

@@ -99,7 +99,7 @@ class Controls:
         fill_tensor: Callable[[TensorChunk, torch.Tensor], None],
         *,
         chunk_bytes: int = 64 << 20,
-        restore: bool = False,
+        restore: bool | Collection[str] = False,
         skip_shared: bool = False,
         prefix: str = "",
     ) -> None:
@@ -107,8 +107,13 @@ class Controls:
             if skip_shared and name in self.shared_host:
                 continue
             initializer = self.bindings[name]["initialization"]
+            restoring = (
+                restore
+                if isinstance(restore, bool)
+                else self._name(name, prefix) in restore
+            )
             if (
-                not restore
+                not restoring
                 and initializer
                 and initializer["kind"] in {"constant", "value"}
             ):

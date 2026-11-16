@@ -181,7 +181,7 @@ def visit_tensors(
     chunk_bytes: int,
     *,
     initialize: bool,
-    restore: bool = False,
+    restore: bool | Collection[str] = False,
     prefix: str = "",
     skip_shared: bool = False,
     names: Collection[str] | None = None,
@@ -215,11 +215,14 @@ def visit_tensors(
             write=initialize,
         ):
             request = tensor.chunk(start, prefix)
-            if initialize and not restore and tensor.name.startswith("gradient."):
+            restoring = (
+                restore if isinstance(restore, bool) else request.name in restore
+            )
+            if initialize and not restoring and tensor.name.startswith("gradient."):
                 destination.zero_()
             elif (
                 initialize
-                and not restore
+                and not restoring
                 and tensor.initializer
                 and tensor.initializer["kind"] != "external"
             ):

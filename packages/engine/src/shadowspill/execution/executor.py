@@ -107,7 +107,7 @@ class Executor:
         fill_tensor: Callable[[TensorChunk, torch.Tensor], None],
         *,
         chunk_bytes: int = 64 << 20,
-        restore: bool = False,
+        restore: bool | Collection[str] = False,
         replicated_copies: Mapping[str, tuple[str, GroupRef]] | None = None,
     ) -> None:
         """Fill owned state, then optionally reconstruct declared replicas.
@@ -117,17 +117,34 @@ class Executor:
         untouched: bounded CPU transfers fill them after all local reads pass.
         All workers must participate, including workers with an empty mapping.
         This is initialization, not an optimizer update or checkpoint reshard.
+        ``restore=True`` loads all state. A collection selects canonical tensor
+        names whose saved values override defaults; unselected tensors retain
+        the ordinary fresh initialization behavior.
         """
         self.synchronize()
         self._initialized = False
 
         def fill() -> None:
+            if not isinstance(restore, bool | Collection):
+                raise TypeError(
+                    "restore requires a boolean or collection of tensor names"
+                )
+            selected = (
+                restore
+                if isinstance(restore, bool)
+                else export_selection(self.tensor_chunks(), restore)
+            )
+            assert selected is not None
             path = self._paths[0]
             visit_tensors(
-                path.storage, fill_tensor, chunk_bytes, initialize=True, restore=restore
+                path.storage,
+                fill_tensor,
+                chunk_bytes,
+                initialize=True,
+                restore=selected,
             )
             path.controls.initialize(
-                fill_tensor, chunk_bytes=chunk_bytes, restore=restore
+                fill_tensor, chunk_bytes=chunk_bytes, restore=selected
             )
             for name, extra in self._named_paths.items():
                 visit_tensors(
@@ -135,14 +152,14 @@ class Executor:
                     fill_tensor,
                     chunk_bytes,
                     initialize=True,
-                    restore=restore,
+                    restore=selected,
                     skip_shared=True,
                     prefix=f"plans.{name}.",
                 )
                 extra.controls.initialize(
                     fill_tensor,
                     chunk_bytes=chunk_bytes,
-                    restore=restore,
+                    restore=selected,
                     skip_shared=True,
                     prefix=f"plans.{name}.",
                 )

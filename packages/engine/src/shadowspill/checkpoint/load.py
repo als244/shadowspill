@@ -6,7 +6,7 @@ import os
 import re
 import sys
 import tarfile
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import replace
 from io import BufferedReader
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
@@ -242,17 +242,21 @@ class _Reader:
                 else source.region_elements
             )
             consume(end, source_end)
+            # A completed local cast must not retain its scratch into the later
+            # collective reconstruction, which already owns two bounded chunks.
+            self.scratch = None
 
 
 def _initialize(
     executor: Executor,
     reader: _Reader,
-    manifest: dict[str, Any],
+    manifest: Mapping[str, Any],
     chunks: dict[str, TensorChunk],
     omitted: set[str],
     *,
     chunk_bytes: int,
     fill_tensor: Callable[[TensorChunk, torch.Tensor], None] | None,
+    restore: bool | Collection[str] = True,
 ) -> None:
     """Apply verified selections through the existing Executor initialization."""
     derived = manifest["derived_tensors"]
@@ -274,7 +278,7 @@ def _initialize(
     executor.initialize(
         fill,
         chunk_bytes=chunk_bytes,
-        restore=True,
+        restore=restore,
         replicated_copies={
             name: (item["source"], GroupRef(name, item["groups"]))
             for name, item in gathered.items()

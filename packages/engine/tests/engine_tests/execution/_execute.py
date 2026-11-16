@@ -21,6 +21,8 @@ from engine_tests.execution._trace_checks import check_trace  # noqa: E402
 from engine_tests.spill_pool import spill_pool  # noqa: E402
 from qualification.runtime_evidence import adapter_statistics  # noqa: E402
 from shadowspill import Executor, load_checkpoint, save_checkpoint  # noqa: E402
+from shadowspill.checkpoint import write_weights  # noqa: E402
+from shadowspill.checkpoint.weights_load import load_weights  # noqa: E402
 from shadowspill.memory import PinnedHostPool  # noqa: E402
 from shadowspill.planning.shared import shared_memory  # noqa: E402
 from shadowspill.runtime.occupancy import plan_slices  # noqa: E402
@@ -247,6 +249,18 @@ for index, (outputs, state) in enumerate(oracle["expected"]):
             == before_checkpoint.allocation_callbacks
         )
         assert steady_statistics.free_callbacks == before_checkpoint.free_callbacks
+        if oracle.get("weights_initialization") is not None:
+            weights_path = directory / "weights.ssp"
+            with weights_path.open("wb") as stream:
+                write_weights(
+                    executor,
+                    stream,
+                    chunk_bytes=40,
+                    weights=oracle["weights_initialization"],
+                )
+            executor.initialize(lambda request, chunk: chunk.zero_(), restore=True)
+            load_weights(executor, weights_path, chunk_bytes=28)
+            assert_state(executor, oracle["fresh_state"])
 if plan.program.bindings["kind"] == "forward":
     first = executor.run(
         args=[oracle["examples"][0][0]], kwargs=[oracle["examples"][0][1]]
