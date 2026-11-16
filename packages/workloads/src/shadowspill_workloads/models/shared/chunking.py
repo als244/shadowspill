@@ -95,6 +95,10 @@ def is_barrier(target):
     } or any(
         marker in target
         for marker in (
+            # Keep the whole embedding prologue separate from token-local
+            # projections/norms. Otherwise a frozen embedding can prevent their
+            # flattened token/head statistics from acquiring a chunk domain.
+            "embedding",
             "flash_attention",
             "scaled_dot_product",
             "linear_attention",
