@@ -148,6 +148,22 @@ class ResolvedModel:
             self.definition.config, self.config if build is None else build.config
         )
         model = self.definition.create(configured)
+        overrides = (
+            {}
+            if self.settings is None
+            else self.settings.precision.get("parameter_dtypes", {})
+        )
+        if self.definition.parameter_dtypes or overrides:
+            from shadowspill.pytorch.precision import (
+                apply_parameter_dtypes,
+                parameter_dtypes,
+            )
+
+            apply_parameter_dtypes(
+                model,
+                defaults=self.definition.parameter_dtypes,
+                overrides=parameter_dtypes(overrides),
+            )
         if self.settings is not None and self.settings.trainable is not None:
             from shadowspill.pytorch.trainable import select_trainable
 

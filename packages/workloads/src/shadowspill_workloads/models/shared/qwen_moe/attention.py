@@ -4,7 +4,6 @@ import mlops
 import torch
 from torch import nn
 
-from ..decay import DecayParameters
 from ..delta_net import GatedDeltaNet as _DeltaNet
 from ..norms import GatedRMSNorm
 from .initialization import Conv1d, Linear
@@ -94,7 +93,11 @@ class GatedDeltaNet(_DeltaNet):
     """Reuse the packed MLOps recurrence with the published initial state/norm."""
 
     def __init__(self, config):
-        DecayParameters.__init__(self, config.lin_v_heads)
+        nn.Module.__init__(self)
+        self.A_log = nn.Parameter(torch.empty(config.lin_v_heads, dtype=torch.float32))
+        self.dt_bias = nn.Parameter(
+            torch.empty(config.lin_v_heads, dtype=torch.float32)
+        )
         self.config = config
         self.w_qkvz = Linear(
             config.d_model, config.qkvz_width, std=config.initializer_range

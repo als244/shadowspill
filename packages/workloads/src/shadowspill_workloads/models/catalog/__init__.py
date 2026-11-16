@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from shadowspill_workloads.models.families import families as registered_families
+from shadowspill_workloads.models.families import family as registered_family
 from shadowspill_workloads.providers import ModelImplementation
 
 from .entry import IMPLEMENTATIONS, Entry, Geometry
@@ -107,6 +108,7 @@ def build_on_meta(
         dtype=dtype,
         lora=None if lora is None else dict(lora),
         device=device,
+        parameter_dtypes=registered_family(item.family).parameter_dtypes,
         config=item.config(**changes),
     )
 
@@ -137,6 +139,7 @@ def build_from_checkpoint(
         dtype=dtype,
         lora=None if lora is None else dict(lora),
         device=device,
+        parameter_dtypes=registered_family(family).parameter_dtypes,
         config=configuration,
     )
 

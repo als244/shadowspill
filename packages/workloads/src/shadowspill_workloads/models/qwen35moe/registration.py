@@ -14,6 +14,10 @@ FAMILY = Family(
     implementations=("mlops",),
     mixture=True,
     expert_parallel=True,
+    parameter_dtypes={
+        "blocks.*.mixer.A_log": "float32",
+        "blocks.*.mixer.dt_bias": "float32",
+    },
     checkpoint_reader="Qwen35MoECheckpoint",
     checkpoint_types=("qwen3_5_moe", "qwen3_5_moe_text"),
     initialization=ParameterInitialization(

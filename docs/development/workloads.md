@@ -44,7 +44,9 @@ in the engine.
    match, and keep an independent small reference for numerical checks.
 2. Add `checkpoint.py` for pretrained weight mappings and bounded copying.
    Add `lora.py` if adapter targeting depends on the architecture. Keep parameter
-   storage precision explicit.
+   storage precision explicit. Declare selective defaults in
+   `FAMILY.parameter_dtypes` and pass them into the public `ModelDefinition`;
+   shared setup applies the [dtype policy](../python/advanced/precision.md).
 3. Supply a public model-registration hook. Reuse the existing input schema,
    adapter, objectives and preparation hooks when they describe the model's inputs
    correctly. A family-specific `training.py` supplies settings and hooks; it

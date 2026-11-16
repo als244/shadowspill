@@ -16,6 +16,7 @@ These guides cover optional controls, custom definitions and detailed diagnostic
 
 | Task | Guide |
 | --- | --- |
+| Override model tensor dtypes | [Parameter precision](precision.md) |
 | Select microbatches, orderings, chunk sizes and retention candidates | [Training configuration](../../../packages/workloads/src/shadowspill_workloads/recipes/configuration.md) |
 | Separate checkpoint regions from execution chunks | [Partitioning example](../../examples/custom-partitioning.md), [build policies](../api/frontend.md) |
 | Replan saved profiles across budgets and search choices | [Reusable planning](../../examples/reusable-planning.md), [planning API](../api/planning.md) |

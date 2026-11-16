@@ -103,8 +103,9 @@ uses the same registry and its existing model. Importing either description
 requires no Torch import; model construction is explicit.
 
 `llama3` supplies packed preparation, with BF16 compute and FP32
-gradients by default. `Model.precision` accepts `compute_dtype`, `grad_dtype` and `lora_dtype`
-(FP32 or BF16); optimizer masters are a separate optimizer setting. `config`
+gradients by default. Its `Model.precision` accepts `compute_dtype`, `grad_dtype` and `lora_dtype`
+(FP32 or BF16). All models also accept the generic
+[`parameter_dtypes` map](precision.md); optimizer masters are a separate setting. `config`
 selects a named `preset` (default `tiny`) and optional `architecture` overrides.
 LoRA uses the family's existing targets unless supplied explicitly; its current
 provider supports zero dropout. Initialization supports explicit random weights,

@@ -4,6 +4,7 @@ from functools import partial
 
 from shadowspill.training.definitions import ModelDefinition, PreparationDefinition
 from shadowspill_workloads.inputs.text import preparation as inputs
+from shadowspill_workloads.models.families import family as family_definition
 
 from .. import training_options
 from ..moe_provider import PROVIDERS, gradient_destination_rules
@@ -84,6 +85,7 @@ def register(registry, settings):
             else None,
             initialization=configuration.initialization,
             temporary_initialization=configuration.initialization,
+            parameter_dtypes=family_definition(family).parameter_dtypes,
         ),
         source=source,
     )

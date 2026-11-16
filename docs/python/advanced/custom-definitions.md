@@ -72,6 +72,13 @@ resources are optional hooks; add them when your architecture requires them.
 See [input adapters](definitions.md#input-adapters) and
 [build descriptions](definitions.md#geometry-aware-model-builds).
 
+If some tensors need a different storage dtype, declare defaults with
+`ModelDefinition(parameter_dtypes={"projection.bias": "float32"}, ...)` during
+registration. Users can override them with `Model.precision["parameter_dtypes"]`.
+The shared setup applies this before initialization and capture; no special
+model base class or casting hook is needed. See [parameter precision](precision.md)
+for matching rules and the distinction between storage and computation.
+
 ## 3. Describe initial weights
 
 Model construction also runs on storage-free tensors during preparation. Initial

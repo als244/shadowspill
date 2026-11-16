@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
+from shadowspill.pytorch.precision import parameter_dtypes
 from shadowspill_client import Model
 from shadowspill_client._records import Value, mapping
 from shadowspill_client.protocol.controls import ControlSchema
@@ -51,6 +52,8 @@ class ModelDefinition:
     choices and translates them into the same typed constructor config. It must
     be stable when resolved defaults are supplied again. Common parameter-name
     globs apply trainable selection after construction, including tied aliases.
+    ``parameter_dtypes`` supplies storage defaults for floating parameters and
+    buffers; shared setup applies caller overrides before initialization/capture.
     Weight initialization is separate. ``default_parallelism`` describes named
     logical placement without reserving workers or constructing the model.
     """
@@ -78,9 +81,13 @@ class ModelDefinition:
     gradient_destination_rules: (
         Callable[[Any], Sequence[GradientDestinationRule]] | None
     ) = None
+    parameter_dtypes: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
+        object.__setattr__(
+            self, "parameter_dtypes", parameter_dtypes(self.parameter_dtypes)
+        )
         if not callable(self.config) or not callable(self.create):
             raise TypeError("model config and create must be callable")
         if not isinstance(self.inputs, InputSchema) and not callable(self.inputs):

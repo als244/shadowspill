@@ -7,13 +7,16 @@ import mlops
 import torch
 import torch.nn as nn
 
-from .decay import DecayParameters
 from .norms import GatedRMSNorm
 
 
-class GatedDeltaNet(DecayParameters):
+class GatedDeltaNet(nn.Module):
     def __init__(self, config) -> None:
-        super().__init__(config.lin_v_heads)
+        super().__init__()
+        self.A_log = nn.Parameter(torch.empty(config.lin_v_heads, dtype=torch.float32))
+        self.dt_bias = nn.Parameter(
+            torch.empty(config.lin_v_heads, dtype=torch.float32)
+        )
         self.config = config
         self.w_qkvz = nn.Linear(config.d_model, config.qkvz_width, bias=False)
         self.w_ba = nn.Linear(config.d_model, 2 * config.lin_v_heads, bias=False)

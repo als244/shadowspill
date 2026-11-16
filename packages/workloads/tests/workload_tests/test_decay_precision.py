@@ -1,4 +1,4 @@
-"""Dense and MoE decay storage survives construction, loading and model casts."""
+"""Dense and MoE decay storage follows the shared setup policy."""
 
 from dataclasses import replace
 
@@ -6,6 +6,7 @@ import pytest
 import torch
 from torch import nn
 
+from shadowspill.pytorch.precision import apply_parameter_dtypes
 from shadowspill_workloads.models.qwen35.config import PRESETS as DENSE
 from shadowspill_workloads.models.qwen35.implementations.pytorch import linear_attention
 from shadowspill_workloads.models.qwen35moe.config import PRESETS as MOE
@@ -52,7 +53,9 @@ def test_meta_construction_and_materialization_preserve_decay_precision(factory,
     assert torch.isfinite(module.A_log).all() and torch.isfinite(module.dt_bias).all()
 
 
-def test_model_cast_preserves_loaded_decay_values_gradients_and_small_updates(factory):
+def test_shared_policy_preserves_loaded_decay_values_gradients_and_small_updates(
+    factory,
+):
     module = factory()
     original = {
         "A_log": torch.tensor([0.12345679, 0.23456789, 0.34567891, 0.45678912]),
@@ -63,11 +66,18 @@ def test_model_cast_preserves_loaded_decay_values_gradients_and_small_updates(fa
     for name in original:
         getattr(module, name).grad = gradients.clone()
 
-    # Exercise recursive casts through a parent, including a repeated cast.
+    # The policy converts each original tensor directly to its selected dtype.
     parent = nn.Sequential(module)
-    for dtype in (torch.bfloat16, torch.float16, torch.float64, torch.bfloat16):
-        parent.to(dtype=dtype)
-        assert module.w_qkvz.weight.dtype == dtype
+    for dtype in ("bfloat16", "float16", "float64", "bfloat16"):
+        apply_parameter_dtypes(
+            parent,
+            defaults={
+                "*": dtype,
+                "0.A_log": "float32",
+                "0.dt_bias": "float32",
+            },
+        )
+        assert module.w_qkvz.weight.dtype == getattr(torch, dtype)
         for name, expected in original.items():
             value = getattr(module, name)
             assert value.dtype == value.grad.dtype == torch.float32
@@ -92,10 +102,18 @@ def test_bfloat16_gpu_recurrence_matches_reference_decay_gradients(factory):
     import mlops
 
     torch.manual_seed(531)
-    module = factory().to(device="cuda", dtype=torch.bfloat16)
-    reference = linear_attention.GatedDeltaNet(module.config).to(
-        device="cuda", dtype=torch.bfloat16
-    )
+    module = factory()
+    reference = linear_attention.GatedDeltaNet(module.config)
+    for model in (module, reference):
+        apply_parameter_dtypes(
+            model,
+            defaults={
+                "*": "bfloat16",
+                "A_log": "float32",
+                "dt_bias": "float32",
+            },
+        )
+        model.to(device="cuda")
     reference.load_state_dict(module.state_dict())
     hidden = torch.randn(1, 8, 32, device="cuda", dtype=torch.bfloat16)
     tangent = torch.randn_like(hidden)

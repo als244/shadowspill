@@ -1,7 +1,7 @@
 """CPU-only declarations shared by the built-in family registrations."""
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from shadowspill_workloads.providers import ModelImplementation
@@ -36,3 +36,11 @@ class Family:
     initialization: ParameterInitialization | None = None
     training: str | None = None
     validate_pretrained: Callable[[dict, Any], None] | None = None
+    parameter_dtypes: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self):
+        from shadowspill.pytorch.precision import parameter_dtypes
+
+        object.__setattr__(
+            self, "parameter_dtypes", parameter_dtypes(self.parameter_dtypes)
+        )

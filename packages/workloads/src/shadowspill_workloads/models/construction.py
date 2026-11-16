@@ -8,7 +8,7 @@ declared tensor shards through the bounded Executor initialization interface.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import torch
@@ -20,6 +20,7 @@ def build_on_meta(
     dtype: str | None = None,
     lora: dict[str, Any] | None = None,
     device: str = "meta",
+    parameter_dtypes: Mapping[str, str] | None = None,
     **arguments: Any,
 ) -> nn.Module:
     """``model(**arguments)`` built on ``device`` (``meta`` unless another is
@@ -43,6 +44,10 @@ def build_on_meta(
                 )
 
                 result = configure_lora(result, **lora)
+            if parameter_dtypes:
+                from shadowspill.pytorch.precision import apply_parameter_dtypes
+
+                apply_parameter_dtypes(result, defaults=parameter_dtypes)
         return result
     finally:
         torch.set_default_dtype(previous_dtype)

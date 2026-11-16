@@ -21,6 +21,10 @@ FAMILY = Family(
     checkpoint_reader="Qwen35Checkpoint",
     checkpoint_types=("qwen3_5", "qwen3_5_text"),
     initialization=ParameterInitialization(),
+    parameter_dtypes={
+        "blocks.*.mixer.A_log": "float32",
+        "blocks.*.mixer.dt_bias": "float32",
+    },
     training="shadowspill_workloads.models.qwen35.training:register",
     validate_pretrained=partial(validate_decoder, attention_gate=True),
 )

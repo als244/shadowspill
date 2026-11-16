@@ -5,7 +5,8 @@ MLP in every block. `full_attention_interval=4` means three DeltaNet blocks,
 then one full-attention block. This family has no routed experts.
 
 The recurrent decay parameters `A_log` and `dt_bias` keep FP32 storage and
-gradients when the surrounding projections use BF16, as in the MoE variant.
+gradients by default when the surrounding projections use BF16, as in the MoE
+variant. Family registration declares these defaults for shared training setup.
 
 ## Shapes
 

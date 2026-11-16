@@ -1,8 +1,10 @@
 """Structural options belong to installed definitions, never model-name branches."""
 
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from typing import Any
 
+from shadowspill.pytorch.precision import parameter_dtypes
 from shadowspill_client import Model, Optimizer
 from shadowspill_client._records import Value, mapping
 
@@ -18,6 +20,16 @@ def constructor_config(
     ordinary settings and must be stable when those defaults are supplied again.
     Initial weight loading stays separate from model construction/capture.
     """
+    if isinstance(settings, Model) and "parameter_dtypes" in settings.precision:
+        parameter_dtypes(settings.precision["parameter_dtypes"])
+        settings = replace(
+            settings,
+            precision={
+                key: value
+                for key, value in settings.precision.items()
+                if key != "parameter_dtypes"
+            },
+        )
     if configure is not None:
         return mapping(configure(settings), "configured definition settings")
     fields = (
