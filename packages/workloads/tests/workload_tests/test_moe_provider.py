@@ -2,7 +2,10 @@
 
 import pytest
 
+from shadowspill.artifacts.program import Program
+from shadowspill.ir import DeviceSpec
 from shadowspill.training.definitions import load_registry
+from shadowspill.training.preparation.allocation_coverage import allocation_coverage
 from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_workloads.definitions import moe_provider, source
 from workload_tests.test_moe_definitions import FAMILIES, prepared
@@ -32,6 +35,25 @@ def test_prepared_moe_family_retains_provider_lifecycle_and_allocation_scope(
         assert len(build.operator_preparation) == (dtype == "bfloat16")
         for item in build.operator_preparation:
             assert dict(item.options) == available[item.factory]
+        # Exercise the actual bound-task check before reserving a GPU. This
+        # description-only Program isolates preparation activation from kernels.
+        program = Program(
+            devices=(DeviceSpec("rank0", "worker", "cuda", 0),),
+            alias_groups=(),
+            objects=(),
+            tasks=(),
+            task_definitions=(),
+            bindings={
+                "operator_preparation": {
+                    "providers": [item.to_dict() for item in build.operator_preparation]
+                }
+            },
+        )
+        proof = allocation_coverage(template, program)
+        assert proof["preparations"] == {
+            item.factory: build.allocation_invariants[item.factory]
+            for item in build.operator_preparation
+        }
         sonic = {
             name: contract
             for name, contract in build.allocation_invariants.items()

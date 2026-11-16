@@ -44,4 +44,16 @@ def preparations(dtype):
 
 
 def allocations(dtype):
-    return {**CONTRACTS, **SONIC_CONTRACTS} if dtype == "bfloat16" else CONTRACTS
+    if dtype != "bfloat16":
+        return CONTRACTS
+    return {
+        **CONTRACTS,
+        **SONIC_CONTRACTS,
+        # Binding loads all saved objects before execution. Activation only
+        # checks their lifetime/context and selects the bound calls/choices;
+        # it neither reads tensor values nor allocates device storage. The
+        # unsupported-device binding is an empty context with the same guarantee.
+        "mlops.preparation.available:factory": (
+            "shadowspill/sonicmoe-prepared-activation@1"
+        ),
+    }
