@@ -82,6 +82,10 @@ def is_barrier(target):
     # earlier stages' summaries. Keep that aggregation outside a row region.
     return target in {
         "aten.stack.default",
+        # Packed sequence offsets and their token lookup use complete boundary
+        # arrays. Keep their construction outside token-local execution loops.
+        "aten.cumsum.default",
+        "aten.searchsorted.Tensor",
         # Frozen compressed dense weights are shared by all token slices.
         # Decode once outside their loops, not once per chunk.
         "mlops_seqmoe.decode_weight.default",
