@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
-from functools import partial
-from math import prod
 from pathlib import Path
 from threading import Lock
 from typing import Any, BinaryIO
@@ -17,15 +15,15 @@ from shadowspill.artifacts._values import freeze
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.tensors import TensorChunk, export_selection
 
-from .compatibility import RankedTensor, describe_family, require_compatible
+from .compatibility import describe_family, require_compatible
 from .frozen import omitted_parameters
 from .inspection import MANIFEST_LIMIT
 from .mapping import LogicalView
-from .reading import RankReader, read_rank
+from .reading import read_rank
+from .redistribution import transfer_family
 from .staging import TensorStaging, stage_tensors
 from .state import PlanState
 from .tensors import region_bytes
-from .transfer import SourceView, TargetView, transfer_tensor
 from .weights import WeightRepresentation, select_weights
 
 type InitializeTemporary = Callable[[int, TensorChunk, torch.Tensor], None]
@@ -73,35 +71,6 @@ class ConvertedState:
     weights: WeightRepresentation
     frozen_state_id: str | None
     source_metadata: Mapping[str, Any]
-
-
-def _source(entry: RankedTensor, readers: Sequence[RankReader]) -> SourceView | None:
-    item = entry.tensor
-    if item.archive is None or not item.view.region_elements:
-        return None
-    reader = readers[entry.rank]
-    name = item.archive.name
-    if name in reader.manifest["omitted_parameters"]:
-        return None
-    view = item.view
-    if name not in reader.chunks:
-        if item.tensor.identity.role not in {"parameter", "master"}:
-            raise ValueError("checkpoint logical state has no saved representation")
-        name = reader.manifest["derived_tensors"].get(name) or reader.manifest[
-            "gathered_tensors"
-        ].get(name, {}).get("source")
-        if name not in reader.chunks:
-            # Empty selected shards have no file member; other logical ranks
-            # must still supply complete coverage of the authoritative state.
-            return None
-        selected = reader.chunks[name]
-        view = replace(
-            view,
-            storage_elements=selected.storage_elements,
-            region_offset=selected.region_offset,
-            region_elements=region_bytes(selected) // selected.dtype.itemsize,
-        )
-    return SourceView(reader, reader.chunks[name], view)
 
 
 def conversion_tensors(
@@ -214,44 +183,14 @@ def convert_state(
                 max_disk_bytes=max_disk_bytes,
             )
         )
-        for identity, entries in target_family.tensors.items():
-            selected = [
-                entry
-                for entry in entries
-                if entry.tensor.archive is not None
-                and (entry.rank, entry.tensor.archive.name) in chunks
-            ]
-            if not selected or not prod(selected[0].tensor.view.shape):
-                continue
-            source_views = [
-                source
-                for entry in source_family.tensors[identity]
-                if (source := _source(entry, readers)) is not None
-            ]
-            if not source_views:
-                raise ValueError(
-                    f"checkpoint state requires an unavailable dependency: {identity}"
-                )
-            destinations = []
-            for entry in selected:
-                assert entry.tensor.archive is not None
-                key = entry.rank, entry.tensor.archive.name
-                destinations.append(
-                    TargetView(
-                        entry.tensor.view,
-                        entry.tensor.archive.dtype,
-                        partial(staging.write, key),
-                    )
-                )
-            transfer_tensor(
-                source_views,
-                destinations,
-                scratch_bytes=transfer_budget,
-                transformation="scalar_cast"
-                if identity.role in {"parameter", "master"}
-                and source_views[0].chunk.dtype != destinations[0].dtype
-                else "identity",
-            )
+        transfer_family(
+            source_family.tensors,
+            target_family.tensors,
+            readers,
+            chunks,
+            staging,
+            scratch_bytes=transfer_budget,
+        )
         for key in temporary:
             assert initialize_temporary is not None
             chunk = chunks[key]
