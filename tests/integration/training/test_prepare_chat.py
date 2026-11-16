@@ -178,6 +178,26 @@ def test_prepared_files_carry_a_mask_a_run_trains_by(tokenizer, tmp_path):
     )
 
 
+def test_generation_decoration_sharing_content_prefix_cannot_consume_content(tokenizer):
+    tokenizer.chat_template = (
+        "{% for m in messages %}<|{{ m['role'] }}|>"
+        "{% if m['role'] == 'assistant' and loop.last %}<think>{% endif %}"
+        "{{ m['content'] }}<|end|>{% endfor %}"
+        "{% if add_generation_prompt %}<|assistant|><think>{% endif %}"
+    )
+    messages = [
+        {"role": "user", "content": "write HTML"},
+        {"role": "assistant", "content": "<!DOCTYPE html>"},
+        {"role": "user", "content": "thanks"},
+        {"role": "assistant", "content": "welcome"},
+    ]
+    text, spans = render(tokenizer, messages)
+    assert [text[a:b] for a, b in spans] == [
+        "<!DOCTYPE html><|end|>",
+        "welcome<|end|>",
+    ]
+
+
 def test_a_template_ending_turns_with_the_end_of_text_id_gets_another_separator(
     tokenizer, tmp_path
 ):

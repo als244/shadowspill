@@ -97,21 +97,27 @@ def render(
         prompt = tokenizer.apply_chat_template(
             messages[:index], tokenize=False, add_generation_prompt=True
         )
-        start = common_prefix(text, prompt)
+        prefix = tokenizer.apply_chat_template(
+            messages[:index], tokenize=False, add_generation_prompt=False
+        )
+        boundary = common_prefix(text, prefix)
         content = str(message["content"])
         # A template may trim the content's surrounding whitespace.
-        found = [
+        found = sorted(
             (at, candidate)
             for candidate in (content, content.strip())
-            if candidate and (at := text.find(candidate, start)) >= 0
-        ]
-        if not found or tail in text[start : found[0][0]]:
+            if candidate and (at := text.find(candidate, boundary)) >= 0
+        )
+        if not found or tail in text[boundary : found[0][0]]:
             raise ValueError(
                 "the chat template does not render the assistant's content "
                 "verbatim after its generation prompt; the assistant's tokens "
                 "cannot be located"
             )
         at, candidate = found[0]
+        # A generation decoration may share a prefix with the actual content:
+        # e.g. "<think>" versus "<!DOCTYPE". Never consume those content bytes.
+        start = min(common_prefix(text, prompt), at)
         end = at + len(candidate)
         if not text.startswith(tail, end):
             raise ValueError(
