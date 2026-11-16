@@ -5,6 +5,7 @@ from functools import partial
 from shadowspill.training.definitions import ModelDefinition, PreparationDefinition
 from shadowspill_workloads.inputs.text import preparation as inputs
 
+from .. import training_options
 from ..source import definition_source
 from . import configuration
 
@@ -15,6 +16,7 @@ def register(registry):
     source = definition_source(
         (
             "definitions/llama",
+            "definitions/training_options.py",
             "definitions/text_allocations.py",
             "inputs/text/preparation.py",
             "initialization",
@@ -49,9 +51,9 @@ def register(registry):
             capabilities=("target_logprobs",),
             input_adapter=inputs.adapter,
             preparation=PRESET,
-            configure=configuration.configure,
+            configure=partial(training_options.configure, label="Llama"),
             build=configuration.build,
-            capture_context=configuration.capture_context,
+            capture_context=training_options.capture_context,
             initialization=configuration.initialization,
             temporary_initialization=configuration.initialization,
         ),

@@ -1,9 +1,7 @@
 """Installed packed OLMoE model; secondary objectives remain caller-selected."""
 
-from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from functools import partial
-from importlib.util import find_spec
 from math import isfinite
 
 from shadowspill.training.definitions import (
@@ -11,13 +9,11 @@ from shadowspill.training.definitions import (
     ModelDefinition,
     PreparationDefinition,
 )
-from shadowspill_client import LoRA
-from shadowspill_client._records import integer, plain
 from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.inputs.text import preparation as inputs
 from shadowspill_workloads.models.olmoe.config import PRESETS, Config
 
-from . import expert_parallel, moe_provider
+from . import expert_parallel, moe_provider, training_options
 from .source import definition_source
 
 PRESET = "shadowspill/olmoe_packed@1"
@@ -64,38 +60,9 @@ class Settings:
             raise ValueError(
                 "the installed OLMoE definition requires mlops or mlops_ep"
             )
-        for name in ("compute_dtype", "grad_dtype", "lora_dtype"):
-            if getattr(self, name) not in ("float32", "bfloat16"):
-                raise ValueError(f"unsupported OLMoE {name}")
-        if self.lora is not None:
-            lora = LoRA.from_dict(self.lora)
-            if lora.dropout:
-                raise ValueError("the installed OLMoE LoRA provider requires dropout=0")
-            object.__setattr__(self, "lora", lora.to_dict())
-        if self.lora_seed is not None:
-            integer(self.lora_seed, "lora_seed")
-            if self.lora is None:
-                raise ValueError("lora_seed requires LoRA")
+        training_options.validate(self, label="OLMoE")
         object.__setattr__(self, "architecture", asdict(config))
         expert_parallel.validate(self)
-
-
-def configure(model):
-    values = plain(model.config)
-    overrides = dict(model.precision)
-    if unknown := overrides.keys() - {"compute_dtype", "grad_dtype", "lora_dtype"}:
-        raise ValueError(f"unsupported OLMoE precision: {sorted(unknown)}")
-    if model.implementation is not None:
-        overrides["implementation"] = model.implementation
-    if model.lora is not None:
-        overrides["lora"] = model.lora.to_dict()
-    for name, value in overrides.items():
-        if name in values and values[name] != value:
-            raise ValueError(f"conflicting OLMoE setting: {name}")
-        values[name] = value
-    if find_spec("mlops") is None:
-        raise ValueError("packed OLMoE requires the installed MLOps provider")
-    return values
 
 
 def create(config):
@@ -120,18 +87,7 @@ def create(config):
         model = Model(Config(**config.architecture))
     finally:
         torch.set_default_dtype(previous)
-    if config.lora is not None:
-        from shadowspill_workloads.lora import configure_lora
-
-        lora = LoRA.from_dict(config.lora)
-        model = configure_lora(
-            model,
-            rank=lora.rank,
-            alpha=lora.alpha,
-            targets=lora.targets,
-            factor_dtype=config.lora_dtype,
-        )
-    return model
+    return training_options.adapt(model, config)
 
 
 def build(config, context):
@@ -147,15 +103,6 @@ def build(config, context):
     )
 
 
-@contextmanager
-def capture_context(config):
-    import torch
-    from mlops.dispatch import weight_gradients_at
-
-    with weight_gradients_at(getattr(torch, config.grad_dtype)):
-        yield
-
-
 def initialization(config, context):
     if config.implementation == "mlops_ep":
         return expert_parallel.initialization(
@@ -168,6 +115,7 @@ def register(registry):
     source = definition_source(
         (
             "definitions/olmoe.py",
+            "definitions/training_options.py",
             "definitions/expert_parallel.py",
             "definitions/expert_allocations.py",
             "definitions/moe_allocations.py",
@@ -211,9 +159,9 @@ def register(registry):
             capabilities=("target_logprobs", "router_statistics"),
             input_adapter=inputs.adapter,
             preparation=PRESET,
-            configure=configure,
+            configure=partial(training_options.configure, label="OLMoE"),
             build=build,
-            capture_context=capture_context,
+            capture_context=training_options.capture_context,
             gradient_destination_rules=moe_provider.gradient_destination_rules,
             initialization=initialization,
             temporary_initialization=initialization,

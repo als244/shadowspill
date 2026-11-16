@@ -2,6 +2,9 @@
 
 from types import SimpleNamespace
 
+import pytest
+
+from shadowspill.training.definitions import load_registry
 from shadowspill_workloads.definitions import source
 
 
@@ -55,3 +58,28 @@ def test_absent_provider_and_single_extension_have_distinct_sources(
         assert source._provider_digest("test-provider") != absent
     finally:
         source._provider_digest.cache_clear()
+
+
+def test_shared_training_options_changes_invalidate_every_using_model(monkeypatch):
+    names = ("llama3", "qwen3moe", "qwen35moe", "olmoe", "regression")
+    original = load_registry(["shadowspill-workloads"])
+    saved = {
+        name: original.resolve_model(f"shadowspill/{name}@1").source for name in names
+    }
+    add = source._add
+
+    def changed(digest, name, path):
+        add(digest, name, path)
+        if name == "definitions/training_options.py":
+            digest.update(b"changed shared implementation")
+
+    monkeypatch.setattr(source, "_add", changed)
+    current = load_registry(["shadowspill-workloads"])
+    for name in names:
+        definition = f"shadowspill/{name}@1"
+        if name == "regression":
+            assert current.resolve_model(definition).source == saved[name]
+        else:
+            assert current.resolve_model(definition).source != saved[name]
+            with pytest.raises(ValueError, match="model definition source changed"):
+                current.resolve_model(definition, source=saved[name])

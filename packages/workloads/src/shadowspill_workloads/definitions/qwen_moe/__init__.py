@@ -5,6 +5,7 @@ from functools import partial
 from shadowspill.training.definitions import ModelDefinition, PreparationDefinition
 from shadowspill_workloads.inputs.text import preparation as inputs
 
+from .. import training_options
 from ..moe_provider import PROVIDERS, gradient_destination_rules
 from ..source import definition_source
 from . import configuration
@@ -17,6 +18,7 @@ def register(registry):
         source = definition_source(
             (
                 "definitions/qwen_moe",
+                "definitions/training_options.py",
                 "definitions/expert_parallel.py",
                 "definitions/expert_allocations.py",
                 "definitions/moe_allocations.py",
@@ -61,9 +63,9 @@ def register(registry):
                 capabilities=("target_logprobs", "router_statistics"),
                 input_adapter=inputs.adapter,
                 preparation=preset,
-                configure=configuration.configure,
+                configure=partial(training_options.configure, label="Qwen"),
                 build=configuration.build,
-                capture_context=configuration.capture_context,
+                capture_context=training_options.capture_context,
                 gradient_destination_rules=gradient_destination_rules,
                 initialization=configuration.initialization,
                 temporary_initialization=configuration.initialization,

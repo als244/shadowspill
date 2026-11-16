@@ -1,21 +1,17 @@
 """CPU Qwen settings; model and tensor providers load only in build workers."""
 
-from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from importlib import import_module
-from importlib.util import find_spec
 from math import isfinite
 from types import ModuleType
 from typing import ClassVar
 
 from shadowspill.training.definitions import ModelBuild
-from shadowspill_client import LoRA
-from shadowspill_client._records import integer, plain
 from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.models.qwen3moe import config as qwen3
 from shadowspill_workloads.models.qwen35moe import config as qwen35
 
-from .. import expert_parallel, moe_provider
+from .. import expert_parallel, moe_provider, training_options
 
 
 @dataclass(frozen=True)
@@ -78,18 +74,7 @@ class Settings:
         config = replace(self.catalog.PRESETS[self.preset], **self.architecture)
         if self.implementation not in ("mlops", "mlops_ep"):
             raise ValueError("the installed Qwen definitions require mlops or mlops_ep")
-        for name in ("compute_dtype", "grad_dtype", "lora_dtype"):
-            if getattr(self, name) not in ("float32", "bfloat16"):
-                raise ValueError(f"unsupported Qwen {name}")
-        if self.lora is not None:
-            lora = LoRA.from_dict(self.lora)
-            if lora.dropout:
-                raise ValueError("the installed Qwen LoRA provider requires dropout=0")
-            object.__setattr__(self, "lora", lora.to_dict())
-        if self.lora_seed is not None:
-            integer(self.lora_seed, "lora_seed")
-            if self.lora is None:
-                raise ValueError("lora_seed requires LoRA")
+        training_options.validate(self, label="Qwen")
         object.__setattr__(self, "architecture", asdict(config))
         expert_parallel.validate(self)
 
@@ -102,24 +87,6 @@ class Qwen3Settings(Settings):
 class Qwen35Settings(Settings):
     family = "qwen35moe"
     catalog = qwen35
-
-
-def configure(model):
-    values = plain(model.config)
-    overrides = dict(model.precision)
-    if unknown := overrides.keys() - {"compute_dtype", "grad_dtype", "lora_dtype"}:
-        raise ValueError(f"unsupported Qwen precision: {sorted(unknown)}")
-    if model.implementation is not None:
-        overrides["implementation"] = model.implementation
-    if model.lora is not None:
-        overrides["lora"] = model.lora.to_dict()
-    for name, value in overrides.items():
-        if name in values and values[name] != value:
-            raise ValueError(f"conflicting Qwen setting: {name}")
-        values[name] = value
-    if find_spec("mlops") is None:
-        raise ValueError("packed Qwen requires the installed MLOps provider")
-    return values
 
 
 def create(config):
@@ -147,18 +114,7 @@ def create(config):
         model = model_class(config.catalog.Config(**config.architecture))
     finally:
         torch.set_default_dtype(previous)
-    if config.lora is not None:
-        from shadowspill_workloads.lora import configure_lora
-
-        lora = LoRA.from_dict(config.lora)
-        model = configure_lora(
-            model,
-            rank=lora.rank,
-            alpha=lora.alpha,
-            targets=lora.targets,
-            factor_dtype=config.lora_dtype,
-        )
-    return model
+    return training_options.adapt(model, config)
 
 
 def build(config, context):
@@ -172,15 +128,6 @@ def build(config, context):
         operator_preparation=moe_provider.preparations(config.compute_dtype),
         allocation_invariants=moe_provider.allocations(config.compute_dtype),
     )
-
-
-@contextmanager
-def capture_context(config):
-    import torch
-    from mlops.dispatch import weight_gradients_at
-
-    with weight_gradients_at(getattr(torch, config.grad_dtype)):
-        yield
 
 
 def initialization(config, context):
