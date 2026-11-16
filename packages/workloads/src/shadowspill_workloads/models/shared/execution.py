@@ -150,8 +150,14 @@ class TextExecutionChunks:
     inner: bool = False
 
     def configure_stage(self, stage):
+        # The target-logprob head already bounds each projection block. Its
+        # forward-only export retains cross entropy with complete-microbatch
+        # reductions; keep that region whole, as for a terminal training stage.
         if stage.terminal or any(
-            is_barrier(op) or "embedding" in op or "packed_sequence" in op
+            is_barrier(op)
+            or op == "aten.cross_entropy_loss.default"
+            or "embedding" in op
+            or "packed_sequence" in op
             for op in stage.operators
         ):
             return None
