@@ -588,7 +588,7 @@ def qualify_public_server():
                 "TRITON_CACHE_DIR": str(directory / "factory-triton"),
             }
         ),
-        storage_root=directory / "public-service",
+        service_root=directory / "public-service",
         cache_root=directory / "public-cache",
         workload_packages=packages,
         authentication=BearerTokens({token: "owner"}),

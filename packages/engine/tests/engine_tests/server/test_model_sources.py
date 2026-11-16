@@ -71,11 +71,11 @@ def test_server_defaults_do_not_require_the_optional_catalog(
         return object()
 
     monkeypatch.setattr(service, "distribution", installed)
-    server = Server(storage_root=tmp_path / "runs", model_root=tmp_path)
+    server = Server(service_root=tmp_path / "runs", model_root=tmp_path)
     assert server.packages == (
         ("shadowspill", "shadowspill-workloads") if catalog else ("shadowspill",)
     )
     assert server.allocation.environment["CUDA_VISIBLE_DEVICES"] == "2,3"
     assert server.model_root == tmp_path and not server.root.exists()
-    custom = Server(storage_root=tmp_path / "custom", workload_packages=["my-models"])
+    custom = Server(service_root=tmp_path / "custom", workload_packages=["my-models"])
     assert custom.packages == ("my-models",)

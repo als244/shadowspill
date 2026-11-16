@@ -11,7 +11,7 @@ from shadowspill.server import Allocation, Server
 
 Server(
     allocation=Allocation.from_environment(),
-    storage_root="runs/service",
+    service_root="runs/service",
     workload_packages=["shadowspill", "shadowspill-workloads"],
 ).serve(host="127.0.0.1", port=8000)
 ```

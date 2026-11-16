@@ -43,7 +43,7 @@ def deployment(tmp_path, monkeypatch):
         monkeypatch.setattr(Allocation, "_local_node", local)
         server = Server(
             allocation=Allocation.from_environment(),
-            storage_root=tmp_path / "service",
+            service_root=tmp_path / "service",
             authentication=BearerTokens({TOKEN: "owner"}),
         )
         assert server._node is None and not (tmp_path / "service").exists()
@@ -87,7 +87,7 @@ def test_public_server_creates_workers_and_recovers_read_only_records_after_reop
         assert server.closed and nodes[0].used.claims == 0
         with Server(
             allocation=Allocation.from_environment(),
-            storage_root=server.root,
+            service_root=server.root,
             authentication=BearerTokens({TOKEN: "owner"}),
         ) as reopened:
             reopened.start(port=0)
@@ -212,7 +212,7 @@ def listen(self, **kwargs):
         finished.set()
 HTTPService.serve_forever = listen
 server = Server(
-    allocation=Allocation({}), storage_root=Path(sys.argv[1]) / 'service',
+    allocation=Allocation({}), service_root=Path(sys.argv[1]) / 'service',
     authentication=BearerTokens({'test-' + '1' * 64: 'owner'}),
 )
 start = server.start

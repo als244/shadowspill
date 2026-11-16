@@ -55,7 +55,7 @@ for phase in ("source", "target"):
                 "TRITON_CACHE_DIR": str(root / "triton"),
             }
         ),
-        storage_root=directory / "service",
+        service_root=directory / "service",
         cache_root=directory / "cache",
         workload_packages=["external-classifier-fixture"],
         authentication=BearerTokens({token: "owner"}),

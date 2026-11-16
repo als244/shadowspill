@@ -67,7 +67,7 @@ with Server(
             "TRITON_CACHE_DIR": str(root / "triton"),
         }
     ),
-    storage_root=root / "service",
+    service_root=root / "service",
     cache_root=root / "cache",
     workload_packages=["external-classifier-fixture"],
     authentication=BearerTokens({token: "owner"}),

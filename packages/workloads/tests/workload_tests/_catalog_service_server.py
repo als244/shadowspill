@@ -107,7 +107,7 @@ with Server(
             "TRITON_CACHE_DIR": str(root / "triton"),
         }
     ),
-    storage_root=root / "service",
+    service_root=root / "service",
     cache_root=root / "cache",
     workload_packages=["shadowspill", "shadowspill-workloads"],
     authentication=BearerTokens({token: "owner"}),

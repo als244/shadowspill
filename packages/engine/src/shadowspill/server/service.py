@@ -36,13 +36,15 @@ class Server:
     blocks until shutdown. ``close`` ends the service/allocation lifetime, distinct
     from a client disconnect or ordered per-run close. Failed cleanup retains this
     owner and can be retried. Persistent records/artifacts are never deleted here.
+    ``service_root`` holds mutable sessions, logs, outputs and checkpoints;
+    ``model_root`` optionally locates existing, read-only pretrained checkpoints.
     """
 
     def __init__(
         self,
         *,
         allocation: Allocation | None = None,
-        storage_root: str | Path,
+        service_root: str | Path,
         workload_packages: Sequence[str] | None = None,
         model_root: str | Path | None = None,
         cache_root: str | Path | None = None,
@@ -54,7 +56,7 @@ class Server:
         if not isinstance(allocation, Allocation):
             raise TypeError("server requires an existing Allocation")
         self.allocation = allocation
-        self.root = Path(storage_root)
+        self.root = Path(service_root)
         self.model_root = None if model_root is None else Path(model_root).absolute()
         self.cache = self.root / ".cache" if cache_root is None else Path(cache_root)
         if workload_packages is None:

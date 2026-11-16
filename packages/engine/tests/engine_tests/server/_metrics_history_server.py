@@ -32,7 +32,7 @@ for run in previous["runs"]:
     token = "retained-metrics-" + os.urandom(32).hex()
     with Server(
         allocation=Allocation({**os.environ, "CUDA_VISIBLE_DEVICES": ""}),
-        storage_root=source / phase / "service",
+        service_root=source / phase / "service",
         cache_root=output / (phase + "-cache"),
         authentication=BearerTokens({token: "owner"}),
     ) as server:
