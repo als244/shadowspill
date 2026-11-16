@@ -67,6 +67,7 @@ def inputs(options, *, rank=0, split="train"):
 
 
 def _expert_setup(options, precision):
+    from shadowspill_workloads.definitions.expert_parallel import describe
     from shadowspill_workloads.models.catalog import entry
     from shadowspill_workloads.models.shared.expert_parallel import resources
 
@@ -74,13 +75,14 @@ def _expert_setup(options, precision):
     if not item.expert_parallel or config.n_experts % options["ranks"]:
         raise ValueError("model experts must support the requested EP group")
     parallelism = resources.ownership(options["ranks"], 1)
-    provider, resource = resources.description(
+    resource = describe(
         config,
         item.family,
-        precision,
         parallelism,
         options["sequence_length"] * options["sequences_per_example"],
+        grad_dtype=precision.grad_dtype,
     )
+    provider = resources.configuration(resource.options["config"])
     return item, config, provider, resource, parallelism
 
 

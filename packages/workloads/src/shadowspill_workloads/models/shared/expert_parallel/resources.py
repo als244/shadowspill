@@ -2,7 +2,7 @@
 
 import torch
 
-from shadowspill import Parallelism, ParameterStorage, Resource, Sharded
+from shadowspill import Parallelism, ParameterStorage, Sharded
 
 
 def ownership(ranks, num_replicas):
@@ -28,37 +28,32 @@ def ownership(ranks, num_replicas):
     )
 
 
-def description(config, family, precision, parallelism, tokens):
+def configuration(settings):
+    """Materialize the provider's configuration only in a model/resource worker."""
     from mlops.expert_parallel import QuackMoEConfig
-    from mlops.expert_parallel.quack.config import config_signature
 
-    options = QuackMoEConfig(
-        ep_size=parallelism.ranks_per_replica,
-        num_experts=config.n_experts,
-        top_k=config.top_k,
-        model_dim=config.d_model,
-        expert_hidden_dim=config.d_ff_expert,
-        tokens_per_rank=tokens,
-        router_dtype=torch.float32 if family == "olmoe" else torch.bfloat16,
-        router_weight_grad_dtype=torch.float32
-        if family == "olmoe"
-        else precision.gradients,
-        weight_grad_dtype=precision.gradients,
-        renormalize_topk=family != "olmoe",
-        share_expert_banks=True,
-        init_std=getattr(config, "initializer_range", 0.02),
-        gemm_tuned=False,
+    values = dict(settings)
+    for name in ("router_dtype", "router_weight_grad_dtype", "weight_grad_dtype"):
+        values[name] = {"float32": torch.float32, "bfloat16": torch.bfloat16}[
+            values[name]
+        ]
+    return QuackMoEConfig(**values)
+
+
+def initialize(*, name, device, groups, options):
+    """Translate portable workload options into the existing provider factory.
+
+    The provider owns allocation, registration and cleanup, including failures.
+    This adapter never opens an additional group or owns a second buffer.
+    """
+    from mlops.expert_parallel.quack.config import config_signature
+    from mlops.expert_parallel.quack.resources import initialize as initialize_provider
+
+    signature = config_signature(configuration(options["config"]))
+    layers = [{"name": layer, "config": signature} for layer in options["layers"]]
+    return initialize_provider(
+        name=name, device=device, groups=groups, options={"layers": layers}
     )
-    layers = [
-        {"name": f"blocks.{index}.moe.experts", "config": config_signature(options)}
-        for index in range(config.n_layers)
-    ]
-    resource = Resource(
-        "mlops.expert_parallel.quack.resources:initialize",
-        {"layers": layers},
-        {"exchange": parallelism.group("all_ranks")},
-    )
-    return options, resource
 
 
 def model(entry, config, options, precision):

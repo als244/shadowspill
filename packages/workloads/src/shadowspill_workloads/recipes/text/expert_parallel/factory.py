@@ -2,6 +2,7 @@
 
 from functools import partial
 
+from shadowspill_workloads.definitions.expert_parallel import describe
 from shadowspill_workloads.initialization.expert_parallel import Initialize
 from shadowspill_workloads.models import catalog
 from shadowspill_workloads.models.shared.expert_parallel import resources
@@ -81,13 +82,14 @@ def experiment(
         optimizer="sharded",
     )
     parallelism = resources.ownership(ranks, num_replicas)
-    options, resource = resources.description(
+    resource = describe(
         config,
         entry.family,
-        precision,
         parallelism,
         sequence_length * sequences_per_example,
+        grad_dtype=precision.grad_dtype,
     )
+    options = resources.configuration(resource.options["config"])
     setup["model_factory"] = partial(resources.model, entry, config, options, precision)
     setup["fill_tensor"] = Initialize(
         setup["fill_tensor"],
