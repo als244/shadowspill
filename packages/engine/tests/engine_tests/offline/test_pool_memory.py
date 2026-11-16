@@ -163,7 +163,9 @@ def test_shared_worker_reserves_pool_once_and_refuses_different_evidence():
         pool_memory=evidence(),
     )
     assert pool_process_reservation([plan] * 3) == 2
-    assert shared_fixed_overhead([plan] * 3) == 22
+    # The fixture's undecomposed 20-byte fixed cost is retained per bound path;
+    # only the measured 2-byte process pool reservation is shared here.
+    assert shared_fixed_overhead([plan] * 3) == 3 * 20 + 2
     with pytest.raises(ValueError, match="identical pool memory"):
         shared_pool_memory([plan, replace(plan, pool_memory=None)])
     with pytest.raises(ValueError, match="identical pool memory"):
