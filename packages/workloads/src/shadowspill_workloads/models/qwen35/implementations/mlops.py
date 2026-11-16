@@ -19,6 +19,7 @@ from shadowspill_workloads.models.shared.decoder import (
 )
 from shadowspill_workloads.models.shared.delta_net import GatedDeltaNet
 from shadowspill_workloads.models.shared.norms import RMSNorm
+from shadowspill_workloads.models.shared.token_head import decoder_target_logprobs
 
 from ..config import Config
 
@@ -135,6 +136,8 @@ class Block(nn.Module):
 
 
 class Model(nn.Module):
+    target_logprobs = decoder_target_logprobs
+
     """State-dict-compatible optimized twin of the pure reference."""
 
     SUPPORTS_PACKED = True

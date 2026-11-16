@@ -19,6 +19,7 @@ from shadowspill_workloads.models.shared.decoder import (
     language_model_loss,
     swiglu,
 )
+from shadowspill_workloads.models.shared.token_head import decoder_target_logprobs
 
 from ..config import Config
 
@@ -89,6 +90,8 @@ class Block(nn.Module):
 
 
 class Model(nn.Module):
+    target_logprobs = decoder_target_logprobs
+
     SUPPORTS_PACKED = True
 
     LORA_TARGETS = LORA_TARGETS

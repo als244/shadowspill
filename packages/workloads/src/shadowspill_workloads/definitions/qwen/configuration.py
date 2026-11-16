@@ -8,16 +8,22 @@ from typing import ClassVar
 
 from shadowspill.training.definitions import ModelBuild
 from shadowspill_workloads.initialization.pretrained import describe
-from shadowspill_workloads.models.qwen3moe import config as qwen3
-from shadowspill_workloads.models.qwen35moe import config as qwen35
+from shadowspill_workloads.models.qwen3 import config as qwen3
+from shadowspill_workloads.models.qwen3moe import config as qwen3moe
+from shadowspill_workloads.models.qwen35 import config as qwen35
+from shadowspill_workloads.models.qwen35moe import config as qwen35moe
 
 from .. import expert_parallel, moe_provider, training_options
+from ..hybrid_allocations import CONTRACTS as HYBRID_CONTRACTS
+from ..text_allocations import CONTRACTS as TEXT_CONTRACTS
 
 
 @dataclass(frozen=True)
 class Settings:
     family: ClassVar[str]
     catalog: ClassVar[ModuleType]
+    moe: ClassVar[bool] = False
+    hybrid: ClassVar[bool] = False
     preset: str = "tiny"
     architecture: dict = field(default_factory=dict)
     implementation: str = "mlops"
@@ -38,6 +44,7 @@ class Settings:
             "n_heads",
             "n_kv_heads",
             "head_dim",
+            "d_ff",
             "n_experts",
             "top_k",
             "d_ff_expert",
@@ -50,9 +57,13 @@ class Settings:
             "lin_v_head_dim",
             "lin_conv_kernel",
         ):
+            if name not in values:
+                continue
             if type(values[name]) is not int or values[name] <= 0:
                 raise ValueError(f"Qwen {name} must be a positive integer")
-        if type(values["d_ff_shared"]) is not int or values["d_ff_shared"] < 0:
+        if "d_ff_shared" in values and (
+            type(values["d_ff_shared"]) is not int or values["d_ff_shared"] < 0
+        ):
             raise ValueError("Qwen d_ff_shared must be a nonnegative integer")
         for name in (
             "rope_base",
@@ -61,6 +72,8 @@ class Settings:
             "partial_rotary_factor",
             "router_aux_loss_coef",
         ):
+            if name not in values:
+                continue
             value = values[name]
             if (
                 type(value) not in (int, float)
@@ -68,25 +81,43 @@ class Settings:
                 or (value < 0 if name == "router_aux_loss_coef" else value <= 0)
             ):
                 raise ValueError(f"invalid Qwen {name}")
-        for name in ("zero_centered_norm", "attention_gate"):
-            if type(values[name]) is not bool:
+        for name in ("zero_centered_norm", "attention_gate", "tied_embeddings"):
+            if name in values and type(values[name]) is not bool:
                 raise ValueError(f"Qwen {name} must be boolean")
         config = replace(self.catalog.PRESETS[self.preset], **self.architecture)
-        if self.implementation not in ("mlops", "mlops_ep"):
-            raise ValueError("the installed Qwen definitions require mlops or mlops_ep")
+        implementations = ("mlops", "mlops_ep") if self.moe else ("mlops",)
+        if self.implementation not in implementations:
+            raise ValueError(f"{self.family} requires {' or '.join(implementations)}")
         training_options.validate(self, label="Qwen")
         object.__setattr__(self, "architecture", asdict(config))
-        expert_parallel.validate(self)
+        if self.moe:
+            expert_parallel.validate(self)
+        elif self.expert_options is not None:
+            raise ValueError("dense Qwen does not use expert resource settings")
 
 
 class Qwen3Settings(Settings):
-    family = "qwen3moe"
+    family = "qwen3"
     catalog = qwen3
 
 
 class Qwen35Settings(Settings):
-    family = "qwen35moe"
+    family = "qwen35"
     catalog = qwen35
+    hybrid = True
+
+
+class Qwen3MoESettings(Settings):
+    family = "qwen3moe"
+    catalog = qwen3moe
+    moe = True
+
+
+class Qwen35MoESettings(Settings):
+    family = "qwen35moe"
+    catalog = qwen35moe
+    moe = True
+    hybrid = True
 
 
 def create(config):
@@ -125,8 +156,12 @@ def build(config, context):
     return ModelBuild(
         asdict(config),
         grad_dtype=config.grad_dtype,
-        operator_preparation=moe_provider.preparations(config.compute_dtype),
-        allocation_invariants=moe_provider.allocations(config.compute_dtype),
+        operator_preparation=moe_provider.preparations(config.compute_dtype)
+        if config.moe
+        else (),
+        allocation_invariants=moe_provider.allocations(config.compute_dtype)
+        if config.moe
+        else {**TEXT_CONTRACTS, **(HYBRID_CONTRACTS if config.hybrid else {})},
     )
 
 

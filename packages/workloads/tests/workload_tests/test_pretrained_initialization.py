@@ -21,9 +21,18 @@ from shadowspill_client import LoRA, Model, Weights
 from shadowspill_workloads.initialization import headers, hub, hub_files, weight_files
 from shadowspill_workloads.initialization.text import Initialize
 from workload_tests.test_checkpoints import huggingface_state
+from workload_tests.test_dense_qwen_definitions import settings as dense_settings
 from workload_tests.test_llama_definition import settings as llama_settings
 from workload_tests.test_moe_definitions import settings as moe_settings
 from workload_tests.test_pretrained_metadata import FAMILIES, REVISION
+
+
+def settings(family, *, lora=False):
+    if family == "llama3":
+        return llama_settings(capacity=8, lora=LoRA(2) if lora else None)
+    if family in ("qwen3", "qwen35"):
+        return dense_settings(family, lora=lora)
+    return moe_settings(family, lora=lora)
 
 
 @pytest.mark.parametrize("family", FAMILIES)
@@ -34,9 +43,7 @@ def test_exported_weights_derived_buffers_require_no_weight_source(tmp_path, fam
     )
 
     registry = load_registry(["shadowspill-workloads"])
-    requested = (
-        llama_settings(capacity=8) if family == "llama3" else moe_settings(family)
-    )
+    requested = settings(family)
     requested = replace(requested, initialize=Weights.artifact("model-export"))
     resolved = registry.resolve_model(requested.definition, settings=requested)
     context = InitializationContext(
@@ -116,11 +123,7 @@ def test_pretrained_chunks_reproduce_weights_rotary_and_fresh_lora(
 
     registry = load_registry(["shadowspill-workloads"])
     lora = lora_seed is not None
-    desired = (
-        llama_settings(capacity=8, lora=LoRA(2) if lora else None)
-        if family == "llama3"
-        else moe_settings(family, lora=lora)
-    )
+    desired = settings(family, lora=lora)
     base = registry.resolve_model(
         desired.definition, settings=replace(desired, lora=None)
     ).create()

@@ -11,20 +11,14 @@ from shadowspill.training.definitions import (
     InitializationRuntime,
     load_registry,
 )
-from shadowspill_client import LoRA
 from shadowspill_workloads.initialization.text import LORA_LEAVES, Initialize
-from workload_tests.test_llama_definition import settings as llama_settings
-from workload_tests.test_moe_definitions import settings as moe_settings
 from workload_tests.test_pretrained_initialization import fill
+from workload_tests.test_pretrained_initialization import settings as text_settings
 from workload_tests.test_pretrained_metadata import FAMILIES
 
 
 def settings(family):
-    return (
-        llama_settings(capacity=8, lora=LoRA(2))
-        if family == "llama3"
-        else moe_settings(family, lora=True)
-    )
+    return text_settings(family, lora=True)
 
 
 @pytest.mark.parametrize("family", FAMILIES)

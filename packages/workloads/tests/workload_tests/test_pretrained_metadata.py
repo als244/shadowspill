@@ -17,7 +17,7 @@ from shadowspill_workloads.definitions import pretrained
 from shadowspill_workloads.initialization import hub, hub_files
 
 REVISION = "a" * 40
-FAMILIES = ("llama3", "qwen3moe", "qwen35moe", "olmoe")
+FAMILIES = ("llama3", "qwen3", "qwen35", "qwen3moe", "qwen35moe", "olmoe")
 FILES = [
     {"name": "config.json", "size": 1000, "checksum": "b" * 40},
     {"name": "model.safetensors", "size": 4096, "checksum": "c" * 64},
@@ -28,6 +28,8 @@ def metadata(family):
     result = {
         "model_type": {
             "llama3": "llama",
+            "qwen3": "qwen3",
+            "qwen35": "qwen3_5_text",
             "qwen3moe": "qwen3_moe",
             "qwen35moe": "qwen3_5_moe_text",
             "olmoe": "olmoe",
@@ -46,7 +48,7 @@ def metadata(family):
         "max_position_embeddings": 128,
         "norm_topk_prob": family != "olmoe",
     }
-    if family == "qwen35moe":
+    if family in ("qwen35", "qwen35moe"):
         result.update(
             shared_expert_intermediate_size=16,
             full_attention_interval=2,
@@ -57,7 +59,10 @@ def metadata(family):
             linear_conv_kernel_dim=4,
             layer_types=["linear_attention", "full_attention"],
         )
-        return {"model_type": "qwen3_5_moe", "text_config": result}
+        return {
+            "model_type": "qwen3_5" if family == "qwen35" else "qwen3_5_moe",
+            "text_config": result,
+        }
     return result
 
 
@@ -130,6 +135,29 @@ def test_metadata_sets_capacity_and_rejects_incompatible_checkpoint_overrides(fa
 )
 def test_unimplemented_checkpoint_semantics_are_rejected(field, value):
     config = metadata("qwen35moe")
+    config["text_config"][field] = value
+    with pytest.raises(ValueError):
+        pretrained.architecture(config, {})
+
+
+@pytest.mark.parametrize("family", ["qwen3", "qwen35"])
+def test_dense_checkpoint_ties_are_preserved(family):
+    config = metadata(family)
+    text = config.get("text_config", config)
+    text["tie_word_embeddings"] = True
+    assert pretrained.architecture(config, {})[1]["tied_embeddings"]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("attn_output_gate", False),
+        ("rope_scaling", {"factor": 2}),
+        ("layer_types", ["full_attention", "linear_attention"]),
+    ],
+)
+def test_dense_hybrid_checkpoint_requires_supported_attention(field, value):
+    config = metadata("qwen35")
     config["text_config"][field] = value
     with pytest.raises(ValueError):
         pretrained.architecture(config, {})

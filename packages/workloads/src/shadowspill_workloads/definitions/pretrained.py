@@ -11,6 +11,9 @@ from .source import definition_source
 
 FAMILIES = {
     "llama": "llama3",
+    "qwen3": "qwen3",
+    "qwen3_5": "qwen35",
+    "qwen3_5_text": "qwen35",
     "qwen3_moe": "qwen3moe",
     "qwen3_5_moe": "qwen35moe",
     "qwen3_5_moe_text": "qwen35moe",
@@ -67,14 +70,17 @@ def architecture(metadata, overrides):
 def _supported(text, config, family):
     if text.get("hidden_act", "silu") != "silu":
         raise ValueError("pretrained decoder requires the supported silu activation")
-    if family == "llama3":
-        return  # The Llama parser validates its supported biases and RoPE scaling.
-    if text.get("tie_word_embeddings", False):
+    if family in ("llama3", "qwen3"):
+        return  # These parsers validate supported biases and RoPE scaling.
+    moe = family in ("qwen3moe", "qwen35moe", "olmoe")
+    if moe and text.get("tie_word_embeddings", False):
         raise ValueError("the supplied MoE decoders require untied embeddings")
     if text.get("rope_scaling") is not None:
-        raise ValueError("the supplied MoE decoders do not implement rope_scaling")
-    if text.get("mlp_only_layers") or text.get("decoder_sparse_step", 1) != 1:
+        raise ValueError("the supplied decoder does not implement rope_scaling")
+    if moe and (text.get("mlp_only_layers") or text.get("decoder_sparse_step", 1) != 1):
         raise ValueError("the supplied MoE decoder requires every layer to be sparse")
+    if family == "qwen35" and text.get("attn_output_gate", True) is not True:
+        raise ValueError("the supplied Qwen3.5 decoder requires attention output gates")
     if family == "olmoe" and text.get("clip_qkv") is not None:
         raise ValueError("the supplied OLMoE decoder does not implement clip_qkv")
     layers = text.get("layer_types")
@@ -142,6 +148,8 @@ def register(registry):
             "initialization/headers.py",
             "models/llama3/config.py",
             "models/olmoe/config.py",
+            "models/qwen3/config.py",
+            "models/qwen35/config.py",
             "models/qwen3moe/config.py",
             "models/qwen35moe/config.py",
             "models/shared/qwen_moe/config.py",
