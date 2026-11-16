@@ -2,31 +2,6 @@
 
 import torch
 
-from shadowspill import Parallelism, ParameterStorage, Sharded
-
-
-def ownership(ranks, num_replicas):
-    experts = (
-        "blocks.*.moe.experts.gate_up_weight",
-        "blocks.*.moe.experts.down_weight",
-    )
-    return Parallelism(
-        ranks_per_replica=ranks,
-        num_replicas=num_replicas,
-        groups={
-            "all_ranks": (tuple(range(ranks)),),
-            "local": tuple((rank,) for rank in range(ranks)),
-        },
-        default_parameter_storage=ParameterStorage(
-            group="all_ranks",
-            weights="replicated",
-            gradients="replicated",
-            optimizer="sharded",
-        ),
-        parameter_placements={name: Sharded("all_ranks", 0) for name in experts},
-        parameter_storage={name: ParameterStorage(group="local") for name in experts},
-    )
-
 
 def configuration(settings):
     """Materialize the provider's configuration only in a model/resource worker."""

@@ -9,7 +9,7 @@ import pytest
 import torch
 
 from shadowspill import Parallelism, Resource
-from shadowspill_workloads.definitions.expert_parallel import describe
+from shadowspill_workloads.definitions.expert_parallel import describe, ownership
 from shadowspill_workloads.models.shared.expert_parallel import resources
 
 
@@ -38,7 +38,7 @@ def test_description_and_runtime_factory_preserve_provider_defaults_and_groups(
     from mlops.expert_parallel.quack import resources as provider
     from mlops.expert_parallel.quack.config import _configuration
 
-    parallelism = resources.ownership(2, 1)
+    parallelism = ownership(2, 1)
     resource = describe(dimensions(), family, parallelism, 64, grad_dtype=grad_dtype)
     replay = Resource.from_dict(json.loads(json.dumps(resource.to_dict())))
     assert replay == resource
@@ -106,10 +106,10 @@ class Block(importlib.abc.MetaPathFinder):
             raise AssertionError('description imported ' + name)
 sys.meta_path.insert(0, Block())
 from shadowspill import Parallelism, Resource
-from shadowspill_workloads.definitions.expert_parallel import describe
+from shadowspill_workloads.definitions.expert_parallel import describe, ownership
 config = SimpleNamespace(n_layers=2, n_experts=8, top_k=2, d_model=128,
                          d_ff_expert=256, initializer_range=0.017)
-value = describe(config, 'qwen3moe', Parallelism.dp(ranks_per_replica=2),
+value = describe(config, 'qwen3moe', ownership(2, 1),
                  64, grad_dtype='float32')
 assert Resource.from_dict(json.loads(json.dumps(value.to_dict()))) == value
 assert not any(name in sys.modules for name in ('torch','mlops','triton'))
@@ -188,7 +188,7 @@ def test_provider_failure_is_propagated_without_another_resource(monkeypatch):
     from mlops.expert_parallel.quack import resources as provider
 
     resource = describe(
-        dimensions(), "qwen3moe", resources.ownership(2, 1), 64, grad_dtype="float32"
+        dimensions(), "qwen3moe", ownership(2, 1), 64, grad_dtype="float32"
     )
     failure = RuntimeError("provider could not create the shared buffer")
     calls = []
