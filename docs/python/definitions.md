@@ -92,6 +92,14 @@ The supplied
 allocation contracts cover the fixed-geometry builtin MoE and FLA operators;
 SonicMoE and expert-parallel providers require separate admission evidence.
 
+`shadowspill/olmoe@1` uses that same packed preparation, precision/LoRA settings
+and bounded random initializer. Its model exposes the same router-statistics
+capability; no OLMoE-specific loss is required. To retain OLMoE's layer aggregation,
+configure the shared balancing term with `layer_reduction="sum"` and
+`normalize_top_k=True`. Padding is still excluded by default. CPU setup, packed
+objectives, all gradients and initialization checks pass; public GPU service
+qualification is in progress.
+
 Definition provenance hashes provider Python and installed extension binaries
 without importing their implementations in the controller. Each controller or
 worker treats that installed provider snapshot as immutable for its lifetime.

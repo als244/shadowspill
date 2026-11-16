@@ -1,4 +1,4 @@
-"""Public Qwen setup, packed contracts and bounded initialization on CPU."""
+"""Public MoE setup, packed contracts and bounded initialization on CPU."""
 
 import json
 import subprocess
@@ -29,24 +29,40 @@ from shadowspill_client import (
     Weights,
 )
 from shadowspill_client.protocol.operations import OperationKey
+from shadowspill_workloads.models.olmoe.config import Config as OLMoEConfig
 from workload_tests.test_llama_definition import bound, datums
 from workload_tests.test_moe_objective import independent
 from workload_tests.test_qwen_moe import Qwen3MoEConfig, Qwen35MoEConfig, tiny
 
+FAMILIES = ("qwen3moe", "qwen35moe", "olmoe")
+
+
+def balancing(family, **overrides):
+    config = (
+        {"layer_reduction": "sum", "normalize_top_k": True} if family == "olmoe" else {}
+    )
+    return Objective("shadowspill/moe_balance@1", config={**config, **overrides})
+
 
 def settings(family, *, dtype="float32", lora=False):
-    config = Qwen3MoEConfig() if family == "qwen3moe" else Qwen35MoEConfig()
-    architecture = replace(
-        tiny(config),
-        n_layers=2,
-        max_seq_len=8,
-        full_attention_interval=2 if family == "qwen35moe" else 1,
-    )
+    if family == "olmoe":
+        architecture = OLMoEConfig(2, 32, 4, 2, 8, 4, 2, 16, 97, max_seq_len=8)
+    else:
+        config = Qwen3MoEConfig() if family == "qwen3moe" else Qwen35MoEConfig()
+        architecture = replace(
+            tiny(config),
+            n_layers=2,
+            max_seq_len=8,
+            full_attention_interval=2 if family == "qwen35moe" else 1,
+        )
+    projection = "attn" if family == "olmoe" else "mixer"
     return Model(
         f"shadowspill/{family}@1",
         config={"architecture": asdict(architecture)},
         precision={"compute_dtype": dtype, "lora_dtype": "float32"},
-        lora=LoRA(2, targets=["blocks.*.mixer.w*", "blocks.*.moe"]) if lora else None,
+        lora=LoRA(2, targets=[f"blocks.*.{projection}.w*", "blocks.*.moe"])
+        if lora
+        else None,
         initialize=Weights.random(seed=17),
     )
 
@@ -59,10 +75,7 @@ def prepared(family, *, lora=False, dtype="float32", include_padding=False):
         objective=Objective.sum(
             {
                 "tokens": Objective("shadowspill/cross_entropy@1"),
-                "balance": Objective(
-                    "shadowspill/moe_balance@1",
-                    config={"include_padding": include_padding},
-                ),
+                "balance": balancing(family, include_padding=include_padding),
             },
             weights={"balance": 0.001},
         ),
@@ -82,7 +95,7 @@ def prepared(family, *, lora=False, dtype="float32", include_padding=False):
     return registry, setup, prepare_layouts(setup)
 
 
-@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
+@pytest.mark.parametrize("family", FAMILIES)
 def test_resolved_setup_roundtrip_packing_and_source_pinned_inventory(family):
     registry, setup, layouts = prepared(family)
     assert resolve_training(registry, setup.config).config == setup.config
@@ -109,7 +122,7 @@ def test_resolved_setup_roundtrip_packing_and_source_pinned_inventory(family):
     }
 
 
-@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
+@pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("lora", [False, True])
 def test_bound_objective_matches_independent_full_projection_and_router_gradients(
     family, lora
@@ -136,7 +149,7 @@ def test_bound_objective_matches_independent_full_projection_and_router_gradient
         )
 
 
-@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
+@pytest.mark.parametrize("family", FAMILIES)
 def test_bfloat16_construction_preserves_declared_fp32_state_and_restores_default(
     family,
 ):
@@ -151,7 +164,7 @@ def test_bfloat16_construction_preserves_declared_fp32_state_and_restores_defaul
         assert model.blocks[0].mixer.dt_bias.dtype == torch.float32
 
 
-@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
+@pytest.mark.parametrize("family", FAMILIES)
 def test_bounded_initialization_is_chunk_invariant_for_full_and_lora_state(
     tmp_path, family
 ):
@@ -200,7 +213,26 @@ def test_invalid_structural_settings_fail_before_construction(configuration):
         registry.resolve_model("shadowspill/qwen35moe@1", config=configuration)
 
 
-def test_public_qwen_description_is_framework_and_implementation_free():
+@pytest.mark.parametrize(
+    "configuration",
+    [
+        {"architecture": {"n_layers": True}},
+        {"architecture": {"head_dim": 7}},
+        {"architecture": {"top_k": 9}},
+        {"architecture": {"rope_base": float("nan")}},
+        {"architecture": {"initializer_range": 0}},
+        {"implementation": "other"},
+        {"grad_dtype": "float64"},
+        {"lora": {"rank": 2, "dropout": 0.1}},
+    ],
+)
+def test_invalid_olmoe_settings_fail_before_construction(configuration):
+    registry = load_registry(["shadowspill-workloads"])
+    with pytest.raises((ValueError, TypeError)):
+        registry.resolve_model("shadowspill/olmoe@1", config=configuration)
+
+
+def test_public_moe_description_is_framework_and_implementation_free():
     script = """
 import importlib.abc, json, sys
 class Block(importlib.abc.MetaPathFinder):
@@ -214,7 +246,7 @@ sys.meta_path.insert(0, Block())
 from shadowspill.training.definitions import load_registry
 from shadowspill_client import Model, Objective
 registry = load_registry(['shadowspill-workloads'])
-for family in ('qwen3moe', 'qwen35moe'):
+for family in ('qwen3moe', 'qwen35moe', 'olmoe'):
     model = registry.resolve_model('shadowspill/'+family+'@1')
     objective = Objective.sum({
         'tokens': Objective('shadowspill/cross_entropy@1'),
@@ -224,10 +256,10 @@ for family in ('qwen3moe', 'qwen35moe'):
         model=model, config=objective.config, defaults=objective.defaults)
     assert resolved.definition.padding_safe
     assert not any(n in sys.modules for n in ('torch', 'triton', 'mlops', 'fla'))
-print(json.dumps({'families': 2, 'padding_excluded': True}))
+print(json.dumps({'families': 3, 'padding_excluded': True}))
 """
     result = subprocess.run(
         [sys.executable, "-c", script], text=True, capture_output=True, timeout=60
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout) == {"families": 2, "padding_excluded": True}
+    assert json.loads(result.stdout) == {"families": 3, "padding_excluded": True}

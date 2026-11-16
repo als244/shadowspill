@@ -13,7 +13,7 @@ from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.training.definitions import load_registry
 from shadowspill_client import Objective
 from shadowspill_workloads.initialization.text import Initialize
-from workload_tests.test_moe_definitions import settings
+from workload_tests.test_moe_definitions import FAMILIES, balancing, settings
 from workload_tests.test_moe_objective import independent
 
 
@@ -127,7 +127,7 @@ def options(family="qwen3moe", *, lora=False):
         "objective": Objective.sum(
             {
                 "tokens": Objective("shadowspill/cross_entropy@1"),
-                "balance": Objective("shadowspill/moe_balance@1"),
+                "balance": balancing(family),
             },
             weights={"balance": 0.001},
         ).to_dict(),
@@ -170,8 +170,8 @@ def options(family="qwen3moe", *, lora=False):
 
 
 @pytest.mark.parametrize("lora", [False, True])
-@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
-def test_qwen_service_oracles_preserve_frozen_weights_and_distinguish_geometries(
+@pytest.mark.parametrize("family", FAMILIES)
+def test_moe_service_oracles_preserve_frozen_weights_and_distinguish_geometries(
     family, lora
 ):
     value = options(family, lora=lora)
@@ -193,8 +193,8 @@ def test_qwen_service_oracles_preserve_frozen_weights_and_distinguish_geometries
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("lora", [False, True])
-@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
-def test_public_qwen_step_split_and_checkpoint_resume_match_independent_oracles(
+@pytest.mark.parametrize("family", FAMILIES)
+def test_public_moe_step_split_and_checkpoint_resume_match_independent_oracles(
     tmp_path, monkeypatch, family, lora
 ):
     if not torch.cuda.is_available():

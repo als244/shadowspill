@@ -1,4 +1,4 @@
-"""Exact fixed-geometry contracts for the Qwen MLOps/FLA path.
+"""Exact fixed-geometry contracts for the supplied MoE MLOps/FLA paths.
 
 Dropless routed experts allocate T*K assignment rows, E+1 offsets and fixed
 expert banks. Sorting changes row order only. Grouped GEMMs allocate full row
@@ -21,7 +21,7 @@ In particular, SonicMoE/EP paths require their own contracts and qualification.
 
 from .text_allocations import CONTRACTS as TEXT_CONTRACTS
 
-CONTRACT_ID = "shadowspill/qwen-fixed-provider-allocation@1"
+CONTRACT_ID = "shadowspill/moe-fixed-provider-allocation@1"
 
 CONTRACTS = {
     **TEXT_CONTRACTS,
