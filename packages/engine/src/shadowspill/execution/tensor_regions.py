@@ -44,6 +44,7 @@ def tensor_regions(program: Program, logical_rank: int) -> dict[str, TensorRegio
     sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
     logical_sizes = model_storage_bytes(program)
     regions = {}
+    registered = {item["object_id"] for item in bindings.get("registrations", ())}
     for item in bindings.get("registrations", ()):
         value = item["object_id"]
         alias = objects[value].alias_group_id
@@ -74,8 +75,15 @@ def tensor_regions(program: Program, logical_rank: int) -> dict[str, TensorRegio
     }
     for item in bindings.get("optimizer_bindings", ()):
         value = item["object_id"]
-        if value is None or value in regions or not item["shape"]:
-            continue  # CPU controls and scalar state are not parameter shards.
+        if (
+            value is None
+            or value in registered
+            or value in regions
+            or not item["shape"]
+        ):
+            # Model views use weight ownership above, not optimizer storage.
+            # CPU controls and scalar state are not parameter shards.
+            continue
         name = item.get("parameter_name")
         if name is None or name not in parameters:
             continue

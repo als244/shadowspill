@@ -227,6 +227,49 @@ def test_optimizer_tensors_that_are_not_parameter_slices_keep_their_own_geometry
     )
 
 
+def test_registered_compute_copy_keeps_its_physical_view():
+    program = columns_program(((0,), (1,), (2,), (3,)))
+    geometry = {"dtype": "torch.bfloat16", "shape": (2, 3), "stride": (1, 2)}
+    program = replace(
+        program,
+        bindings={
+            **program.bindings,
+            "model_tensor_geometry": {"weight": geometry},
+            "optimizer_bindings": [
+                *program.bindings["optimizer_bindings"],
+                {
+                    **geometry,
+                    "name": "compute.layer.weight",
+                    "parameter_name": "layer.weight",
+                    "role": "compute_copy",
+                    "object_id": "weight",
+                },
+            ],
+        },
+    )
+    state, values = host_storage(program, 0)
+    values["weight"].copy_(torch.arange(6))
+    exported = []
+    visit_tensors(
+        state,
+        lambda request, chunk: exported.append((request, chunk.clone())),
+        12,
+        initialize=False,
+    )
+    request, payload = next(
+        (request, chunk)
+        for request, chunk in exported
+        if request.name == "layer.weight"
+    )
+    assert request.shape == (2, 3) and request.stride == (1, 2)
+    torch.testing.assert_close(
+        payload.as_strided(request.shape, request.stride),
+        torch.tensor([[0, 2, 4], [1, 3, 5]], dtype=torch.bfloat16),
+        rtol=0,
+        atol=0,
+    )
+
+
 @pytest.mark.parametrize("rank", range(4))
 @pytest.mark.parametrize("elements", [1, 15])
 def test_original_offsets_bounded_masters_and_padding(rank, elements):
