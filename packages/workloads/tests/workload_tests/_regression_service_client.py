@@ -8,8 +8,6 @@ import sys
 import tarfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event
-from time import monotonic
 
 import numpy as np
 
@@ -192,19 +190,10 @@ def check(training, oracle, memory, *, counter=None):
 
 def closed(client, training):
     training.close().result(120)
-    # The request closes operation state; allocation retirement also joins worker
-    # processes and publishes exit logs. Observe that separate durable run state
-    # before asking this one-slot deployment to admit its next run. No mutation
-    # is retried, and a transport failure is still surfaced to the caller.
-    deadline = monotonic() + 30
-    while True:
-        info = client._transport.request(
-            "GET", f"/v1/runs/regression/{training.run_id}"
-        ).value
-        if info.state == "closed":
-            return
-        assert info.state == "ready" and monotonic() < deadline, info
-        Event().wait(0.02)
+    reply = client._transport.request(
+        "GET", f"/v1/runs/regression/{training.run_id}"
+    )
+    assert reply.status == 200 and reply.value.state == "closed"
 
 
 def qualify(client, initial, dtype, memory, master_dtype=None):

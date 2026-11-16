@@ -9,8 +9,6 @@ import tarfile
 from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Event
-from time import monotonic
 
 import numpy as np
 
@@ -39,13 +37,11 @@ from shadowspill_client import SSH, ServiceClient  # noqa: E402
 from shadowspill_client.protocol.requests import ArtifactRef  # noqa: E402
 
 
-def retired(service, directory):
+def completed_run(service, directory):
     info = json.loads((directory / "run.json").read_text())
     route = f"/v1/runs/{info['session_id']}/{info['run_id']}"
-    deadline = monotonic() + 30
-    while service._transport.request("GET", route).value.state != "closed":
-        assert monotonic() < deadline
-        Event().wait(0.02)
+    reply = service._transport.request("GET", route)
+    assert reply.status == 200 and reply.value.state == "closed"
     return info["run_id"]
 
 
@@ -134,7 +130,7 @@ def qualify(options):
                 )
                 == 0
             )
-        run = retired(service, first)
+        run = completed_run(service, first)
         with redirect_stdout(sys.stderr):
             assert (
                 main(
@@ -148,7 +144,7 @@ def qualify(options):
                 )
                 == 0
             )
-        restored = retired(service, resumed)
+        restored = completed_run(service, resumed)
         metrics = [
             json.loads(line)
             for line in (first / "metrics.jsonl").read_text().splitlines()

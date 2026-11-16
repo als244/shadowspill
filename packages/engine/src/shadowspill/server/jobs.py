@@ -126,6 +126,11 @@ class RunJobs:
                 and not job.owner.run.finished
             )
 
+    def retired(self, identity: RunIdentity) -> bool:
+        """All run owners and the creation envelope have been released."""
+        with self._mutex:
+            return identity not in self._jobs
+
     def start(self) -> None:
         with self._mutex:
             if self._thread is not None or self._closing:

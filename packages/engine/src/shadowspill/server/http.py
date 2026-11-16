@@ -845,6 +845,9 @@ class _Handler(BaseHTTPRequestHandler):
         assert self.server.jobs is not None
         pending = info.state == "preparing" or (
             info.state == "ready" and not self.server.jobs.available(identity)
+        ) or (
+            info.state in ("closed", "failed", "stopped")
+            and not self.server.jobs.retired(identity)
         )
         self._reply(info, 202 if pending else 200)
 

@@ -163,9 +163,31 @@ class TrainingClient:
             if status.failure is not None:
                 raise TrainingRequestError(status)
             if status.result is not None:
+                if status.result.operation == "close":
+                    self._wait_retired()
                 return TrainingResult(status.result, self._service)
             self._service._work.check()
             status = None
+
+    def _wait_retired(self) -> None:
+        # The durable close receipt can precede worker joins, exit-log
+        # publication and the final creation-envelope release. Only observe
+        # lifecycle progress here; never resubmit close or retry creation.
+        while True:
+            self._service._work.check()
+            reply = self._service._transport.request("GET", self._route)
+            info = reply.value
+            if not isinstance(info, RunInfo) or (
+                info.owner_id != self._service.info.owner_id
+                or info.session_id != self.session_id
+                or info.run_id != self.run_id
+            ):
+                raise ValueError("close lookup crossed authenticated run scope")
+            if reply.status == 200 and info.state in ("closed", "failed", "stopped"):
+                return
+            if reply.status not in (200, 202):
+                raise ValueError("unknown run retirement progress")
+            self._service._work.pause()
 
     def _submit(
         self,
@@ -434,4 +456,5 @@ class TrainingClient:
         return self._submit("save", save=settings)._mapped(exported)
 
     def close(self) -> OperationFuture[TrainingResult]:
+        """Close in order and wait for this run's allocation resources to retire."""
         return self._submit("close")

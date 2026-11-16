@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from dataclasses import replace
 from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,6 +44,25 @@ def runtime(tmp_path, **options):
                 plans=reference,
                 initial_history_id="history",
             )
+            # This fixture owns a controller directly, without creation jobs.
+            # Its worker close is its entire retirement boundary. Real service
+            # lifetime/creation envelopes are exercised separately below.
+            ctx.service.jobs = SimpleNamespace(
+                storage=SimpleNamespace(
+                    catalog=SimpleNamespace(
+                        get=lambda identity: (
+                            replace(info, state="closed")
+                            if run.workers.closed
+                            else info
+                        )
+                        if (identity.owner_id, identity.session_id, identity.run_id)
+                        == (info.owner_id, info.session_id, info.run_id)
+                        else None
+                    )
+                ),
+                available=lambda _: not run.workers.closed,
+                retired=lambda _: run.workers.closed,
+            )
             writer = service._request("POST", ROOT + "/writers/client", WriterLease)
             training = TrainingClient(
                 service, info, run.controller._prepared.setup.config, writer
@@ -50,6 +70,68 @@ def runtime(tmp_path, **options):
             yield service, training, run, ctx
         assert training._slots.used == training._snapshots.used == (0, 0)
         assert service._memory.used == service._work.pending.used == (0, 0)
+
+
+@pytest.mark.parametrize("disconnect", [False, True])
+def test_close_future_waits_for_full_retirement_before_immediate_recreation(
+    tmp_path, monkeypatch, disconnect
+):
+    entered, release = Event(), Event()
+    calls = []
+
+    def fault(owner):
+        calls.append(owner)
+        if len(calls) != 1:
+            return
+        original = owner.close
+
+        def close():
+            original()
+            entered.set()
+            assert release.wait(10)
+
+        monkeypatch.setattr(owner, "close", close)
+
+    with (
+        creation_service(tmp_path, monkeypatch, fault=fault) as ctx,
+        creation_endpoint(ctx) as (transport, _),
+        ServiceClient(address(transport), token=TOKEN) as service,
+    ):
+        training = service.create_training_client(config=ctx.config).result(5)
+        closing = training.close()
+        acceptance = closing.accepted().result(5)
+        try:
+            assert entered.wait(5)
+            reply = service._transport.request("GET", training._route)
+            assert reply.value.state == "closed" and reply.status == 202
+            assert ctx.jobs.used == (1, 0)
+            assert training.requests.status(closing.request_id).result(5).result
+            with pytest.raises(TimeoutError):
+                closing.result(0.05)
+            assert not closing.done() and not closing.cancel()
+            assert closing.accepted().result() == acceptance
+            if disconnect:
+                service.close()
+                with pytest.raises(ConnectionClosed):
+                    closing.result(5)
+                assert closing.accepted().result() == acceptance
+        finally:
+            release.set()
+        if disconnect:
+            until(lambda: ctx.jobs.used == (0, 0))
+            reply = transport.request("GET", training._route)
+            assert reply.status == 200 and reply.value.state == "closed"
+            assert len(calls) == 1
+            return
+        assert closing.result(5).operation == "close"
+        assert ctx.jobs.used == (0, 0)
+        reply = service._transport.request("GET", training._route)
+        assert reply.value.state == "closed" and reply.status == 200
+        # No sleeps, capacity polling or mutation retries at the call site.
+        next_run = service.create_training_client(config=ctx.config).result(5)
+        assert next_run.run_id != training.run_id and len(calls) == 2
+        next_run.close().result(5)
+        assert ctx.jobs.used == (0, 0)
 
 
 @pytest.mark.parametrize("raw", [False, True])

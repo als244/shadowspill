@@ -240,6 +240,12 @@ training.close().result()
 checkpoint.download("./step-50").result()  # New local directory, after worker exit.
 ```
 
+`training.close().result()` waits for ordered worker shutdown and release of the
+run's owned resources, so a new run can immediately request that capacity. A
+timeout stops only the caller's wait. The accepted close is neither cancelled nor
+resubmitted; its durable request status can report completion while the close
+future is still waiting for resource cleanup.
+
 `weights="master"` is the default; `weights="compute"` selects compute-precision
 values under the existing checkpoint reconstruction rules. Caller metadata is
 frozen before submission and returned in the manifest. The save future preserves
