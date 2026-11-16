@@ -31,7 +31,7 @@ sys.meta_path.insert(0, Block())
 here = Path(__file__).resolve().parent
 application = here if (here / "examples").is_dir() else here.parents[3]
 sys.path.insert(0, str(application))
-from examples.train_qwen35_lora import main  # noqa: E402
+from examples import train_qwen3_distributed, train_qwen35_lora  # noqa: E402
 from shadowspill_client import SSH, ServiceClient  # noqa: E402
 from shadowspill_client.protocol.requests import ArtifactRef  # noqa: E402
 
@@ -50,7 +50,7 @@ def completed(service, directory):
         Event().wait(0.02)
 
 
-def checkpoint(service, directory, destination, trained):
+def checkpoint(service, directory, destination, trained, *, lora):
     saved = json.loads((directory / "checkpoints/step-00000003.json").read_text())
     handle = service.artifact(ArtifactRef.from_dict(saved["checkpoint"]))
     info = handle.manifest().result().info
@@ -58,10 +58,10 @@ def checkpoint(service, directory, destination, trained):
     handle.download(destination).result()
     with tarfile.open(destination / "ranks/rank-00000.ssp") as archive:
         manifest = json.load(archive.extractfile("manifest.json"))
-        assert manifest["frozen_state_id"] is not None
-        assert "embed.weight" in manifest["omitted_parameters"]
+        assert (manifest["frozen_state_id"] is not None) == lora
+        assert ("embed.weight" in manifest["omitted_parameters"]) == lora
         hashes = {row["name"]: row["blake3"] for row in manifest["tensors"]}
-        # This fixture uses one worker and untied FP32 adapters. Native checkpoint
+        # This fixture uses one worker and untied FP32 weights. Native checkpoint
         # tensor descriptors give their complete geometry without engine imports.
         assert manifest["logical_rank"] == 0 and not manifest["gathered_tensors"]
         tensors = {row["name"]: row for row in manifest["tensors"]}
@@ -89,6 +89,7 @@ def checkpoint(service, directory, destination, trained):
 
 
 def qualify(options):
+    main = train_qwen35_lora.main if options["lora"] else train_qwen3_distributed.main
     os.environ["SHADOWSPILL_TOKEN"] = options["token"]
     connection = (
         {"ssh": SSH(options["ssh_host"], options["port"])}
@@ -125,6 +126,8 @@ def qualify(options):
                         str(first),
                         "--sequence-length",
                         "4",
+                        "--ranks",
+                        "1",
                         "--sequences-per-step",
                         "2",
                         "--microbatch-sizes",
@@ -133,10 +136,11 @@ def qualify(options):
                         "3",
                         "--schedule-steps",
                         "3",
-                        "--lora-rank",
-                        "2",
-                        "--lora-alpha",
-                        "2",
+                        *(
+                            ["--lora-rank", "2", "--lora-alpha", "2"]
+                            if options["lora"]
+                            else []
+                        ),
                         "--seed",
                         "45",
                         "--compute-dtype",
@@ -209,10 +213,18 @@ def qualify(options):
             atol=2e-5,
         )
         hashes, actual = checkpoint(
-            service, first, root / "first-checkpoint", options["initial"]
+            service,
+            first,
+            root / "first-checkpoint",
+            options["initial"],
+            lora=options["lora"],
         )
         resumed_hashes, _ = checkpoint(
-            service, resumed, root / "resumed-checkpoint", options["initial"]
+            service,
+            resumed,
+            root / "resumed-checkpoint",
+            options["initial"],
+            lora=options["lora"],
         )
         assert hashes == resumed_hashes
         for name, value in actual.items():
@@ -230,6 +242,7 @@ def qualify(options):
             "client_host": socket.gethostname(),
             "runs": [run, restored],
             "pieces": options["pieces"],
+            "family": options["family"],
             "metrics": metrics,
             "resumed_metrics": continuation,
             "actual_example": True,

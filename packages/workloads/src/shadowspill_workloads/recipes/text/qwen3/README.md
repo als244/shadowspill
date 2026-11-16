@@ -1,115 +1,13 @@
 # Qwen3 MoE full training
 
-This recipe uses the [shared Python runner](../../README.md) with sharded DP or
-expert parallelism. The example selects Qwen3-30B-A3B: BF16 compute weights, FP32 gradients,
-FP32 master weights and FP32 AdamW moments. DP shards weights, gradients and
-optimizer data across eight GPUs. EP owns each expert shard locally, replicates
-shared weights and gradients, and shards the shared optimizer state. The recipe
-starts from random weights and reads real,
-already-tokenized text from `train.bin` plus `meta.json`.
+Use the [public client application](../../../../../../../examples/training/qwen3.md)
+and its [Python example](../../../../../../../examples/qwen3.py). Setup is separate
+from the loop submitting `step()` or `forward_backward()` calls. The former
+Qwen-specific recipe adapter and phase CLI are removed; the installed engine
+still provides build/profile/plan/execute and generic parallelism interfaces.
 
-Start with the [commented Python script](../../../../../../../examples/qwen3.py):
-
-```python
-from shadowspill_workloads.recipes import Model, train
-
-model = Model.from_config("qwen3moe-30b-a3b")
-train(model, {
-    "data": "/data/fineweb-qwen3",
-    "run_dir": "runs/qwen3-dp8",
-    "ranks": 8,
-    "parallelism": "dp",
-    "sequence_length": 4096,
-    "sequences_per_step": 64,  # 2,097,152 global tokens/update.
-    "microbatch_sizes": [4, 16],
-    "execution_gib": 20,
-    "spill_gib": 96,
-    "learning_rate": 3e-4,
-    "eval_every": 0,  # Enable when val.bin is available.
-})
-```
-
-Launch this script once, without an outer torchrun. DP uses one
-GPU for build/profile, hides GPUs for planning, and launches all eight workers
-for communication calibration and execution. The script explicitly supplies the
-eight-GPU geometry; `Model.from_config` otherwise uses the common
-[single-GPU defaults](../../README.md#data-defaults-and-search). Its 96 GiB spill
-ceiling per rank permits up to 768 GiB of host pools across the node.
-
-Set `parallelism="ep"` to distribute experts across the rank group. EP build and
-profiling require every resource participant; each microbatch candidate gets its
-own token-capacity resource. EP execution chunks are currently refused because
-the provider has no declared chunkable axes. This is independent of DP
-execution chunking and checkpoint recomputation. Both DP8 and EP8 have completed
-the budget sweep below; its EP runs use unchunked execution.
-
-For full-training DP, chunk candidates currently split the surrounding dense
-projections. Its opaque MoE operations contain sequence-length metadata and
-nonlinear statistics, so they remain whole-sequence barriers. `moe_chunk_sizes`
-does not split those opaque operations. The LoRA adapters have separate provider
-contracts that support chunked expert execution.
-
-Profiling reserves 768 MiB of external GPU headroom (configurable with
-`external_headroom_mib` when creating the run), in addition to calibrated
-communication overhead. This is included in the total GPU budget. Library and
-backend setup on an H100 SonicMoE worker takes more than 512 MiB outside the
-pool; the margin reduces the memory available to planning rather than relaxing
-runtime admission. Changing this reservation requires fresh profiles.
-
-Each phase also runs independently with `phase="build"`, `"profile"`, `"communicate"`,
-`"plan"`, or `"execute"`. Start build with the data path and configuration. Subsequent
-phases read saved settings; a new build requires a fresh directory. Change memory
-budgets only during planning:
-
-```python
-saved = {"run_dir": "runs/qwen3-dp8"}
-train(model, {**saved, "execution_gib": 40}, phase="plan")
-train(model, saved, phase="execute")
-```
-
-The distributed `communicate` phase measures host copies and collectives. For
-DP it also measures paired task/NCCL interference for each saved batch candidate,
-saves `overlap/{candidate}/training.ssp` and merges the measurements into the
-profiles. Planning uses these measured progress rates when transfers overlap
-computation; the original isolated task timing and memory contracts stay intact.
-EP task timings include their internal collectives; extra EP contention
-calibration is not implemented. Changing budgets reuses compatible evidence.
-Changing task implementations or the communication setup requires compatible
-new measurements. See
-[distributed calibration](../../../../../../../docs/python/api/distributed.md#communication-calibration-and-cpu-planning)
-for the public API and measurement limits.
-
-The shared workers have one purpose each; recipe modules delegate to them:
-
-| File | Responsibility | Saved output |
-| --- | --- | --- |
-| [Shared build](../../../../../../engine/src/shadowspill/training/preparation/build.py) | Adapter setup, task compilation, resource declarations | `programs/{candidate}/training.ssp` |
-| [Shared profile](../../../../../../engine/src/shadowspill/training/preparation/profile.py) | Task timing and memory; one representative DP worker or all EP participants | `profiles/`, `profiled/` |
-| [Shared communicate](../../../../../../engine/src/shadowspill/training/preparation/communicate.py) | Host copies, collectives, communication memory and supported paired task interference | `communication/`, `overlap/`, enriched `profiles/` and `profiled/` |
-| [Shared plan](../../../../../../engine/src/shadowspill/training/preparation/plan.py) | Microbatch, chunk, retention and ordering search under memory budgets | `search.json`, `selected.json`, `plans/training.ssp`, `reports/` |
-| [Shared execute](../../../../../../engine/src/shadowspill/training/preparation/execute.py) | Fresh worker, bounded initialization, Trainer updates/checkpoint | `training/rank-NNNNN/` |
-| [Text initialization](../../../initialization/text.py) | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
-
-`microbatch_sizes` lists the exact positive divisors of `sequences_per_step` to
-build and profile. Repeated entries are built once. Changing the list requires a
-fresh run; later phases reuse the saved list. Planning searches all factor
-orderings for each size without rebuilding.
-Inputs are rank-local
-and disjoint. Loss normalization uses the global token count. Random initialization
-draws Hugging Face's initial distributions, from a stable per-tensor RNG stream
-rather than the module-reset traversal order.
-
-`Model.from_config("qwen3moe-tiny")` with short sequences supports local pipeline checks. Single-rank
-profiling also measures host copies, so it needs no communicate phase. Such a
-check does not qualify the 30B model's performance or memory use on eight GPUs.
-The underlying common DP Executor is qualified on two H100s, and the recipe's
-test runs the tiny model through every phase on one and two GPUs, with separate
-compiler caches for each phase. The recipe opts into MLOps' supported
-[operator preparation](../../../../../../../docs/python/advanced/operator-preparation.md): BF16 SonicMoE
-builds archive their selected provider kernels and tuning choices. Profiling
-and execution load those artifacts without retuning inside a task. An eager
-compiler cache is not a substitute for these saved bindings. Other providers
-keep their own preparation contracts.
+The measurements below are preserved historical evidence from the earlier
+trainer at the stated revisions. They do not qualify the new public service path.
 
 ## Eight-H100 budget sweep
 

@@ -20,6 +20,7 @@ from shadowspill_client import (
     Policy,
     Preparation,
     ProfilingOptions,
+    Weights,
 )
 
 
@@ -33,10 +34,10 @@ def objective(weight):
     )
 
 
-def parallelism(ranks):
+def parallelism(ranks, kind="dp"):
     # The existing generic Parallelism.dp wire record. The application submits
     # one global batch; each worker owns independent complete text sequences.
-    return {
+    result = {
         "ranks_per_replica": ranks,
         "num_replicas": 1,
         "groups": {"all_ranks": [list(range(ranks))]},
@@ -66,12 +67,31 @@ def parallelism(ranks):
             "outputs": {},
         },
     }
+    if kind == "ep":
+        experts = (
+            "blocks.*.moe.experts.gate_up_weight",
+            "blocks.*.moe.experts.down_weight",
+        )
+        result["groups"]["local"] = [[r] for r in range(ranks)]
+        result["default_parameter_storage"].update(
+            weights="replicated", gradients="replicated"
+        )
+        result["parameter_placements"] = {
+            name: {"kind": "Sharded", "group": "all_ranks", "dim": 0}
+            for name in experts
+        }
+        result["parameter_storage"] = {name: {"group": "local"} for name in experts}
+    elif kind == "dp":
+        result["default_parameter_storage"]["min_shard_bytes"] = 0
+    else:
+        raise ValueError("parallelism must be dp or ep")
+    return result
 
 
 @dataclass(frozen=True)
 class Settings:
     data: str
-    checkpoint: str
+    checkpoint: str | None
     sequence_length: int = 32768
     sequences_per_step: int = 8
     microbatch_sizes: tuple[int, ...] | None = None
@@ -80,7 +100,7 @@ class Settings:
     graph_pair_policies: tuple[str, ...] = ("cost-input",)
     resolution_options: tuple[str, ...] | None = None
     tail_save_counts: tuple[int, ...] | None = None
-    lora_rank: int = 32
+    lora_rank: int | None = 32
     lora_alpha: float = 32
     compute_dtype: str = "bfloat16"
     steps: int = 5
@@ -98,6 +118,11 @@ class Settings:
     search_workers: int = 8
     warmup_seconds: float = ProfilingOptions().conditioning_seconds
     measure_seconds: float = ProfilingOptions().measurement_seconds
+    family: str = "qwen35moe"
+    preset: str | None = None
+    parallelism: str = "dp"
+    external_headroom_mib: int | None = None
+    reject_overbudget: bool = False
 
     def __post_init__(self):
         for name in (
@@ -107,7 +132,6 @@ class Settings:
             "schedule_steps",
             "ranks",
             "backward_pieces",
-            "lora_rank",
             "eval_updates",
         ):
             if type(getattr(self, name)) is not int or getattr(self, name) < 1:
@@ -133,13 +157,45 @@ class Settings:
             raise ValueError("balance_weight must be finite and nonnegative")
         if self.compute_dtype not in ("float32", "bfloat16"):
             raise ValueError("compute_dtype must be float32 or bfloat16")
-        if not self.checkpoint or not isinstance(self.checkpoint, str):
+        if self.family not in ("qwen3moe", "qwen35moe"):
+            raise ValueError("unsupported Qwen model family")
+        if self.lora_rank is not None and (
+            type(self.lora_rank) is not int or self.lora_rank < 1
+        ):
+            raise ValueError("lora_rank must be positive or None for full training")
+        if self.parallelism not in ("dp", "ep"):
+            raise ValueError("parallelism must be dp or ep")
+        if self.parallelism == "ep" and (
+            self.ranks < 2
+            or self.lora_rank is not None
+            or self.compute_dtype != "bfloat16"
+            or any(self.chunk_sizes)
+            or any(self.moe_chunk_sizes)
+        ):
+            raise ValueError("EP requires unchunked BF16 full training on 2+ ranks")
+        if self.checkpoint is not None and (
+            not self.checkpoint or not isinstance(self.checkpoint, str)
+        ):
             raise ValueError("checkpoint must be an absolute server path or Hub name")
+        if self.preset is not None and (
+            not self.preset or not isinstance(self.preset, str)
+        ):
+            raise ValueError("preset must name an installed model configuration")
+        if (self.checkpoint is None) == (self.preset is None):
+            raise ValueError("supply exactly one checkpoint or random model preset")
+        if self.external_headroom_mib is not None and (
+            type(self.external_headroom_mib) is not int
+            or self.external_headroom_mib < 0
+        ):
+            raise ValueError("external_headroom_mib must be nonnegative or None")
         object.__setattr__(self, "data", str(Path(self.data).resolve()))
         per_worker = self.sequences_per_step // self.ranks
         sizes = self.microbatch_sizes
         if sizes is None:
-            sizes = tuple(n for n in (1, 2, 4, 8) if per_worker % n == 0)
+            defaults = (
+                (1, 2, 4, 8, 16, 32) if self.family == "qwen3moe" else (1, 2, 4, 8)
+            )
+            sizes = tuple(n for n in defaults if per_worker % n == 0)
         for name, values in (
             ("microbatch_sizes", sizes),
             ("chunk_sizes", self.chunk_sizes),
@@ -177,7 +233,42 @@ class Settings:
             )
         self.request()
 
+    @property
+    def application(self):
+        family = "qwen3" if self.family == "qwen3moe" else "qwen35"
+        method = "full" if self.lora_rank is None else "lora"
+        return f"shadowspill.example.{family}_{method}@1"
+
     def request(self):
+        model_options = {
+            "config": {
+                "architecture": {"max_seq_len": self.sequence_length},
+                **({"lora_seed": self.seed} if self.lora_rank is not None else {}),
+                **({"preset": self.preset} if self.preset is not None else {}),
+                **({"implementation": "mlops_ep"} if self.parallelism == "ep" else {}),
+            },
+            "precision": {
+                "compute_dtype": self.compute_dtype,
+                "grad_dtype": "float32",
+                **(
+                    {"lora_dtype": self.compute_dtype}
+                    if self.lora_rank is not None
+                    else {}
+                ),
+            },
+            "lora": LoRA(self.lora_rank, alpha=self.lora_alpha)
+            if self.lora_rank is not None
+            else None,
+        }
+        model = (
+            Model.from_pretrained(self.checkpoint, **model_options)
+            if self.checkpoint is not None
+            else Model(
+                f"shadowspill/{self.family}@1",
+                initialize=Weights.random(seed=self.seed),
+                **model_options,
+            )
+        )
         cases = []
         for sequences in self.microbatch_sizes:
             capacity = sequences * self.sequence_length
@@ -209,19 +300,7 @@ class Settings:
                         if case not in cases:
                             cases.append(case)
         return dict(
-            model=Model.from_pretrained(
-                self.checkpoint,
-                lora=LoRA(self.lora_rank, alpha=self.lora_alpha),
-                config={
-                    "architecture": {"max_seq_len": self.sequence_length},
-                    "lora_seed": self.seed,
-                },
-                precision={
-                    "compute_dtype": self.compute_dtype,
-                    "lora_dtype": self.compute_dtype,
-                    "grad_dtype": "float32",
-                },
-            ),
+            model=model,
             objective=objective(
                 self.balance_weight if self.balance_weight is not None else 0.001
             ),
@@ -241,15 +320,20 @@ class Settings:
                     "max_sequences": self.sequences_per_step,
                 }
             ),
-            parallelism=parallelism(self.ranks),
+            parallelism=parallelism(self.ranks, self.parallelism),
             memory=Memory(self.execution_gib, self.spill_gib),
-            execution=Execution(seed=self.seed),
+            execution=Execution(
+                seed=self.seed, reject_overbudget=self.reject_overbudget
+            ),
             operations={
                 "step": ["metrics"],
                 "forward_backward": ["metrics"],
                 "forward": ["metrics"],
             },
             prepare=Preparation(
+                external_headroom_bytes=None
+                if self.external_headroom_mib is None
+                else self.external_headroom_mib << 20,
                 candidates=BuildCandidates(cases=cases),
                 planning=PlanningOptions(
                     microbatch_counts=sorted(
@@ -266,3 +350,25 @@ class Settings:
                 ),
             ),
         )
+
+
+def qwen3_settings(**options):
+    """Existing eight-worker full-training defaults, expressed as one global batch."""
+    return Settings(
+        **{
+            "family": "qwen3moe",
+            "checkpoint": None,
+            "preset": None if options.get("checkpoint") is not None else "30b-a3b",
+            "lora_rank": None,
+            "ranks": 8,
+            "sequence_length": 4096,
+            "sequences_per_step": 512,
+            "learning_rate": 3e-4,
+            "execution_gib": 77,
+            "spill_gib": 96,
+            "external_headroom_mib": 768,
+            "eval_every": 0,
+            "checkpoint_every": 5,
+            **options,
+        }
+    )

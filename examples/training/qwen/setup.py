@@ -8,8 +8,6 @@ from shadowspill_client.protocol.requests import ArtifactRef
 
 from .settings import Settings, objective
 
-APPLICATION = "shadowspill.example.qwen35_lora@1"
-
 
 def record(settings):
     return json.loads(json.dumps(asdict(settings)))
@@ -21,16 +19,17 @@ def read_resume(path):
     if len(raw) > 64 << 10:
         raise ValueError("resume record exceeds 64 KiB")
     value = json.loads(raw)
-    if value["application"] != APPLICATION:
+    settings = Settings(**value["settings"])
+    if value["application"] != settings.application:
         raise ValueError("resume record belongs to another application")
-    return value, Settings(**value["settings"])
+    return value, settings
 
 
 def resolve(service, settings):
     request = settings.request()
     preview = service.describe_training(**request).result()
-    if preview.config.model.definition != "shadowspill/qwen35moe@1":
-        raise ValueError("this application requires a Qwen3.5 MoE checkpoint")
+    if preview.config.model.definition != f"shadowspill/{settings.family}@1":
+        raise ValueError(f"this application requires a {settings.family} model")
     # Keep the checkpoint's balancing coefficient unless explicitly overridden.
     # This metadata-only preview neither reserves workers nor loads model tensors.
     weight = settings.balance_weight
@@ -84,7 +83,7 @@ def start(service, settings, source, validation, directory, *, resume=None):
         info = checkpoint.manifest().result().info
         metadata = info.to_dict()["metadata"]
         if (
-            metadata.get("application") != APPLICATION
+            metadata.get("application") != settings.application
             or metadata["settings"] != record(settings)
             or metadata["data"] != data_identity(source, validation)
             or metadata["next_update"] != info.completed_updates
@@ -100,7 +99,7 @@ def start(service, settings, source, validation, directory, *, resume=None):
     (directory / "run.json").write_text(
         json.dumps(
             {
-                "application": APPLICATION,
+                "application": settings.application,
                 "settings": record(settings),
                 "session_id": creation.session_id,
                 "run_id": creation.run_id,

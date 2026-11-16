@@ -1,18 +1,14 @@
-"""Optional CLI; public Python scripts use Model.from_config and train."""
+"""Qwen3 MoE full training from a client connected to an existing service."""
 
-from shadowspill.training.preparation import run
-from shadowspill.training.preparation.cli import arguments
-from shadowspill_workloads.recipes.text.qwen3.arguments import parser
+from examples.training.qwen import cli
+
+
+def arguments(argv=None):
+    return cli.arguments(argv, family="qwen3moe")
 
 
 def main(argv=None):
-    command = parser()
-    phase, config = arguments(command, argv)
-    try:
-        run("shadowspill_workloads.recipes.text.qwen3.adapter", config, phase=phase)
-    except ValueError as error:
-        command.error(str(error))
-    return 0
+    return cli.main(argv, family="qwen3moe")
 
 
 if __name__ == "__main__":

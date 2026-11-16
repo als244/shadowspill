@@ -1,4 +1,4 @@
-"""Actual Qwen LoRA CLI, local weights, independent updates and cold resume."""
+"""Actual Qwen full/LoRA CLIs, independent updates and cold checkpoint resume."""
 
 import json
 import subprocess
@@ -18,15 +18,18 @@ from workload_tests.test_moe_objective import independent
 from workload_tests.test_pretrained_initialization import checkpoint, fill
 
 
-def prepare(root, pieces):
-    requested = settings("qwen35moe", lora=True)
+def prepare(root, pieces, family="qwen35moe"):
+    lora = family == "qwen35moe"
+    requested = settings(family, lora=lora)
     architecture = {
         **requested.config["architecture"],
         "max_seq_len": 4,
         "router_aux_loss_coef": 0.07,
     }
     requested = replace(
-        requested, lora=LoRA(2), config={"architecture": architecture, "lora_seed": 45}
+        requested,
+        lora=LoRA(2) if lora else None,
+        config={"architecture": architecture, **({"lora_seed": 45} if lora else {})},
     )
     registry = load_registry(["shadowspill-workloads"])
     base = registry.resolve_model(
@@ -35,12 +38,14 @@ def prepare(root, pieces):
     ).create()
     source = root / "base"
     source.mkdir()
-    generator = Initialize("qwen35moe", base.config, seed=17)
+    generator = Initialize(family, base.config, seed=17)
     for name, value in (*base.named_parameters(), *base.named_buffers()):
         fill(generator, name, value, 257)
-    checkpoint(source, "qwen35moe", base)
+    checkpoint(source, family, base)
     model = registry.resolve_model(requested.definition, settings=requested).create()
-    generator = Initialize("qwen35moe", model.config, seed=17, lora_seed=45)
+    generator = Initialize(
+        family, model.config, seed=17, lora_seed=45 if lora else None
+    )
     for name, value in (*model.named_parameters(), *model.named_buffers()):
         fill(generator, name, value, 257)
     trainable = {
@@ -100,6 +105,8 @@ def prepare(root, pieces):
     return {
         "client_script": "_qwen_example_client.py",
         "checkpoint": str(source),
+        "family": family,
+        "lora": lora,
         "pieces": pieces,
         "initial": initial,
         "final": {name: value.detach().tolist() for name, value in trainable.items()},
@@ -108,18 +115,22 @@ def prepare(root, pieces):
         "rates": rates,
         "fresh_saved_plans": True,
         "model_description": (
-            f"Actual Qwen3.5 LoRA application, FP32, {pieces} backward pieces"
+            f"Actual {family} {'LoRA' if lora else 'full'} application, "
+            f"FP32, {pieces} backward pieces"
         ),
         "oracle_description": (
-            "Independent full-head CE/router formula and CPU AdamW; local base, "
-            "nonzero adapter seed, exact native resume"
+            "Independent full-head CE/router formula and CPU AdamW; local weights, "
+            "exact native resume"
         ),
     }
 
 
 @pytest.mark.parametrize("pieces", [1, 2])
-def test_qwen_application_reference_has_finite_nonzero_updates(tmp_path, pieces):
-    options = prepare(tmp_path, pieces)
+@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
+def test_qwen_application_reference_has_finite_nonzero_updates(
+    tmp_path, pieces, family
+):
+    options = prepare(tmp_path, pieces, family)
     assert all(np.isfinite(options["losses"]))
     assert all(np.isfinite(options["evaluations"]))
     assert any(
@@ -132,13 +143,14 @@ def test_qwen_application_reference_has_finite_nonzero_updates(tmp_path, pieces)
 @pytest.mark.cuda
 @pytest.mark.slow
 @pytest.mark.parametrize("pieces", [1, 2])
+@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
 def test_qwen_application_step_split_and_checkpoint_resume(
-    tmp_path, monkeypatch, pieces
+    tmp_path, monkeypatch, pieces, family
 ):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     monkeypatch.setenv("TRITON_F32_DEFAULT", "ieee")
-    (tmp_path / "setup.json").write_text(json.dumps(prepare(tmp_path, pieces)))
+    (tmp_path / "setup.json").write_text(json.dumps(prepare(tmp_path, pieces, family)))
     child = subprocess.run(
         [
             sys.executable,

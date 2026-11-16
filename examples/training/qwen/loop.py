@@ -5,7 +5,7 @@ from time import monotonic
 
 from shadowspill_client.schedules import WarmupCosine
 
-from .setup import APPLICATION, data_identity, record
+from .setup import data_identity, record
 
 
 def update(training, batch, *, pieces, lr, positions):
@@ -76,7 +76,7 @@ def train(training, settings, source, validation, directory, *, cursor=0, logger
                 saved = training.save_checkpoint(
                     name=f"step-{step:08d}",
                     metadata={
-                        "application": APPLICATION,
+                        "application": settings.application,
                         "settings": record(settings),
                         "data": data_identity(source, validation),
                         "next_update": step,
@@ -85,7 +85,7 @@ def train(training, settings, source, validation, directory, *, cursor=0, logger
                 (checkpoint_dir / f"step-{step:08d}.json").write_text(
                     json.dumps(
                         {
-                            "application": APPLICATION,
+                            "application": settings.application,
                             "settings": record(settings),
                             "checkpoint": saved.reference.to_dict(),
                             "plans": training.plans.reference.to_dict(),

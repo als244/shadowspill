@@ -16,22 +16,31 @@ from shadowspill_workloads.initialization.text import Initialize
 from shadowspill_workloads.inputs.text.calls import Inputs
 from shadowspill_workloads.models.qwen3moe.config import PRESETS
 from shadowspill_workloads.models.shared.decoder import RotaryEmbedding
-from shadowspill_workloads.recipes.text.qwen3.common import batch_sizes
+from shadowspill_workloads.recipes.text.phases.candidates import batch_sizes
 
 
 def test_replanning_preserves_prior_profile_headroom(tmp_path, monkeypatch):
-    from examples import train_qwen3_distributed as recipe
     from shadowspill.training.preparation import api as runner
 
     calls = []
     monkeypatch.setattr(runner, "run_phases", lambda *a, **k: calls.append((a, k)))
     data = tmp_path / "tokens"
     root = tmp_path / "run"
-    recipe.main(["--phase", "build", "--data", str(data), "--run-dir", str(root)])
+    recipe = "shadowspill_workloads.recipes.text.catalog"
+    runner.run(
+        recipe,
+        {
+            "data": str(data),
+            "run_dir": str(root),
+            "model": "qwen3moe-tiny",
+            "external_headroom_mib": 768,
+        },
+        phase="build",
+    )
     path = root / "config.json"
     options = json.loads(path.read_text())
     assert options["external_headroom_mib"] == 768
-    recipe.main(["--phase", "plan", "--run-dir", str(root), "--execution-gib", "4"])
+    runner.run(recipe, {"run_dir": str(root), "execution_gib": 4}, phase="plan")
     restored = json.loads(path.read_text())
     assert restored["external_headroom_mib"] == 768
     assert restored["execution_gib"] == 4
@@ -112,40 +121,31 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
     entrypoint = [
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
-        "-m",
-        "examples.train_qwen3_distributed",
+        "-c",
+        "import json, sys; from shadowspill.training.preparation import run; "
+        "run('shadowspill_workloads.recipes.text.catalog', "
+        "json.loads(sys.argv[1]), phase=sys.argv[2])",
     ]
-    command = [
-        *entrypoint,
-        "--data",
-        str(data),
-        "--run-dir",
-        str(root),
-        "--model",
-        "qwen3moe-tiny",
-        "--ranks",
-        str(ranks),
-        "--sequence-length",
-        "16",
-        "--sequences-per-step",
-        "8",
-        "--microbatch-sizes",
-        "2",
-        "4",
-        "--steps",
-        "3",
-        "--learning-rate",
-        "0.001",
-        "--execution-gib",
-        "4",
-        "--spill-gib",
-        "0.125",
-        "--warmup-seconds",
-        "0.001",
-        "--measure-seconds",
-        "0.002",
-        "--no-plots",
-    ]
+    config = {
+        "data": str(data),
+        "run_dir": str(root),
+        "model": "qwen3moe-tiny",
+        "ranks": ranks,
+        "sequence_length": 16,
+        "sequences_per_step": 8,
+        "microbatch_sizes": [2, 4],
+        "steps": 3,
+        "schedule_steps": 10,
+        "learning_rate": 0.001,
+        "execution_gib": 4,
+        "spill_gib": 0.125,
+        "external_headroom_mib": 768,
+        "warmup_seconds": 0.001,
+        "measure_seconds": 0.002,
+        "plots": False,
+        "eval_every": 0,
+        "checkpoint_every": 5,
+    }
     phases = [
         "build",
         "profile",
@@ -158,11 +158,9 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
         # eager cache can conceal an omitted provider-preparation description:
         # runtime tuning then changes the profiled task's allocation trace.
         cache = tmp_path / "caches" / phase
-        arguments = (
-            command if phase == "build" else [*entrypoint, "--run-dir", str(root)]
-        )
+        arguments = config if phase == "build" else {"run_dir": str(root)}
         child = subprocess.run(
-            [*arguments, "--phase", phase],
+            [*entrypoint, json.dumps(arguments), phase],
             env={
                 **os.environ,
                 "OMP_NUM_THREADS": "1",

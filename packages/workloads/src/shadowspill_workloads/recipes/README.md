@@ -53,11 +53,13 @@ model = Model.from_checkpoint("/checkpoints/Qwen3.5-35B-A3B", lora=LoRA())
 # "frozen_state_id": "exact-base-checkpoint-revision"
 ```
 
-Commented scripts: [catalog full training](../../../../../examples/train_text.py),
-[Qwen3 distributed full training](../../../../../examples/qwen3.py),
-[Qwen3.5 LoRA](../../../../../examples/qwen35_lora.py),
-[GLM Flash LoRA](../../../../../examples/glm53_flash_lora.py).
+Commented scripts for this runner: [catalog full training](../../../../../examples/train_text.py)
+and [GLM Flash LoRA](../../../../../examples/glm53_flash_lora.py).
 The checkpoint recipes document their storage/precision requirements.
+The [Qwen3 full-training](../../../../../examples/training/qwen3.md) and
+[Qwen3.5 LoRA](../../../../../examples/training/qwen35_lora.md) applications now
+use separate public setup/runtime clients, an existing service, and global
+sequence counts. Their application guides describe the current commands.
 For a custom model or loss, follow the [custom-model guide](../../../../../docs/python/custom-models.md).
 
 ## Data, defaults and search
