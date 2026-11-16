@@ -390,8 +390,10 @@ def main():
                 raise AssertionError("framework or engine import in client: " + name)
 
     sys.meta_path.insert(0, Block())
-    raw = sys.stdin.buffer.read((4 << 20) + 1)
-    assert len(raw) <= 4 << 20
+    # Aligned-rank LoRA includes independent whole/split parameter trajectories.
+    # This bounds test-fixture input, independently of service request limits.
+    raw = sys.stdin.buffer.read((8 << 20) + 1)
+    assert len(raw) <= 8 << 20
     options = json.loads(raw)
     connection = (
         {"ssh": SSH(options["ssh_host"], options["port"])}
