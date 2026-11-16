@@ -119,7 +119,7 @@ def qualify(options):
                         "--backward-pieces",
                         str(options["pieces"]),
                         "--execution-gib",
-                        "2",
+                        "4" if options["ranks"] > 1 else "2",
                         "--spill-gib",
                         "0.125",
                         "--warmup-seconds",
