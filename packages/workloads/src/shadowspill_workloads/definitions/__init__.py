@@ -11,7 +11,7 @@ def register(registry):
     from .moe_objective import register as register_moe_objective
     from .olmoe import register as register_olmoe
     from .pretrained import register as register_pretrained
-    from .qwen_moe import register as register_qwen_moe
+    from .qwen import register as register_qwen
     from .regression import register as register_regression
     from .text_policies import register as register_text_policies
     from .token import register as register_token
@@ -20,7 +20,7 @@ def register(registry):
     register_token(registry)
     register_moe_objective(registry)
     register_llama(registry)
-    register_qwen_moe(registry)
+    register_qwen(registry)
     register_olmoe(registry)
     register_pretrained(registry)
     register_text_policies(registry)
