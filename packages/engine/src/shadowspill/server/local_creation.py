@@ -30,7 +30,8 @@ from shadowspill.orchestration.launch.phases import NodePhases
 from shadowspill.orchestration.launch.processes import worker_command
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.bundle import TrainingBundle
-from shadowspill.training.preparation.job import BUNDLE_NAME, prepare_job
+from shadowspill.training.preparation.job import BUNDLE_NAME, measure_job, prepare_job
+from shadowspill.training.preparation.measurement_export import export_measurements
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.worker.checkpoint_records import RankRestore
@@ -45,6 +46,7 @@ from shadowspill.training.worker.resources import WorkerHost
 from shadowspill.training.worker.runtime import PreparedWorker
 from shadowspill_client._records import integer, names
 from shadowspill_client.buffers import BufferBudget, BufferLease
+from shadowspill_client.protocol.preparation import PREPARATION_MEDIA_TYPE
 from shadowspill_client.protocol.preview import TrainingPreview
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.runs import CreationStage, RunInfo
@@ -212,7 +214,11 @@ class LocalCreation:
             self._artifacts = self._pin.__enter__()
             creation = load_creation(self._artifacts, self.info)
             execution = creation.config.execution
-            capture = NsysCapture.from_settings(execution.nsys)
+            capture = (
+                NsysCapture.from_settings(execution.nsys)
+                if creation.kind == "training"
+                else None
+            )
             if capture is not None:
                 # Resolve the installed executable before phases or device admission.
                 replace(capture, executable=limits.nsys.executable).command(
@@ -232,9 +238,12 @@ class LocalCreation:
             )
             # A complete checkpoint is the initializer. Historical fresh-weight
             # provenance in saved Plans never requires opening that old source.
-            if checkpoint is None:
+            if checkpoint is None and creation.kind == "training":
                 prepare_initialization(setup)
-            elif checkpoint.manifest.info.frozen_base is not None:
+            elif (
+                checkpoint is not None
+                and checkpoint.manifest.info.frozen_base is not None
+            ):
                 for rank in range(setup.context.parallelism.world_size):
                     initial_base = prepare_frozen_initialization(
                         setup, checkpoint.manifest.info.frozen_base, rank
@@ -244,6 +253,7 @@ class LocalCreation:
             initial = creation.config.model.initialize
             if (
                 checkpoint is None
+                and creation.kind == "training"
                 and initial is not None
                 and initial.kind == "artifact"
             ):
@@ -314,6 +324,26 @@ class LocalCreation:
                     admitted=self._progress,
                     host=phase_host,
                 )
+                if creation.kind == "preparation":
+                    measure_job(
+                        job_root,
+                        packages=factory.packages,
+                        config=creation.config,
+                        environment=factory.environment,
+                        launch=self._phases,
+                    )
+                    self._active()
+                    exported = export_measurements(
+                        job_root,
+                        root / "measurements.zip",
+                        max_disk_bytes=limits.preparation_disk_bytes,
+                        max_files=limits.max_preparation_files,
+                    )
+                    reference = self._publish_file(
+                        exported, "measurements", media_type=PREPARATION_MEDIA_TYPE
+                    )
+                    factory.storage.catalog.prepared(self.identity, reference)
+                    return
                 bundle = prepare_job(
                     job_root,
                     packages=factory.packages,
@@ -526,12 +556,14 @@ class LocalCreation:
             self._conversion_logs = None
         self._conversion_lease = None
 
-    def _publish_file(self, path: Path, name: str) -> ArtifactRef:
+    def _publish_file(
+        self, path: Path, name: str, *, media_type: str = "application/octet-stream"
+    ) -> ArtifactRef:
         assert self._artifacts is not None
         with path.open("rb") as source:
             digest = hashlib.file_digest(source, "sha256").hexdigest()
         reference = ArtifactRef(
-            "prepared." + self._key(name), digest, path.stat().st_size
+            "prepared." + self._key(name), digest, path.stat().st_size, media_type
         )
         self._artifacts.put(reference, lambda _: path.open("rb"))
         return reference

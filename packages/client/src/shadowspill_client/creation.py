@@ -52,6 +52,8 @@ def _ready(service: ServiceClient, run_id: str, *, read_only: bool) -> RunInfo:
         service._work.check()
         reply = service._transport.request("GET", route)
         info = _info(service, reply.value, run_id)
+        if info.kind != "training":
+            raise ValueError("measurement-only preparation has no training client")
         if read_only or (reply.status == 200 and info.state == "ready"):
             return info
         if info.state in ("failed", "closed", "stopped"):

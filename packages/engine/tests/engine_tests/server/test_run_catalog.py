@@ -12,6 +12,7 @@ from shadowspill.server.records.run_index import RUN_BYTES, run_bytes
 from shadowspill.server.records.runs import INDEX_BYTES, RunCatalog
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.codec import ProtocolError, decode, encode
+from shadowspill_client.protocol.preparation import PREPARATION_MEDIA_TYPE
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.runs import CREATION_STAGES, RunInfo
 from shadowspill_client.protocol.service import ServiceError
@@ -74,6 +75,30 @@ def test_exact_creation_retries_and_original_provenance_survive_close_and_restar
         with pytest.raises(RuntimeError, match="earlier server"):
             records.ready(IDENTITY, plans=PLANS, initial_history_id="history")
     assert budget.used == (0, 0)
+
+
+def test_measurement_completion_is_terminal_and_survives_restart(tmp_path):
+    export = ArtifactRef("measurements", "d" * 64, 1000, PREPARATION_MEDIA_TYPE)
+    with catalog(tmp_path) as records:
+        original, _ = create(records, kind="preparation")
+        with pytest.raises(ValueError, match="different creation"):
+            create(records)
+        with pytest.raises(ValueError, match="measurement"):
+            records.prepared(IDENTITY, export)
+        for phase in ("build", "profile", "communicate"):
+            records.progress(IDENTITY, phase)
+        with pytest.raises(ValueError, match="cannot plan"):
+            records.progress(IDENTITY, "plan")
+        finished = records.prepared(IDENTITY, export)
+        assert finished.state == "prepared" and finished.preparation_export == export
+        assert finished.plans is finished.initial_history_id is None
+        assert records.prepared(IDENTITY, export) == finished
+        with pytest.raises(ValueError, match="terminal"):
+            records.prepared(IDENTITY, replace(export, id="other"))
+        assert finished.kind == original.kind == "preparation"
+    with catalog(tmp_path, incarnation="replacement") as records:
+        assert records.get(IDENTITY) == finished and not records.interrupted()
+        assert create(records, kind="preparation") == (finished, False)
 
 
 def test_registration_leaves_room_for_maximum_failure_and_ready_provenance(tmp_path):

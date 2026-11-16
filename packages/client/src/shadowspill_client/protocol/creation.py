@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from .._records import Record, record
 from .requests import ArtifactRef
-from .runs import organization
+from .runs import RunKind, organization
 from .training import ResolvedTraining
 
 
@@ -17,8 +17,15 @@ class TrainingCreation(Record):
     wait_for_resources: bool = False
     name: str | None = None
     labels: Mapping[str, str] = field(default_factory=dict)
+    kind: RunKind = "training"
 
     def __post_init__(self) -> None:
+        if self.kind not in ("training", "preparation"):
+            raise ValueError("unknown creation kind")
+        if self.kind == "preparation" and (
+            self.plans is not None or self.checkpoint is not None
+        ):
+            raise ValueError("measurement jobs do not load Plans or checkpoints")
         object.__setattr__(
             self, "config", record(ResolvedTraining, self.config, "config")
         )

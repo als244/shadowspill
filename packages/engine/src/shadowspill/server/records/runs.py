@@ -10,7 +10,12 @@ from typing import Self
 
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef, identifier
-from shadowspill_client.protocol.runs import CREATION_STAGES, CreationStage, RunInfo
+from shadowspill_client.protocol.runs import (
+    CREATION_STAGES,
+    CreationStage,
+    RunInfo,
+    RunKind,
+)
 from shadowspill_client.protocol.service import ServiceError
 
 from .artifact_index import reference_bytes
@@ -33,6 +38,7 @@ def _registration(info: RunInfo) -> tuple[object, ...]:
         info.configuration,
         info.name,
         info.labels,
+        info.kind,
     )
 
 
@@ -42,7 +48,7 @@ def _transition(before: RunInfo, after: RunInfo) -> None:
         or before.server_incarnation != after.server_incarnation
     ):
         raise ValueError("run registration and creation identity are immutable")
-    if before.state in ("failed", "stopped", "closed"):
+    if before.state in ("failed", "stopped", "closed", "prepared"):
         raise ValueError("terminal run lifecycle records are immutable")
     if before.state == "ready":
         if after.state not in ("stopped", "closed") or (
@@ -58,6 +64,9 @@ def _transition(before: RunInfo, after: RunInfo) -> None:
     elif after.state == "ready":
         if before.stage != "initializing":
             raise ValueError("worker readiness must follow explicit initialization")
+    elif after.state == "prepared":
+        if before.kind != "preparation" or before.stage != "communicate":
+            raise ValueError("preparation completion must follow target measurement")
     elif after.state == "preparing":
         assert before.stage is not None and after.stage is not None
         if CREATION_STAGES.index(after.stage) <= CREATION_STAGES.index(before.stage):
@@ -163,6 +172,7 @@ class RunCatalog:
         configuration: ArtifactRef,
         name: str | None = None,
         labels: Mapping[str, str] | None = None,
+        kind: RunKind = "training",
     ) -> tuple[RunInfo, bool]:
         """Commit once before enqueueing; exact retries return the original record."""
         requested = RunInfo(
@@ -174,6 +184,7 @@ class RunCatalog:
             configuration,
             name=name,
             labels={} if labels is None else labels,
+            kind=kind,
         )
         registration_bytes(requested)
         with self._mutex:
@@ -236,6 +247,18 @@ class RunCatalog:
                     parent_checkpoint=parent_checkpoint,
                     initial_completed_updates=initial_completed_updates,
                     initial_checkpoint=initial_checkpoint or parent_checkpoint,
+                ),
+            )
+
+    def prepared(self, identity: RunIdentity, export: ArtifactRef) -> RunInfo:
+        """Record an immutable export after all measurement children have exited."""
+        reference_bytes(export)
+        with self._mutex:
+            before = self._require(identity, live=True)
+            return self._update(
+                before,
+                replace(
+                    before, state="prepared", stage=None, preparation_export=export
                 ),
             )
 

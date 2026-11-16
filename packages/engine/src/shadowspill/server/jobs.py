@@ -11,7 +11,7 @@ from typing import Protocol
 from shadowspill_client._records import integer, number
 from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.requests import ArtifactRef
-from shadowspill_client.protocol.runs import RunInfo
+from shadowspill_client.protocol.runs import RunInfo, RunKind
 from shadowspill_client.protocol.service import ServiceError
 
 from .http import RunAccess
@@ -154,6 +154,7 @@ class RunJobs:
         configuration: ArtifactRef,
         name: str | None = None,
         labels: Mapping[str, str] | None = None,
+        kind: RunKind = "training",
         publish: Callable[[], None] | None = None,
     ) -> RunInfo:
         """Publish optional creation metadata after admission, before registration.
@@ -176,6 +177,7 @@ class RunJobs:
                     configuration=configuration,
                     name=name,
                     labels=labels,
+                    kind=kind,
                 )[0]
             if identity in self._jobs:
                 raise TimeoutError("creation metadata is already being published")
@@ -190,6 +192,7 @@ class RunJobs:
                 configuration,
                 name=name,
                 labels={} if labels is None else labels,
+                kind=kind,
             )
             registration_bytes(info)
             memory = self._memory.reserve(self.host_bytes, timeout=0)
@@ -205,6 +208,7 @@ class RunJobs:
                     configuration=configuration,
                     name=name,
                     labels=labels,
+                    kind=kind,
                 )
                 if not created:
                     del self._jobs[identity]
@@ -293,7 +297,10 @@ class RunJobs:
             owner = job.owner
             run = None if owner is None else owner.run
             if not running and job.error is None and not self._closing:
-                if run is None or not run.ready:
+                info = self.storage.catalog.get(identity)
+                if info is not None and info.state == "prepared":
+                    pass  # A measurement-only job has no persistent execution run.
+                elif run is None or not run.ready:
                     job.error = "Creation returned without initialized workers."
                 elif not run.finished:
                     job.live = True

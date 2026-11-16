@@ -8,10 +8,12 @@ from typing import Literal
 
 from .._records import Record, integer, record, text
 from .checkpoints import CHECKPOINT_MEDIA_TYPE
+from .preparation import PREPARATION_MEDIA_TYPE
 from .requests import ArtifactRef, identifier
 from .service import ServiceError
 
-type RunState = Literal["preparing", "ready", "failed", "stopped", "closed"]
+type RunKind = Literal["training", "preparation"]
+type RunState = Literal["preparing", "ready", "prepared", "failed", "stopped", "closed"]
 type CreationStage = Literal[
     "queued", "build", "profile", "communicate", "plan", "converting", "initializing"
 ]
@@ -65,8 +67,12 @@ class RunInfo(Record):
     parent_checkpoint: ArtifactRef | None = None
     initial_completed_updates: int = 0
     initial_checkpoint: ArtifactRef | None = None
+    kind: RunKind = "training"
+    preparation_export: ArtifactRef | None = None
 
     def __post_init__(self) -> None:
+        if self.kind not in ("training", "preparation"):
+            raise ValueError("unknown run kind")
         for name in ("owner_id", "session_id", "run_id", "server_incarnation"):
             identifier(getattr(self, name), name)
         if (
@@ -110,8 +116,35 @@ class RunInfo(Record):
                 raise ValueError("initial checkpoint requires checkpoint lineage")
         if self.error is not None:
             object.__setattr__(self, "error", record(ServiceError, self.error, "error"))
-        if self.state not in ("preparing", "ready", "failed", "stopped", "closed"):
+        if self.state not in (
+            "preparing",
+            "ready",
+            "prepared",
+            "failed",
+            "stopped",
+            "closed",
+        ):
             raise ValueError("unknown run lifecycle state")
+        if self.preparation_export is not None:
+            object.__setattr__(
+                self,
+                "preparation_export",
+                record(ArtifactRef, self.preparation_export, "preparation export"),
+            )
+            if self.preparation_export.media_type != PREPARATION_MEDIA_TYPE:
+                raise ValueError("preparation export requires its archive media type")
+        if (self.preparation_export is not None) != (self.state == "prepared"):
+            raise ValueError("only completed preparation has an export")
+        if self.state == "prepared" and self.kind != "preparation":
+            raise ValueError(
+                "training runs cannot complete without initialized workers"
+            )
+        if self.kind == "preparation" and (
+            self.plans is not None
+            or self.initial_history_id is not None
+            or self.stage in ("plan", "converting", "initializing")
+        ):
+            raise ValueError("measurement jobs cannot plan or own training state")
         if (self.stage in CREATION_STAGES) != (self.state == "preparing") or (
             self.state != "preparing" and self.stage is not None
         ):

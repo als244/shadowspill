@@ -134,6 +134,8 @@ class ServiceStorage:
         info = self.catalog.get(identity)
         if info is None:
             raise KeyError("unknown owner/session/run")
+        if info.kind != "training":
+            raise ValueError("measurement-only jobs have no training request journal")
         create = (
             info.state == "preparing" and info.server_incarnation == self.incarnation
         )
@@ -196,7 +198,9 @@ class ServiceStorage:
                     identity,
                     ServiceError(
                         "server_restarted",
-                        "Server restarted; recover training state from a checkpoint.",
+                        "Server restarted; recover training state from a checkpoint."
+                        if info.kind == "training"
+                        else "Server restarted; submit a new measurement job.",
                     ),
                 )
                 after = position

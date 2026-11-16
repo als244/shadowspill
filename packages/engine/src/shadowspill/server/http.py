@@ -822,6 +822,7 @@ class _Handler(BaseHTTPRequestHandler):
                 configuration=record.configuration,
                 name=creation.name,
                 labels=creation.labels,
+                kind=creation.kind,
                 publish=publish,
             )
         elif self.command != "GET":
@@ -846,7 +847,7 @@ class _Handler(BaseHTTPRequestHandler):
         pending = info.state == "preparing" or (
             info.state == "ready" and not self.server.jobs.available(identity)
         ) or (
-            info.state in ("closed", "failed", "stopped")
+            info.state in ("closed", "failed", "stopped", "prepared")
             and not self.server.jobs.retired(identity)
         )
         self._reply(info, 202 if pending else 200)

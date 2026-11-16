@@ -19,6 +19,7 @@ from .creation import TrainingFuture, create_training_client, get_training_clien
 from .downloads import CHECKPOINT_SCRATCH_BYTES, FILE_SCRATCH_BYTES
 from .metrics import MetricQueries
 from .plans import PlansHandle, get_plans
+from .preparation import PreparationFuture, get_preparation, prepare_training
 from .protocol.checkpoints import CHECKPOINT_MEDIA_TYPE, WEIGHTS_MEDIA_TYPE
 from .protocol.codec import ProtocolError, encode
 from .protocol.metrics import MetricPage
@@ -140,6 +141,14 @@ class ServiceClient:
 
     def create_training_client(self, **setup: Any) -> TrainingFuture:
         return create_training_client(self, **setup)
+
+    def prepare_training(self, **setup: Any) -> PreparationFuture:
+        """Measure every case for export, without planning or starting training."""
+        return prepare_training(self, **setup)
+
+    def get_preparation(self, run_id: str) -> PreparationFuture:
+        """Inspect/rejoin a measurement job in this session without replaying it."""
+        return get_preparation(self, run_id)
 
     def get_metrics(
         self,

@@ -11,7 +11,7 @@ Checkpoint save, ordered restore, new-run resume and explicit directory download
 are supported. New-run creation converts compatible checkpoint state when its
 prepared Plans change. Named Plans can be saved and retrieved after worker close
 or service restart. Explicit file and checkpoint downloads can retain verified
-progress for resume; uploads are still being implemented.
+progress for resume; explicit artifact and checkpoint uploads are supported.
 Existing phase and Trainer APIs remain available during migration.
 
 The [Llama application](../../examples/training/llama3/README.md) now uses this
@@ -110,6 +110,32 @@ The creation future exposes its
 `session_id` and `run_id` before readiness. Reconnect using the same session ID
 and `service.get_training_client(run_id).result()`. Writable reattachment fences
 the earlier writer; `read_only=True` permits inspection without takeover.
+
+For measured inputs without starting a training run, use the same setup with
+`service.prepare_training(**setup).result()`. Initialization can be omitted.
+This runs the existing build, profiling and communication phases, and releases
+their resources before the future completes:
+
+```python
+pending = service.prepare_training(**setup)
+prepared = pending.result()
+prepared.export().result().download("measured-inputs.zip").result()
+```
+
+The standard ZIP contains `manifest.json` plus the original phase archives for
+every requested capture, including recorded rejections. The manifest identifies
+each file, checksum, resolved configuration and required measured case. Programs,
+profiles, target memory calibration and communication measurements retain their
+existing formats for inspection and the CPU planning APIs. It contains no
+initialized training state or selected Plan bundle. The ordinary client needs
+only NumPy to download and inspect the manifest; native planning requires the
+optional engine installation. Compatible measurement reuse and locally planned
+bundle submission are still being implemented.
+
+After disconnecting, reconnect to the same session and call
+`service.get_preparation(pending.run_id).result()`. This only queries the original
+job; it never repeats measurement. A timeout or client disconnect leaves accepted
+server work running. Restarted unfinished jobs are reported as stopped.
 
 Runtime methods are `step`, `forward_backward`, `optim_step`, `forward`,
 `discard_gradients`, `save_checkpoint`, `export_weights`, `load_checkpoint` and

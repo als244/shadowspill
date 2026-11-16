@@ -7,6 +7,7 @@ import pytest
 from client_tests.test_training_config import resolved
 from shadowspill_client.protocol.codec import decode, digest, encode
 from shadowspill_client.protocol.creation import TrainingCreation
+from shadowspill_client.protocol.preparation import PREPARATION_MEDIA_TYPE
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.runs import RunInfo, RunPage
 
@@ -77,3 +78,39 @@ def test_run_page_roundtrip_requires_one_scope_and_a_valid_continuation():
     ):
         with pytest.raises(ValueError):
             RunPage(rows, cursor)
+
+
+def test_measurement_records_have_no_training_state_or_restore_choices():
+    creation = TrainingCreation(resolved(), kind="preparation")
+    assert decode(encode(creation)) == creation
+    assert digest(creation) != digest(replace(creation, kind="training"))
+    reference = ArtifactRef("measurements", "a" * 64, 100, PREPARATION_MEDIA_TYPE)
+    info = RunInfo(
+        "owner",
+        "session",
+        "run",
+        "server",
+        "b" * 64,
+        ArtifactRef("configuration", "c" * 64, 100),
+        kind="preparation",
+        state="prepared",
+        stage=None,
+        preparation_export=reference,
+    )
+    assert decode(encode(info)) == info
+    for change in (
+        {"plans": reference},
+        {"checkpoint": reference},
+        {"kind": "unknown"},
+    ):
+        with pytest.raises(ValueError):
+            replace(creation, **change)
+    for change in (
+        {"kind": "training"},
+        {"preparation_export": None},
+        {"plans": reference, "initial_history_id": "history"},
+        {"state": "preparing", "stage": "plan", "preparation_export": None},
+        {"preparation_export": replace(reference, media_type="application/zip")},
+    ):
+        with pytest.raises(ValueError):
+            replace(info, **change)

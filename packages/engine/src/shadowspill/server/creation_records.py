@@ -89,7 +89,11 @@ def load_creation(artifacts: ArtifactStore, info: RunInfo) -> TrainingCreation:
     expected = CreationRecord.encode(value)
     if expected.configuration != info.configuration:
         raise ValueError("creation settings differ from the registered configuration")
-    if value.name != info.name or value.labels != info.labels:
+    if (
+        value.name != info.name
+        or value.labels != info.labels
+        or value.kind != info.kind
+    ):
         raise ValueError("creation organization differs from its registered identity")
     if artifacts.get(info.configuration.id) != info.configuration:
         raise ValueError("registered configuration is not in owner storage")

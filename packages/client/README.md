@@ -37,6 +37,14 @@ distinct from explicit `None` (unchunked); candidate axes and complete coupled
 `BuildCase` lists are mutually exclusive. These records preserve user choices;
 server preset resolution, coverage and memory admission run on the server.
 
+`service.prepare_training(**setup).result()` runs measurement without selecting
+Plans, initializing weights or starting training workers. Its
+`.export().result().download(path).result()` writes a standard ZIP with every
+requested case, original phase archives and a manifest. Initialization is
+optional for this path. `service.get_preparation(run_id).result()` reattaches to
+the same measurement job without replaying it. The future completes after phase
+resources retire; downloaded artifacts remain available after disconnect.
+
 The protocol modules also define compute requests, acceptance, results and
 failures. `protocol.codec` encodes a versioned, bounded canonical JSON envelope.
 Tensor bytes use separate artifact references; Datum is deliberately not a wire
