@@ -187,7 +187,7 @@ def test_meta_initialization_tied_head_and_full_parameter_override():
             model_type(config), rank=4, head="lora", trainable_base=["embed.weight"]
         )
     assert model.embed.weight is model.lm_head.weight
-    from shadowspill.training._model import initialize_model
+    from shadowspill.pytorch.initialization import initialize_model
 
     initialize_model(model, initialize=initialize)
     assert model.lm_head.weight is model.embed.weight
@@ -211,7 +211,7 @@ def test_shared_expert_lora_is_explicit():
 
 @pytest.mark.parametrize("implementation,family", MODELS)
 def test_text_recipe_materializes_mixed_precision_factors(implementation, family):
-    from shadowspill.training._model import initialize_model
+    from shadowspill.pytorch.initialization import initialize_model
     from shadowspill_workloads.models.construction import build_on_meta, initialize
 
     original_dtype = torch.get_default_dtype()

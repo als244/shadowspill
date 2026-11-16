@@ -5,7 +5,8 @@ from contextlib import ExitStack, contextmanager
 import torch
 
 from shadowspill.artifacts.tensors import TensorChunk
-from shadowspill.training import config, reset_parameters
+from shadowspill.pytorch.initialization import reset_parameters
+from shadowspill.training import config
 
 
 @contextmanager

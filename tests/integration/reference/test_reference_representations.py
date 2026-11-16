@@ -4,9 +4,9 @@ import pytest
 import torch
 
 from engine_tests.pytorch.representation_fixtures import model
+from reference.training import state as checkpoints
 from reference.training.engine import EagerStep
-from shadowspill.training import checkpoints
-from shadowspill.training._model import initialize_model
+from shadowspill.pytorch.initialization import initialize_model
 from shadowspill.training.observations import MetricSummary
 
 

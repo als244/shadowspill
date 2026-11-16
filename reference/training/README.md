@@ -15,10 +15,15 @@ The files each own one part of the reference:
 | `engine.py` | Forward/backward, gradient accumulation, schedules, optimizer update and evaluation. |
 | `loop.py` | Logging, evaluation/checkpoint cadence and packing records. |
 | `checkpoint.py` | Atomic model/optimizer and loop-state saving, resume and retention. |
+| `state.py` | The reference's PyTorch model/optimizer checkpoint format. |
+| `weights.py` | Compute weights, optimizer masters and accumulated gradients. |
+| `hyperparameters.py` | Apply scheduled optimizer values and model-buffer controls. |
+| `inputs.py` | Move reference inputs to the selected device. |
 
 The reference uses ordinary allocations. It does not depend on `Trainer`, the
-preparation phases or a ShadowSpill Plan. Shared precision helpers retain compute
-weights, optional masters and separately accumulated gradients. Metric callbacks
+preparation phases or a ShadowSpill Plan. Its weight helper retains compute
+weights, optional masters and separately accumulated gradients. Model materialization
+and explicit objective scaling use shared `shadowspill.pytorch` helpers. Metric callbacks
 remain eager. `parameter_norms_every` enables norms on selected updates; observations
 are disabled by default. An explicit `parameter_metrics` callback defaults to every
 update unless a cadence is supplied.

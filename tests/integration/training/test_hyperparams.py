@@ -4,7 +4,7 @@ import pytest
 import torch
 from torch import nn
 
-from shadowspill.training._hyperparams import set_hyperparams
+from reference.training.hyperparameters import set_hyperparams
 
 
 def test_named_optimizer_group_only_updates_that_group_in_place():

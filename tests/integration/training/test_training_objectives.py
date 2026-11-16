@@ -4,8 +4,8 @@ import pytest
 import torch
 from torch import nn
 
-from shadowspill.training._inputs import ScaledObjective
-from shadowspill.training._model import initialize_model
+from shadowspill.pytorch.initialization import initialize_model
+from shadowspill.pytorch.objectives import ScaledObjective
 
 
 def test_scaled_tuple_objective_is_accepted_by_capture():

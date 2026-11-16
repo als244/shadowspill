@@ -26,6 +26,9 @@ Inside `engine_tests/`, the mirror goes all the way down: a test for
 `packages/engine/tests/engine_tests/profiling/`. A test that exercises two packages
 belongs to the one it is about, not the one it imports for a fixture.
 
+Independent PyTorch training and checkpoint checks live in
+`tests/integration/reference/`; their implementation belongs to `reference/training/`.
+
 `packages/engine/tests/engine_tests/native/` mirrors `packages/engine/csrc/` the same way: `runtime/`, `simulator/`, `backends/`,
 `adapter/`, `network/` and `planner/search/algorithms/pressurefit/` hold the
 canaries for those libraries. At its root, the ABI sizes and build canaries are

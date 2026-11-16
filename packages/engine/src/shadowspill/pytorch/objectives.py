@@ -1,4 +1,4 @@
-"""User data stays a pytree; only loss scaling is added by the runner."""
+"""Explicit objective scaling for captured calls and independent references."""
 
 from __future__ import annotations
 
@@ -7,23 +7,8 @@ from typing import Any
 
 import torch
 from torch import nn
-from torch.utils._pytree import tree_map
 
 from shadowspill.pytorch.contracts import normalize_objective_result
-
-
-def on_device(value: Any, device: torch.device) -> Any:
-    # Preserve repeated tensor identities in arbitrary nested inputs.
-    tensors: dict[int, torch.Tensor] = {}
-
-    def move(leaf: Any) -> Any:
-        if not isinstance(leaf, torch.Tensor):
-            return leaf
-        if id(leaf) not in tensors:
-            tensors[id(leaf)] = leaf.to(device=device)
-        return tensors[id(leaf)]
-
-    return tree_map(move, value)
 
 
 def unpack_objective(value: Any) -> tuple[torch.Tensor, Any]:

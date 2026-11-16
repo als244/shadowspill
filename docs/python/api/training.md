@@ -28,7 +28,7 @@ the tensor name, dtype, owned geometry and flat element offset. The
 fills ordinary model tensors; Trainer initializes captured optimizer defaults.
 `initialize(..., chunk_bytes=64 << 20)` sets the maximum chunk size and returns
 Trainer. Use it before the first update. For eager model initialization outside
-saved execution, `shadowspill.training.reset_parameters(model)` calls each
+saved execution, `shadowspill.pytorch.initialization.reset_parameters(model)` calls each
 submodule's available `reset_parameters` method.
 
 To resume, replace `initialize` with `trainer.load("run/checkpoint.ssp")`.

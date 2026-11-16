@@ -7,8 +7,8 @@ import torch
 from torch import nn
 
 from reference.training import checkpoint
+from reference.training import state as checkpoints
 from reference.training.engine import EagerStep
-from shadowspill.training import checkpoints
 from shadowspill.training.observations import MetricSummary
 
 

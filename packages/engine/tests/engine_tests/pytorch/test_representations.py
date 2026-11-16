@@ -140,7 +140,7 @@ def test_optimizer_placeholder_preserves_component_storage_views():
 
 
 def test_meta_initialization_preserves_representation_and_ties():
-    from shadowspill.training._model import initialize_model
+    from shadowspill.pytorch.initialization import initialize_model
 
     source = model()
     source.tied = source.weight

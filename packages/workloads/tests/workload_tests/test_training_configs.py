@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 import torch
 
+from reference.training.hyperparameters import set_hyperparams
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.training import config
-from shadowspill.training._hyperparams import set_hyperparams
 from shadowspill_workloads.recipes.text.experiment.hyperparameters import (
     scheduled_arguments,
 )

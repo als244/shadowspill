@@ -14,7 +14,7 @@ def test_reference_uses_shared_bounded_initializer_and_plan_schedule_names(tmp_p
 
     from reference.training.initialization import initializer
     from shadowspill.artifacts.tensors import TensorChunk
-    from shadowspill.training._model import initialize_model
+    from shadowspill.pytorch.initialization import initialize_model
     from tests.integration.training._synthetic import TinyModel, fill_tiny_tensor
 
     options = {"initialize": "@tests.integration.training._synthetic:fill_tiny_tensor"}

@@ -107,7 +107,7 @@ def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
     import torch
 
     from reference.training.engine import EagerStep
-    from shadowspill.training import reset_parameters
+    from shadowspill.pytorch.initialization import reset_parameters
     from tests.integration.training._synthetic import write_dataset
 
     path = _write(

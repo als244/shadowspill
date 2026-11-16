@@ -7,8 +7,8 @@ import sys
 import torch
 
 from shadowspill import Parallelism, build_forward, build_step
+from shadowspill.pytorch.objectives import ScaledObjective
 from shadowspill.training import config
-from shadowspill.training._inputs import ScaledObjective
 from shadowspill.training.preparation.phases import settings
 from shadowspill_workloads.recipes.text.optimizer import build_optimizer
 

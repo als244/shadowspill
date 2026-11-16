@@ -6,7 +6,6 @@ from typing import Any
 _PUBLIC = {
     "Trainer": ".trainer",
     "StepResult": ".results",
-    "reset_parameters": "._model",
 }
 
 

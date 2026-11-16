@@ -8,8 +8,8 @@ from pathlib import Path
 
 import torch
 
+from reference.training import state as checkpoints
 from shadowspill.pytorch._rng import restore_rng, rng_state
-from shadowspill.training import checkpoints
 
 
 def save(path, engine, source, step, elapsed, options):
