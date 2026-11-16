@@ -5,7 +5,7 @@ from functools import partial
 from shadowspill.training.definitions import ModelDefinition, PreparationDefinition
 from shadowspill_workloads.inputs.text import preparation as inputs
 
-from ..moe_provider import PROVIDERS
+from ..moe_provider import PROVIDERS, gradient_destination_rules
 from ..source import definition_source
 from . import configuration
 
@@ -61,6 +61,7 @@ def register(registry):
                 configure=configuration.configure,
                 build=configuration.build,
                 capture_context=configuration.capture_context,
+                gradient_destination_rules=gradient_destination_rules,
                 initialization=configuration.initialization,
                 temporary_initialization=configuration.initialization,
             ),

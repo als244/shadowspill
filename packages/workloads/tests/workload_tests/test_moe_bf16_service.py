@@ -20,7 +20,7 @@ from workload_tests.test_moe_objective import independent
 from workload_tests.test_moe_service import options
 
 
-def bf16_options(lora):
+def bf16_options(lora, *, lora_rank=2):
     value = options(lora=lora)
     # Keep tiny, signed BF16 derivatives well conditioned through AdamW. With
     # eps=1e-3, a <0.6% gradient-norm difference at one nearly cancelled LoRA
@@ -28,6 +28,11 @@ def bf16_options(lora):
     # scaling and moments against independent equations without that amplification.
     value["optim"]["eps"] = float(torch.tensor(0.01))
     requested = settings("qwen3moe", dtype="bfloat16", lora=lora)
+    if lora:
+        requested = replace(
+            requested,
+            lora=replace(requested.lora, rank=lora_rank, alpha=float(lora_rank)),
+        )
     requested = replace(
         requested,
         precision={
@@ -154,7 +159,7 @@ def bf16_options(lora):
         "loss_rtol": 0.003,
         "loss_atol": 0.008,
         "model_description": "Qwen3 BF16 compute/gradients, FP32 AdamW masters/moments"
-        + (", LoRA" if lora else ", full training"),
+        + (f", LoRA rank {lora_rank}" if lora else ", full training"),
         "oracle_description": (
             "independent CPU BF16 autograd, explicit router formula and FP32 "
             "master AdamW; separate whole/split trajectories"
@@ -162,9 +167,9 @@ def bf16_options(lora):
     }
 
 
-@pytest.mark.parametrize("lora", [False, True])
-def test_bf16_oracle_keeps_master_precision_and_independent_trajectories(lora):
-    value = bf16_options(lora)
+@pytest.mark.parametrize("lora,rank", [(False, 2), (True, 2), (True, 16)])
+def test_bf16_oracle_keeps_master_precision_and_independent_trajectories(lora, rank):
+    value = bf16_options(lora, lora_rank=rank)
     assert json.loads(json.dumps(value)) == value
     initial = value["oracles"]["whole"][0]["weights"]
     for trajectory in value["oracles"].values():

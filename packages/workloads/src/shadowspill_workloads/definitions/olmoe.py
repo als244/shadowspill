@@ -183,6 +183,7 @@ def register(registry):
             configure=configure,
             build=build,
             capture_context=capture_context,
+            gradient_destination_rules=moe_provider.gradient_destination_rules,
             initialization=initialization,
             temporary_initialization=initialization,
         ),

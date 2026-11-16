@@ -98,6 +98,9 @@ BF16 MoE definitions request the existing provider preparation lifecycle and pin
 Quack, SonicMoE and Cutlass sources. The provider selects supported kernels during
 build and restores the saved choices during execution. Allocation contracts cover
 ordinary unquantized BF16 Sonic calls and their prepared activation wrapper.
+BF16 LoRA definitions also supply the provider's existing gradient-destination
+rules and allocation contracts. The compiler fuses eligible complete, contiguous
+gradients; unsupported crops or dtype transformations retain ordinary accumulation.
 The H100 checks confirm actual Sonic calls and saved preparation manifests in
 both full and LoRA Plans. They cover BF16 compute/gradients; cold-cache execution
 without compilation, FP32-gradient production paths, FP8, expert parallelism and

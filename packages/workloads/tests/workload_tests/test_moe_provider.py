@@ -60,10 +60,46 @@ def test_prepared_moe_family_retains_provider_lifecycle_and_allocation_scope(
             if "sonicmoe" in name
         }
         if dtype == "bfloat16":
-            assert sonic == moe_provider.SONIC_CONTRACTS
+            assert sonic == {
+                **moe_provider.SONIC_CONTRACTS,
+                **moe_provider.DESTINATION_CONTRACTS,
+            }
         else:
             assert not sonic
-        assert not any("accumulate" in name for name in sonic)
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize(
+    "dtype,lora", [("bfloat16", True), ("float32", True), ("bfloat16", False)]
+)
+def test_destination_rules_reuse_provider_eligibility_and_exact_allocation_contracts(
+    family, dtype, lora, monkeypatch
+):
+    import torch
+
+    monkeypatch.setattr(
+        torch.cuda,
+        "get_device_capability",
+        lambda *a, **kw: pytest.fail("device discovery while resolving contracts"),
+    )
+    _, setup, layouts = prepared(family, dtype=dtype, lora=lora)
+    template = next(iter(capture_inventory(layouts).templates.values()))
+    rules = setup.model.gradient_destination_rules(template.model_build)
+    if dtype != "bfloat16" or not lora:
+        assert not rules
+        return
+    assert {"torch.ops." + item.replacement for item in rules} == set(
+        moe_provider.DESTINATION_CONTRACTS
+    )
+    for item in rules:
+        assert item.version == 1 and item.output_indices == (1, 2, 3)
+        assert item.mapper is not None
+        assert "torch.ops." + item.target in moe_provider.SONIC_CONTRACTS
+        name = "torch.ops." + item.replacement
+        assert (
+            template.model_build.allocation_invariants[name]
+            == (moe_provider.DESTINATION_CONTRACTS[name])
+        )
 
 
 @pytest.mark.parametrize("provider", moe_provider.PROVIDERS)

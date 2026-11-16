@@ -9,8 +9,11 @@ size outputs from the contents of the routing offsets.
 
 The available factory captures selected kernels/launch choices and restores
 them in cold workers. Dispatch remains provider-owned. This contract covers
-the ordinary BF16, unquantized model/factor paths declared by these definitions;
-it does not cover FP8 containers, EP, or destination-writing backward variants.
+the ordinary BF16, unquantized model/factor paths declared by these definitions.
+Destination-writing backwards reuse that workspace and write selected parameter
+products into existing complete, contiguous buffers. They return empty tensors
+for consumed products; their GEMM uses split_k=1 with dynamic scheduling disabled.
+Unselected products retain the ordinary fixed shapes. This excludes FP8 and EP.
 """
 
 from shadowspill.preparation import OperatorPreparation
@@ -35,6 +38,23 @@ SONIC_CONTRACTS = {
         "lora_sonicmoe_down_bwd",
     )
 }
+DESTINATION_CONTRACTS = {
+    f"torch.ops.mlops.lora_sonicmoe_{direction}_bwd_accumulate.default": (
+        "shadowspill/sonicmoe-bf16-destinations-allocation@1"
+    )
+    for direction in ("up", "down")
+}
+
+
+def gradient_destination_rules(config):
+    if config.compute_dtype != "bfloat16" or config.lora is None:
+        return ()
+    from shadowspill.integrations.mlops import sonicmoe_gradient_destination_rules
+
+    # The provider mapper checks actual dtype, complete aligned shapes and
+    # transforms. Crops, unsupported casts and unselected operators keep the
+    # ordinary backward/add path; configuration does not certify eligibility.
+    return sonicmoe_gradient_destination_rules()
 
 
 def preparations(dtype):
@@ -49,6 +69,7 @@ def allocations(dtype):
     return {
         **CONTRACTS,
         **SONIC_CONTRACTS,
+        **DESTINATION_CONTRACTS,
         # Binding loads all saved objects before execution. Activation only
         # checks their lifetime/context and selects the bound calls/choices;
         # it neither reads tensor values nor allocates device storage. The
