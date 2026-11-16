@@ -134,13 +134,16 @@ class WorkerLaunch(Record):
             object.__setattr__(
                 self, "restore", record(RankRestore, self.restore, "restore")
             )
+            base = self.restore.info.frozen_base
+            required = () if base is None or base.artifact is None else (base.artifact,)
             if (
-                weights
+                weights != required
                 or self.restore.rank.rank != self.startup.scope.rank
                 or self.restore.info.world_size != len(self.startup.logical_by_worker)
             ):
                 raise ValueError(
-                    "checkpoint startup requires its rank and no fresh weights"
+                    "checkpoint startup requires its rank and exact frozen base; "
+                    "no fresh weights"
                 )
 
 

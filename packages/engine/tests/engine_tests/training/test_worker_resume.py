@@ -26,8 +26,9 @@ from shadowspill.training.definitions import InitializationRuntime
 from shadowspill.training.worker.channel import read_message, write_message
 from shadowspill.training.worker.checkpoint_reader import WorkerCheckpointReader
 from shadowspill.training.worker.checkpoint_records import RankRestore
-from shadowspill.training.worker.protocol import WorkerBoot, WorkerLaunch
+from shadowspill.training.worker.protocol import CODEC, WorkerBoot, WorkerLaunch
 from shadowspill.training.worker.runtime import PreparedWorker
+from shadowspill_client import Weights
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
@@ -35,6 +36,7 @@ from shadowspill_client.protocol.checkpoints import (
     SavedRank,
     SaveInfo,
 )
+from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
 
 
@@ -184,3 +186,26 @@ def test_checkpoint_launch_cannot_also_grant_fresh_weights_or_another_rank(tmp_p
                 worker.restore, info=replace(worker.restore.info, world_size=2)
             ),
         )
+
+
+def test_checkpoint_launch_grants_only_its_exact_artifact_backed_frozen_base(tmp_path):
+    worker, _, _ = source(tmp_path)
+    config = prepared_worker().bindings.setup.config
+    artifact = ArtifactRef("frozen-base", "c" * 64, 100)
+    base = FrozenBase(
+        replace(config.model, initialize=Weights.artifact(artifact.id)),
+        config.definition_sources["model"],
+        artifact,
+    )
+    restored = replace(
+        worker.restore,
+        info=replace(
+            worker.restore.info, frozen_base=base, frozen_state_id=base.identity
+        ),
+    )
+    launch = WorkerLaunch(worker.startup, (), [artifact], restored)
+    assert CODEC.decode(CODEC.encode(launch)) == launch
+    other = ArtifactRef("unrelated", "d" * 64, 100)
+    for grants in ((), [other], [artifact, other]):
+        with pytest.raises(ValueError, match="frozen base"):
+            WorkerLaunch(worker.startup, (), grants, restored)
