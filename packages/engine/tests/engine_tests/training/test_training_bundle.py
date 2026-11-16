@@ -15,6 +15,7 @@ from shadowspill import MemoryBudgets, plan_program
 from shadowspill.artifacts._values import plain
 from shadowspill.planning.shared import SharedMemory
 from shadowspill.step.ordering import StepDataOrdering
+from shadowspill.training.definitions import ModelReferenceDefinition
 from shadowspill.training.inputs.coverage_bounds import CoverageError
 from shadowspill.training.preparation import bundle_validation, family, family_selection
 from shadowspill.training.preparation.bundle import TrainingBundle
@@ -34,6 +35,7 @@ from shadowspill_client import (
     BuildCandidates,
     PlanningOptions,
     Preparation,
+    Weights,
 )
 
 
@@ -157,6 +159,76 @@ def test_bundle_roundtrip_preserves_all_dependencies_and_deduplicates_code(
     with pytest.raises(TypeError):
         restored.plans[0]["extra"] = next(iter(restored.plans[0].values()))
     assert "weights" not in restored.to_dict()
+
+
+@pytest.mark.parametrize("kind", ["random", "pretrained", "artifact", "checkpoint"])
+def test_saved_bundle_reuses_computation_with_different_initial_weights(
+    saved_family, tmp_path, kind
+):
+    bundle, _ = saved_family
+    registry = installed()
+    weights = {
+        "random": Weights.random(seed=123),
+        "pretrained": replace(
+            Weights.pretrained("fixture/model", revision="a" * 40),
+            metadata={"files": [{"name": "weights", "checksum": "abc"}]},
+        ),
+        "artifact": Weights.artifact("uploaded-weights"),
+        "checkpoint": None,
+    }[kind]
+    sources = dict(bundle.config.definition_sources)
+    reference = None
+    if kind == "pretrained":
+        reference = "external/reference@1"
+        sources["reference"] = sources["model"]
+        registry.add_model_reference(
+            ModelReferenceDefinition(reference, lambda _: True, lambda model: model),
+            source=sources["reference"],
+        )
+    config = replace(
+        bundle.config,
+        model=replace(bundle.config.model, initialize=weights),
+        reference_definition=reference,
+        definition_sources=sources,
+        origins={**bundle.config.origins, "model.config.num_classes": "explicit"},
+    )
+    rebound = bundle.with_initialization(config)
+    assert rebound.config == config and bundle.config != config
+    assert rebound.sources == bundle.sources and rebound.plans == bundle.plans
+    path = tmp_path / "rebound.ssp"
+    rebound.save(path)
+    restored = TrainingBundle.load(path)
+    assert manifest(restored.recheck(registry)) == plain(bundle.metadata)
+    # A pretrained bundle must also permit a new random source without retaining
+    # resolver fields or altering any captured computation.
+    assert rebound.with_initialization(bundle.config).config == bundle.config
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda c: replace(c, model=replace(c.model, config={"num_classes": 4})),
+        lambda c: replace(
+            c, objective=replace(c.objective, defaults={"temperature": 2.0})
+        ),
+        lambda c: replace(c, optimizer=replace(c.optimizer, defaults={"lr": 0.2})),
+        lambda c: replace(c, memory=replace(c.memory, device_gib=3)),
+        lambda c: replace(c, execution=replace(c.execution, seed=1337)),
+        lambda c: replace(c, engine_source=replace(c.engine_source, digest="a" * 64)),
+        lambda c: replace(c, client_source=replace(c.client_source, digest="b" * 64)),
+        lambda c: replace(
+            c,
+            definition_sources={
+                **c.definition_sources,
+                "model": replace(c.definition_sources["model"], digest="c" * 64),
+            },
+        ),
+    ],
+)
+def test_saved_bundle_initializer_rebinding_rejects_other_changes(saved_family, change):
+    bundle, _ = saved_family
+    with pytest.raises(ValueError, match="saved Plans differ"):
+        bundle.with_initialization(change(bundle.config))
 
 
 @pytest.mark.parametrize(

@@ -22,6 +22,7 @@ from shadowspill.profiling.apply import apply_profiles
 from shadowspill_client.protocol.training import ResolvedTraining
 
 from .cost_evidence import communication_edits, profile_edits
+from .identity import without_initialization
 from .local_plans import LocalPlans
 from .planning_requests import PlanningRequest
 from .templates import instantiate_program
@@ -127,7 +128,6 @@ class PlanningInputs:
             config,
             memory=self.config.memory,
             execution=self.config.execution,
-            model=replace(config.model, initialize=self.config.model.initialize),
             origins=self.config.origins,
             preparation=replace(
                 config.preparation,
@@ -140,7 +140,7 @@ class PlanningInputs:
                 ),
             ),
         )
-        if normalized != self.config:
+        if without_initialization(normalized) != without_initialization(self.config):
             raise ValueError("local planning settings require different exported cases")
         supplied = {} if profiles is None else profiles
         comm = {} if communication is None else communication

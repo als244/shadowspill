@@ -12,7 +12,7 @@ class _BoundedWriter(io.BufferedIOBase):
     def write(self, buffer: Buffer, /) -> int:
         data = memoryview(buffer)
         if self.tell() + data.nbytes > self._limit:
-            raise ValueError("preparation export exceeds its reserved disk envelope")
+            raise ValueError("archive exceeds its reserved disk envelope")
         return self._stream.write(data)
 
     def tell(self) -> int:
@@ -23,4 +23,3 @@ class _BoundedWriter(io.BufferedIOBase):
 
     def flush(self) -> None:
         self._stream.flush()
-

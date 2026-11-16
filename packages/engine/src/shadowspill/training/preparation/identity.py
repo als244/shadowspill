@@ -1,5 +1,6 @@
 """Portable source identities for CPU setup semantics, independent of hardware."""
 
+from dataclasses import replace
 from functools import lru_cache
 from hashlib import sha256
 from importlib.metadata import version
@@ -7,6 +8,27 @@ from pathlib import Path
 
 import shadowspill_client
 from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.training import ResolvedTraining
+
+
+def without_initialization(config: ResolvedTraining) -> ResolvedTraining:
+    """Compare computation settings independently of weight provenance/origins.
+
+    Every compute source, control, capability and memory policy remains exact.
+    Installed hooks and captures must still be rechecked before executable reuse.
+    """
+    return replace(
+        config,
+        model=replace(config.model, initialize=None),
+        reference_definition=None,
+        definition_sources={
+            key: value
+            for key, value in config.definition_sources.items()
+            if key != "reference"
+        },
+        origins={},
+        preparation=replace(config.preparation, origins={}),
+    )
 
 
 @lru_cache(maxsize=1)

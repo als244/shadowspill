@@ -9,9 +9,11 @@ import os
 import tempfile
 import zipfile
 from collections.abc import Mapping
+from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, BinaryIO, ClassVar, Self
+from typing import Any, BinaryIO, ClassVar, Self, cast
 
+from ._bounded_io import _BoundedWriter
 from ._values import encoded
 
 
@@ -34,7 +36,16 @@ class Artifact:
     def _archive_payloads(self) -> Mapping[str, bytes]:
         return {}
 
-    def save(self, path: str | os.PathLike[str]) -> None:
+    def save(
+        self, path: str | os.PathLike[str], *, max_bytes: int | None = None
+    ) -> None:
+        """Atomically publish an archive, optionally bounding each disk write.
+
+        The limit applies to the new archive; an existing destination retains
+        its separate ownership until the replacement is complete.
+        """
+        if max_bytes is not None and (type(max_bytes) is not int or max_bytes < 0):
+            raise ValueError("archive byte limit must be a nonnegative integer")
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         data = encoded(self.to_dict())
@@ -53,7 +64,16 @@ class Artifact:
                 dir=destination.parent, prefix=f".{destination.name}.", delete=False
             ) as stream:
                 temporary = stream.name
-                with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+                with (
+                    (
+                        nullcontext(stream)
+                        if max_bytes is None
+                        else _BoundedWriter(cast(BinaryIO, stream), max_bytes)
+                    ) as target,
+                    zipfile.ZipFile(
+                        cast(BinaryIO, target), "w", zipfile.ZIP_DEFLATED
+                    ) as archive,
+                ):
                     archive.writestr("manifest.json", encoded(manifest))
                     archive.writestr("artifact.json", data)
                     for key, value in payloads.items():

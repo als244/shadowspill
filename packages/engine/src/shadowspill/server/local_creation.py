@@ -310,6 +310,7 @@ class LocalCreation:
             self._directory = TemporaryDirectory(prefix="creation-", dir=factory.root)
             root = Path(self._directory.name)
             job_root = root / "preparation"
+            rebound = False
             if creation.plans is None:
                 self._admit_host(
                     limits.transfer_bytes + limits.preparation_host_bytes,
@@ -470,11 +471,17 @@ class LocalCreation:
                 else:
                     bundle = TrainingBundle.load(path)
                 if bundle.config != creation.config:
-                    raise ValueError(
-                        "saved Plans differ from the exact resolved configuration"
-                    )
+                    bundle = bundle.with_initialization(creation.config)
+                    rebound = True
             self._active()
             family = bundle.recheck(registry)
+            if rebound:
+                # Replace only this run's downloaded copy. Publish a new immutable
+                # bundle so worker preflight and later resume see the new source.
+                path = root / BUNDLE_NAME
+                path.unlink()
+                bundle.save(path, max_bytes=limits.preparation_disk_bytes - 8192)
+                plans = self._publish_file(path, "bundle")
             publish_summary(self._artifacts, plans, family)
             if checkpoint is not None and checkpoint.manifest.info.plans != plans:
                 checkpoint = self._convert_checkpoint(

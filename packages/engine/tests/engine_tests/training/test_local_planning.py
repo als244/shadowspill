@@ -29,6 +29,7 @@ from shadowspill.task.storage import (
     StorageRootKind,
     TaskStorageContract,
 )
+from shadowspill.training.definitions import ModelReferenceDefinition
 from shadowspill.training.preparation import job
 from shadowspill.training.preparation.cost_evidence import (
     communication_edits,
@@ -41,7 +42,13 @@ from shadowspill.training.preparation.local_reconciliation import reconcile_loca
 from shadowspill.training.preparation.measurement_export import export_measurements
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import capture_inventory
-from shadowspill_client import BuildCandidates, Memory, PlanningOptions, Preparation
+from shadowspill_client import (
+    BuildCandidates,
+    Memory,
+    PlanningOptions,
+    Preparation,
+    Weights,
+)
 
 
 @pytest.fixture
@@ -172,6 +179,39 @@ def changed_profiles(inputs):
             metadata={**profile.metadata, "duration_kind": "estimated"},
         )
     return result
+
+
+def test_local_planning_can_select_pretrained_weights_without_new_measurements(
+    measured,
+):
+    root, _, inputs, target = measured
+    config = target.layouts.setup.config
+    source = config.definition_sources["model"]
+    registry = installed()
+    registry.add_model_reference(
+        ModelReferenceDefinition("external/reference@1", lambda _: True, lambda m: m),
+        source=source,
+    )
+    config = replace(
+        config,
+        model=replace(
+            config.model,
+            initialize=Weights.pretrained("fixture/model", revision="a" * 40),
+        ),
+        reference_definition="external/reference@1",
+        definition_sources={**config.definition_sources, "reference": source},
+    )
+    proposal = inputs.plan(config=config)
+    inventory = capture_inventory(
+        prepare_layouts(resolve_training(registry, config=config))
+    )
+    bundle, _ = reconcile_local_plans(proposal, root, inventory)
+    assert bundle.config.model.initialize == config.model.initialize
+    assert bundle.recheck(registry).coverage
+    assert all(
+        value.program.digest == inputs.sources[key].program.digest
+        for key, value in bundle.sources.items()
+    )
 
 
 def test_local_cpu_plans_roundtrip_and_reconcile_original_memory_without_binaries(

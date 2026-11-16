@@ -99,8 +99,12 @@ artifacts. It does not save a checkpoint or apply pending gradients; resume from
 a saved checkpoint in a new run.
 
 Creation accepts raw setup keywords directly, or `config=preview.config`.
-`plans=training.plans` with the same configuration skips preparation; weights
-still come from the explicit initializer. To resume, supply
+`plans=training.plans` with the same computation settings skips preparation.
+The explicit initializer may select different random weights or another compatible
+pretrained/artifact source. The server rechecks the captured programs, schedules
+and resource limits, then retains a new immutable bundle recording that source;
+the original Plans remain available. This performs no build, profiling or search.
+To resume, supply
 `service.create_training_client(plans=training.plans, checkpoint=checkpoint)`.
 The client reads the saved configuration as bounded metadata; it does not download
 or decode executable Plans. The server validates every rank before initialization

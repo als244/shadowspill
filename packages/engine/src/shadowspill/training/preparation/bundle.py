@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, ClassVar
 
@@ -17,6 +17,7 @@ from shadowspill_client.protocol.training import ResolvedTraining
 
 from .bundle_manifest import manifest
 from .family_records import PreparedPlans
+from .identity import without_initialization
 from .layouts import prepare_layouts
 from .setup import resolve_training
 from .templates import capture_inventory
@@ -92,6 +93,19 @@ class TrainingBundle(Artifact):
         )
         recheck_bundle(bundle, prepared.inventory)
         return bundle
+
+    def with_initialization(self, config: ResolvedTraining) -> TrainingBundle:
+        """Retain executable Plans while selecting fresh weights or a checkpoint.
+
+        The returned bundle requires the same strict ``recheck`` before use.
+        Initialization does not change captures or admission; all other settings
+        stay exact, apart from nonexecuting default/override provenance.
+        """
+        if without_initialization(config) != without_initialization(self.config):
+            raise ValueError(
+                "saved Plans differ from the resolved computation settings"
+            )
+        return replace(self, config=config)
 
     def recheck(self, registry: Registry) -> PreparedPlans:
         """Fail closed on missing/changed capabilities; never repair or replan."""

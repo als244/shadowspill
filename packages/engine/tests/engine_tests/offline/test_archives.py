@@ -2,6 +2,7 @@ import hashlib
 import json
 import zipfile
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -59,6 +60,33 @@ def test_phase_artifacts_are_self_contained_single_archives(tmp_path):
         with zipfile.ZipFile(path) as archive:
             assert sorted(archive.namelist()) == ["artifact.json", "manifest.json"]
     assert len(list(tmp_path.iterdir())) == 6
+
+
+@pytest.mark.parametrize("limit", [0, 128, "almost"])
+def test_bounded_archive_save_preserves_original_and_never_overwrites_allowance(
+    tmp_path, monkeypatch, limit
+):
+    source = program()
+    path = tmp_path / "program.ssp"
+    source.save(path)
+    original = path.read_bytes()
+    limit = len(original) - 1 if limit == "almost" else limit
+    removed = []
+    unlink = Path.unlink
+
+    def check_cleanup(file, *args, **kwargs):
+        if file.name.startswith(".program.ssp."):
+            removed.append(file.stat().st_size)
+        return unlink(file, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", check_cleanup)
+    with pytest.raises(ValueError, match="reserved disk envelope"):
+        source.save(path, max_bytes=limit)
+    assert path.read_bytes() == original
+    assert removed and max(removed) <= limit
+    assert list(tmp_path.iterdir()) == [path]
+    source.save(path, max_bytes=len(original))
+    assert type(source).load(path).to_dict() == source.to_dict()
 
 
 def test_archive_rejects_wrong_kind_and_corrupt_payload(tmp_path):

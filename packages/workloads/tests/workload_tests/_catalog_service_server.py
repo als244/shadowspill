@@ -31,6 +31,19 @@ from shadowspill.server.authentication import BearerTokens  # noqa: E402
 
 root = Path(sys.argv[1])
 options = json.loads((root / "setup.json").read_text())
+if options.get("fresh_saved_plans"):
+    import shadowspill.server.local_creation as creation
+
+    original_prepare = creation.prepare_job
+    preparations = 0
+
+    def prepare_once(*args, **kwargs):
+        global preparations
+        preparations += 1
+        assert preparations == 1, "saved Plans unexpectedly restarted preparation"
+        return original_prepare(*args, **kwargs)
+
+    creation.prepare_job = prepare_once
 if options.get("local_planning"):
     import shadowspill.planning.plan as planner
     import shadowspill.server.local_creation as creation

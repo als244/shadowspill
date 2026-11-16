@@ -45,6 +45,7 @@ def test_public_pretrained_step_split_and_checkpoint_resume(
         config=requested.config,
     ).to_dict()
     value["exact_resume"] = True
+    value["fresh_saved_plans"] = options(policy, seed=29)
     value["model_description"] = "pretrained packed Llama over bounded HTTP" + (
         ", LoRA policy" if policy else ", full CE"
     )
@@ -72,6 +73,7 @@ def test_public_pretrained_step_split_and_checkpoint_resume(
     )
     assert receipt["whole_split_equivalence"] and receipt["evaluation_isolation"]
     assert receipt["adamw_resume"] and receipt["exact_resume"]
+    assert receipt["fresh_saved_plans"] and len(receipt["runs"]) == 4
     assert any(
         method == "GET" and name.endswith(".safetensors") for method, name in requests
     )

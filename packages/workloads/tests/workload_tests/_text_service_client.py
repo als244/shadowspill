@@ -160,7 +160,7 @@ def close(client, training):
 
 
 def qualify(client, options, budget):
-    preview = client.describe_training(
+    settings = dict(
         model=Model.from_dict(options["model"]),
         objective=Objective.from_dict(options["objective"]),
         optimizer=Optimizer(
@@ -192,7 +192,8 @@ def qualify(client, options, budget):
                 conditioning_seconds=0.001, measurement_seconds=0.002
             ),
         ),
-    ).result(30)
+    )
+    preview = client.describe_training(**settings).result(30)
     training = client.create_training_client(config=preview.config).result(480)
     plans = training.plans
     initial = training.save_checkpoint(name="initial").result(120)
@@ -276,8 +277,42 @@ def qualify(client, options, budget):
                 actual[name], final[name], rtol=1e-4, atol=3e-6, err_msg=name
             )
     close(client, resumed)
+    runs = [training.run_id, resumed.run_id]
+    fresh_options = base_options.get("fresh_saved_plans")
+    if fresh_options is not None:
+        fresh = client.create_training_client(
+            plans=plans,
+            **{**settings, "model": Model.from_dict(fresh_options["model"])},
+        ).result(240)
+        assert fresh.plans.reference != plans.reference
+        assert (
+            fresh.get_config().model.initialize
+            == Model.from_dict(fresh_options["model"]).initialize
+        )
+        check(fresh, fresh_options, 0, budget)
+        for subset in (records[:1], records[1:]):
+            fresh.forward_backward(
+                subset, loss_params=fresh_options["controls"]
+            ).result(120)
+        result = fresh.optim_step(grad_scale=0.25).result(120)
+        assert result.completed_updates == 1
+        check(fresh, fresh_options, 1, budget)
+        saved = fresh.save_checkpoint(name="fresh-after-one").result(120)
+        fresh.step(records, loss_params=fresh_options["controls"]).result(120)
+        expected = check(fresh, fresh_options, 2, budget)
+        close(client, fresh)
+        continued = client.create_training_client(
+            plans=fresh.plans, checkpoint=saved
+        ).result(240)
+        check(continued, fresh_options, 1, budget)
+        continued.step(records, loss_params=fresh_options["controls"]).result(120)
+        actual = check(continued, fresh_options, 2, budget)
+        for name in fresh_options["trainable"]:
+            np.testing.assert_array_equal(actual[name], expected[name], err_msg=name)
+        close(client, continued)
+        runs.extend((fresh.run_id, continued.run_id))
     return {
-        "runs": [training.run_id, resumed.run_id],
+        "runs": runs,
         "observations": observations,
         "whole_split_equivalence": options.get("whole_split_equivalence", True),
         "independent_geometry_oracles": "oracles" in options,
@@ -286,6 +321,7 @@ def qualify(client, options, budget):
         "separate_fp32_masters": options.get("separate_fp32_masters", True),
         "same_dtype_master_reuse": not options.get("separate_fp32_masters", True),
         "exact_resume": options.get("exact_resume", False),
+        "fresh_saved_plans": fresh_options is not None,
     }
 
 
