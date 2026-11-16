@@ -7,6 +7,9 @@ It has a shared SwiGLU expert with a learned sigmoid gate, zero-centered RMSNorm
 and normalized top-k routed probabilities. The checkpoint's vision encoder and
 multi-token prediction module are outside this text model.
 
+The recurrent decay parameters `A_log` and `dt_bias` keep FP32 storage and
+gradients when the surrounding projections use BF16, as in the dense variant.
+
 ## Shapes
 
 [config.py](config.py) holds `Config` and `PRESETS`, the named shapes the

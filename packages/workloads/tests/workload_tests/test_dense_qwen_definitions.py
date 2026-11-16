@@ -167,10 +167,8 @@ def test_bfloat16_construction_preserves_catalog_storage_and_default_dtype(famil
     assert model.embed.weight.dtype == torch.bfloat16
     assert model.rotary.cosine.dtype == torch.float32
     if family == "qwen35":
-        # Dense Qwen3.5 follows its existing catalog dtype for these parameters;
-        # its decay arithmetic promotes to FP32 inside the model implementation.
-        assert model.blocks[0].mixer.A_log.dtype == torch.bfloat16
-        assert model.blocks[0].mixer.dt_bias.dtype == torch.bfloat16
+        assert model.blocks[0].mixer.A_log.dtype == torch.float32
+        assert model.blocks[0].mixer.dt_bias.dtype == torch.float32
 
 
 @pytest.mark.parametrize("settings_class", [Qwen3Settings, Qwen35Settings])

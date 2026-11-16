@@ -4,6 +4,7 @@ import mlops
 import torch
 from torch import nn
 
+from ..decay import DecayParameters
 from ..delta_net import GatedDeltaNet as _DeltaNet
 from ..norms import GatedRMSNorm
 from .initialization import Conv1d, Linear
@@ -93,7 +94,7 @@ class GatedDeltaNet(_DeltaNet):
     """Reuse the packed MLOps recurrence with the published initial state/norm."""
 
     def __init__(self, config):
-        nn.Module.__init__(self)
+        DecayParameters.__init__(self, config.lin_v_heads)
         self.config = config
         self.w_qkvz = Linear(
             config.d_model, config.qkvz_width, std=config.initializer_range
@@ -105,12 +106,6 @@ class GatedDeltaNet(_DeltaNet):
             config.convolution_width,
             config.lin_conv_kernel,
             std=config.initializer_range,
-        )
-        # The recurrent decay parameters have FP32 storage even with BF16
-        # projections. They are parameters, not a persistent inference cache.
-        self.A_log = nn.Parameter(torch.empty(config.lin_v_heads, dtype=torch.float32))
-        self.dt_bias = nn.Parameter(
-            torch.empty(config.lin_v_heads, dtype=torch.float32)
         )
         self.lin_norm = GatedRMSNorm(config.lin_v_head_dim, epsilon=config.norm_epsilon)
         self.w_out = Linear(

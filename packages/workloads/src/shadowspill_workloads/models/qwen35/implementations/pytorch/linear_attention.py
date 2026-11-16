@@ -6,15 +6,16 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from shadowspill_workloads.models.shared.decay import DecayParameters
 from shadowspill_workloads.models.shared.decoder import GatedRMSNorm, l2_normalize
 
 from ...config import Config
 from .delta_rule.operation import _delta_rule
 
 
-class GatedDeltaNet(nn.Module):
+class GatedDeltaNet(DecayParameters):
     def __init__(self, config: Config) -> None:
-        super().__init__()
+        super().__init__(config.lin_v_heads)
         self.config = config
         self.w_qkvz = nn.Linear(config.d_model, config.qkvz_width, bias=False)
         self.w_ba = nn.Linear(config.d_model, 2 * config.lin_v_heads, bias=False)
@@ -25,8 +26,6 @@ class GatedDeltaNet(nn.Module):
             groups=config.convolution_width,
             bias=False,
         )
-        self.A_log = nn.Parameter(torch.empty(config.lin_v_heads))
-        self.dt_bias = nn.Parameter(torch.empty(config.lin_v_heads))
         self.lin_norm = GatedRMSNorm(config.lin_v_head_dim, epsilon=config.norm_epsilon)
         self.w_out = nn.Linear(config.linear_value_width, config.d_model, bias=False)
         self.reset_parameters()
