@@ -1,14 +1,14 @@
 """Global logical identity and structural ties before checkpoint conversion."""
 
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from math import gcd, prod
 from types import MappingProxyType
 from typing import Any
 
 from shadowspill.artifacts._values import digest
-from shadowspill.artifacts.state import StateId
+from shadowspill.artifacts.state import StateId, StateRole
 
 from .logical import LogicalTensor
 from .mapping import coverage
@@ -43,7 +43,9 @@ class LogicalFamily:
         )
 
 
-def describe_family(states: Sequence[PlanState]) -> LogicalFamily:
+def describe_family(
+    states: Sequence[PlanState], *, roles: Collection[StateRole] | None = None
+) -> LogicalFamily:
     """Check the complete rank set, global coordinates and replica descriptions."""
     if not states or [state.logical_rank for state in states] != list(
         range(len(states))
@@ -65,7 +67,7 @@ def describe_family(states: Sequence[PlanState]) -> LogicalFamily:
             if count != len(states):
                 raise ValueError("checkpoint rank set differs from saved Parallelism")
         groups: dict[str | StateId, dict[StateId, LogicalTensor]] = defaultdict(dict)
-        for item in state.logical_tensors():
+        for item in state.logical_tensors(roles=roles):
             _nonoverlapping(item)
             key = item.tensor.identity
             signature = (
