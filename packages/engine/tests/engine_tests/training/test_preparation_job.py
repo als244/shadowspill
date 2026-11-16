@@ -81,6 +81,42 @@ def test_job_preserves_unrelated_directories_and_rejects_changed_setup(
     assert len(launches) == 1
 
 
+def test_measurement_stops_before_planning_and_needs_no_initializer(
+    prepared, tmp_path, monkeypatch
+):
+    bundle, _, _ = prepared
+    config = replace(bundle.config, model=replace(bundle.config.model, initialize=None))
+    launched = []
+
+    def phases(package, root, selected, **options):
+        assert job.PreparationJob.load(root / job.JOB_NAME).config == config
+        launched.extend(options["phases"])
+
+    monkeypatch.setattr(job, "run_phases", phases)
+    root = job.measure_job(tmp_path / "measured", packages=(), config=config)
+    assert root == tmp_path / "measured"
+    assert launched == ["build", "profile", "communicate"]
+    assert not (root / job.BUNDLE_NAME).exists()
+
+
+def test_completed_bundle_validation_keeps_exclusive_job_ownership(
+    prepared, tmp_path, monkeypatch
+):
+    bundle, _, _ = prepared
+    original = job.TrainingBundle.load
+
+    def load(path):
+        with (
+            pytest.raises(RuntimeError, match="already running"),
+            job._job_lock(path.parent),
+        ):
+            pass
+        return original(path)
+
+    monkeypatch.setattr(job.TrainingBundle, "load", load)
+    job.prepare_job(tmp_path / "job", packages=(), config=bundle.config)
+
+
 def test_job_locks_survive_failure_and_prevent_concurrent_launch(prepared, tmp_path):
     bundle, _, launches = prepared
     root = tmp_path / "job"

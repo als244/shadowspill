@@ -101,6 +101,56 @@ def prepare_job(
     The caller owns allocation admission, launch environment and the directory.
     This launches no training loop or persistent Executor and initializes no weights.
     """
+    with _run_job(
+        directory,
+        packages=packages,
+        config=config,
+        environment=environment,
+        launch=launch,
+        phases=("build", "profile", "communicate", "plan"),
+    ) as (root, registry):
+        bundle = TrainingBundle.load(root / BUNDLE_NAME)
+        if bundle.config != config:
+            raise ValueError("completed bundle differs from the saved preparation job")
+        bundle.recheck(registry)
+        return bundle
+
+
+def measure_job(
+    directory: str | Path,
+    *,
+    packages: Sequence[str],
+    config: ResolvedTraining,
+    environment: Mapping[str, str] | None = None,
+    launch: Callable[[PhaseInvocation], PhaseResult] | None = None,
+) -> Path:
+    """Run the same preparation through measurement, without planning or workers.
+
+    The directory retains every requested build case and its measured artifacts
+    or recoverable rejection. Explicit invocation may reuse exact build/profile
+    files; communication measurement runs on the assigned target workers.
+    """
+    with _run_job(
+        directory,
+        packages=packages,
+        config=config,
+        environment=environment,
+        launch=launch,
+        phases=("build", "profile", "communicate"),
+    ) as (root, _):
+        return root
+
+
+@contextmanager
+def _run_job(
+    directory: str | Path,
+    *,
+    packages: Sequence[str],
+    config: ResolvedTraining,
+    environment: Mapping[str, str] | None,
+    launch: Callable[[PhaseInvocation], PhaseResult] | None,
+    phases: tuple[str, ...],
+) -> Iterator[tuple[Path, Registry]]:
     root = Path(directory).resolve()
     requested = PreparationJob(tuple(packages), config)
     registry, inventory = requested.resolve()
@@ -126,15 +176,11 @@ def prepare_job(
                 "all",
                 ranks=ranks,
                 preparation_ranks=ranks,
-                phases=("build", "profile", "communicate", "plan"),
+                phases=phases,
                 environment=environment,
                 launch=launch,
             )
-        bundle = TrainingBundle.load(root / BUNDLE_NAME)
-        if bundle.config != config:
-            raise ValueError("completed bundle differs from the saved preparation job")
-        bundle.recheck(registry)
-        return bundle
+        yield root, registry
 
 
 def load_job(directory: str | Path) -> tuple[Path, Registry, TemplateInventory]:
