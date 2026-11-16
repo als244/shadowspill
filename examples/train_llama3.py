@@ -4,9 +4,9 @@ import argparse
 from dataclasses import fields, replace
 from pathlib import Path
 
-from examples.training.llama3.data import TokenBatches
 from examples.training.llama3.loop import train
 from examples.training.llama3.setup import Settings, read_resume, start
+from examples.training.text_data import TokenBatches
 from shadowspill_client import SSH, ServiceClient
 
 

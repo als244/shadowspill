@@ -10,8 +10,8 @@ import numpy as np
 import pytest
 
 from examples.train_llama3 import arguments, main
-from examples.training.llama3.data import TokenBatches
 from examples.training.llama3.setup import APPLICATION, Settings, read_resume, start
+from examples.training.text_data import TokenBatches
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
