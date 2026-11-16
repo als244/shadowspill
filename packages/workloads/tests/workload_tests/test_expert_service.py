@@ -4,6 +4,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,7 @@ from shadowspill_client.protocol.payload import snapshot_batch
 from workload_tests._expert_oracle import (
     SPLIT,
     WHOLE,
+    WeightGradients,
     initial_model,
     loss,
     options,
@@ -32,9 +34,9 @@ from workload_tests._expert_oracle import (
 from workload_tests._text_service_client import training_settings
 
 
-@pytest.fixture(scope="module")
-def reference():
-    return options()
+@pytest.fixture(scope="module", params=["bfloat16", "float32"])
+def reference(request):
+    return options(grad_dtype=request.param)
 
 
 def test_oracle_has_distinct_shards_fp32_masters_and_geometry_specific_updates(
@@ -75,6 +77,41 @@ def test_reference_padding_has_no_loss_or_gradient_participation():
         not gradient.any()
         for gradient in torch.autograd.grad(empty, tuple(model.parameters()))
     )
+
+
+def test_fp32_weight_products_match_autograd_across_owner_contributions():
+    _, model = initial_model()
+    model = model.float()
+    reference = deepcopy(model)
+    observer = WeightGradients(model)
+    for indices, coefficient in (((0, 3), 0.07), ((1, 2), 0.03), ((), 0.11)):
+        loss(model, records(), indices, coefficient).backward()
+        loss(reference, records(), indices, coefficient).backward()
+    expected = dict(reference.named_parameters())
+    assert observer.values.keys() == expected.keys()
+    for name, parameter in expected.items():
+        torch.testing.assert_close(
+            observer.values[name], parameter.grad, rtol=3e-5, atol=3e-6, msg=name
+        )
+    observer.close()
+    assert all(block.moe.gradient_observer is None for block in model.blocks)
+
+
+def test_expert_weight_product_is_retained_before_bf16_leaf_rounding():
+    _, model = initial_model()
+    observer = WeightGradients(model)
+    weight = model.blocks[0].moe.experts.down_weight
+    inputs = torch.zeros(4, weight.shape[-1], dtype=torch.bfloat16)
+    inputs[:, 0] = torch.tensor([1, 1 / 256, 1 / 256, 1 / 256])
+    output = torch.nn.functional.linear(inputs.float(), weight[0].float())
+    observer._observe("blocks.0.moe.experts.down_weight", 0, inputs, output)
+    output.sum().backward()
+    product = observer.values["blocks.0.moe.experts.down_weight"]
+    assert product.dtype == torch.float32
+    assert product[0, 0, 0].item() == 1 + 3 / 256
+    assert weight.grad[0, 0, 0].item() != product[0, 0, 0].item()
+    assert not product[1:].any()
+    observer.close()
 
 
 def test_explicit_oracle_groups_match_every_prepared_count_and_empty_owner(reference):
@@ -175,22 +212,26 @@ def test_public_two_h100_ep_step_split_empty_owner_and_checkpoint_resume(
     bundle = TrainingBundle.load(source)
     assert set(bundle.plans) == {0, 1}
     calls = set()
+    grad_dtype = reference["gradient_dtype"]
     for plans in bundle.plans.values():
         for plan in plans.values():
+            if grad_dtype == "float32":
+                assert len(plan.program.bindings["component_layouts"]) == 3
             for task in plan.program.bindings["allocation_coverage"]["tasks"].values():
                 calls.update(
                     name for name in task["contracts"] if "mlops_ep_quack" in name
                 )
+    prefix = "bf16_" if grad_dtype == "float32" else ""
     assert {
-        "torch.ops.mlops_ep_quack_v1.forward.default",
-        "torch.ops.mlops_ep_quack_v1.backward.default",
+        f"torch.ops.mlops_ep_quack_v1.{prefix}forward.default",
+        f"torch.ops.mlops_ep_quack_v1.{prefix}backward.default",
     } <= calls
     (tmp_path / "provider.json").write_text(
         json.dumps(
             {
                 "ranks": 2,
                 "calls": sorted(calls),
-                "gradient_dtype": "bfloat16",
+                "gradient_dtype": grad_dtype,
                 "parameter_elements": sum(
                     np.size(value)
                     for value in reference["oracles"]["whole"][0]["weights"].values()

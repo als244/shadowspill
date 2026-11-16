@@ -3,8 +3,8 @@
 No communication/provider kernel or engine capture computes reference values.
 One model holds every expert; explicit lists give each logical input owner its
 own physical microbatch. Gate/up rows are interleaved, and weighted expert
-outputs round before their FP32 sum. Ordinary eager autograd is the independent
-BF16 gradient reference, subject to the established update-error bounds.
+outputs round before their FP32 sum. Eager autograd supplies BF16 gradients;
+observed linear products retain FP32 gradients before leaf rounding when needed.
 """
 
 from copy import deepcopy
@@ -21,6 +21,7 @@ from shadowspill_client import Objective
 from shadowspill_workloads.definitions.expert_parallel import ownership
 from shadowspill_workloads.initialization.expert_parallel import Initialize
 from shadowspill_workloads.initialization.text import Initialize as TextInitialize
+from workload_tests._moe_oracle import WeightGradients as DenseGradients
 from workload_tests.test_expert_definitions import settings
 
 
@@ -40,10 +41,21 @@ class ReferenceMoE(nn.Module):
         super().__init__()
         assert not config.d_ff_shared
         self.config, self.experts, self.observe = config, Experts(config), None
+        self.gradient_observer = None
 
     def forward(self, hidden, residual, *, router_mask=None):
         x = hidden.flatten(0, -2)
-        logits = F.linear(x.float(), self.experts.router_weight.float())
+
+        def linear(inputs, name, expert=None):
+            weight = getattr(self.experts, name)
+            if expert is not None:
+                weight = weight[expert]
+            output = F.linear(inputs.float(), weight.float())
+            if self.gradient_observer is not None:
+                self.gradient_observer(name, expert, inputs, output)
+            return output
+
+        logits = linear(x, "router_weight")
         if self.observe is not None:
             self.observe.append(logits)
         selected, ids = logits.topk(self.config.top_k, -1)
@@ -53,11 +65,9 @@ class ReferenceMoE(nn.Module):
             rows, slots = (ids == expert).nonzero(as_tuple=True)
             # The up epilogue consumes FP32 products before storing BF16
             # activations. Adjacent rows are gate/up, not two contiguous halves.
-            projection = F.linear(
-                x[rows].float(), self.experts.gate_up_weight[expert].float()
-            )
+            projection = linear(x[rows], "gate_up_weight", expert)
             activation = (F.silu(projection[:, 0::2]) * projection[:, 1::2]).bfloat16()
-            raw = F.linear(activation.float(), self.experts.down_weight[expert].float())
+            raw = linear(activation, "down_weight", expert)
             weighted = (raw * scores[rows, slots, None]).bfloat16()
             result = result.index_add(0, rows, weighted.float())
         mask = (
@@ -70,7 +80,27 @@ class ReferenceMoE(nn.Module):
         return residual + result.bfloat16().reshape_as(hidden), counts, probabilities
 
 
-def initial_model():
+class WeightGradients(DenseGradients):
+    """Observe FP32 products directly in the independent expert equations."""
+
+    def __init__(self, model):
+        super().__init__(model)
+        self.experts = []
+        for name, module in model.named_modules():
+            if isinstance(module, ReferenceMoE):
+                self.experts.append(module)
+                module.gradient_observer = lambda local, expert, x, y, name=name: (
+                    self._observe(f"{name}.experts.{local}", expert, x, y)
+                )
+
+    def close(self):
+        super().close()
+        for module in self.experts:
+            module.gradient_observer = None
+
+
+def initial_model(*, grad_dtype="bfloat16"):
+    assert grad_dtype in ("bfloat16", "float32")
     requested = settings("qwen3moe")
     requested = replace(
         requested,
@@ -82,7 +112,7 @@ def initial_model():
                 "max_seq_len": 4,
             }
         },
-        precision={"grad_dtype": "bfloat16"},
+        precision={"grad_dtype": grad_dtype},
     )
     # Reuse only the supplied dense CPU architecture, replacing every MoE with
     # elementary tensor equations. The service still constructs real Quack EP.
@@ -187,8 +217,8 @@ def loss(model, records, indices, coefficient, *, size=4):
     return primary + coefficient * auxiliary * valid.sum()
 
 
-def options():
-    requested, initial = initial_model()
+def options(*, grad_dtype="bfloat16"):
+    requested, initial = initial_model(grad_dtype=grad_dtype)
     rows, coefficient = records(), 0.07
     optim = {
         name: float(torch.tensor(value))
@@ -233,13 +263,23 @@ def options():
             foreach=False,
         )
         trajectory = [snapshot(model, masters)]
+        observer = WeightGradients(model) if grad_dtype == "float32" else None
         for index, scale in enumerate((0.25, 1.0)):
             for owners in SPLIT if split and index == 0 else (WHOLE,):
                 for indices in owners:
                     loss(model, rows, indices, coefficient).backward()
+            if observer is not None:
+                assert observer.values.keys() == masters.keys()
             for name, parameter in model.named_parameters():
                 assert parameter.grad is not None
-                masters[name].grad = parameter.grad.float() * scale
+                gradient = (
+                    parameter.grad.float()
+                    if observer is None
+                    else observer.values[name]
+                )
+                masters[name].grad = gradient * scale
+            if observer is not None:
+                observer.values.clear()
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
             with torch.no_grad():
@@ -247,6 +287,8 @@ def options():
                     parameter.copy_(masters[name])
             model.zero_grad(set_to_none=True)
             trajectory.append(snapshot(model, masters))
+        if observer is not None:
+            observer.close()
         oracles["split" if split else "whole"] = trajectory
     return dict(
         model=requested.to_dict(),
@@ -301,7 +343,7 @@ def options():
         preparation_timeout=1200,
         client_timeout=1800,
         device_gib=8,
-        gradient_dtype="bfloat16",
+        gradient_dtype=grad_dtype,
         separate_fp32_masters=True,
         weight_rtol=0.04,
         weight_atol=2e-5,
@@ -314,12 +356,17 @@ def options():
         exact_resume=True,
         client_script="_text_service_client.py",
         model_description=(
-            "Qwen3 full training, two EP workers, BF16 compute/gradients, "
-            "FP32 AdamW masters/moments"
+            "Qwen3 full training, two EP workers, "
+            f"BF16 compute/{grad_dtype} gradients, FP32 AdamW masters/moments"
         ),
         oracle_description=(
             "independent CPU per-expert projections with adjacent gate/up rows, "
             "explicit per-owner router balancing excluding padding, full vocabulary "
-            "projection and AdamW; whole/split trajectories"
+            "projection and AdamW; whole/split trajectories; "
+            + (
+                "FP32 weight products observed before BF16 leaf rounding"
+                if grad_dtype == "float32"
+                else "BF16 autograd gradients"
+            )
         ),
     )
