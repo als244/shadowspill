@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from shadowspill.parallelism import Parallelism
 from shadowspill_client import Model, Weights
-from shadowspill_client._records import integer
+from shadowspill_client._records import integer, names
 from shadowspill_client.protocol.requests import identifier
 
 if TYPE_CHECKING:
@@ -23,6 +23,7 @@ class InitializationContext:
     weights: Weights
     parallelism: Parallelism
     logical_rank: int
+    temporary: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.weights != self.model.initialize:
@@ -34,6 +35,11 @@ class InitializationContext:
             identifier(self.weights.reference, "weights artifact ID")
         if self.weights.kind == "pretrained" and self.weights.revision is None:
             raise ValueError("pretrained initialization requires a pinned revision")
+        if self.temporary is not None:
+            selected = names(self.temporary, "temporary tensor names")
+            if not selected:
+                raise ValueError("temporary initialization requires tensor names")
+            object.__setattr__(self, "temporary", selected)
 
 
 @dataclass(frozen=True)

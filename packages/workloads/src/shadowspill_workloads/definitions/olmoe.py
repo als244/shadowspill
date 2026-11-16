@@ -179,6 +179,7 @@ def register(registry):
             build=build,
             capture_context=capture_context,
             initialization=initialization,
+            temporary_initialization=initialization,
         ),
         source=source,
     )

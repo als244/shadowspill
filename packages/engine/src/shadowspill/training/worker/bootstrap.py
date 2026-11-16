@@ -52,7 +52,10 @@ def serve(
     )
     if set(weights) != (
         {initial.reference}
-        if initial is not None and initial.kind == "artifact"
+        if initial is not None
+        and initial.kind == "artifact"
+        and prepared.initialization is not None
+        and prepared.initialization.context.temporary is None
         else set()
     ):
         raise ValueError("worker weight grants differ from its initialization")

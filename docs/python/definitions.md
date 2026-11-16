@@ -253,6 +253,16 @@ host staging before launching workers. Inspection and preparation may omit initi
 weights; fresh creation requires explicit weights and a bounded installed loader,
 or a compatible checkpoint restore.
 
+An exported weights generation omits nonpersistent model buffers, such as derived
+position tables. Models that need these values declare
+`temporary_initialization(config, InitializationContext)`, returning the same
+bounded `ModelInitialization` description. `context.temporary` names the exact
+buffers to generate; the worker restricts the callback to those names. This hook
+uses model settings and opens no historical weight source. Saved model values and
+fresh optimizer defaults are initialized separately. Models without such buffers
+need no additional hook. A partial export can reuse its declared frozen-base
+initializer for these derived values.
+
 An initializer that downloads or extracts files also declares `disk_bytes`
 (default zero). The node reserves the sum for its workers before opening sources
 or launching children. Workers share a private initialization cache within that

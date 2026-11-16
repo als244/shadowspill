@@ -6,12 +6,16 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from shadowspill.artifacts.state_inventory import program_state
+from shadowspill.artifacts.tensors import registration_name
+from shadowspill.planning.shared_state import shared_state
 from shadowspill.training.definitions.initialization import (
     InitializationContext,
     InitializationRuntime,
     ModelInitialization,
     TensorInitializer,
 )
+from shadowspill.training.preparation.family_records import PreparedPlans
 from shadowspill.training.preparation.setup import ResolvedSetup
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.definitions import DefinitionSource
@@ -41,6 +45,7 @@ class PreparedInitialization:
             "peak_bytes": self.description.peak_bytes,
             "chunk_bytes": self.description.chunk_bytes,
             "disk_bytes": self.description.disk_bytes,
+            "temporary": self.context.temporary,
         }
 
 
@@ -77,6 +82,62 @@ def prepare_frozen_initialization(
     model = replace(setup.model, settings=base.model)
     return PreparedInitialization(
         context, model.describe_initialization(context), base.source
+    )
+
+
+def prepare_temporary_initialization(
+    prepared: PreparedPlans, rank: int
+) -> PreparedInitialization | None:
+    """Describe derived model buffers absent from an exported weights generation."""
+    plans = prepared.plans[rank]
+    primary = min(plans)
+    programs = {
+        "": plans[primary].program,
+        **{name: plan.program for name, plan in plans.items() if name != primary},
+    }
+    if not any(
+        not row["parameter"] and not row.get("persistent", True)
+        for program in programs.values()
+        for row in program.bindings.get("registrations", ())
+    ):
+        return None
+    shared = shared_state(programs, logical_rank=rank)
+    requested = set()
+    for name, program in programs.items():
+        inventory = program_state(program, rank)
+        bindings = {item.identity: item for item in inventory.bindings}
+        protected = {
+            bindings[item.identity].alias_group_id
+            for item in inventory.tensors
+            if item.checkpoint
+            and item.identity.role in {"parameter", "buffer", "master"}
+        }
+        aliases = {obj.object_id: obj.alias_group_id for obj in program.objects}
+        sizes = {
+            alias.alias_group_id: alias.size_bytes for alias in program.alias_groups
+        }
+        visited = set(shared.aliases[name]) | protected
+        for row in program.bindings["registrations"]:
+            alias = aliases[row["object_id"]]
+            if alias in visited or not sizes[alias]:
+                continue
+            visited.add(alias)
+            if not row["parameter"] and not row.get("persistent", True):
+                requested.add(registration_name(row))
+    if not requested:
+        return None
+    setup = prepared.inventory.layouts.setup
+    model = setup.config.model
+    assert model.initialize is not None
+    context = InitializationContext(
+        model,
+        model.initialize,
+        setup.context.parallelism,
+        rank,
+        tuple(sorted(requested)),
+    )
+    return PreparedInitialization(
+        context, setup.model.describe_initialization(context), setup.model.source
     )
 
 
@@ -129,6 +190,13 @@ def open_initialization(
             raise TypeError("initialization context must yield a tensor filler")
 
         def fill_chunk(request: "TensorChunk", destination: "torch.Tensor") -> None:
+            if (
+                prepared.context.temporary is not None
+                and request.name not in prepared.context.temporary
+            ):
+                raise ValueError(
+                    "temporary initializer requested undeclared model state"
+                )
             if (
                 destination.device.type != "cpu"
                 or destination.ndim != 1

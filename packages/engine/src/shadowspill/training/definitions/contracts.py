@@ -71,6 +71,9 @@ class ModelDefinition:
     initialization: (
         Callable[[Any, InitializationContext], ModelInitialization] | None
     ) = None
+    temporary_initialization: (
+        Callable[[Any, InitializationContext], ModelInitialization] | None
+    ) = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -99,10 +102,10 @@ class ModelDefinition:
             raise TypeError("build must be an installed CPU description function")
         if self.capture_context is not None and not callable(self.capture_context):
             raise TypeError("capture_context must be an installed context factory")
-        if self.initialization is not None and not callable(self.initialization):
-            raise TypeError(
-                "initialization must be an installed CPU description function"
-            )
+        for name in ("initialization", "temporary_initialization"):
+            hook = getattr(self, name)
+            if hook is not None and not callable(hook):
+                raise TypeError(f"{name} must be an installed CPU description function")
         for name in ("capabilities", "mutable_buffers"):
             values = tuple(getattr(self, name))
             if any(not isinstance(v, str) or not v for v in values) or len(

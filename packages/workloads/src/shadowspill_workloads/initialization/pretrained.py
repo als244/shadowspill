@@ -12,13 +12,21 @@ from .hub import immutable_revision
 def describe(family, config, context):
     weights = context.weights
     width = getattr(config, "rotary_width", config.head_dim)
-    if weights.kind == "random":
+    if context.temporary is not None:
+        if not set(context.temporary).issubset({"rotary.cosine", "rotary.sine"}):
+            raise ValueError(
+                "catalog temporary initialization requires derived rotary buffers"
+            )
+        seed = 0  # These tables depend only on model geometry, never on weight RNG.
+    else:
+        seed = weights.seed
+    if context.temporary is not None or weights.kind == "random":
 
         @contextmanager
         def open_random(runtime):
             from .text import Initialize
 
-            yield Initialize(family, config, seed=weights.seed)
+            yield Initialize(family, config, seed=seed)
 
         return ModelInitialization(
             peak_bytes=(32 << 20) + 32 * width,

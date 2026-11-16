@@ -53,6 +53,7 @@ def register(registry):
             build=configuration.build,
             capture_context=configuration.capture_context,
             initialization=configuration.initialization,
+            temporary_initialization=configuration.initialization,
         ),
         source=source,
     )

@@ -97,9 +97,10 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
             initialization=SimpleNamespace(
                 description=SimpleNamespace(disk_bytes=17),
                 context=SimpleNamespace(
+                    temporary=None,
                     weights=SimpleNamespace(kind="artifact", reference="missing")
                     if issue == "weights"
-                    else SimpleNamespace(kind="random")
+                    else SimpleNamespace(kind="random"),
                 ),
             ),
             outputs={},

@@ -32,6 +32,7 @@ from .initialization import (
     initialize,
     prepare_frozen_initialization,
     prepare_initialization,
+    prepare_temporary_initialization,
     restore_staging,
 )
 from .loop import WorkerLoop
@@ -67,7 +68,7 @@ class PreparedWorker:
 
     @property
     def chunk_bytes(self) -> int:
-        if self.frozen_base is not None:
+        if self.frozen_base is not None or self.initial_weights is not None:
             return restore_staging(self.initialization, self.startup.staging_bytes)[0]
         return min(
             64 << 20,
@@ -125,19 +126,21 @@ class PreparedWorker:
             and base is None
         ):
             raise ValueError("saved state has no declared frozen-base identity")
-        initial = (
-            prepare_initialization(bindings.setup)[scope.rank]
-            if saved is None
-            else None
-            if base is None
-            else prepare_frozen_initialization(bindings.setup, base, scope.rank)
-        )
+        initial: PreparedInitialization | None
+        if saved is None:
+            initial = prepare_initialization(bindings.setup)[scope.rank]
+        elif base is not None:
+            initial = prepare_frozen_initialization(bindings.setup, base, scope.rank)
+        elif initial_weights is not None:
+            initial = prepare_temporary_initialization(prepared, scope.rank)
+        else:
+            initial = None
         initial_bytes = (
             initial.description.peak_bytes
             if initial is not None
             else min(128 << 20, bindings.setup.config.execution.max_staging_bytes)
         )
-        if base is not None:
+        if base is not None or initial_weights is not None:
             _, initial_bytes = restore_staging(
                 initial, bindings.setup.config.execution.max_staging_bytes
             )
@@ -358,6 +361,7 @@ class PreparedWorker:
                         self.initial_weights,
                         chunk_bytes=self.chunk_bytes,
                         world_size=len(self.startup.logical_by_worker),
+                        initialization=self.initialization,
                     )
                 else:
                     assert self.restore is not None

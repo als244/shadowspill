@@ -75,13 +75,22 @@ class ResolvedModel:
     ) -> ModelInitialization:
         if context.model != self.settings:
             raise ValueError("initialization context differs from the resolved model")
-        if self.definition.initialization is None:
+        hook = (
+            self.definition.initialization
+            if context.temporary is None
+            else self.definition.temporary_initialization
+        )
+        if hook is None:
+            if context.temporary is not None:
+                raise ValueError(
+                    "model definition has no bounded temporary initialization hook"
+                )
             raise ValueError(
                 "model definition has no bounded initialization hook; "
                 "install one or restore a compatible checkpoint"
             )
         configured, _ = _configuration(self.definition.config, self.config)
-        result = self.definition.initialization(configured, context)
+        result = hook(configured, context)
         if not isinstance(result, ModelInitialization):
             raise TypeError("initialization hook must return ModelInitialization")
         return result

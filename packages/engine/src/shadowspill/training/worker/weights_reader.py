@@ -30,8 +30,11 @@ def validate_rank(
     *,
     chunk_bytes: int,
     world_size: int,
+    initialization: PreparedInitialization | None = None,
 ) -> None:
     """Verify the complete archive before any worker enters initialization."""
+    from shadowspill.checkpoint.state import PlanState
+    from shadowspill.checkpoint.tensors import region_bytes
     from shadowspill.checkpoint.weights_reading import read_weights
 
     info = source.info
@@ -41,6 +44,25 @@ def validate_rank(
         raise ValueError("worker has no declared frozen-base initialization identity")
     if any(chunk.dtype.itemsize > chunk_bytes for chunk in state.tensor_chunks()):
         raise ValueError("weights staging cannot hold one tensor element per chunk")
+    layout = (
+        state
+        if isinstance(state, PlanState)
+        else PlanState(state.plan, state.plans, logical_rank=source.rank.rank)
+    )
+    temporary = {
+        chunk.name
+        for chunk, initial in layout.temporary_initializers()
+        if region_bytes(chunk)
+        and (initial is None or initial.get("kind") == "external")
+    }
+    if temporary and (
+        initialization is None
+        or (
+            initialization.context.temporary is not None
+            and not temporary.issubset(initialization.context.temporary)
+        )
+    ):
+        raise ValueError("weights have no declared temporary-state initializer")
     with read_weights(
         state, path, chunk_bytes=chunk_bytes, frozen_state_id=info.frozen_state_id
     ) as reader:

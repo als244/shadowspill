@@ -17,13 +17,56 @@ from shadowspill.training.definitions import (
     InitializationRuntime,
     load_registry,
 )
-from shadowspill_client import LoRA, Model
+from shadowspill_client import LoRA, Model, Weights
 from shadowspill_workloads.initialization import headers, hub, hub_files
 from shadowspill_workloads.initialization.text import Initialize
 from workload_tests.test_checkpoints import huggingface_state
 from workload_tests.test_llama_definition import settings as llama_settings
 from workload_tests.test_moe_definitions import settings as moe_settings
 from workload_tests.test_pretrained_metadata import FAMILIES, REVISION
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+def test_exported_weights_derived_buffers_require_no_weight_source(tmp_path, family):
+    from shadowspill.training.worker.initialization import (
+        PreparedInitialization,
+        open_initialization,
+    )
+
+    registry = load_registry(["shadowspill-workloads"])
+    requested = (
+        llama_settings(capacity=8) if family == "llama3" else moe_settings(family)
+    )
+    requested = replace(requested, initialize=Weights.artifact("model-export"))
+    resolved = registry.resolve_model(requested.definition, settings=requested)
+    context = InitializationContext(
+        resolved.settings,
+        resolved.settings.initialize,
+        Parallelism(),
+        0,
+        temporary=("rotary.cosine", "rotary.sine"),
+    )
+    description = resolved.describe_initialization(context)
+    assert description.disk_bytes == 0 and description.peak_bytes < 64 << 20
+    initial = PreparedInitialization(context, description, resolved.source)
+    runtime = InitializationRuntime(tmp_path, lambda _: pytest.fail("weight source"))
+    model = resolved.create()
+    generated = Initialize(family, model.config, seed=29)
+    with open_initialization(initial, runtime) as loader:
+        for name, tensor in model.named_buffers():
+            if name not in context.temporary:
+                continue
+            reference = torch.empty_like(tensor)
+            fill(generated, name, reference, 19)
+            fill(loader, name, tensor, 17)
+            torch.testing.assert_close(tensor, reference, rtol=0, atol=0)
+        with pytest.raises(ValueError, match="undeclared model state"):
+            loader(
+                TensorChunk("embed.weight", (1,), torch.float32, 0, 1), torch.zeros(1)
+            )
+    assert not list(tmp_path.iterdir())
+    with pytest.raises(ValueError, match="derived rotary buffers"):
+        resolved.describe_initialization(replace(context, temporary=("unknown",)))
 
 
 def fill(loader, name, tensor, chunk):
