@@ -32,8 +32,12 @@ def measurement_phases(monkeypatch, *, fail=False):
 
     def measure(root, *, packages, config, environment, launch):
         assert config.model.initialize is None
-        root.mkdir()
-        job.PreparationJob(tuple(packages), config).save(root / job.JOB_NAME)
+        if config.preparation.reuse:
+            assert (root / "reused.json").is_file()
+            assert job.PreparationJob.load(root / job.JOB_NAME).config == config
+        else:
+            root.mkdir()
+            job.PreparationJob(tuple(packages), config).save(root / job.JOB_NAME)
         for phase in ("build", "profile", "communicate"):
             phases.append(phase)
             result = launch(
@@ -51,7 +55,7 @@ def measurement_phases(monkeypatch, *, fail=False):
                 raise RuntimeError("intentional measurement failure")
         _, _, inventory = job.load_job(root)
         for stage in ("programs", "profiled", "calibrated", "communication"):
-            (root / stage).mkdir()
+            (root / stage).mkdir(exist_ok=True)
             for key in inventory.templates:
                 (root / stage / f"{key}.ssp").write_bytes(f"{stage}:{key}".encode())
 
@@ -176,3 +180,57 @@ def test_restart_stops_measurement_without_creating_training_history(tmp_path):
         assert "new measurement job" in stopped.error.message
         assert stopped.preparation_export is None
         assert not service._request_path(identity).exists()
+
+
+def test_public_reuse_authenticates_the_original_measurement_job(tmp_path, monkeypatch):
+    with (
+        configured(
+            tmp_path, monkeypatch, change=no_initializer, artifact_count=300
+        ) as ctx,
+        endpoint(ctx) as (server, _),
+        ServiceClient(address(server), token=TOKEN, session_id="source") as client,
+    ):
+        phases = measurement_phases(monkeypatch)
+        original = client.prepare_training(config=ctx.config).result(10)
+        config = replace(
+            ctx.config,
+            preparation=replace(
+                ctx.config.preparation,
+                reuse=original.reuse,
+            ),
+        )
+        reused = client.prepare_training(config=config).result(10)
+        archive = reused.export().result(5).download(tmp_path / "reused.zip").result(5)
+        with zipfile.ZipFile(archive) as exported:
+            receipt = json.loads(exported.read("reused.json"))
+            assert receipt["source"] == original.info.preparation_export.to_dict()
+            assert receipt["calibration_reused"]
+        assert phases == ["build", "profile", "communicate"] * 2
+        assert ctx.jobs.used == (0, 0)
+
+        # Another owner's real completed record is not a reuse grant.
+        foreign = RunIdentity("someone_else", "foreign", original.info.run_id)
+        ctx.service.catalog.create(
+            foreign,
+            request_sha256="c" * 64,
+            configuration=original.info.configuration,
+            kind="preparation",
+        )
+        ctx.service.catalog.progress(foreign, "communicate")
+        ctx.service.catalog.prepared(foreign, original.info.preparation_export)
+        missing = replace(
+            config,
+            preparation=replace(
+                config.preparation,
+                reuse={
+                    "measurements": {
+                        "session_id": "foreign",
+                        "run_id": original.info.run_id,
+                    },
+                },
+            ),
+        )
+        with pytest.raises(CreationError, match="not a completed preparation owned"):
+            client.prepare_training(config=missing).result(10)
+        assert len(phases) == 6
+        until(lambda: ctx.jobs.used == (0, 0))

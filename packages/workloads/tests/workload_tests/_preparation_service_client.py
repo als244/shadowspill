@@ -3,11 +3,15 @@
 import hashlib
 import importlib.abc
 import json
+import runpy
 import socket
 import sys
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 from tempfile import mkdtemp
+
+import numpy as np
 
 from shadowspill_client import (
     SSH,
@@ -21,7 +25,61 @@ from shadowspill_client import (
     Preparation,
     ProfilingOptions,
     ServiceClient,
+    Weights,
 )
+from shadowspill_client.buffers import BufferBudget
+
+
+def check_reused_training(client, settings, prepared, initial):
+    checks = runpy.run_path(
+        str(Path(__file__).with_name("_regression_service_client.py"))
+    )
+    training = client.create_training_client(
+        **{
+            **settings,
+            "model": replace(settings["model"], initialize=Weights.random(seed=0)),
+            "memory": Memory(device_gib=3, spill_gib=0.125),
+            "prepare": replace(
+                settings["prepare"],
+                planning=PlanningOptions(microbatch_counts=[1]),
+                reuse=prepared.reuse,
+            ),
+        }
+    ).result(300)
+    memory = BufferBudget(64 << 20, 8)
+    checkpoint = training.save_checkpoint().result(60)
+    rows = []
+    for split in (False, True):
+        if split:
+            training.load_checkpoint(checkpoint.id).result(60)
+        oracle = checks["Oracle"](initial, "float32")
+        batch = checks["records"]()
+        if split:
+            for start, stop in ((0, 2), (2, 5)):
+                result = training.forward_backward(batch[start:stop]).result(60)
+                np.testing.assert_allclose(
+                    result.loss,
+                    oracle.forward_backward(slice(start, stop))[1],
+                    rtol=2e-5,
+                    atol=1e-6,
+                )
+            result = training.optim_step().result(60)
+        else:
+            result = training.step(batch).result(60)
+            np.testing.assert_allclose(
+                result.loss, oracle.forward_backward()[1], rtol=2e-5, atol=1e-6
+            )
+        oracle.update(oracle.forward_backward()[2])
+        checks["check"](training, oracle, memory, counter=2 if split else 1)
+        assert result.completed_updates == 1
+        rows.append(result.record.to_dict())
+    training.close().result(60)
+    assert memory.used == (0, 0)
+    return {
+        "reused_training": True,
+        "whole_split_oracles": rows,
+        "training_run": training.run_id,
+    }
 
 
 def main():
@@ -47,10 +105,16 @@ def main():
     with ServiceClient(
         **connection, token=options["token"], session_id="measurements", timeout=30
     ) as client:
-        prepared = client.prepare_training(
+        settings = dict(
             model=Model("shadowspill/regression@1"),
             objective=Objective("shadowspill/weighted_squared_error@1"),
-            optimizer=Optimizer("mlops/adamw@1"),
+            optimizer=Optimizer(
+                "mlops/adamw@1",
+                precision={
+                    "gradient_dtype": "float32",
+                    "opt_state_dtype": "float32",
+                },
+            ),
             batch=BatchConfig(limits={"max_examples": 8}),
             memory=Memory(device_gib=2, spill_gib=0.0625),
             operations={
@@ -65,7 +129,8 @@ def main():
                     conditioning_seconds=0.001, measurement_seconds=0.002
                 ),
             ),
-        ).result(300)
+        )
+        prepared = client.prepare_training(**settings).result(300)
         assert prepared.info.state == "prepared"
         assert prepared.info.plans is prepared.info.initial_history_id is None
         export = prepared.export().result(30)
@@ -83,6 +148,11 @@ def main():
                 }
         rejoined = client.get_preparation(prepared.info.run_id).result(30)
         assert rejoined.info == prepared.info
+        reuse = (
+            check_reused_training(client, settings, prepared, options["initial"])
+            if options.get("reuse")
+            else {}
+        )
     assert client._memory.used == client._work.pending.used == (0, 0)
     print(
         json.dumps(
@@ -94,6 +164,7 @@ def main():
                 "captures": len(manifest["captures"]),
                 "files": len(manifest["files"]),
                 "run": prepared.info.to_dict(),
+                **reuse,
             }
         )
     )

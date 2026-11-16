@@ -55,6 +55,7 @@ def configured(
     fault=None,
     limits_change=lambda limits: limits,
     ranks=1,
+    artifact_count=100,
 ):
     inv = inventory()
     if ranks > 1:
@@ -148,7 +149,7 @@ def configured(
             max_request_owners=1,
             max_artifact_owners=1,
             artifact_bytes=32 << 20,
-            artifact_count=100,
+            artifact_count=artifact_count,
         ) as service,
     ):
         service.recover()

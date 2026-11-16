@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ._async import CallFuture
+from ._records import Value, mapping
 from .artifacts import ArtifactHandle
 from .creation import CreationError, _info
 from .protocol.creation import TrainingCreation
@@ -27,6 +28,19 @@ class PreparationHandle:
 
     info: RunInfo
     _service: ServiceClient
+
+    @property
+    def reuse(self) -> Mapping[str, Value]:
+        """Portable provenance for ``Preparation(reuse=prepared.reuse)``."""
+        return mapping(
+            {
+                "measurements": {
+                    "session_id": self.info.session_id,
+                    "run_id": self.info.run_id,
+                },
+            },
+            "preparation reuse",
+        )
 
     def export(self) -> CallFuture[ArtifactHandle]:
         """Obtain the immutable ZIP containing all cases and their manifest."""

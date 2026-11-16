@@ -6,7 +6,7 @@ import hashlib
 import io
 import os
 import zipfile
-from collections.abc import Buffer
+from collections.abc import Buffer, Mapping
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -16,6 +16,7 @@ from shadowspill_client._records import integer
 
 from .job import JOB_NAME, load_job
 from .job_artifacts import admitted_inventory
+from .measurement_reuse import REUSE_NAME
 
 _STAGES = ("programs", "profiled", "calibrated", "communication", "failures")
 _COPY_BYTES = 64 << 10
@@ -35,7 +36,7 @@ def _files(root: Path, max_bytes: int, max_files: int) -> tuple[list[Path], int]
             if used > max_bytes or count > max_files:
                 raise ValueError("preparation files exceed the export storage envelope")
             relative = path.relative_to(root)
-            if relative == Path(JOB_NAME) or (
+            if relative in (Path(JOB_NAME), Path(REUSE_NAME)) or (
                 len(relative.parts) == 2
                 and relative.parts[0] in _STAGES
                 and path.suffix == ".ssp"
@@ -80,6 +81,7 @@ def export_measurements(
     *,
     max_disk_bytes: int,
     max_files: int,
+    context: Mapping[str, Any] | None = None,
 ) -> Path:
     """Export original phase artifacts and a manifest; never plan or initialize.
 
@@ -106,7 +108,7 @@ def export_measurements(
     captures: dict[str, Any] = {}
     for name in descriptions:
         path = Path(name)
-        if name == JOB_NAME:
+        if name in (JOB_NAME, REUSE_NAME):
             continue
         if path.stem not in original.templates:
             raise ValueError(
@@ -120,6 +122,7 @@ def export_measurements(
         {
             "format": "shadowspill.preparation-export",
             "version": 1,
+            "context": {} if context is None else dict(context),
             "configuration": original.layouts.setup.config.to_dict(),
             "files": descriptions,
             "captures": {

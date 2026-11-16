@@ -1,5 +1,6 @@
 """Resolved definition jobs use the ordinary build/profile/calibrate/plan APIs."""
 
+import json
 from functools import partial
 from pathlib import Path
 
@@ -10,7 +11,15 @@ from shadowspill.orchestration.launch.workers import workers
 from .bundle import TrainingBundle
 from .groups import capture_groups
 from .job import BUNDLE_NAME, load_job
-from .job_artifacts import admitted_inventory, attempt, profile_at, program_at, reused
+from .job_artifacts import (
+    admitted_inventory,
+    attempt,
+    calibration_at,
+    profile_at,
+    program_at,
+    reused,
+)
+from .measurement_reuse import REUSE_NAME
 
 
 def build(directory: str | Path) -> None:
@@ -77,6 +86,23 @@ def communicate(directory: str | Path) -> None:
     with workers(inventory.layouts.setup.context.parallelism.world_size) as group:
         groups = capture_groups(inventory)
         keys = tuple(dict.fromkeys(peers[group.logical_rank] for peers in groups))
+        receipt = root / REUSE_NAME
+        reusable = receipt.is_file() and json.loads(receipt.read_bytes()).get(
+            "calibration_reused", False
+        )
+        if all(group.gather(reusable)):
+            for peers in groups:
+                key = peers[group.logical_rank]
+                if (
+                    reused(
+                        root / "communication" / f"{key}.ssp",
+                        group,
+                        partial(calibration_at, root, inventory, key),
+                    )
+                    is None
+                ):
+                    raise ValueError("staged calibration is missing a required case")
+            return
         program, collectives = communication_probes(
             program_at(root, inventory, key) for key in keys
         )

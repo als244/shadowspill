@@ -59,6 +59,7 @@ from .checkpoint_restore import CheckpointResolver
 from .creation_records import load_creation
 from .live import LiveRun
 from .plan_summaries import publish_summary
+from .preparation_reuse import stage_preparation_reuse
 from .records.requests import RunIdentity
 from .storage import ServiceStorage
 
@@ -324,6 +325,20 @@ class LocalCreation:
                     admitted=self._progress,
                     host=phase_host,
                 )
+                context = {
+                    "server_incarnation": factory.storage.incarnation,
+                    "devices": list(devices),
+                }
+                stage_preparation_reuse(
+                    self._artifacts,
+                    factory.storage.catalog,
+                    creation.config,
+                    job_root,
+                    packages=factory.packages,
+                    context=context,
+                    max_disk_bytes=limits.preparation_disk_bytes,
+                    max_files=limits.max_preparation_files,
+                )
                 if creation.kind == "preparation":
                     measure_job(
                         job_root,
@@ -338,6 +353,7 @@ class LocalCreation:
                         root / "measurements.zip",
                         max_disk_bytes=limits.preparation_disk_bytes,
                         max_files=limits.max_preparation_files,
+                        context=context,
                     )
                     reference = self._publish_file(
                         exported, "measurements", media_type=PREPARATION_MEDIA_TYPE

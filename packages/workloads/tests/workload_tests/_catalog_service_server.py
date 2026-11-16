@@ -31,6 +31,19 @@ from shadowspill.server.authentication import BearerTokens  # noqa: E402
 
 root = Path(sys.argv[1])
 options = json.loads((root / "setup.json").read_text())
+if options.get("guard_measurement_reuse"):
+    import shadowspill.training.preparation.phases as preparation_phases
+
+    def measured_command(module, arguments, *, ranks=1):
+        assert ranks == 1
+        return [
+            sys.executable,
+            str(Path(__file__).with_name("_measurement_phase_worker.py")),
+            module,
+            *map(str, arguments),
+        ]
+
+    preparation_phases.worker_command = measured_command
 if options.get("cold_llama_workers"):
     import shadowspill.training.worker.launch as worker_launch
 

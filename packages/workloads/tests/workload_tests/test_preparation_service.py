@@ -13,8 +13,11 @@ import pytest
 
 @pytest.mark.cuda
 @pytest.mark.slow
-def test_public_measurement_exports_all_cases_to_cpu_planning(tmp_path):
+@pytest.mark.parametrize("reuse", [False, True])
+def test_public_measurement_exports_all_cases_to_cpu_planning(tmp_path, reuse):
     import torch
+
+    from workload_tests.test_regression_service import initialized
 
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -24,6 +27,12 @@ def test_public_measurement_exports_all_cases_to_cpu_planning(tmp_path):
                 "client_script": "_preparation_service_client.py",
                 "model_description": "Regression measured at sizes 4 and 8",
                 "oracle_description": "Original phase hashes and actual CPU replanning",
+                "reuse": reuse,
+                "guard_measurement_reuse": reuse,
+                "initial": {
+                    name: value.detach().tolist()
+                    for name, value in initialized().named_parameters()
+                },
             }
         )
     )
@@ -45,6 +54,8 @@ def test_public_measurement_exports_all_cases_to_cpu_planning(tmp_path):
         receipt["all_server_claims_released"] and receipt["all_client_claims_released"]
     )
     assert receipt["captures"] >= 2
+    if reuse:
+        assert receipt["reused_training"] and len(receipt["whole_split_oracles"]) == 2
     destination = tmp_path / "measurements.zip"
     if host := os.environ.get("SHADOWSPILL_DEMO_CLIENT_HOST"):
         copied = subprocess.run(

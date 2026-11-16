@@ -44,6 +44,9 @@ requested case, original phase archives and a manifest. Initialization is
 optional for this path. `service.get_preparation(run_id).result()` reattaches to
 the same measurement job without replaying it. The future completes after phase
 resources retire; downloaded artifacts remain available after disconnect.
+`Preparation(reuse=prepared.reuse, ...)` identifies those original measurements
+for compatible new preparation or training. Build/profile reuse preserves exact
+source and physical input identities; changed budgets/counts are replanned.
 
 The protocol modules also define compute requests, acceptance, results and
 failures. `protocol.codec` encodes a versioned, bounded canonical JSON envelope.

@@ -132,8 +132,19 @@ profiles, target memory calibration and communication measurements retain their
 existing formats for inspection and the CPU planning APIs. It contains no
 initialized training state or selected Plan bundle. The ordinary client needs
 only NumPy to download and inspect the manifest; native planning requires the
-optional engine installation. Compatible measurement reuse and locally planned
-bundle submission are still being implemented.
+optional engine installation. Locally planned bundle submission is still being
+implemented.
+
+Pass `Preparation(reuse=prepared.reuse, ...)` with the desired preparation settings
+to reuse compatible measured cases in a new preparation or training run. For
+example, change device/spill budgets or schedule counts and initialize training
+from the original captures. Exact capture identities select reusable builds;
+profiling controls must also match to reuse task measurements. Communication and
+overlap additionally require the same complete capture inventory and physical
+assignment within the same service allocation. Changed cases are prepared through
+the ordinary phases. The new run records its source and copied file checksums;
+phase workers recheck target/toolchain compatibility before planning. Reuse requires
+a completed preparation owned by the authenticated caller.
 
 After disconnecting, reconnect to the same session and call
 `service.get_preparation(pending.run_id).result()`. This only queries the original

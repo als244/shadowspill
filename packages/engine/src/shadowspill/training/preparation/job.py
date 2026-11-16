@@ -60,11 +60,6 @@ class PreparationJob(Artifact):
     def resolve(self) -> tuple[Registry, TemplateInventory]:
         registry = load_registry(self.packages)
         setup = resolve_training(registry, config=self.config)
-        if self.config.preparation.reuse:
-            raise ValueError(
-                "artifact reuse references must be resolved by service storage "
-                "before starting local preparation"
-            )
         return registry, capture_inventory(prepare_layouts(setup))
 
     def to_dict(self) -> dict[str, Any]:
@@ -151,7 +146,10 @@ def _run_job(
     launch: Callable[[PhaseInvocation], PhaseResult] | None,
     phases: tuple[str, ...],
 ) -> Iterator[tuple[Path, Registry]]:
+    from .measurement_reuse import require_staged_reuse
+
     root = Path(directory).resolve()
+    require_staged_reuse(root, config)
     requested = PreparationJob(tuple(packages), config)
     registry, inventory = requested.resolve()
     created = False
@@ -184,6 +182,10 @@ def _run_job(
 
 
 def load_job(directory: str | Path) -> tuple[Path, Registry, TemplateInventory]:
+    from .measurement_reuse import require_staged_reuse
+
     root = Path(directory)
-    registry, inventory = PreparationJob.load(root / JOB_NAME).resolve()
+    job = PreparationJob.load(root / JOB_NAME)
+    require_staged_reuse(root, job.config)
+    registry, inventory = job.resolve()
     return root, registry, inventory

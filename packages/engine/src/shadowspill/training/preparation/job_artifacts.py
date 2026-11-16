@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.artifacts.program import Program
+from shadowspill.communication.info import CommunicationInfo
 from shadowspill.orchestration.launch.workers import Workers
 
 from .allocation_coverage import validate_allocation_coverage
@@ -73,6 +74,37 @@ def profile_at(root: Path, inventory: TemplateInventory, key: str) -> ProfiledPr
     if profiled.program.digest != source.digest:
         raise ValueError("saved profile belongs to another source capture")
     return profiled
+
+
+def calibration_at(root: Path, inventory: TemplateInventory, key: str) -> bool:
+    """Retained overlap/communication must preserve the original memory evidence."""
+    source = profile_at(root, inventory, key)
+    calibrated = ProfiledProgram.load(root / "calibrated" / f"{key}.ssp")
+    communication = CommunicationInfo.load(root / "communication" / f"{key}.ssp")
+    validate_profile(inventory, key, calibrated)
+    if (
+        calibrated.program.digest != source.program.digest
+        or calibrated.fixed_device_bytes != source.fixed_device_bytes
+        or communication.metadata.get("profiling_options")
+        != inventory.layouts.setup.config.preparation.profiling.to_dict()
+    ):
+        raise ValueError("saved calibration differs from its measured capture/policy")
+    for key, original in source.task_profiles.items():
+        actual = calibrated.task_profiles[key]
+        if any(
+            getattr(actual, field) != getattr(original, field)
+            for field in (
+                "duration_seconds",
+                "workspace_bytes",
+                "compatibility_digest",
+                "resource_phases",
+            )
+        ) or any(
+            actual.metadata.get(name) != value
+            for name, value in original.metadata.items()
+        ):
+            raise ValueError("saved overlap calibration changed original task evidence")
+    return True
 
 
 def admitted_inventory(
