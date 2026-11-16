@@ -8,8 +8,33 @@ from engine_tests.pytorch.chunking.test_axis_vjp import executable
 from engine_tests.pytorch.chunking.test_contracts import artifact
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.aot import capture_graph_pair
+from shadowspill.pytorch.capture.export import capture_forward, inference_artifact
 from shadowspill.pytorch.chunking import AxisChunks, ChunkAxis
 from shadowspill.pytorch.chunking.transform import chunk_artifact
+
+
+@pytest.mark.parametrize("name", ["__or__", "__and__", "__xor__"])
+@pytest.mark.parametrize("dtype", [torch.bool, torch.int64])
+def test_forward_export_bitwise_aliases_match_whole(name, dtype):
+    class Masks(torch.nn.Module):
+        def forward(self, left, right):
+            operation = getattr(torch.ops.aten, name)
+            return operation.Tensor(left, right), operation.Scalar(left, 1)
+
+    torch.manual_seed(731)
+    values = tuple(
+        torch.randint(0, 2 if dtype == torch.bool else 8, shape).to(dtype)
+        for shape in ((2, 17, 5), (2, 17, 1))
+    )
+    model = Masks()
+    full = inference_artifact(capture_forward(model, values))
+    assert f"aten.{name}.Tensor" in full.operator_targets
+    chunked = chunk_artifact(
+        full, (ChunkAxis(1), ChunkAxis(1)), 17, AxisChunks(7, {0: 1, 1: 1})
+    )
+    torch.testing.assert_close(
+        executable(chunked)(*values), model(*values), rtol=0, atol=0
+    )
 
 
 @pytest.mark.parametrize(
