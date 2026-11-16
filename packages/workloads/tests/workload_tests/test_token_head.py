@@ -63,6 +63,51 @@ def test_default_head_bound_is_independent_of_total_token_count(monkeypatch):
             )
 
 
+@pytest.mark.parametrize("family", ["qwen3moe", "qwen35moe"])
+@pytest.mark.parametrize("lora", [False, True])
+def test_qwen_target_logprobs_match_full_head_vjps_and_updates(family, lora):
+    from importlib import import_module
+
+    from shadowspill_workloads.lora import configure_lora
+    from workload_tests.test_qwen_moe import tiny
+
+    torch.manual_seed(208)
+    config = import_module(f"shadowspill_workloads.models.{family}.config").Config()
+    model_type = import_module(
+        f"shadowspill_workloads.models.{family}.implementations.mlops"
+    ).Model
+    model = model_type(tiny(config))
+    if lora:
+        configure_lora(model, rank=2, alpha=2, head="lora", factor_dtype="float32")
+        with torch.no_grad():
+            for name, parameter in model.named_parameters():
+                if "lora_" in name and name.endswith("b"):
+                    parameter.normal_(std=0.02)
+    oracle = copy.deepcopy(model)
+    selected = tuple(p for p in model.parameters() if p.requires_grad)
+    reference = tuple(p for p in oracle.parameters() if p.requires_grad)
+    optimizer, other = (torch.optim.SGD(p, lr=0.01) for p in (selected, reference))
+    tokens = torch.randint(0, model.config.vocab_size, (1, 7))
+    targets = torch.randint(0, model.config.vocab_size, tokens.shape)
+    weights = torch.tensor([[1, -0.3, 0, 0.7, -1, 0.4, 0.2]])
+    for _ in range(2):
+        optimizer.zero_grad()
+        other.zero_grad()
+        actual = model.target_logprobs(tokens, targets, (3, 4), head_chunk_size=2)
+        logits = oracle(tokens, (3, 4))
+        expected = logits.log_softmax(-1).gather(-1, targets[..., None]).squeeze(-1)
+        torch.testing.assert_close(actual, expected, atol=2e-6, rtol=3e-5)
+        (actual * weights).sum().backward()
+        (expected * weights).sum().backward()
+        for a, b in zip(selected, reference, strict=True):
+            torch.testing.assert_close(a.grad, b.grad, atol=2e-6, rtol=3e-5)
+        optimizer.step()
+        other.step()
+        torch.testing.assert_close(
+            model.state_dict(), oracle.state_dict(), atol=2e-6, rtol=3e-5
+        )
+
+
 @pytest.mark.parametrize("model_type", [Llama, MlopsLlama])
 @pytest.mark.parametrize("mode", ["full", "frozen_head", "lora_head", "tied"])
 def test_llama_target_logprobs_match_full_head_gradients_and_updates(model_type, mode):

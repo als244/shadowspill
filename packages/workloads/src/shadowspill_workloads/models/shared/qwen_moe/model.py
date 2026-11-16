@@ -9,6 +9,7 @@ from shadowspill_workloads.models.shared.decoder import (
     auxiliary_share,
     packed_metadata,
 )
+from shadowspill_workloads.models.shared.token_head import target_logprobs
 
 from ..expert_parallel import close_experts, expert_construction
 from .attention import Attention, GatedDeltaNet, RMSNorm
@@ -150,6 +151,19 @@ class QwenMoE(nn.Module):
     def forward(self, tokens, sequence_lengths=None):
         hidden, _ = self.hidden(tokens, sequence_lengths)
         return self.lm_head(hidden)
+
+    def target_logprobs(
+        self, tokens, targets, sequence_lengths=None, *, head_chunk_size=None
+    ):
+        """FP32 target logprobs for weighted token and policy objectives.
+
+        This exposes the token distribution. The existing ``loss`` method owns
+        the separately weighted router-balancing term and retains its semantics.
+        """
+        hidden, _ = self.hidden(tokens, sequence_lengths)
+        return target_logprobs(
+            hidden, self.lm_head, targets, chunk_size=head_chunk_size
+        )
 
     def loss(
         self,

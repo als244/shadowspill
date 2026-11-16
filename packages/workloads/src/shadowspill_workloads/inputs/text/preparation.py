@@ -40,9 +40,7 @@ def schema(config):
 def adapter(config, layout):
     (size,) = layout.buffer.fields[TOKENS]
     if any(layout.local_shape(p) != s for p, s in layout.buffer.fields.items()):
-        raise ValueError(
-            "Llama packed attention requires complete sequences per worker"
-        )
+        raise ValueError("packed attention requires complete sequences per worker")
     capacity = config.architecture["max_seq_len"]
     slots = layout.buffer.max_datums + ceil(size / capacity)
 
@@ -52,7 +50,7 @@ def adapter(config, layout):
         for index, region in enumerate(context.routed.owner.regions):
             (span,) = region.fields[TOKENS]
             if span.start != end or span.stop - span.start > capacity:
-                raise ValueError("Llama input regions violate sequence geometry")
+                raise ValueError("packed input regions violate sequence geometry")
             lengths[index] = span.stop - span.start
             end = span.stop
         # Padding is its own causal sequence(s), never a continuation of a Datum.
@@ -86,18 +84,18 @@ def _check(context):
             "max_sequences",
         }:
             raise ValueError(
-                "Llama requires token, sequence-length and sequence-count limits"
+                "packed text requires token, sequence-length and sequence-count limits"
             )
         if any(type(value) is not int or value < 1 for value in batch.limits.values()):
-            raise ValueError("Llama capacities must be positive integers")
+            raise ValueError("packed text capacities must be positive integers")
         if batch.limits["max_sequence_length"] > capacity:
-            raise ValueError("sequence-length limit exceeds Llama rotary capacity")
+            raise ValueError("sequence-length limit exceeds model rotary capacity")
         if batch.limits["token_capacity"] >= 2**31:
-            raise ValueError("Llama packed offsets require fewer than 2**31 tokens")
+            raise ValueError("packed offsets require fewer than 2**31 tokens")
         if batch.limits["max_sequences"] >= 2**31:
-            raise ValueError("Llama sequence count exceeds int32 metadata capacity")
+            raise ValueError("sequence count exceeds int32 metadata capacity")
         if batch.typical.keys() - {"sequence_length"}:
-            raise ValueError("unknown Llama timing hint")
+            raise ValueError("unknown packed text timing hint")
         typical = batch.typical.get("sequence_length", 1)
         if type(typical) is not int or not 1 <= typical <= min(
             batch.limits["max_sequence_length"], batch.limits["token_capacity"]
@@ -123,7 +121,7 @@ def defaults(context, *, preset):
 def buffers(context, batch, paths, size):
     partitions = _check(context)
     if not 0 < size < 2**31:
-        raise ValueError("Llama microbatch size must fit int32 offsets")
+        raise ValueError("packed microbatch size must fit int32 offsets")
     shape = BufferShape(
         context.batches[batch].limits["max_sequences"], {p: (size,) for p in paths}
     )
