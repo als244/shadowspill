@@ -8,10 +8,6 @@ from typing import ClassVar
 
 from shadowspill.training.definitions import ModelBuild
 from shadowspill_workloads.initialization.pretrained import describe
-from shadowspill_workloads.models.qwen3 import config as qwen3
-from shadowspill_workloads.models.qwen3moe import config as qwen3moe
-from shadowspill_workloads.models.qwen35 import config as qwen35
-from shadowspill_workloads.models.qwen35moe import config as qwen35moe
 
 from .. import expert_parallel, moe_provider, training_options
 from ..hybrid_allocations import CONTRACTS as HYBRID_CONTRACTS
@@ -94,30 +90,6 @@ class Settings:
             expert_parallel.validate(self)
         elif self.expert_options is not None:
             raise ValueError("dense Qwen does not use expert resource settings")
-
-
-class Qwen3Settings(Settings):
-    family = "qwen3"
-    catalog = qwen3
-
-
-class Qwen35Settings(Settings):
-    family = "qwen35"
-    catalog = qwen35
-    hybrid = True
-
-
-class Qwen3MoESettings(Settings):
-    family = "qwen3moe"
-    catalog = qwen3moe
-    moe = True
-
-
-class Qwen35MoESettings(Settings):
-    family = "qwen35moe"
-    catalog = qwen35moe
-    moe = True
-    hybrid = True
 
 
 def create(config):

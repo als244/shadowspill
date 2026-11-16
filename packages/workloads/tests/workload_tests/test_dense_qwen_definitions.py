@@ -21,8 +21,9 @@ from shadowspill_client import (
     Preparation,
     Weights,
 )
-from shadowspill_workloads.definitions.qwen import configuration
 from shadowspill_workloads.lora import configure_lora
+from shadowspill_workloads.models.qwen3.training import Settings as Qwen3Settings
+from shadowspill_workloads.models.qwen35.training import Settings as Qwen35Settings
 from workload_tests.test_llama_definition import bound, datums
 
 FAMILIES = ("qwen3", "qwen35")
@@ -172,9 +173,7 @@ def test_bfloat16_construction_preserves_catalog_storage_and_default_dtype(famil
         assert model.blocks[0].mixer.dt_bias.dtype == torch.bfloat16
 
 
-@pytest.mark.parametrize(
-    "settings_class", [configuration.Qwen3Settings, configuration.Qwen35Settings]
-)
+@pytest.mark.parametrize("settings_class", [Qwen3Settings, Qwen35Settings])
 @pytest.mark.parametrize(
     "overrides",
     [

@@ -8,18 +8,19 @@ package is ``shadowspill_workloads.models.<family>``: its ``config`` module hold
 ``Config`` and ``PRESETS``, the configurations by size, ``implementations``
 holds one module per implementation, each exposing ``Model``, and
 ``checkpoint`` holds the reader of a local Hugging Face checkpoint of the
-family, named in ``READERS``.
+family, declared in ``registration.py``.
 
 An entry also records which implementations build it, the geometry a
 benchmark of it starts from, whether its objective carries a router
 balancing term, whether the mlops implementation can shard its experts over
 an expert-parallel group and, for a checkpoint-bound family, the quickstart
 factory that builds it. Adding a model is one family package and one entry
-here."""
+in ``models/families.py``."""
 
 from collections.abc import Mapping
 from typing import Any
 
+from shadowspill_workloads.models.families import families as registered_families
 from shadowspill_workloads.providers import ModelImplementation
 
 from .entry import IMPLEMENTATIONS, Entry, Geometry
@@ -32,12 +33,9 @@ assert len(_BY_NAME) == len(ENTRIES), "catalog names repeat"
 #: ``shadowspill_workloads.models.<family>.checkpoint``;
 #: the GLM families load through their own recipe.
 READERS: Mapping[str, str] = {
-    "llama3": "Llama3Checkpoint",
-    "qwen3": "Qwen3Checkpoint",
-    "qwen35": "Qwen35Checkpoint",
-    "olmoe": "OLMoECheckpoint",
-    "qwen3moe": "Qwen3MoECheckpoint",
-    "qwen35moe": "Qwen35MoECheckpoint",
+    item.name: item.checkpoint_reader
+    for item in registered_families()
+    if item.checkpoint_reader is not None
 }
 
 

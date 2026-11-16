@@ -6,19 +6,10 @@ from importlib import import_module
 from shadowspill.training.definitions import ModelReferenceDefinition
 from shadowspill_client._records import plain
 from shadowspill_workloads.initialization import hub, hub_files, local_files
+from shadowspill_workloads.models.families import checkpoint_families, families
 
 from .source import definition_source
 
-FAMILIES = {
-    "llama": "llama3",
-    "qwen3": "qwen3",
-    "qwen3_5": "qwen35",
-    "qwen3_5_text": "qwen35",
-    "qwen3_moe": "qwen3moe",
-    "qwen3_5_moe": "qwen35moe",
-    "qwen3_5_moe_text": "qwen35moe",
-    "olmoe": "olmoe",
-}
 # These settings select the stored tensors or their layout. Other supported
 # overrides (e.g. rotary capacity/frequencies or top-k) do not reshape weights.
 WEIGHT_GEOMETRY = {
@@ -48,9 +39,11 @@ def architecture(metadata, overrides):
     if not isinstance(text, dict):
         raise ValueError("pretrained text_config must be a JSON object")
     kind = text.get("model_type", metadata.get("model_type"))
-    if kind not in FAMILIES:
+    supported = checkpoint_families(training=True)
+    if kind not in supported:
         raise ValueError(f"unsupported pretrained model type: {kind!r}")
-    family = FAMILIES[kind]
+    registration = supported[kind]
+    family = registration.name
     module = import_module(f"shadowspill_workloads.models.{family}.config")
     defaults = {}
     if "max_position_embeddings" in text:
@@ -59,41 +52,13 @@ def architecture(metadata, overrides):
             raise ValueError("pretrained maximum sequence length must be positive")
         defaults["max_seq_len"] = capacity
     original = module.from_huggingface(metadata, **defaults)
-    _supported(text, original, family)
+    if registration.validate_pretrained is not None:
+        registration.validate_pretrained(text, original)
     values = asdict(original)
     for name in WEIGHT_GEOMETRY & overrides.keys():
         if name in values and values[name] != overrides[name]:
             raise ValueError(f"pretrained override changes checkpoint geometry: {name}")
     return family, asdict(replace(original, **overrides))
-
-
-def _supported(text, config, family):
-    if text.get("hidden_act", "silu") != "silu":
-        raise ValueError("pretrained decoder requires the supported silu activation")
-    if family in ("llama3", "qwen3"):
-        return  # These parsers validate supported biases and RoPE scaling.
-    moe = family in ("qwen3moe", "qwen35moe", "olmoe")
-    if moe and text.get("tie_word_embeddings", False):
-        raise ValueError("the supplied MoE decoders require untied embeddings")
-    if text.get("rope_scaling") is not None:
-        raise ValueError("the supplied decoder does not implement rope_scaling")
-    if moe and (text.get("mlp_only_layers") or text.get("decoder_sparse_step", 1) != 1):
-        raise ValueError("the supplied MoE decoder requires every layer to be sparse")
-    if family == "qwen35" and text.get("attn_output_gate", True) is not True:
-        raise ValueError("the supplied Qwen3.5 decoder requires attention output gates")
-    if family == "olmoe" and text.get("clip_qkv") is not None:
-        raise ValueError("the supplied OLMoE decoder does not implement clip_qkv")
-    layers = text.get("layer_types")
-    layer_kind = getattr(config, "layer_kind", lambda index: "full")
-    if layers is not None and (
-        not isinstance(layers, list)
-        or len(layers) != config.n_layers
-        or any(
-            kind != f"{layer_kind(index)}_attention"
-            for index, kind in enumerate(layers)
-        )
-    ):
-        raise ValueError("pretrained layer_types differ from the supported decoder")
 
 
 def resolve(requested):
@@ -146,12 +111,21 @@ def register(registry):
             "initialization/weight_files.py",
             "initialization/local_files.py",
             "initialization/headers.py",
-            "models/llama3/config.py",
-            "models/olmoe/config.py",
-            "models/qwen3/config.py",
-            "models/qwen35/config.py",
-            "models/qwen3moe/config.py",
-            "models/qwen35moe/config.py",
+            "models/families.py",
+            "models/registration.py",
+            "definitions/text_metadata.py",
+            *(
+                path
+                for family in families()
+                for path in (
+                    f"models/{family.name}/registration.py",
+                    *(
+                        (f"models/{family.name}/config.py",)
+                        if family.training and family.checkpoint_types
+                        else ()
+                    ),
+                )
+            ),
             "models/shared/qwen_moe/config.py",
         ),
         providers=("huggingface_hub", "httpx", "httpcore", "httpx2", "httpcore2"),

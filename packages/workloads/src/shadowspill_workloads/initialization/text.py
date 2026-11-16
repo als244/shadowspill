@@ -3,9 +3,8 @@
 import torch
 
 from shadowspill.checkpoint.initialization import fill_generated, validate_chunk
+from shadowspill_workloads.models.families import family as registered_family
 from shadowspill_workloads.models.shared.decoder import llama3_frequencies
-
-FAMILIES = {"llama3", "qwen3", "qwen35", "olmoe", "qwen3moe", "qwen35moe"}
 
 #: The leaves a checkpoint does not hold: fresh LoRA factors.
 LORA_LEAVES = {
@@ -50,7 +49,8 @@ class Initialize:
     def __init__(self, family, config, *, seed=0, lora_seed=None):
         self.family, self.config, self.seed = family, config, seed
         self.lora_seed = seed if lora_seed is None else lora_seed
-        if self.family not in FAMILIES:
+        self.distribution = registered_family(family).initialization
+        if self.distribution is None:
             raise ValueError(
                 f"{self.family} needs its own checkpoint/initialization recipe"
             )
@@ -70,7 +70,6 @@ class Initialize:
     def constant(self, name):
         """Constant leaves need no RNG blocks or temporary full-precision copy."""
         leaf = name.rsplit(".", 1)[-1]
-        qwen_moe = self.family in {"qwen3moe", "qwen35moe"}
         if name.endswith("norm.weight"):
             centered = getattr(
                 self.config, "zero_centered_norm", False
@@ -78,10 +77,10 @@ class Initialize:
             return 0 if centered else 1
         if leaf in {"lora_b", "lora_gate_up_b", "lora_down_b"}:
             return 0
-        if leaf == "A_log" and not qwen_moe:
+        if leaf == "A_log" and not self.distribution.log_uniform_decay:
             return 0
         if leaf == "dt_bias":
-            return 1 if qwen_moe else 0
+            return self.distribution.time_bias
         return None
 
     def values(self, name, shape, start, stop, generator):
@@ -89,7 +88,6 @@ class Initialize:
             return self.rotary(name, start, stop)
         values = torch.empty(stop - start, dtype=torch.float32)
         leaf = name.rsplit(".", 1)[-1]
-        qwen_moe = self.family in {"qwen3moe", "qwen35moe"}
         if leaf in {"lora_a", "lora_gate_up_a", "lora_down_a"}:
             bound = shape[-1] ** -0.5
             return (
@@ -99,13 +97,9 @@ class Initialize:
             )
         if leaf == "A_log":
             return values.uniform_(0.01, 16, generator=generator).log_()
-        if qwen_moe and (leaf in {"w13", "w2"} or leaf == "weight"):
-            return values.normal_(
-                std=self.config.initializer_range, generator=generator
-            )
         if (
             name == "embed.weight"
-            or leaf in {"w13_experts", "w2_experts"}
+            or leaf in self.distribution.normal_leaves
             or (leaf == "weight" and len(shape) >= 2)
         ):
             return values.normal_(

@@ -1,0 +1,19 @@
+"""llama3 catalog and training integration; no framework imports."""
+
+from shadowspill_workloads.definitions.text_metadata import validate_activation
+from shadowspill_workloads.models.registration import Family, ParameterInitialization
+
+FAMILY = Family(
+    name="llama3",
+    presets=(
+        ("numerical", 8192, "the exact-scale shape the numerical gate runs"),
+        ("tiny", 4096, "a smoke-test shape"),
+        ("1b", 8192, "Llama-3.2-1B's decoder, with tied embeddings"),
+        ("8b", 8192, "Llama-3.1-8B's decoder"),
+    ),
+    checkpoint_reader="Llama3Checkpoint",
+    checkpoint_types=("llama",),
+    initialization=ParameterInitialization(),
+    training="shadowspill_workloads.definitions.llama:register",
+    validate_pretrained=validate_activation,
+)

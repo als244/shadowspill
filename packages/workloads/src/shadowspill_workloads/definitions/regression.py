@@ -3,9 +3,6 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
-from hashlib import sha256
-from importlib.metadata import version
-from pathlib import Path
 
 from shadowspill.training.definitions import (
     ModelDefinition,
@@ -13,12 +10,13 @@ from shadowspill.training.definitions import (
     ObjectiveDefinition,
 )
 from shadowspill_client.protocol.definitions import (
-    DefinitionSource,
     OutputSet,
     Participation,
     TensorOutput,
 )
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
+
+from .source import definition_source
 
 
 @dataclass(frozen=True)
@@ -71,18 +69,13 @@ def weighted_squared_error(model, inputs, loss_inputs, loss_params):
 
 
 def register(registry):
-    root = Path(__file__).resolve().parents[1]
-    digest = sha256()
-    # Explicit source closure, including the existing model, pins editable installs.
-    for relative in (
-        "definitions/regression.py",
-        "models/regression/model.py",
-        "models/regression/initialization.py",
-    ):
-        digest.update(relative.encode())
-        digest.update((root / relative).read_bytes())
-    source = DefinitionSource(
-        "shadowspill-workloads", version("shadowspill-workloads"), digest.hexdigest()
+    source = definition_source(
+        (
+            "definitions/regression.py",
+            "models/families.py",
+            "models/registration.py",
+            "models/regression",
+        )
     )
     registry.add_model(
         ModelDefinition(

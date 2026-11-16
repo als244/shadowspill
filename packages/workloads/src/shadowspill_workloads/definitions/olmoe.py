@@ -114,6 +114,8 @@ def initialization(config, context):
 def register(registry):
     source = definition_source(
         (
+            "models/families.py",
+            "models/registration.py",
             "definitions/olmoe.py",
             "definitions/training_options.py",
             "definitions/expert_parallel.py",

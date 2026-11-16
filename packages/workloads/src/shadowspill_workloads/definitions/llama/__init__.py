@@ -15,6 +15,8 @@ PRESET = "shadowspill/llama3_packed@1"
 def register(registry):
     source = definition_source(
         (
+            "models/families.py",
+            "models/registration.py",
             "definitions/llama",
             "definitions/training_options.py",
             "definitions/text_allocations.py",

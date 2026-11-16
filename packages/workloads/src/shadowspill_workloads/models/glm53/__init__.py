@@ -2,6 +2,17 @@
 attention indices, ordinary residuals, three initial dense MLPs, then
 256 routed experts/top-8 plus a shared expert."""
 
-from .config import Config
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config import Config
 
 __all__ = ["Config"]
+
+
+def __getattr__(name):
+    if name == "Config":
+        from .config import Config
+
+        return Config
+    raise AttributeError(name)

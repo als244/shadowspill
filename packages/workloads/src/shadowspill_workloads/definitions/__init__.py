@@ -1,26 +1,25 @@
 """Supplied definitions use the public registry, like external integrations.
 
-Regression, packed Llama/MoE and token objectives are registered during the refactor.
-Other catalog text/media definitions migrate as their preparation paths land.
-Importing this module does not construct a model or import a tensor framework.
+Loading the registry imports no tensor framework and constructs no models.
+Each model family owns its registration hook; objectives and policies are shared.
 """
+
+from importlib import import_module
 
 
 def register(registry):
-    from .llama import register as register_llama
+    from shadowspill_workloads.models.families import families
+
     from .moe_objective import register as register_moe_objective
-    from .olmoe import register as register_olmoe
     from .pretrained import register as register_pretrained
-    from .qwen import register as register_qwen
-    from .regression import register as register_regression
     from .text_policies import register as register_text_policies
     from .token import register as register_token
 
-    register_regression(registry)
     register_token(registry)
     register_moe_objective(registry)
-    register_llama(registry)
-    register_qwen(registry)
-    register_olmoe(registry)
+    for family in families():
+        if family.training is not None:
+            module, name = family.training.split(":")
+            getattr(import_module(module), name)(registry)
     register_pretrained(registry)
     register_text_policies(registry)
