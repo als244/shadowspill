@@ -28,7 +28,7 @@ from .inductor.compiler import compile_graph
 from .inductor.manifest import toolchain
 from .pointwise import native_pointwise_rounding
 
-_BUILD_VERSION = 13
+_BUILD_VERSION = 14
 
 
 @dataclass(frozen=True)

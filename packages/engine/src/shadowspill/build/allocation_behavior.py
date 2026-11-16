@@ -10,6 +10,7 @@ import ast
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
+import torch
 from torch._inductor.codegen import wrapper
 from torch._inductor.utils import LineContext
 
@@ -36,6 +37,9 @@ def wrapper_allocation_behavior(
         elif isinstance(line, wrapper.KernelCallLine):
             if not line.triton:
                 opaque.add(line.kernel_name)
+        elif isinstance(line, wrapper.ScatterFallbackLine):
+            if not _fixed_integer_scatter(line.node):
+                unknown.add("unreviewed scatter allocation behavior")
         elif isinstance(line, wrapper.UnbackedSymbolDefsLine):
             if line.unbacked_bindings:
                 unknown.add("unbacked values can change generated geometry")
@@ -75,6 +79,27 @@ def wrapper_allocation_behavior(
         "opaque_calls": sorted(opaque),
         "unresolved": sorted(unknown),
     }
+
+
+def _fixed_integer_scatter(node: Any) -> bool:
+    """ATen's int64 sum mutates its already allocated destination.
+
+    TensorIterator uses declared tensor geometry and scalar dim. Integer sum
+    never takes the deterministic index-sort or floating CPU expanded-index
+    paths; index values only choose destinations. Restrict this rule to the
+    audited overload/arguments/dtypes, keeping other scatter forms unresolved.
+    Geometry gaps remain errors and the Program pins the Torch toolchain.
+    """
+    return (
+        node.python_kernel_name == "aten.scatter_reduce_.two"
+        and node.src_is_tensor
+        and node.kwargs == {"reduce": "sum", "include_self": True}
+        and len(node.constant_args) == 1
+        and type(node.constant_args[0]) is int
+        and len(node.inputs) == 3
+        and all(value.get_dtype() == torch.int64 for value in node.inputs)
+        and all(value.get_device().type in {"cpu", "cuda"} for value in node.inputs)
+    )
 
 
 def _static_statement(source: str) -> bool:

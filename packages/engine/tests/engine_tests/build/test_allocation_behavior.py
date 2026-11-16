@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 from torch._inductor.codegen import wrapper
 from torch._inductor.utils import LineContext
 
@@ -62,6 +63,71 @@ def test_opaque_calls_are_requirements_not_a_static_allocation_guarantee():
     )
     assert record["opaque_calls"] == ["provider.kernel"]
     assert record["unresolved"] == ["allocation extent: dynamic_output"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [None, "float", "mean", "exclude_self", "overload", "scalar", "symbolic_dim"],
+)
+def test_integer_scatter_rule_does_not_admit_other_reductions_or_dynamic_geometry(
+    change,
+):
+    tensor = SimpleNamespace(
+        get_dtype=lambda: torch.float32 if change == "float" else torch.int64,
+        get_device=lambda: torch.device("cuda"),
+    )
+    node = SimpleNamespace(
+        python_kernel_name="aten.scatter_.src"
+        if change == "overload"
+        else "aten.scatter_reduce_.two",
+        src_is_tensor=change != "scalar",
+        kwargs={
+            "reduce": "mean" if change == "mean" else "sum",
+            "include_self": change != "exclude_self",
+        },
+        constant_args=("unknown" if change == "symbolic_dim" else 0,),
+        inputs=[tensor] * 3,
+    )
+    line = wrapper.ScatterFallbackLine(None, node)
+    record = wrapper_allocation_behavior([line])
+    assert bool(record["unresolved"]) == (change is not None)
+    assert wrapper_allocation_behavior([line], geometry_gaps=["dynamic count"])[
+        "unresolved"
+    ]
+
+
+@pytest.mark.parametrize(
+    "device", ["cpu", pytest.param("cuda", marks=pytest.mark.cuda)]
+)
+def test_compiled_router_counts_reuse_fixed_geometry_across_assignment_values(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    from torch.fx.experimental.proxy_tensor import make_fx
+
+    from shadowspill.build.compilation import compile_task
+    from shadowspill.pytorch.capture.artifacts import GraphArtifact
+    from shadowspill.pytorch.executable import restore_executable
+
+    def function(indices, active):
+        counts = torch.zeros(4, dtype=torch.int64, device=indices.device)
+        return (counts.scatter_add(0, indices, active),)
+
+    indices = torch.zeros(12, dtype=torch.int64, device=device)
+    active = torch.ones_like(indices)
+    artifact = GraphArtifact.capture(
+        kind="forward",
+        graph_module=make_fx(function)(indices, active),
+        example_inputs=(indices, active),
+    )
+    compiled = compile_task(artifact)
+    assert compiled.memory["allocation_behavior"]["unresolved"] == []
+    execute = restore_executable(compiled.payload)
+    for divisor in (1, 2, 4):
+        indices.copy_(torch.arange(12, device=device) % divisor)
+        active.copy_(torch.arange(12, device=device) % 3 != 0)
+        (actual,) = execute(indices, active)
+        torch.testing.assert_close(actual, function(indices, active)[0])
+        assert actual.untyped_storage().nbytes() == 4 * 8
 
 
 def test_composition_propagates_every_child_requirement_and_missing_evidence():
