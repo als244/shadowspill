@@ -28,7 +28,8 @@ class OptimizerDefinition:
     Optional ``configure(Optimizer)`` validates groups/precision and translates
     them into that same factory config on CPU, with stable resolved defaults.
     ``master_dtype`` may be a dtype name or CPU config resolver; it selects the
-    existing separate optimizer-parameter capture, without changing model dtype.
+    existing optimizer-parameter capture, without changing model dtype. Ordinary
+    parameters need no separate copy when they already meet that precision.
     """
 
     id: str

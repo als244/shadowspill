@@ -9,7 +9,9 @@ import pytest
 import torch
 
 from engine_tests.pytorch.optimizer.test_optimizer import _install_declared_state
+from shadowspill.build.optimizer_parameters import local_optimizer_parameters
 from shadowspill.pytorch.optimizer import capture_optimizer
+from shadowspill.pytorch.optimizer.sandbox import copy_optimizer_to_meta
 from shadowspill.training.definitions import Registry, adamw
 from shadowspill_client import Optimizer
 
@@ -89,7 +91,7 @@ def test_factory_preserves_precision_trainable_selection_and_consumed_controls(d
     "settings",
     [
         {"groups": {"head": {"lr": 0.1}}},
-        {"precision": {"master_dtype": "bfloat16"}},
+        {"precision": {"master_dtype": "int32"}},
         {"precision": {"gradient_dtype": "float64"}},
         {"precision": {"parameter_rounding": "truncate"}},
         {"config": {"maximize": 1}},
@@ -109,6 +111,53 @@ def test_factory_preserves_precision_trainable_selection_and_consumed_controls(d
 def test_unsupported_settings_fail_during_cpu_resolution(settings):
     with pytest.raises((TypeError, ValueError)):
         resolve(**settings)
+
+
+@pytest.mark.parametrize("master", [None, "bfloat16", "float32"])
+def test_bf16_rounding_and_master_storage_preserve_fp32_parameters(master):
+    resolved = resolve(
+        precision={
+            "master_dtype": master,
+            "gradient_dtype": "bfloat16",
+            "opt_state_dtype": "bfloat16",
+            "parameter_rounding": "stochastic",
+            "opt_state_rounding": "stochastic",
+        }
+    )
+    model = torch.nn.ParameterDict(
+        {
+            "weight": torch.nn.Parameter(torch.ones(16, dtype=torch.bfloat16)),
+            "decay": torch.nn.Parameter(torch.ones(2, dtype=torch.float32)),
+        }
+    )
+    original = resolved.create(
+        model, {name: torch.tensor(value) for name, value in resolved.defaults.items()}
+    )
+    named = dict(model.named_parameters())
+    copied, names = copy_optimizer_to_meta(
+        original, {id(parameter): name for name, parameter in named.items()}
+    )
+    optimizer, names, copies = local_optimizer_parameters(
+        copied,
+        names,
+        named,
+        set(named),
+        None if master is None else getattr(torch, master),
+    )
+    parameters = {names[id(p)]: p for p in optimizer.param_groups[0]["params"]}
+    assert parameters["decay"].dtype == torch.float32
+    assert set(copies) == ({"weight"} if master == "float32" else set())
+    if master != "float32":
+        assert optimizer is copied  # No redundant BF16 or FP32 master allocation.
+        assert parameters["weight"].dtype == torch.bfloat16
+    group = optimizer.param_groups[0]
+    assert group["parameter_rounding"] == group["opt_state_rounding"] == "stochastic"
+    _install_declared_state(parameters, optimizer)
+    captured = capture_optimizer(parameters, optimizer, compute_copies=copies)
+    resolved.definition.validate_capture(captured)
+    assert sum(b.role == "compute_copy" for b in captured.bindings) == len(copies)
+    for state in optimizer.state.values():
+        assert state["exp_avg"].dtype == state["exp_avg_sq"].dtype == torch.bfloat16
 
 
 def test_controls_are_nonsticky_and_provider_sources_are_rechecked(

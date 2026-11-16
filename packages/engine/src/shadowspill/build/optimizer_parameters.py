@@ -35,8 +35,18 @@ def local_optimizer_parameters(
     copies: dict[str, torch.Tensor] = {}
     for parameter in optimizer_parameters(optimizer):
         name = names[id(parameter)]
-        target_dtype = dtype or parameter.dtype
         wrapped = is_wrapper(model_parameters[name])
+        # A master widens ordinary parameter storage; it must not downgrade
+        # model-required FP32 parameters in an otherwise BF16 model. Wrappers
+        # explicitly choose dense optimizer storage independently of their
+        # advertised logical dtype.
+        target_dtype = (
+            parameter.dtype
+            if dtype is None
+            else dtype
+            if wrapped
+            else torch.promote_types(parameter.dtype, dtype)
+        )
         if name not in trained or (
             parameter.dtype == target_dtype and name not in sharded and not wrapped
         ):

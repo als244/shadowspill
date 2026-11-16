@@ -91,7 +91,9 @@ retains checkpoint inputs and supported routing choices, regenerating other
 intermediates. Explicit rules can change each variant independently.
 
 `master_dtype=torch.float32` leaves model compute precision unchanged while
-adding optimizer master weights. `grad_dtype` controls stored gradients;
+adding optimizer master weights for lower-precision parameters. Ordinary parameters
+already at that precision reuse their storage; master dtype never narrows them.
+`grad_dtype` controls stored gradients;
 optimizer rules determine moment/state dtypes. Ordinary masters are initialized
 from compute weights in bounded chunks. Trainable tensor wrappers require an
 explicit master dtype and separate initialization of physical components and

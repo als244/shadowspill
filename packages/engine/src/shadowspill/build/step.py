@@ -48,7 +48,9 @@ def build_step(
     tensor contents are supplied at execution. CPU planning chooses when each
     independent update runs after its required gradient writes and weight reads.
     ``master_dtype`` optionally captures separate optimizer parameters; model
-    compute precision is unchanged. ``grad_dtype`` controls stored gradients
+    compute precision is unchanged. Ordinary parameters keep their own storage
+    when it already meets that precision; masters never narrow their dtype.
+    ``grad_dtype`` controls stored gradients
     independently. Optimizer state dtypes come from that optimizer's own rules.
     Trainable tensor wrappers require an explicit ``master_dtype`` even if their
     logical dtype matches it. The bounded initializer must fill their physical

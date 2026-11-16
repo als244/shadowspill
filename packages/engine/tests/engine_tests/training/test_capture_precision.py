@@ -65,7 +65,7 @@ def prepared(
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("master", [None, "float32"])
+@pytest.mark.parametrize("master", [None, "bfloat16", "float32"])
 def test_bfloat16_model_fp32_gradients_and_optional_masters_reach_actual_capture(
     monkeypatch, master
 ):
@@ -85,7 +85,7 @@ def test_bfloat16_model_fp32_gradients_and_optional_masters_reach_actual_capture
         # Exercise real core captures, stopping before CUDA compilation/profiling.
         assert options["grad_dtype"] == torch.float32
         assert options.get("master_dtype") == (
-            None if master is None else torch.float32
+            None if master is None else getattr(torch, master)
         )
         training = capture_training_model(
             model,
@@ -114,10 +114,10 @@ def test_bfloat16_model_fp32_gradients_and_optional_masters_reach_actual_capture
         gradients = [b for b in bindings if b.role == "gradient"]
         assert parameters and gradients
         assert all(
-            b.tensor.dtype == (torch.bfloat16 if master is None else torch.float32)
+            b.tensor.dtype == (torch.float32 if master == "float32" else torch.bfloat16)
             for b in parameters
         )
-        assert bool(copies) == (master is not None)
+        assert bool(copies) == (master == "float32")
         assert all(b.tensor.dtype == torch.bfloat16 for b in copies)
         assert all(b.tensor.dtype == torch.float32 for b in gradients)
         assert update.gradient_scale_control is not None

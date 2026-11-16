@@ -667,9 +667,12 @@ omitted values use the immutable setup defaults. Structural `config` supports
 `opt_state_rounding` (`nearest` or `stochastic`). Defaults match MLOps: BF16 update
 gradients and moments, nearest rounding. These dtype settings describe the
 optimizer's input conversion and moment storage; they do not change model or
-gradient-accumulation storage. An additional `master_dtype="float32"` option
-selects separate FP32 optimizer parameters through the existing build engine;
-its default is `None` (no master copy). Unsupported groups and precision
+gradient-accumulation storage. `master_dtype` accepts `float32`, `float16` or
+`bfloat16`; its default is `None`. Ordinary parameters use separate master storage
+only when promotion to that dtype requires it. For example, BF16 master dtype
+adds no copies to a BF16 model, and its FP32 exceptions remain FP32. FP32 master
+dtype adds FP32 copies of BF16 parameters. Both rounding options can be set to
+`"stochastic"` when training with BF16 parameters and moments. Unsupported groups and precision
 options fail during description. For the existing FP32 regression recipe, specify
 `precision={"opt_state_dtype": "float32"}` to preserve its optimizer settings.
 
