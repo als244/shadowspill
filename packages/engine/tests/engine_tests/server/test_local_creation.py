@@ -28,6 +28,7 @@ from shadowspill.orchestration.launch.host_arena import HostArena
 from shadowspill.orchestration.launch.phases import PhaseInvocation
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
 from shadowspill.server import local_creation as module
+from shadowspill.server import plan_summaries
 from shadowspill.server.creation_records import CreationRecord
 from shadowspill.server.jobs import RunJobs
 from shadowspill.server.local_creation import LocalCreationFactory, LocalCreationLimits
@@ -114,6 +115,22 @@ def configured(
     )
     bundle = SimpleNamespace(config=config, recheck=lambda _: family)
     monkeypatch.setattr(module.TrainingBundle, "load", lambda _: bundle)
+    # These are CPU sentinel worker Plans, without real simulation/layout evidence.
+    # Report attribution is tested separately against actual saved Plan artifacts.
+    monkeypatch.setattr(
+        plan_summaries,
+        "occupancy_data",
+        lambda plan, *, description: {
+            "plan": description,
+            "view": "simulated",
+            "clock": "CPU service fixture",
+            "end_seconds": 1,
+            "pools": [],
+            "compute": [],
+            "fetch": [],
+            "evict": [],
+        },
+    )
 
     def prepare(root, *, packages, config, environment, launch):
         assert not saved

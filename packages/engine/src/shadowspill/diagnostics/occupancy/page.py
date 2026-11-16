@@ -15,6 +15,22 @@ from .plan import PlanOccupancy
 from .summary import summarize
 
 
+def html_parts(title: str) -> tuple[str, str]:
+    """Self-contained page around a JSON payload, also usable by bounded writers."""
+    template = Path(__file__).with_name("occupancy_page.html").read_text()
+    prefix, suffix = template.replace("__TITLE__", escape(title)).split(
+        "__OCCUPANCY_DATA__"
+    )
+    return prefix, suffix
+
+
+def script_json(value: Any) -> str:
+    """JSON in a script element must not contain an HTML closing tag."""
+    return json.dumps(value, separators=(",", ":"), allow_nan=False).replace(
+        "<", "\\u003c"
+    )
+
+
 def table(occupancy: Occupancy, by: str, at_ns: Sequence[int] = ()) -> str:
     """One pool at its peak and at the times asked for, by category or role."""
 
@@ -111,7 +127,7 @@ def page_data(
             {
                 "name": occupancy.pool,
                 "note": note,
-                "times": [round(t, 4) for t in times],
+                "times": [round(t, 9) for t in times],
                 "rows": {
                     name: [round(v, 4) for v in values] for name, values in rows.items()
                 },
@@ -252,20 +268,17 @@ def write_pages(
     around this one. Returns the pages written, the index first."""
 
     directory.mkdir(parents=True, exist_ok=True)
-    template = Path(__file__).with_name("occupancy_page.html").read_text()
     written: list[Path] = []
     links: list[str] = []
     tables: list[str] = []
     for result in views:
         name = f"{result.view}.html"
         named = (plan_by_view or {}).get(result.view, plan)
-        payload = json.dumps(
-            page_data(result, by=by, tokens_per_step=tokens_per_step, plan=named),
-            separators=(",", ":"),
+        payload = script_json(
+            page_data(result, by=by, tokens_per_step=tokens_per_step, plan=named)
         )
-        page = template.replace(
-            "__TITLE__", escape(f"{title} · {result.view}")
-        ).replace("__OCCUPANCY_DATA__", payload)
+        prefix, suffix = html_parts(f"{title} · {result.view}")
+        page = prefix + payload + suffix
         (directory / name).write_text(page)
         written.append(directory / name)
         links.append(f'<li><a href="{name}">{result.clock_label}</a></li>')

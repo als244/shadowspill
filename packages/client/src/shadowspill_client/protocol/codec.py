@@ -26,7 +26,7 @@ from .definitions import DefinitionSource, OutputSet
 from .frozen import FrozenBase
 from .inputs import InputSchema
 from .metrics import MetricAnnotation, MetricPage, MetricRecord, MetricSnapshot
-from .plans import PlanSummaryPage, SavedPlans
+from .plans import PlanReportDocument, PlanReportRequest, PlanSummaryPage, SavedPlans
 from .preparation import ResolvedPreparation
 from .preview import TrainingPreview
 from .reports import ReportDocument, ReportSettings
@@ -77,6 +77,8 @@ _KINDS: Mapping[str, type[Record]] = {
     "training.preview": TrainingPreview,
     "plans.summary": PlanSummaryPage,
     "plans.saved": SavedPlans,
+    "plans.report": PlanReportRequest,
+    "plans.report_document": PlanReportDocument,
     "checkpoint.manifest": CheckpointManifest,
     "weights.manifest": WeightsManifest,
     "metrics.page": MetricPage,

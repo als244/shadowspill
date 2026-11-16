@@ -950,6 +950,19 @@ def test_pages_are_written_per_view_with_the_data_inline(tmp_path: Path) -> None
     assert "a toy step" in index
 
 
+def test_inline_report_labels_cannot_close_the_data_script(tmp_path: Path) -> None:
+    label = '</script><script>alert("model label")</script>'
+    write_pages(
+        [attribute(_selection(), _program())], tmp_path, title=label, plan=label
+    )
+    html = (tmp_path / "simulated.html").read_text()
+    encoded = html.split('<script id="data" type="application/json">', 1)[1].split(
+        "</script>", 1
+    )[0]
+    assert json.loads(encoded)["plan"] == label
+    assert label not in html
+
+
 def _lowered_phases() -> set[str]:
     """The phases the lowerings give the tasks they build, read off the
     package's code: the phase each ``TaskSpec`` construction names, or

@@ -446,6 +446,9 @@ class _Handler(BaseHTTPRequestHandler):
         if parts[4:] == ("plans",):
             run_routes.plans(self, identity, query, body)
             return
+        if parts[4:] == ("plans", "report"):
+            run_routes.plan_report(self, identity, query, body)
+            return
         if parts[4:] == ("nsys",):
             observations.nsys(self, identity, query, body)
             return

@@ -18,6 +18,9 @@
   .head .meta { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   .controls { margin-left: auto; display: flex; gap: 6px; align-items: center; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
   button { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; font: inherit; }
+  select { background: var(--bg); color: var(--ink); padding: 6px; max-width: 100%; }
+  a { color: #547fe8; } .scroll { overflow-x: auto; } details { margin: 10px 0; }
+  summary { cursor: pointer; } pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   canvas { display: block; width: 100%; touch-action: none; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding: 6px 4px 4px; }
   .legend span::before { content: ""; display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
@@ -38,6 +41,7 @@
 </head>
 <body>
 <h1>Occupancy over the step: __TITLE__</h1>
+<div id="prepared"></div>
 <div class="sub" id="plan"></div>
 <div class="sub" id="sub"></div>
 <div id="panels"></div>
@@ -45,7 +49,10 @@
 <script id="data" type="application/json">__OCCUPANCY_DATA__</script>
 <script>
 (function () {
-  const DATA = JSON.parse(document.getElementById("data").textContent);
+  const DOCUMENT = JSON.parse(document.getElementById("data").textContent);
+  const requested = /^#view-(\d+)$/.exec(location.hash);
+  const selected = requested && DOCUMENT.views && +requested[1] < DOCUMENT.views.length ? +requested[1] : 0;
+  const DATA = DOCUMENT.views ? DOCUMENT.views[selected].data : DOCUMENT;
   // Two families told apart by tone: objects (pools, and transfer bars) in
   // light and mid blues, purples, pinks, teals and greens; task phases
   // (compute bars) dark -- navy, maroon and grey for the step's own work,
@@ -73,6 +80,69 @@
 
   const fmtDuration = (s) => s < 0.001 ? (s * 1e6).toFixed(2) + " µs" : (s * 1e3).toFixed(3) + " ms";
   const preciseBytes = (b) => b == null ? "unavailable" : fmtBytes(b) + " (" + b.toLocaleString() + " bytes)";
+
+  if (DOCUMENT.views) {
+    const root = document.getElementById("prepared");
+    root.className = "panel";
+    function element(tag, text, parent = root) {
+      const node = document.createElement(tag); node.textContent = text; parent.appendChild(node); return node;
+    }
+    function table(title, headers, rows) {
+      element("h2", title);
+      const scroll = element("div", ""); scroll.className = "scroll";
+      const table = element("table", "", scroll), head = element("tr", "", table);
+      headers.forEach(name => element("th", name, head));
+      rows.forEach(cells => {
+        const row = element("tr", "", table);
+        cells.forEach(value => {
+          const cell = element("td", "", row);
+          if (typeof value === "function") value(cell); else cell.textContent = value;
+        });
+      });
+    }
+    function openView(index) {
+      if (index === selected) return;
+      location.hash = "view-" + index; location.reload();
+    }
+    element("h2", "Prepared builds and Plans");
+    element("p", "Estimated times come from measured task profiles and schedule simulation. They are not measured end-to-end request latency. Every retained worker Plan is available below, including accumulation paths.");
+    const choice = element("select", ""); choice.setAttribute("aria-label", "Worker Plan report");
+    DOCUMENT.views.forEach((view, index) => {
+      const option = element("option", "Rank " + view.rank + " · " + view.mode + " · " + view.id.slice(0, 12) + " · " + fmtDuration(view.data.end_seconds), choice);
+      option.value = index; option.selected = index === selected;
+    });
+    choice.addEventListener("change", () => openView(+choice.value));
+    const rows = DOCUMENT.rows || [];
+    table("Prepared candidates", ["Operation", "Batch", "Build", "Microbatches", "Estimated step / call", "Reports"],
+      rows.filter(row => row.kind === "candidate").map(({values: v}) => [
+        v.operation.operation + "/" + (v.operation.outputs || "none") + " (" + v.operation.mode + ")",
+        v.batch, v.case, v.count, fmtDuration(v.simulated_seconds), cell => {
+          const keys = new Set(v.workers.flatMap(w => [w.main, w.masked, w.optimizer].filter(Boolean).map(id => w.rank + ":" + id)));
+          DOCUMENT.views.forEach((view, index) => {
+            if (!keys.has(view.rank + ":" + view.id)) return;
+            const link = element("a", "rank " + view.rank + " " + view.mode + " " + view.id.slice(0, 8), cell);
+            link.href = "#view-" + index;
+            link.addEventListener("click", event => { event.preventDefault(); openView(index); });
+            cell.appendChild(document.createElement("br"));
+          });
+        }
+      ]));
+    table("Build configurations", ["Build", "Settings"], rows.filter(row => row.kind === "build_case").map(({values: v}) => [v.index, JSON.stringify(v)]));
+    const rejected = rows.filter(row => row.kind === "rejected_candidate");
+    if (rejected.length) table("Rejected candidates", ["Operation", "Build", "Stage", "Reason"], rejected.map(({values: v}) => [v.operation.operation, v.case, v.stage, v.reason]));
+    const details = element("details", "");
+    element("summary", "Configuration, coverage and memory metadata", details);
+    element("pre", JSON.stringify(rows.filter(row => !["candidate", "worker_plan", "build_case", "rejected_candidate"].includes(row.kind)), null, 2), details);
+  }
+
+  if (DATA.allocation) {
+    const a = DATA.allocation, note = document.createElement("p");
+    note.className = "sub";
+    note.textContent = "GPU allowance: " + preciseBytes(a.effective_execution_bytes)
+      + " · fixed runtime and reserved memory outside the execution pool: " + preciseBytes(a.fixed_device_bytes)
+      + (DATA.simulation_only_reasons.length ? " · Simulation only: " + DATA.simulation_only_reasons.join("; ") : "");
+    document.getElementById("prepared").after(note);
+  }
 
   document.getElementById("plan").textContent = DATA.plan || "";
   document.getElementById("sub").textContent = DATA.clock + " · step of " + fmtS(DATA.end_seconds)

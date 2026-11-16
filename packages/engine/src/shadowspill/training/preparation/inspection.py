@@ -5,6 +5,7 @@ from typing import Any
 
 from shadowspill_client.protocol.plans import PlanSummaryRow, SummaryKind
 
+from .bundle_manifest import rejection_value
 from .family_records import PreparedPlans
 
 
@@ -95,6 +96,8 @@ def summary_rows(prepared: PreparedPlans) -> Iterator[PlanSummaryRow]:
                 declared_spill_bytes=plan.memory_budgets.spill_bytes,
                 **plan.summary,
             )
+    for rejected in prepared.rejected:
+        yield row("rejected_candidate", **rejection_value(rejected))
     for (operation, batch_index), proof in prepared.coverage.items():
         yield row(
             "coverage",

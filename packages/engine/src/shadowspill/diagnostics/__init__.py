@@ -9,6 +9,18 @@ Executor records optional device markers and runtime events. `collection/` joins
 them with the selected simulation; it does not change task execution or costs.
 """
 
-from .step import StepDiagnostics, StepTimingSummary, Timelines
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .step import StepDiagnostics, StepTimingSummary, Timelines
 
 __all__ = ["StepDiagnostics", "StepTimingSummary", "Timelines"]
+
+
+def __getattr__(name: str) -> Any:
+    if name not in __all__:
+        raise AttributeError(name)
+    value = getattr(import_module(".step", __name__), name)
+    globals()[name] = value
+    return value

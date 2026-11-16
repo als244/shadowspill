@@ -9,11 +9,16 @@ from shadowspill_client.protocol.codec import (
     ProtocolError,
 )
 from shadowspill_client.protocol.creation import TrainingCreation
-from shadowspill_client.protocol.plans import SavedPlans
+from shadowspill_client.protocol.plans import (
+    PlanReportDocument,
+    PlanReportRequest,
+    SavedPlans,
+)
 from shadowspill_client.protocol.runs import RunInfo, RunPage
 from shadowspill_client.protocol.service import CONTROL_MEDIA_TYPE
 
 from ..creation_records import CreationRecord
+from ..plan_reports import generate_plan_report
 from ..records.artifact_index import ArtifactAlias
 from ..records.requests import RunIdentity
 from ..records.run_index import RUN_BYTES
@@ -137,6 +142,31 @@ def require_scope(info: RunInfo, identity: RunIdentity) -> None:
         identity.run_id,
     ):
         raise PermissionError("run catalog crossed authenticated scope")
+
+
+def plan_report(
+    exchange: _Handler, identity: RunIdentity, query: dict[str, list[str]], body: _Body
+) -> None:
+    jobs = exchange.server.jobs
+    if jobs is None:
+        raise KeyError("saved Plan routes are unavailable")
+    if exchange.command != "POST" or query:
+        raise ProtocolError("invalid Plan report route")
+    if exchange.headers.get("Content-Type") != CONTROL_MEDIA_TYPE:
+        raise ProtocolError("Plan report has no control media type")
+    request = body.record()
+    info = jobs.storage.catalog.get(identity)
+    if info is None or info.plans is None:
+        raise KeyError("run Plans")
+    require_scope(info, identity)
+    if not isinstance(request, PlanReportRequest) or (
+        request.session_id, request.run_id, request.plans
+    ) != (identity.session_id, identity.run_id, info.plans):
+        raise ProtocolError("Plan report differs from its source run")
+    with exchange.server.artifacts(identity.owner_id) as store:
+        exchange._reply(
+            PlanReportDocument(request, generate_plan_report(store, identity, request))
+        )
 
 
 def reply(exchange: _Handler, info: RunInfo, identity: RunIdentity) -> None:

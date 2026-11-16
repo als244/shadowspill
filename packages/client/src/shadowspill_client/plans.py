@@ -8,7 +8,14 @@ from urllib.parse import urlencode
 
 from ._async import CallFuture
 from .artifacts import ArtifactHandle
-from .protocol.plans import PlanSummaryPage, SavedPlans, plan_name, summary_id
+from .protocol.plans import (
+    PlanReportDocument,
+    PlanReportRequest,
+    PlanSummaryPage,
+    SavedPlans,
+    plan_name,
+    summary_id,
+)
 from .protocol.requests import identifier
 
 if TYPE_CHECKING:
@@ -18,6 +25,25 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class PlansHandle(ArtifactHandle):
     _run_id: str | None = field(default=None, repr=False, compare=False)
+
+    def report(self, *, max_bytes: int = 64 << 20) -> CallFuture[ArtifactHandle]:
+        """Render all saved candidates in one standalone, offline HTML report."""
+        if self._run_id is None:
+            raise ValueError("Plan reports require a training or saved-name handle")
+        request = PlanReportRequest(
+            self._service.session_id, self._run_id, self.reference, max_bytes
+        )
+        route = f"/v1/runs/{self._service.session_id}/{self._run_id}/plans/report"
+
+        def render() -> ArtifactHandle:
+            document = self._service._request(
+                "POST", route, PlanReportDocument, request
+            )
+            if document.request != request:
+                raise ValueError("Plan report reply differs from requested Plans")
+            return ArtifactHandle(document.reference, self._service)
+
+        return self._service._work.submit(render)
 
     def save(self, *, name: str) -> CallFuture[PlansHandle]:
         """Name this run's existing Plans on the server; no weights or download."""

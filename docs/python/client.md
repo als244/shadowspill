@@ -71,6 +71,23 @@ Python's `**settings` notation would expand a dictionary into these same named
 arguments. It is ordinary Python syntax, not an additional setup object or a
 required part of this API.
 
+## Inspect the plan
+
+Before submitting the first batch, download the interactive report:
+
+```python
+report = training.plans.report().result()
+report.download("plan.html").result()
+```
+
+Open `plan.html` in your laptop's browser. It includes every prepared build and
+retained worker Plan, estimated step times, compute and transfer lanes, and
+execution/spill memory over time with category breakdowns. The page works offline.
+These are simulated predictions from the measured profiles.
+
+Reports remain available after closing training. See the
+[Plan guide](advanced/plan-report.md) for saved summaries and direct engine usage.
+
 ## Runtime operations
 
 | Call | What it does |

@@ -1,7 +1,34 @@
 # Interpreting a Plan
 
+## From the training client
+
+```python
+# No step has run yet.
+report = training.plans.report().result()
+report.download("plan.html").result()
+```
+
+The standalone HTML includes prepared build configurations, retained candidates
+with estimated call durations, rejected candidates with reasons, and links to
+each worker's detailed memory and lane report. Gradient accumulation paths are
+separate views. Choose a worker Plan, then zoom or pan all its panels together.
+Fixed runtime/reserved GPU memory is listed separately from execution-pool usage.
+
+`training.plans.summary(page=0).result()` returns a small metadata page; follow
+`next_page` until it is `None` to inspect the entire family programmatically.
+Neither call loads executable Plans on the laptop or runs training. After saving
+a name with `training.plans.save(name="baseline").result()`, a reconnected client
+can use `service.get_plans(run_id, name="baseline").result().report().result()`.
+
+Report generation reserves up to 64 MiB by default. Pass `max_bytes=...` to
+`report()` for a different limit. An exceeded limit fails without publishing a
+partial report. Downloads create new files; use a new filename for each report.
+
+## Direct engine usage
+
 `plan_program` returns a `Plan`. Load it with `Plan.load(path)` to inspect it on
-CPU; use `write_report(plan, directory)` for simulated timelines and tables.
+CPU; use `write_report(plan, directory)` for simulated timelines and tables. Open
+its `occupancy.html` for the interactive lane and memory breakdowns.
 The archive includes its Program and applied profiles. It requires no source
 artifact folders or live model for inspection.
 

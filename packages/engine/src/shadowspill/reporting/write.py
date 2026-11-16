@@ -10,7 +10,9 @@ from typing import Any
 
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.sweep import SweepResult
+from shadowspill.diagnostics.occupancy.page import html_parts, script_json
 
+from .occupancy import occupancy_data
 from .plot import plot_plan
 from .rows import task_rows, transfer_rows
 
@@ -104,6 +106,10 @@ def write_report(
         )
         if plots:
             plot_plan(result, destination)
+        prefix, suffix = html_parts(result.program.name or "Plan report")
+        (destination / "occupancy.html").write_text(
+            prefix + script_json(occupancy_data(result)) + suffix
+        )
         note = (
             (
                 "<p>Simulation only: "
@@ -121,6 +127,8 @@ def write_report(
         html = _page(
             result.program.name or "Plan report",
             note
+            + '<p><a href="occupancy.html">Interactive report: summary, lanes, '
+            'execution and spill memory breakdowns</a></p>'
             + _table([result.summary])
             + figure
             + "<details open><summary>Tasks</summary>"

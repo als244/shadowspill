@@ -3,9 +3,13 @@
 import hashlib
 import io
 from collections.abc import Iterable
+from dataclasses import replace
 
+from shadowspill.diagnostics.occupancy.page import script_json
+from shadowspill.reporting.occupancy import occupancy_data
 from shadowspill.training.preparation.family_records import PreparedPlans
 from shadowspill.training.preparation.inspection import summary_rows
+from shadowspill_client._records import Value, mapping
 from shadowspill_client.protocol.codec import ProtocolError, digest, encode
 from shadowspill_client.protocol.plans import (
     MAX_SUMMARY_ROWS,
@@ -25,11 +29,47 @@ def publish_summary(
     _publish_pages(
         artifacts,
         plans,
-        summary_rows(prepared),
+        _inspection_rows(artifacts, prepared),
         configuration_sha256=digest(prepared.inventory.layouts.setup.config),
         candidate_count=sum(len(rows) for rows in prepared.families.values()),
         plan_count=sum(len(plans) for plans in prepared.plans.values()),
     )
+
+
+def _inspection_rows(
+    artifacts: ArtifactStore, prepared: PreparedPlans
+) -> Iterable[PlanSummaryRow]:
+    for row in summary_rows(prepared):
+        if row.kind == "worker_plan":
+            rank, identity = row.values["rank"], row.values["id"]
+            assert isinstance(rank, int) and isinstance(identity, str)
+            plan = prepared.plans[rank][identity]
+            views: list[Value] = []
+            paths = (("fresh", plan), ("accumulated", plan._accumulation_plan))
+            for mode, path in paths:
+                if path is None:
+                    continue
+                payload = script_json(
+                    occupancy_data(
+                        path, description=f"Rank {rank} · {identity} · {mode}"
+                    )
+                ).encode()
+                if len(payload) > 16 << 20:
+                    raise ValueError("one Plan inspection view exceeds 16 MiB")
+                checksum = hashlib.sha256(payload).hexdigest()
+                reference = ArtifactRef(
+                    "plan-view." + checksum, checksum, len(payload), "application/json"
+                )
+
+                def open_payload(_: ArtifactRef, data: bytes = payload) -> io.BytesIO:
+                    return io.BytesIO(data)
+
+                artifacts.put(reference, open_payload)
+                views.append(
+                    mapping({"mode": mode, "data": reference.to_dict()}, "Plan view")
+                )
+            row = replace(row, values={**row.values, "views": tuple(views)})
+        yield row
 
 
 def _publish_pages(

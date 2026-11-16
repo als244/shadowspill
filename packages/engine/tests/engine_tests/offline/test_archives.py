@@ -147,6 +147,15 @@ def test_report_from_restored_plan_has_numeric_rows_and_figures(tmp_path):
     assert json.loads((index.parent / "summary.json").read_text())["fetch_bytes"] == 64
     assert (index.parent / "timeline.svg").stat().st_size > 100
     assert (index.parent / "timeline.png").stat().st_size > 100
+    report = (index.parent / "occupancy.html").read_text()
+    payload = json.loads(
+        report.split('type="application/json">', 1)[1].split("</script>", 1)[0]
+    )
+    assert payload["summary"]["seconds"] == restored.timeline.makespan_ns / 1e9
+    assert payload["allocation"] == restored.summary
+    assert payload["compute"] and payload["fetch"]
+    assert {pool["name"] for pool in payload["pools"]} == {"spill"}
+    assert payload["simulation_only_reasons"]  # No invented physical layout.
 
 
 @pytest.mark.parametrize("limit", ["metadata", "payload"])
