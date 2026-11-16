@@ -132,7 +132,7 @@ def test_host_infeasible_alternatives_have_reasons_and_coverage_is_recomputed():
     assert two.bindings[0, 0].inputs is two.bindings[1, 0].inputs
 
 
-def test_an_uncovered_explicit_batch_fails_the_whole_preparation():
+def test_uncovered_batch_keeps_actual_candidates_and_empty_family_still_fails():
     model, _, _ = definitions()
     registry = installed(
         model=replace(
@@ -147,8 +147,27 @@ def test_an_uncovered_explicit_batch_fails_the_whole_preparation():
             "execution": Execution(max_staging_bytes=2 << 20),
         },
     )
-    with pytest.raises(LayoutCoverageError, match="batch 1") as caught:
-        prepare_layouts(setup)
+    layouts = prepare_layouts(setup)
+    key = setup.config.operations[0]
+    assert (key, 1) not in layouts.coverage
+    assert {row.candidate.batch for row in layouts.families[key]} == {0, 1}
+    assert layouts.setup.config.batches == setup.config.batches
+    registry = installed(
+        model=replace(
+            model.definition, input_adapter=metadata_adapter(lambda size: True)
+        )
+    )
+    with pytest.raises(LayoutCoverageError) as caught:
+        prepare_layouts(
+            resolve_training(
+                registry,
+                **{
+                    **arguments(),
+                    "batch": list(setup.config.batches),
+                    "execution": setup.config.execution,
+                },
+            )
+        )
     assert any(
         row.batch == 1 and row.stage == "staging" for row in caught.value.rejected
     )

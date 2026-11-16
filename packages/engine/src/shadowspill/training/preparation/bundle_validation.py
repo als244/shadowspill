@@ -168,8 +168,6 @@ def recheck_bundle(
         ):
             raise ValueError("saved coverage has no matching admitted witness")
         coverage[key] = proof
-    if coverage.keys() != requirements:
-        raise ValueError("bundle is missing a requested coverage proof")
     selected, memory = joint_memory(rows, bundle.plans)
     families = {
         key: tuple(

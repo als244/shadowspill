@@ -105,6 +105,7 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
             ),
             outputs={},
             traces={},
+            bindings=SimpleNamespace(prepared=SimpleNamespace(plans={0: {}})),
             serve=serve,
         )
 

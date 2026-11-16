@@ -59,8 +59,8 @@ def pack_batch(
     """Pack atomic Datum/groups; never split context or cross a call boundary.
 
     The declaration author must permit grouping/reordering and masked padding.
-    Preparation separately proves collective order, memory and advertised input
-    coverage. A bounded heuristic failure is explicit, never an extra buffer.
+    Preparation separately proves collective order and memory admission. A
+    bounded heuristic failure is explicit, never an extra buffer.
     """
     batch.require_context(schema, limits)
     if type(max_repair_nodes) is not int or max_repair_nodes < 0:

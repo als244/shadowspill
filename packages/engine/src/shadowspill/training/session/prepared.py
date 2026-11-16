@@ -12,16 +12,15 @@ from shadowspill.training.preparation.family_records import (
     PlannedCandidate,
     PreparedPlans,
 )
-from shadowspill.training.preparation.operations import OperationContract
-from shadowspill_client import BatchConfig
-from shadowspill_client._records import number
 from shadowspill_client.buffers import BufferBudget, BufferLease
-from shadowspill_client.inputs.packing import (
-    PackedAssignment,
-    PackingError,
-    pack_batch,
+from shadowspill_client.inputs.packing import PackedAssignment
+from shadowspill_client.inputs.selection import (
+    PackingCandidate,
+    admissible_batches,
+    select_packing,
+    validate_snapshot,
 )
-from shadowspill_client.inputs.validation import ValidatedBatch, validate_batch
+from shadowspill_client.inputs.validation import ValidatedBatch
 from shadowspill_client.inputs.values import VALIDATION_SCRATCH_BYTES
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.payload import BatchSnapshot, snapshot_batch
@@ -134,12 +133,15 @@ class PreparedRequests:
             raise ValueError("prepared request family differs from fixed capabilities")
         for key, rows in self._families.items():
             for batch in range(len(self.setup.config.batches)):
-                proof = prepared.coverage[key, batch]
-                if proof.schedule not in [
+                proof = prepared.coverage.get((key, batch))
+                schedules = [
                     row.source.layout.candidate.schedule
                     for row in rows
                     if row.operation == key and row.batch == batch
-                ]:
+                ]
+                if not schedules or (
+                    proof is not None and proof.schedule not in schedules
+                ):
                     raise ValueError(
                         "prepared request family is missing its coverage witness"
                     )
@@ -158,18 +160,6 @@ class PreparedRequests:
             and self._optimizer is None
         ):
             raise ValueError("prepared family has no optimizer-only dependency")
-        self._limits = tuple(
-            {name: number(value, name) for name, value in batch.limits.items()}
-            for batch in self.setup.config.batches
-        )
-        # This union permits schema/value validation once. Actual admission below
-        # still requires one whole original BatchConfig; dimensions from separate
-        # options must never be combined into a newly advertised capacity.
-        self._validation_limits = BatchConfig(
-            limits={
-                name: max(row[name] for row in self._limits) for name in self._limits[0]
-            }
-        )
 
     def _optimizer_cost(self, row: PlannedCandidate) -> tuple[float, str]:
         costs = []
@@ -265,13 +255,7 @@ class PreparedRequests:
             workspace = budget.reserve(
                 bound.workspace_bytes + VALIDATION_SCRATCH_BYTES, timeout=0
             )
-            contract = OperationContract(key, self.setup.objective)
-            validated = validate_batch(
-                snapshot,
-                self.setup.context.schema,
-                self._validation_limits,
-                required_paths=contract.required_paths,
-            )
+            validated = validate_snapshot(snapshot, self.setup.config, key)
             participates = (
                 None
                 if key.operation == "forward"
@@ -323,37 +307,25 @@ class PreparedRequests:
     def _select(
         self, key: OperationKey, validated: ValidatedBatch
     ) -> tuple[PlannedCandidate, PackedAssignment]:
-        allowed = {
-            i
-            for i, limits in enumerate(self._limits)
-            if all(
-                total <= limits[name] for name, total in validated.capacities.items()
-            )
-        }
-        if not allowed:
-            raise ValueError("input capacities fit no requested batch option")
+        allowed = admissible_batches(validated, self.setup.config.batches)
         groups = self.setup.model.group_inputs(
             replace(validated, config=self.setup.config.batches[min(allowed)])
         )
-        for candidate in self._families[key]:
-            if candidate.batch not in allowed:
-                continue
-            limits = self.setup.config.batches[candidate.batch]
-            batch = replace(validated, config=limits)
-            schedule = candidate.source.layout.candidate.schedule
-            proof = self.prepared.coverage[key, candidate.batch]
-            try:
-                assignment = pack_batch(
-                    batch,
-                    proof.schema,
-                    limits,
-                    proof.placement,
-                    schedule,
-                    groups=groups,
-                )
-            except PackingError:
-                if schedule != proof.schedule:
-                    continue
-                assignment = proof.pack(batch, groups=groups)
-            return candidate, assignment
-        raise ValueError("prepared coverage witness did not cover the validated input")
+        placement = self.setup.context.parallelism.inputs
+        assert placement is not None
+        selected, assignment = select_packing(
+            validated,
+            self.setup.config.batches,
+            placement,
+            [
+                PackingCandidate(c.id, c.batch, c.source.layout.candidate.schedule)
+                for c in self._families[key]
+            ],
+            proofs={
+                batch: proof
+                for (op, batch), proof in self.prepared.coverage.items()
+                if op == key
+            },
+            groups=groups,
+        )
+        return next(c for c in self._families[key] if c.id == selected.id), assignment

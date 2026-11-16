@@ -91,7 +91,11 @@ class BatchSnapshot:
 
 
 def snapshot_batch(
-    batch: Sequence[Datum], budget: BufferBudget, *, timeout: float | None = None
+    batch: Sequence[Datum],
+    budget: BufferBudget,
+    *,
+    timeout: float | None = None,
+    workspace_bytes: int = 0,
 ) -> BatchSnapshot:
     """Copy exactly one logical call before its future may be returned.
 
@@ -143,7 +147,9 @@ def snapshot_batch(
         metadata_size,
         max((s.nbytes for s in sources), default=0),
     )
-    lease = budget.reserve(size.staging, timeout=timeout)
+    if type(workspace_bytes) is not int or workspace_bytes < 0:
+        raise ValueError("snapshot workspace must be nonnegative bytes")
+    lease = budget.reserve(size.staging + workspace_bytes, timeout=timeout)
     try:
         digest = hashlib.sha256(MAGIC + struct.pack("<Q", len(header)) + header)
         tensors = []
@@ -155,7 +161,7 @@ def snapshot_batch(
         result = BatchSnapshot(
             header, tensors, owned_datums(trees, tensors), digest.hexdigest(), lease
         )
-        lease.shrink(size.retained)
+        lease.shrink(size.retained + workspace_bytes)
         return result
     except BaseException:
         lease.close()

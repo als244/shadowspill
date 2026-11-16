@@ -148,8 +148,9 @@ def certify_coverage(
 
     Either one buffer covers aggregate resources and all record slots (including
     arbitrary atomic groups), or independent records fit reserved worst-case
-    slots across the schedule. Noncertified families fail setup even if selected
-    samples happen to pack. Additional proofs can extend this same interface.
+    slots across the schedule. A certificate is an optional fallback; families
+    without one rely on actual-batch packing. Additional proofs can extend this
+    same interface.
     """
     if grouping not in ("independent", "grouped"):
         raise ValueError("coverage requires independent or grouped contributions")

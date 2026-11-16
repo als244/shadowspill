@@ -293,7 +293,7 @@ def test_bundle_rejects_missing_capabilities_and_changed_saved_proofs(
     elif change == "worker":
         plans[1] = plans.pop(0)
     elif change == "coverage":
-        metadata["coverage"].pop()
+        metadata["coverage"][0]["proof"]["max_datums"] += 1
     elif change == "layout":
         metadata["candidates"][0]["layout"]["staging_bytes"] += 1
     elif change == "admission":
@@ -302,6 +302,14 @@ def test_bundle_rejects_missing_capabilities_and_changed_saved_proofs(
         metadata["candidates"].append(metadata["candidates"][0])
     with pytest.raises(ValueError):
         replace(bundle, plans=plans, metadata=metadata).recheck(installed())
+
+
+def test_bundle_accepts_missing_optional_coverage_proof(saved_family):
+    bundle, _ = saved_family
+    metadata = plain(bundle.metadata)
+    metadata["coverage"] = []
+    restored = replace(bundle, metadata=metadata).recheck(installed())
+    assert restored.families and not restored.coverage
 
 
 def test_bundle_rechecks_source_scenarios_and_rejects_unreferenced_artifacts(

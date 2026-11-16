@@ -36,7 +36,7 @@ def test_masked_failure_prunes_every_dependent_operation_without_lowering_capaci
         ]
 
 
-def test_all_failed_witnesses_fail_creation_without_reducing_requested_capacity():
+def test_lost_universal_witness_keeps_candidates_but_lost_capability_fails():
     prepared = inventory()
     failed = {
         key: PreparationFailure(key, "build", "device exhausted")
@@ -44,7 +44,18 @@ def test_all_failed_witnesses_fail_creation_without_reducing_requested_capacity(
         if template.output_only
         and template.binding.inputs.layout.buffer.max_datums >= 2
     }
-    with pytest.raises(PlanInfeasibleError, match="removed coverage") as caught:
+    actual, _ = prune_failed_templates(prepared, failed)
+    assert actual.layouts.setup is prepared.layouts.setup
+    assert len(actual.layouts.coverage) < len(prepared.layouts.coverage)
+    assert all(actual.families.values())
+    failed.update(
+        {
+            key: PreparationFailure(key, "build", "device exhausted")
+            for key, template in prepared.templates.items()
+            if template.output_only
+        }
+    )
+    with pytest.raises(PlanInfeasibleError, match="removed every candidate") as caught:
         prune_failed_templates(prepared, failed)
     assert caught.value.kind == "prepared_capture_coverage"
     assert caught.value.diagnostics

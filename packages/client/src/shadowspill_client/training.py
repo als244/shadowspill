@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from ._async import CallFuture
 from ._records import Value
+from .batch_validation import BatchValidation, BatchValidator
 from .buffers import BufferBudget
 from .captures import NsightCapture
 from .checkpoints import CheckpointHandle
@@ -18,7 +19,7 @@ from .plans import PlansHandle
 from .protocol.checkpoint_settings import SaveSettings
 from .protocol.controls import Scalar
 from .protocol.metrics import MetricRecord
-from .protocol.payload import MEDIA_TYPE, snapshot_batch
+from .protocol.payload import MEDIA_TYPE
 from .protocol.requests import (
     ArtifactRef,
     Operation,
@@ -57,7 +58,7 @@ class TrainingClient:
     """A handle to ready workers; construction is owned by ServiceClient factories.
 
     Calls copy complete inputs before returning, then upload in submission order.
-    The server alone validates coverage, packs inputs and advances training state.
+    Local validation uses the saved layouts; the server rechecks and advances state.
     A connection failure requires explicit lookup/reattachment, never replay.
     """
 
@@ -88,10 +89,33 @@ class TrainingClient:
             config.execution.max_staging_bytes, config.execution.max_pending_requests
         )
         self._slots = BufferBudget(1, config.execution.max_pending_requests)
+        self._validator = BatchValidator(service, config, info.plans)
         service._retain_handle(self)
 
     def get_config(self) -> ResolvedTraining:
         return self._config
+
+    def validate_batch(
+        self,
+        batch: Sequence[Datum],
+        *,
+        operation: str = "step",
+        outputs: str | None = None,
+        mode: str | None = None,
+    ) -> CallFuture[BatchValidation]:
+        """Check values, limits and packing locally, without submitting a step."""
+        self._service._work.check()
+        snapshot = self._validator.snapshot(
+            batch, self._snapshots, operation, outputs, mode
+        )
+        try:
+            return self._service._work.submit(
+                lambda: self._validator.validate(snapshot, operation, outputs, mode),
+                cleanup=snapshot.close,
+            )
+        except BaseException:
+            snapshot.close()
+            raise
 
     def log_metrics(
         self,
@@ -249,7 +273,10 @@ class TrainingClient:
                 if batch is not None:
                     from dataclasses import replace
 
-                    snapshot = snapshot_batch(batch, self._snapshots)
+                    snapshot = self._validator.snapshot(
+                        batch, self._snapshots, operation, outputs, mode
+                    )
+                    self._validator.validate(snapshot, operation, outputs, mode)
                     request = replace(
                         request,
                         datum_count=len(snapshot.datums),

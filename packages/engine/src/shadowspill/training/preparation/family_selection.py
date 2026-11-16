@@ -1,8 +1,9 @@
-"""Choose coverage witnesses first, then retain jointly admitted alternatives."""
+"""Retain each requested capability and jointly admitted packing alternatives."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from dataclasses import replace
 from itertools import product
 from types import MappingProxyType
@@ -105,9 +106,9 @@ def select_family(
     *,
     max_family_attempts: int,
 ) -> PreparedPlans:
-    """No partial result: every operation/explicit batch retains a construction.
+    """No partial result: every operation/explicit batch retains a candidate.
 
-    Search complete witness combinations before adding optional faster layouts.
+    Search complete capability combinations before adding alternative layouts.
     A bounded stop remains search exhaustion, never a proof of infeasibility.
     Unexpected shared-state/schema failures propagate rather than pruning work.
     """
@@ -124,10 +125,8 @@ def select_family(
     }
     proofs = {}
     for row in ordered:
-        try:
+        with suppress(CoverageError):
             proofs[row.id] = certificate(inventory, row)
-        except CoverageError:
-            continue
         witnesses[row.operation, row.batch].append(row)
     missing = [key for key, values in witnesses.items() if not values]
     if missing:
@@ -138,7 +137,7 @@ def select_family(
         unknown = any(
             r.search_exhausted and (r.operation, r.batch) in missing for r in rejected
         )
-        message = "no admitted coverage witness for " + "; ".join(messages)
+        message = "no admitted candidate for " + "; ".join(messages)
         if unknown:
             raise PlanSearchExhaustedError(message, diagnostics=tuple(rejected))
         raise PlanInfeasibleError(
@@ -177,7 +176,9 @@ def select_family(
             kind="prepared_shared_memory",
             diagnostics=(*rejected, last_error),
         )
-    coverage = {(c.operation, c.batch): proofs[c.id] for c in selected}
+    coverage = {
+        (c.operation, c.batch): proofs[c.id] for c in selected if c.id in proofs
+    }
     decisions = list(rejected)
     included = {row.id for row in selected}
 
@@ -200,6 +201,10 @@ def select_family(
         included.add(candidate.id)
         cases.add(logical_case(candidate))
         selected_plans, memory = additional, admitted
+        if candidate.id in proofs:
+            coverage.setdefault(
+                (candidate.operation, candidate.batch), proofs[candidate.id]
+            )
     families = {
         key: tuple(
             sorted(

@@ -134,6 +134,22 @@ once before splitting the resulting list across backward calls for one update.
 Batch limits include scheduled padding. For example, a 128K-token cap cannot
 execute three 64K microbatches.
 
+## Validate a batch
+
+`step()`, `forward_backward()` and `forward()` check input values, limits and
+packing locally before uploading. To check a batch separately without training:
+
+```python
+validation = training.validate_batch(batch).result()
+print(validation.capacities, validation.scheduled_capacities)
+```
+
+Short sequences can share prepared buffers. A batch must fit an available layout,
+including its padding, as well as the declared limits. The server repeats these
+checks. Custom models that require a server grouping callback return
+`packing_checked=False` with an explanation; their values and limits are still
+checked locally.
+
 ## Save and resume
 
 Save at a completed update boundary, then reuse the saved Plans and checkpoint:

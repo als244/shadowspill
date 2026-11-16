@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, ClassVar, Literal, cast
@@ -124,14 +125,20 @@ def prune_failed_templates(
     coverage = {}
     for operation, rows in families.items():
         for batch, config in enumerate(setup.config.batches):
-            try:
-                schedules = [
-                    row.layout.candidate.schedule
-                    for row in rows
-                    if row.layout.candidate.batch == batch
-                ]
-                if not schedules:
-                    raise CoverageError("no prepared candidate remains")
+            schedules = [
+                row.layout.candidate.schedule
+                for row in rows
+                if row.layout.candidate.batch == batch
+            ]
+            if not schedules:
+                raise PlanInfeasibleError(
+                    "preparation failures removed every candidate for "
+                    f"{operation.operation}/"
+                    f"{operation.outputs}/{operation.mode}, batch {batch}",
+                    kind="prepared_capture_coverage",
+                    diagnostics=tuple(rejected),
+                )
+            with suppress(CoverageError):
                 coverage[operation, batch] = certify_coverage(
                     setup.context.schema,
                     config,
@@ -142,13 +149,6 @@ def prune_failed_templates(
                         setup.model.definition.batching,
                     ),
                 )
-            except CoverageError as error:
-                raise PlanInfeasibleError(
-                    f"preparation failures removed coverage for {operation.operation}/"
-                    f"{operation.outputs}/{operation.mode}, batch {batch}: {error}",
-                    kind="prepared_capture_coverage",
-                    diagnostics=tuple(rejected),
-                ) from error
     layouts = replace(
         inventory.layouts,
         families=MappingProxyType(

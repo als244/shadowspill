@@ -38,7 +38,6 @@ from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.scalars import control_values
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import capture_inventory
-from shadowspill.training.session import prepared as prepared_module
 from shadowspill.training.session.dispatch import RequestDispatcher
 from shadowspill.training.session.inputs import RequestInputs
 from shadowspill.training.session.prepared import PreparedRequests
@@ -57,6 +56,7 @@ from shadowspill_client import (
     Weights,
 )
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.inputs import selection as selection_module
 from shadowspill_client.inputs.packing import PackingError
 from shadowspill_client.inputs.shapes import BufferShape
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
@@ -86,6 +86,7 @@ def family(inv=None):
                 workers[rank] = worker
                 for member in worker.members():
                     plans.setdefault(rank, {})[member] = SimpleNamespace(
+                        memory_budgets=SimpleNamespace(spill_bytes=0),
                         timeline=SimpleNamespace(makespan_ns=100 + index),
                         summary={"duration_seconds": (100 + index) * 1e-9},
                         program=SimpleNamespace(
@@ -491,7 +492,7 @@ def test_padding_cap_and_installed_groups_use_only_requested_witness(
         def exhausted(*args, **kwargs):
             raise PackingError("bounded repair stopped")
 
-        monkeypatch.setattr(prepared_module, "pack_batch", exhausted)
+        monkeypatch.setattr(selection_module, "pack_batch", exhausted)
         prepared.register(inputs, command)
         assert inputs.receive("a", io.BytesIO(wire)).state == "accepted"
         data = inputs.take("a")

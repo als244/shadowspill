@@ -167,7 +167,7 @@ def test_missing_capability_and_unexpected_native_errors_are_never_silently_prun
 ):
     prepared, rows, plans = choices()
     with pytest.raises(
-        PlanInfeasibleError, match="no admitted coverage witness for forward"
+        PlanInfeasibleError, match="no admitted candidate for forward"
     ):
         select_family(prepared, rows[:2], plans, [], max_family_attempts=10)
     failure = ValueError("state geometry changed")

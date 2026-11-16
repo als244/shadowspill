@@ -121,12 +121,13 @@ def _candidate(
 def prepare_layouts(
     setup: ResolvedSetup, *, max_bindings: int = 65536
 ) -> PreparedLayouts:
-    """Resolve all adapters, output geometry and host bounds, then prove coverage.
+    """Resolve adapters, output geometry and host bounds for actual-batch packing.
 
     Known staging infeasibility removes only that alternative, with a reason.
     Definition/schema failures propagate. Every operation and explicit batch
-    option must still have a constructive coverage witness. This CPU step
-    constructs no tensors/models and does not certify runtime pools or collectives.
+    option must retain at least one layout. Constructive coverage is optional.
+    This CPU step constructs no tensors/models and does not certify runtime pools
+    or collectives.
     """
     if type(max_bindings) is not int or max_bindings < 1:
         raise ValueError("max_bindings must be a positive integer")
@@ -179,9 +180,13 @@ def prepare_layouts(
                 for row in admitted
                 if row.candidate.batch == batch_index
             ]
+            if not schedules:
+                raise LayoutCoverageError(
+                    f"{key.operation}/{key.outputs}/{key.mode}, batch {batch_index}: "
+                    "no input/output candidate fits host staging",
+                    tuple(rejected),
+                )
             try:
-                if not schedules:
-                    raise CoverageError("no input/output candidate fits host staging")
                 certificate = certify_coverage(
                     setup.context.schema,
                     batch,
@@ -189,12 +194,8 @@ def prepare_layouts(
                     schedules,
                     grouping=grouping,
                 )
-            except CoverageError as error:
-                raise LayoutCoverageError(
-                    f"{key.operation}/{key.outputs}/{key.mode}, "
-                    f"batch {batch_index}: {error}",
-                    tuple(rejected),
-                ) from error
+            except CoverageError:
+                continue
             coverage[key, batch_index] = certificate
         families[key] = tuple(admitted)
     staging = {

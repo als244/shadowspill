@@ -24,6 +24,11 @@ def summary_rows(prepared: PreparedPlans) -> Iterator[PlanSummaryRow]:
         engine_source=config.engine_source.to_dict(),
         client_source=config.client_source.to_dict(),
         timing="simulated; representative inputs, not measured request latency",
+        grouping=prepared.inventory.layouts.setup.model.definition.batching,
+        validation_workspace=[
+            {"operation": key.to_dict(), "bytes": bound.workspace_bytes}
+            for key, bound in prepared.inventory.layouts.staging.items()
+        ],
     )
     for index, batch in enumerate(config.batches):
         yield row("batch", index=index, **batch.to_dict())
@@ -54,6 +59,7 @@ def summary_rows(prepared: PreparedPlans) -> Iterator[PlanSummaryRow]:
                 batch=candidate.batch,
                 case=source.case,
                 count=source.count,
+                packing_schedule=source.schedule.to_dict(),
                 ordering=None
                 if candidate.ordering is None
                 else candidate.ordering.to_dict(),
@@ -108,6 +114,7 @@ def summary_rows(prepared: PreparedPlans) -> Iterator[PlanSummaryRow]:
             grouping=proof.grouping,
             max_datums=proof.max_datums,
             buffer_count=len(proof.schedule.buffers),
+            proof=proof.to_dict(),
         )
     for rank, memory in sorted(prepared.memory.items()):
         yield row(

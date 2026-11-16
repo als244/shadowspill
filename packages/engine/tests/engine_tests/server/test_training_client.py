@@ -13,10 +13,13 @@ from engine_tests.server.test_jobs import until
 from engine_tests.server.test_local_creation import configured as creation_service
 from engine_tests.server.test_service_client import address
 from engine_tests.training.test_controller import configured
+from shadowspill.server.plan_summaries import _publish_pages
+from shadowspill.training.preparation.inspection import summary_rows
 from shadowspill_client import ServiceClient, TrainingClient
 from shadowspill_client._async import ConnectionClosed
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.creation import CreationError
+from shadowspill_client.protocol.codec import digest
 from shadowspill_client.protocol.payload import snapshot_batch
 from shadowspill_client.protocol.requests import ArtifactRef, WriterLease
 from shadowspill_client.protocol.runs import RunInfo
@@ -31,6 +34,15 @@ def runtime(tmp_path, **options):
             address(ctx.client), token=TOKEN, session_id="session"
         ) as service:
             reference = ArtifactRef("cpu-fixture", "a" * 64, 0)
+            prepared = run.controller._prepared.prepared
+            _publish_pages(
+                ctx.artifacts,
+                reference,
+                summary_rows(prepared),
+                configuration_sha256=digest(prepared.inventory.layouts.setup.config),
+                candidate_count=sum(map(len, prepared.families.values())),
+                plan_count=sum(map(len, prepared.plans.values())),
+            )
             info = RunInfo(
                 "owner",
                 "session",
@@ -205,7 +217,11 @@ def test_input_and_control_snapshots_ordered_accumulation_and_explicit_recovery(
         malformed[0] = replace(
             malformed[0], loss_inputs={**malformed[0].loss_inputs, "class_id": -1}
         )
-        bad = training.forward_backward(malformed)
+        sequence = training._next
+        with pytest.raises(ValueError):
+            training.forward_backward(malformed)
+        assert training._next == sequence and not entered.is_set()
+        bad = training.forward_backward(records(), loss_params={"temperature": -1})
         assert entered.wait(5)
         dependent = training.optim_step()
         release.set()
@@ -253,6 +269,7 @@ def test_lost_submission_reply_blocks_unsent_suffix_and_keeps_stable_ids(
     tmp_path, monkeypatch
 ):
     with runtime(tmp_path) as (service, training, run, _):
+        training.validate_batch(records()).result(5)  # Cache immutable metadata.
         entered, release = Event(), Event()
 
         def lost(*args, **kwargs):
@@ -294,11 +311,7 @@ def test_capacity_wait_retains_dependencies_and_impossible_snapshot_does_not_sub
             return original(*args)
 
         monkeypatch.setattr(service._transport, "upload", delay)
-        values = records()
-        values[0] = replace(
-            values[0], loss_inputs={**values[0].loss_inputs, "class_id": -1}
-        )
-        failed = training.forward_backward(values)
+        failed = training.forward_backward(records(), loss_params={"temperature": -1})
         assert entered.wait(5)
         queued = []
         caller = Thread(target=lambda: queued.append(training.optim_step()))
