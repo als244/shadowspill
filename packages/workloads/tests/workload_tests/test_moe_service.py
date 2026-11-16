@@ -12,7 +12,7 @@ import torch
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.training.definitions import load_registry
 from shadowspill_client import Objective
-from shadowspill_workloads.initialization.text import Initialize
+from shadowspill_workloads.initialization.decoder import Initialize
 from workload_tests.test_moe_definitions import FAMILIES, balancing, settings
 from workload_tests.test_moe_objective import independent
 

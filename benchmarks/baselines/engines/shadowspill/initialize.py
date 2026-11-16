@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from shadowspill_workloads.initialization.text import (
+from shadowspill_workloads.initialization.decoder import (
     Initialize as CatalogInitialize,
 )
 from shadowspill_workloads.models.shared.routed_lora import FACTORS

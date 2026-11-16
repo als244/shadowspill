@@ -17,6 +17,6 @@ FAMILY = Family(
     checkpoint_reader="OLMoECheckpoint",
     checkpoint_types=("olmoe",),
     initialization=ParameterInitialization(),
-    training="shadowspill_workloads.definitions.olmoe:register",
+    training="shadowspill_workloads.models.olmoe.training:register",
     validate_pretrained=partial(validate_decoder, mixture=True, unclipped=True),
 )

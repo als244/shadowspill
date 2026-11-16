@@ -15,8 +15,7 @@ from shadowspill_client.protocol.definitions import (
     TensorOutput,
 )
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
-
-from .source import definition_source
+from shadowspill_workloads.definitions.source import definition_source
 
 
 @dataclass(frozen=True)
@@ -71,7 +70,6 @@ def weighted_squared_error(model, inputs, loss_inputs, loss_params):
 def register(registry):
     source = definition_source(
         (
-            "definitions/regression.py",
             "models/families.py",
             "models/registration.py",
             "models/regression",

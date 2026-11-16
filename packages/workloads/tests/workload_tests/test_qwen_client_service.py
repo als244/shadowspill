@@ -12,7 +12,7 @@ import torch
 
 from shadowspill.training.definitions import load_registry
 from shadowspill_client import LoRA
-from shadowspill_workloads.initialization.text import Initialize
+from shadowspill_workloads.initialization.decoder import Initialize
 from workload_tests.test_moe_definitions import settings
 from workload_tests.test_moe_objective import independent
 from workload_tests.test_pretrained_initialization import checkpoint, fill

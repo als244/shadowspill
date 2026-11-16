@@ -9,12 +9,15 @@ from shadowspill.training.definitions import (
     ModelDefinition,
     PreparationDefinition,
 )
+from shadowspill_workloads.definitions import (
+    expert_parallel,
+    moe_provider,
+    training_options,
+)
+from shadowspill_workloads.definitions.source import definition_source
 from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.inputs.text import preparation as inputs
 from shadowspill_workloads.models.olmoe.config import PRESETS, Config
-
-from . import expert_parallel, moe_provider, training_options
-from .source import definition_source
 
 PRESET = "shadowspill/olmoe_packed@1"
 
@@ -116,7 +119,6 @@ def register(registry):
         (
             "models/families.py",
             "models/registration.py",
-            "definitions/olmoe.py",
             "definitions/training_options.py",
             "definitions/expert_parallel.py",
             "definitions/expert_allocations.py",

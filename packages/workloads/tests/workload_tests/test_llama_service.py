@@ -11,7 +11,7 @@ import torch
 
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill_client import LoRA, Objective, Weights
-from shadowspill_workloads.initialization.text import Initialize
+from shadowspill_workloads.initialization.decoder import Initialize
 from shadowspill_workloads.models.llama3.config import Config
 from shadowspill_workloads.models.llama3.implementations.pytorch import (
     Model as Reference,

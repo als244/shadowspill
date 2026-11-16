@@ -4,11 +4,10 @@ from dataclasses import asdict, dataclass, field, replace
 from math import isfinite
 
 from shadowspill.training.definitions import ModelBuild
+from shadowspill_workloads.definitions import training_options
+from shadowspill_workloads.definitions.text_allocations import CONTRACTS
 from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.models.llama3.config import PRESETS, Config
-
-from .. import training_options
-from ..text_allocations import CONTRACTS
 
 
 @dataclass(frozen=True)

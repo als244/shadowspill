@@ -1,109 +1,42 @@
 # Workloads
 
-Example models and data recipes passed into the public ShadowSpill APIs.
-These modules live in the repository and are not installed as part of the
-`shadowspill` package. Core planning, runtime, lowering, and the generic trainer
-must never import `workloads`.
+`shadowspill-workloads` is the optional library of supplied model architectures,
+checkpoint readers, input adapters and training definitions. Custom packages use
+the same public extension API and do not need this library.
 
-Shared process infrastructure lives in [`shadowspill.orchestration`](../../../engine/src/shadowspill/orchestration/README.md).
-Recipes may use its worker launching, host coordination and phase journals;
-they do not depend on benchmark implementations. Benchmark tools consume these
-workloads through their model, data and initialization contracts.
+Start with the [training client](../../../../docs/python/client.md) and
+[built-in models and optimizers](../../../../docs/python/catalog.md), or browse
+the detailed [architecture catalog](MODELS.md).
 
-## Choose a model
+## Organization
 
-The [example model catalog](MODELS.md) is the central reference for:
+| Owner | Responsibility |
+| --- | --- |
+| [models/](models) | One package per family: architecture, configuration, checkpoint mapping, LoRA targets and registration |
+| [models/shared/](models/shared) | Reusable model layers, math and checkpoint mapping components |
+| [definitions/](definitions) | Shared public registration, preparation and objective hooks |
+| [inputs/](inputs) | Input schemas, processors, packing adapters and corpus readers |
+| [objectives/](objectives) | Reusable losses and metrics |
+| [initialization/](initialization) | Bounded checkpoint loading and parameter initialization |
+| [lora/](lora) | Shared adapter selection and application |
+| [policies/](policies) | Execution chunking and retention choices |
+| [recipes/](recipes) | Application composition and experiment settings |
 
-- Llama 3, dense Qwen 3, dense Qwen 3.5, OLMoE, Qwen 3 MoE, Qwen 3.5 MoE,
-  GLM-5.3 and GLM-5.3-Flash.
-- Catalog names, preset dimensions and parameter counts, and one README per
-  family under `models/<family>/` with its architecture, configuration,
-  implementations and construction.
-- Shape configuration, weights/masters/gradients/optimizer dtypes, and rounding.
-- Frozen/trainable parameters, LoRA availability, and expert parallelism.
-- Inputs, losses, packing, and runnable Python/JSON/CLI examples.
+Each family declares its presets, checkpoint reader, pretrained identifiers and
+training hook in `models/<family>/registration.py`. The catalog derives its
+lookups from those declarations. See
+[adding a family](../../../../docs/development/workloads.md) for the source
+pattern and validation steps.
 
-The [catalog](models/catalog) names every supplied model `<family>-<size>`:
-`llama3-8b`, `qwen3-8b`, `qwen3-32b`, `qwen35-9b`, `qwen35-27b`,
-`olmoe-7b-a1b`, `qwen3moe-30b-a3b`, `qwen35moe-35b-a3b`, the small
-`llama3-1b`, `qwen3-1.7b` and `qwen35-2b`, the `numerical` shapes of Llama 3,
-dense Qwen 3.5 and OLMoE, every family's `tiny` shape, and the GLM entries.
-The implementation, `mlops` or `pytorch`, is chosen beside the name.
+The engine owns build/profile/plan/execute, worker startup, shared state and
+checkpoint orchestration. Model integrations supply computation and declarations;
+they do not add another trainer. Shared process infrastructure lives in
+[`shadowspill.orchestration`](../../../engine/src/shadowspill/orchestration/README.md).
 
-The MLOps OLMoE, Qwen 3 MoE and Qwen 3.5 MoE models expose optional expert
-parallelism through the same constructor arguments. Choose the architecture
-first, then supply `ep_group` and `token_capacity` (or an existing `buffer`).
-No separate EP model import is needed; see
-[expert parallelism](MODELS.md#expert-parallelism).
+## Examples and extension
 
-## Layout
-
-| Directory / file | Purpose |
-|---|---|
-| [models/](models) | One package per model family: its configuration, checkpoint reader, README and implementations (`pytorch`, `mlops`); `models/shared/` holds the code families share |
-| [lora/](lora) | LoRA targeting for the supplied models over MLOps's reusable projections |
-| [recipes/](recipes) | Caller-side model/data/objective composition |
-| [recipes/text/data/](inputs/text) | Corpus preparation, fixed token sequences, document packing and resumable sources |
-| [recipes/text/experiment/](recipes/text/experiment) | Configured text experiments with separate build, profile, CPU plan and fresh-worker execution |
-| [recipes/text/reference/](../../../../reference/training) | Ordinary PyTorch reference updates, evaluation and checkpoint/resume |
-| [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
-| [numerical.py](numerical.py) | Exact-scale cases shared by the numerical qualification's two arms |
-| [precision.py](precision.py) | Explicit precision settings used by supplied workloads |
-| [providers.py](providers.py) | The implementation names |
-
-Model definitions describe computation. Recipes choose data, objectives,
-initialization, and run policy. ShadowSpill's build APIs accept ordinary user
-models; `shadowspill.execution.Executor` executes saved Plans and
-`shadowspill.training.Trainer` manages training through it. Neither requires
-this directory.
-
-This boundary applies to every family, including GLM: `config.py`,
-`checkpoint.py`, `lora.py` and `implementations/` own model-specific behavior.
-Recipes supply those models to the shared phase APIs. A new architecture does
-not add a model-specific build, planner, profiler or executor to ShadowSpill.
-
-The [shared Python training runner](recipes/README.md) accepts catalog model
-names for Llama, OLMoE, dense Qwen and Qwen MoE full training, plus checkpoint
-sources for Qwen3.5 MoE and GLM Flash LoRA. It owns build/profile/plan/execute;
-model adapters supply construction, bounded initialization and resumable text
-inputs. See the [commented script](../../../../examples/train_text.py). The standalone
-[Llama application](../../../../examples/training/llama3/README.md) now uses the
-public service client, with setup separate from its input and training loop.
-The [configured text runner](recipes/text/experiment) follows the same phases,
-preserving document packing, runtime norm logging, held-out evaluation and resume.
-The [regression application](../../../../examples/training/regression/README.md)
-also uses the public client, with one global batch, mean squared-error
-normalization and explicit sharded-DP input placement. The service owns all
-preparation and worker startup.
-
-The catalog separates its entry type, preset rows, and lookup functions.
-The [shared GLM recipes](recipes/text/glm) own quickstart configuration,
-synthetic/real text inputs, bounded initialization and optional partitioning.
-The shared [GLM checkpoint reader](models/shared/glm/checkpoint) separates meta
-model declaration, precision/coverage validation, expert conversion, and loading;
-family readers supply only names and configurations. Keep kernel implementations
-in MLOps and pipeline orchestration in ShadowSpill.
-
-The other Hugging Face readers share [checkpoint/](models/shared/checkpoint):
-family name mappings, tensor-layout sources and bounded range copying stay
-separate. `copy_chunk(name, shape, offset, destination)` fills an Executor buffer
-without assembling full concatenated projections or expert banks. Direct tensors,
-row concatenation, expert banks and gated-query reordering support this path;
-an unknown transformation fails explicitly instead of allocating a full tensor.
-
-Larger implementations use a package rather than a single long file. For example,
-the [Qwen3.5 PyTorch reference](models/qwen35/implementations/pytorch) keeps its
-recurrence, operator registration, attention modules and model assembly separate;
-the caller still imports `Model` from `implementations.pytorch`.
-
-## Run an example
-
-- [Training recipes](../../../../examples/training/README.md): complete configs, data preparation,
-  dtype overrides, schedules, logging, evaluation and checkpoints.
-- [Benchmark quickstart](../../../../benchmarks/quickstart.md): throughput presets or
-  a user experiment factory, budget/geometry search, plots and resolution plans.
-- [Generic training example](../../../../docs/examples/generic-training.md): a non-text
-  model and iterable data.
-- [Distributed API](../../../../docs/python/api/distributed.md): devices, groups,
-  parameter replicas, sharding, verified planning and ranks on different
-  hardware.
+- [Training examples](../../../../examples/training/README.md)
+- [Custom definitions](../../../../docs/python/advanced/definitions.md)
+- [Non-text training](../../../../docs/examples/generic-training.md)
+- [Benchmark quickstart](../../../../benchmarks/quickstart.md)
+- [Distributed API](../../../../docs/python/api/distributed.md)

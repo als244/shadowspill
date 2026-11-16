@@ -67,7 +67,7 @@ def test_a_checkpoint_entry_stands_for_the_model_and_its_initializer(tmp_path):
         "lora": {"rank": 4, "alpha": 8},
     }
     assert expanded["initialize"] == {
-        "@call": "shadowspill_workloads.initialization.text:from_checkpoint",
+        "@call": "shadowspill_workloads.initialization.decoder:from_checkpoint",
         "family": family,
         "directory": str(directory),
         "max_seq_len": 64,

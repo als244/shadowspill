@@ -1,4 +1,4 @@
-"""Bounded catalog initialization; no anonymous full model or expert-bank copy."""
+"""Bounded decoder parameter initialization without a full model copy."""
 
 import torch
 

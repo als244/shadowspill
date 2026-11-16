@@ -95,7 +95,7 @@ common loader for controller and fresh-phase startup.
 
 The small [external classifier fixture](../../../packages/engine/tests/engine_tests/fixtures/external_definition.py)
 shows the full interface. The supplied
-[regression definition](../../../packages/workloads/src/shadowspill_workloads/definitions/regression.py)
+[regression definition](../../../packages/workloads/src/shadowspill_workloads/models/regression/training.py)
 uses the same registry and its existing model. Importing either description
 requires no Torch import; model construction is explicit.
 

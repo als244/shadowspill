@@ -4,5 +4,5 @@ from shadowspill_workloads.models.registration import Family
 
 FAMILY = Family(
     name="regression",
-    training="shadowspill_workloads.definitions.regression:register",
+    training="shadowspill_workloads.models.regression.training:register",
 )

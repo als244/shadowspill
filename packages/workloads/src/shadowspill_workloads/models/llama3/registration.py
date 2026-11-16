@@ -14,6 +14,6 @@ FAMILY = Family(
     checkpoint_reader="Llama3Checkpoint",
     checkpoint_types=("llama",),
     initialization=ParameterInitialization(),
-    training="shadowspill_workloads.definitions.llama:register",
+    training="shadowspill_workloads.models.llama3.training:register",
     validate_pretrained=validate_activation,
 )

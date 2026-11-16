@@ -126,7 +126,7 @@ def expand_checkpoint(raw):
         **{k: entry[k] for k in ("implementation", "dtype", "lora") if k in entry},
     }
     expanded["initialize"] = {
-        "@call": "shadowspill_workloads.initialization.text:from_checkpoint",
+        "@call": "shadowspill_workloads.initialization.decoder:from_checkpoint",
         **shared,
         "seed": entry.get("seed", raw.get("seed", 0)),
     }

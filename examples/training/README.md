@@ -154,7 +154,7 @@ once:
 
 The entry stands for the model, `shadowspill_workloads.models.catalog:build_from_checkpoint`,
 declared at the checkpoint's configuration, and the initializer,
-`shadowspill_workloads.initialization.text:from_checkpoint`, which streams the
+`shadowspill_workloads.initialization.decoder:from_checkpoint`, which streams the
 parameters in bounded chunks and generates the rotary tables and any LoRA
 factors as for a catalog model; the two explicit entries remain available.
 

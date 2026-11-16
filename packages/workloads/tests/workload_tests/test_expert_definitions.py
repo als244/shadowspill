@@ -209,8 +209,8 @@ def fill(loader, name, shape, dtype, chunk):
 def test_initialization_preserves_replicas_expert_slices_and_payload_masters(
     tmp_path, family
 ):
+    from shadowspill_workloads.initialization.decoder import Initialize as Catalog
     from shadowspill_workloads.initialization.expert_parallel import Initialize
-    from shadowspill_workloads.initialization.text import Initialize as Catalog
     from shadowspill_workloads.models.catalog import entry
 
     registry = load_registry(["shadowspill", "shadowspill-workloads"])

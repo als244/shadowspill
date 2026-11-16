@@ -19,7 +19,7 @@ from shadowspill.training.definitions import (
 )
 from shadowspill_client import LoRA, Model, Weights
 from shadowspill_workloads.initialization import headers, hub, hub_files, weight_files
-from shadowspill_workloads.initialization.text import Initialize
+from shadowspill_workloads.initialization.decoder import Initialize
 from workload_tests.test_checkpoints import huggingface_state
 from workload_tests.test_dense_qwen_definitions import settings as dense_settings
 from workload_tests.test_llama_definition import settings as llama_settings

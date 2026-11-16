@@ -11,7 +11,7 @@ import pytest
 import torch
 
 from shadowspill.execution.tensors import TensorChunk
-from shadowspill_workloads.initialization.text import Initialize
+from shadowspill_workloads.initialization.decoder import Initialize
 from shadowspill_workloads.inputs.text.calls import Inputs
 from shadowspill_workloads.models.llama3.config import LLAMA_3_1_ROPE_SCALING, Config
 from shadowspill_workloads.models.shared.decoder import RotaryEmbedding

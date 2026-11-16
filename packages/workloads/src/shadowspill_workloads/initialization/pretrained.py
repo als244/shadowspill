@@ -25,7 +25,7 @@ def describe(family, config, context):
 
         @contextmanager
         def open_random(runtime):
-            from .text import Initialize
+            from .decoder import Initialize
 
             yield Initialize(family, config, seed=seed, lora_seed=lora_seed)
 
@@ -43,7 +43,7 @@ def describe(family, config, context):
 
         @contextmanager
         def open_local(runtime):
-            from .text import FromCheckpoint
+            from .decoder import FromCheckpoint
 
             with (
                 local_files.snapshot(weights.reference, manifest, runtime) as directory,
@@ -67,8 +67,8 @@ def describe(family, config, context):
 
     @contextmanager
     def open_pretrained(runtime):
+        from .decoder import FromCheckpoint
         from .headers import validate
-        from .text import FromCheckpoint
 
         with hub_files.snapshot(
             weights.reference, weights.revision, manifest, runtime

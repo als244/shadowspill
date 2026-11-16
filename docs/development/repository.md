@@ -2,6 +2,9 @@
 
 ## Top-level layout
 
+See [workload organization and adding a model family](workloads.md) for the
+structure inside `packages/workloads` and its extension pattern.
+
 ```text
 shadowspill/
 ├── packages/client/       lightweight service/training clients and portable records

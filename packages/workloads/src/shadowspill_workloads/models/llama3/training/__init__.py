@@ -3,10 +3,10 @@
 from functools import partial
 
 from shadowspill.training.definitions import ModelDefinition, PreparationDefinition
+from shadowspill_workloads.definitions import training_options
+from shadowspill_workloads.definitions.source import definition_source
 from shadowspill_workloads.inputs.text import preparation as inputs
 
-from .. import training_options
-from ..source import definition_source
 from . import configuration
 
 PRESET = "shadowspill/llama3_packed@1"
@@ -17,7 +17,6 @@ def register(registry):
         (
             "models/families.py",
             "models/registration.py",
-            "definitions/llama",
             "definitions/training_options.py",
             "definitions/text_allocations.py",
             "inputs/text/preparation.py",

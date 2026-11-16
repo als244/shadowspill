@@ -11,7 +11,7 @@ from shadowspill.training.definitions import (
     InitializationRuntime,
     load_registry,
 )
-from shadowspill_workloads.initialization.text import LORA_LEAVES, Initialize
+from shadowspill_workloads.initialization.decoder import LORA_LEAVES, Initialize
 from workload_tests.test_pretrained_initialization import fill
 from workload_tests.test_pretrained_initialization import settings as text_settings
 from workload_tests.test_pretrained_metadata import FAMILIES

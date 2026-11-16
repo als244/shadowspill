@@ -112,7 +112,7 @@ the model, parameter by parameter, through `config.from_huggingface` and
 reader except the GLM families', which load through their own recipe.
 `catalog.build_from_checkpoint(family, directory)` declares a family's model at
 a checkpoint's configuration, and
-`shadowspill_workloads.initialization.text.from_checkpoint` streams the checkpoint
+`shadowspill_workloads.initialization.decoder.from_checkpoint` streams the checkpoint
 into a run, so a fine-tune is a config naming a family and a directory, its
 `checkpoint` entry.
 

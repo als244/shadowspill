@@ -49,7 +49,7 @@
   "execution_gib": 8,
   "spill_gib": 32,
   "initialize": {
-    "@call": "shadowspill_workloads.initialization.text:from_catalog",
+    "@call": "shadowspill_workloads.initialization.decoder:from_catalog",
     "model": "qwen35-numerical",
     "max_seq_len": 2048,
     "seed": 0

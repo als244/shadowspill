@@ -29,7 +29,7 @@ SOURCE_PATHS = (
     "packages/workloads/src/shadowspill_workloads/lora",
     "packages/workloads/src/shadowspill_workloads/full_model.py",
     "packages/workloads/src/shadowspill_workloads/recipes/text/geometry.py",
-    "packages/workloads/src/shadowspill_workloads/initialization/text.py",
+    "packages/workloads/src/shadowspill_workloads/initialization/decoder.py",
     "benchmarks/quickstart/phases",
     "benchmarks/quickstart/orchestrate.py",
     "benchmarks/quickstart/launch.py",

@@ -1,6 +1,6 @@
 """Bounded base loading and chunk-independent initialization of LoRA and RoPE."""
 
-from shadowspill_workloads.initialization.text import FromCheckpoint
+from shadowspill_workloads.initialization.decoder import FromCheckpoint
 
 
 class Initialize(FromCheckpoint):

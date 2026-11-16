@@ -19,8 +19,8 @@ from shadowspill.parallelism import InputFieldPlacement, InputPlacement
 from shadowspill.training.definitions import load_registry
 from shadowspill_client import Objective
 from shadowspill_workloads.definitions.expert_parallel import ownership
+from shadowspill_workloads.initialization.decoder import Initialize as DecoderInitialize
 from shadowspill_workloads.initialization.expert_parallel import Initialize
-from shadowspill_workloads.initialization.text import Initialize as TextInitialize
 from workload_tests._moe_oracle import WeightGradients as DenseGradients
 from workload_tests.test_expert_definitions import settings
 
@@ -124,7 +124,7 @@ def initial_model(*, grad_dtype="bfloat16"):
     )
     for block in model.blocks:
         block.moe = ReferenceMoE(model.config)
-    base = TextInitialize("qwen3moe", model.config, seed=17)
+    base = DecoderInitialize("qwen3moe", model.config, seed=17)
     with torch.no_grad():
         for name, value in (*model.named_parameters(), *model.named_buffers()):
             sharded = name.endswith(("experts.gate_up_weight", "experts.down_weight"))
