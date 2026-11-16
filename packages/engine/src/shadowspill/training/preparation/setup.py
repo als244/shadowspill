@@ -87,7 +87,7 @@ def _assemble(
         or objective.controls != config.loss_controls
         or (None if optimizer is None else optimizer.definition.controls)
         != config.optimizer_controls
-        or objective.definition.participation != config.participation
+        or objective.participation != config.participation
         or {name: objective.outputs.get(name) for name in config.outputs}
         != config.outputs
     ):
@@ -315,7 +315,7 @@ def _describe(
             for key in keys
             if key.outputs is not None
         },
-        participation=resolved_objective.definition.participation,
+        participation=resolved_objective.participation,
         origins=origins,
         reference_definition=reference_definition,
     )

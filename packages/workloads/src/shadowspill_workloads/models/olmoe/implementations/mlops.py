@@ -26,6 +26,11 @@ from shadowspill_workloads.models.shared.expert_parallel import (
 )
 from shadowspill_workloads.models.shared.norms import RMSNorm
 from shadowspill_workloads.models.shared.routed_lora import factors, reset_factors
+from shadowspill_workloads.models.shared.router_statistics import (
+    masked_statistics,
+    token_outputs,
+)
+from shadowspill_workloads.models.shared.token_head import target_logprobs
 
 from ..config import Config
 
@@ -121,6 +126,7 @@ class MoE(nn.Module):
         residual: torch.Tensor,
         *,
         return_metrics: bool = False,
+        router_mask=None,
     ):
         # Softmax-then-top-k balances experts over the whole microbatch, so
         # where its sequences begin is no concern of the router's.
@@ -148,6 +154,21 @@ class MoE(nn.Module):
                     **routing,
                 )
             )
+        if router_mask is not None:
+            counts, probability_sum = masked_statistics(
+                hidden,
+                self.router.weight
+                if self.experts is None
+                else self.experts.router_weight,
+                router_mask,
+                top_k=self.config.top_k,
+                routing_mode="softmax_then_topk",
+            )
+            rows = router_mask.sum().clamp_min(1)
+            frequency = counts.float() / (rows * self.config.top_k)
+            auxiliary = (
+                self.config.n_experts * (frequency * probability_sum / rows).sum()
+            )
         if return_metrics:
             return output, auxiliary, counts, probability_sum
         return output, auxiliary
@@ -168,9 +189,15 @@ class Block(nn.Module):
         rotary: RotaryEmbedding,
         *,
         return_metrics: bool = False,
+        router_mask=None,
     ):
         hidden = hidden + self.attn(self.attn_norm(hidden), packing, rotary)
-        return self.moe(self.ffn_norm(hidden), hidden, return_metrics=return_metrics)
+        return self.moe(
+            self.ffn_norm(hidden),
+            hidden,
+            return_metrics=return_metrics,
+            router_mask=router_mask,
+        )
 
 
 class Model(nn.Module):
@@ -251,6 +278,8 @@ class Model(nn.Module):
         sequence_lengths: SequenceLengths = None,
         *,
         return_metrics: bool = False,
+        router_mask=None,
+        detach_metrics=True,
     ):
         packing = packed_metadata(
             tokens, sequence_lengths, capacity=self.config.max_seq_len
@@ -259,13 +288,21 @@ class Model(nn.Module):
         auxiliary = torch.zeros((), dtype=torch.float32, device=hidden.device)
         layer_auxiliary, counts, probability_sums = [], [], []
         for block in self.blocks:
-            values = block(hidden, packing, self.rotary, return_metrics=return_metrics)
+            values = block(
+                hidden,
+                packing,
+                self.rotary,
+                return_metrics=return_metrics,
+                router_mask=router_mask,
+            )
             hidden, block_auxiliary = values[:2]
             auxiliary = auxiliary + block_auxiliary
             if return_metrics:
                 layer_auxiliary.append(block_auxiliary.detach())
                 counts.append(values[2])
-                probability_sums.append(values[3].detach())
+                probability_sums.append(
+                    values[3].detach() if detach_metrics else values[3]
+                )
         if return_metrics:
             return (
                 self.final_norm(hidden),
@@ -283,6 +320,16 @@ class Model(nn.Module):
     ) -> torch.Tensor:
         hidden, _auxiliary = self.hidden(tokens, sequence_lengths)
         return self.lm_head(hidden)
+
+    def target_logprobs(
+        self, tokens, targets, sequence_lengths=None, *, head_chunk_size=None
+    ):
+        hidden, _ = self.hidden(tokens, sequence_lengths)
+        return target_logprobs(
+            hidden, self.lm_head, targets, chunk_size=head_chunk_size
+        )
+
+    token_outputs = token_outputs
 
     def loss(
         self,

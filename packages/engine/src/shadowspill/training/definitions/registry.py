@@ -12,7 +12,11 @@ from shadowspill.resources.description import validate_resources
 from shadowspill_client import Model, Optimizer
 from shadowspill_client._records import Value, mapping, plain
 from shadowspill_client.protocol.controls import ControlSchema, Scalar
-from shadowspill_client.protocol.definitions import DefinitionSource, OutputSet
+from shadowspill_client.protocol.definitions import (
+    DefinitionSource,
+    OutputSet,
+    Participation,
+)
 from shadowspill_client.protocol.inputs import InputSchema
 from shadowspill_client.protocol.operations import OperationKey
 
@@ -202,6 +206,11 @@ class ResolvedObjective:
     config: Mapping[str, Value]
     inputs: InputSchema
     defaults: Mapping[str, Scalar]
+
+    @property
+    def participation(self) -> Participation:
+        assert isinstance(self.definition.participation, Participation)
+        return self.definition.participation
 
     @property
     def controls(self) -> ControlSchema:
@@ -555,6 +564,9 @@ class Registry:
                 )
         objective = replace(
             objective,
+            participation=objective.participation(configured)
+            if callable(objective.participation)
+            else objective.participation,
             padding_safe=objective.padding_safe(configured)
             if callable(objective.padding_safe)
             else objective.padding_safe,
@@ -570,6 +582,13 @@ class Registry:
         )
         assert isinstance(objective.controls, ControlSchema)
         assert not callable(objective.outputs)
+        if not isinstance(objective.participation, Participation) or any(
+            type(flag) is not bool
+            for flag in (objective.padding_safe, objective.physical_batch_loss)
+        ):
+            raise TypeError(
+                "objective guarantees must resolve to participation and boolean flags"
+            )
         inputs = _schema(objective.inputs, configured)
         model_paths = {tuple(field.path) for field in model.inputs.fields}
         loss_fields = {tuple(field.path): field for field in inputs.fields}

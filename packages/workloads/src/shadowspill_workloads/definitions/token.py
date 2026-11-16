@@ -17,6 +17,8 @@ from shadowspill_client.protocol.definitions import (
 )
 from shadowspill_client.protocol.inputs import InputSchema, TensorField
 
+from .token_evaluation import token_evaluation
+
 
 @dataclass(frozen=True)
 class TokenConfig:
@@ -164,15 +166,13 @@ def outputs(config, *, policy):
     }
 
 
-def forward_logprobs(model, inputs, loss_inputs, loss_params, *, packed=False):
-    values = model.target_logprobs(
-        targets=loss_inputs["target_tokens"], **inputs
-    ).float()
+def forward_logprobs(evaluated, inputs, loss_inputs, loss_params, *, packed=False):
+    values = evaluated["logprobs"].float()
     return {"logprobs": values.reshape(-1) if packed else values}
 
 
 def compute(
-    model,
+    evaluated,
     inputs,
     loss_inputs,
     loss_params,
@@ -187,8 +187,7 @@ def compute(
     from shadowspill_workloads.objectives.token import clipped_policy, cross_entropy
 
     valid = loss_inputs["response_mask" if policy else "loss_mask"]
-    targets = torch.where(valid, loss_inputs["target_tokens"], 0)
-    current = model.target_logprobs(targets=targets, **inputs).float()
+    current = evaluated["logprobs"].float()
     if policy:
         reference = "reference_logprobs" in loss_inputs
         loss = clipped_policy(
@@ -224,7 +223,11 @@ def bind(config, key, *, policy):
 def register(registry):
     root = Path(__file__).resolve().parents[1]
     digest = sha256()
-    for relative in ("definitions/token.py", "objectives/token.py"):
+    for relative in (
+        "definitions/token.py",
+        "definitions/token_evaluation.py",
+        "objectives/token.py",
+    ):
         digest.update(relative.encode())
         digest.update((root / relative).read_bytes())
     source = DefinitionSource(
@@ -241,6 +244,7 @@ def register(registry):
                 controls=controls if policy else ControlSchema({}),
                 outputs=partial(outputs, policy=policy),
                 bind=partial(bind, policy=policy),
+                evaluate=partial(token_evaluation, policy=policy),
                 requires=("target_logprobs",),
                 participation=Participation(
                     ("response_mask" if policy else "loss_mask",)

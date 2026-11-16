@@ -9,6 +9,7 @@ from shadowspill_workloads.models.shared.decoder import (
     auxiliary_share,
     packed_metadata,
 )
+from shadowspill_workloads.models.shared.router_statistics import token_outputs
 from shadowspill_workloads.models.shared.token_head import target_logprobs
 
 from ..expert_parallel import close_experts, expert_construction
@@ -26,14 +27,16 @@ class Block(nn.Module):
         self.ffn_norm = RMSNorm(config.d_model, config)
         self.moe = MoE(config, expert_factory=expert_factory)
 
-    def forward(self, hidden, packing, rotary, cumulative, chunk_indices):
+    def forward(
+        self, hidden, packing, rotary, cumulative, chunk_indices, *, router_mask=None
+    ):
         normalized = self.attn_norm(hidden)
         if self.kind == "full":
             update = self.mixer(normalized, packing, rotary)
         else:
             update = self.mixer(normalized, cumulative, chunk_indices)
         hidden = hidden + update
-        return self.moe(self.ffn_norm(hidden), hidden)
+        return self.moe(self.ffn_norm(hidden), hidden, router_mask=router_mask)
 
 
 class QwenMoE(nn.Module):
@@ -114,7 +117,15 @@ class QwenMoE(nn.Module):
             (block.moe.experts for block in self.blocks), destroy_buffer=owns_buffer
         )
 
-    def hidden(self, tokens, sequence_lengths=None, *, return_metrics=False):
+    def hidden(
+        self,
+        tokens,
+        sequence_lengths=None,
+        *,
+        return_metrics=False,
+        router_mask=None,
+        detach_metrics=True,
+    ):
         c = self.config
         packing = packed_metadata(tokens, sequence_lengths, capacity=c.max_seq_len)
         cumulative, chunks = None, None
@@ -127,7 +138,12 @@ class QwenMoE(nn.Module):
         counts, probabilities = [], []
         for block in self.blocks:
             hidden, count, probability = block(
-                hidden, packing, self.rotary, cumulative, chunks
+                hidden,
+                packing,
+                self.rotary,
+                cumulative,
+                chunks,
+                router_mask=router_mask,
             )
             counts.append(count)
             probabilities.append(probability)
@@ -135,7 +151,9 @@ class QwenMoE(nn.Module):
         probabilities = torch.stack(probabilities)
         # Same balancing definition as concatenating all layers' router logits:
         # E * sum_e(mean assignment frequency_e * mean router probability_e).
-        total = tokens.numel() * c.n_layers
+        total = (
+            tokens.numel() if router_mask is None else router_mask.sum().clamp_min(1)
+        ) * c.n_layers
         # HF sums assignment fractions over the K choices (it does not divide
         # those counts by K); a balanced router therefore has auxiliary ~= K.
         frequency = counts.sum(0).float() / total
@@ -144,7 +162,12 @@ class QwenMoE(nn.Module):
         if return_metrics:
             return (
                 *result,
-                {"expert_counts": counts, "probability_sum": probabilities.detach()},
+                {
+                    "expert_counts": counts,
+                    "probability_sum": probabilities.detach()
+                    if detach_metrics
+                    else probabilities,
+                },
             )
         return result
 
@@ -160,23 +183,12 @@ class QwenMoE(nn.Module):
         This exposes the token distribution. The existing ``loss`` method owns
         the separately weighted router-balancing term and retains its semantics.
         """
-        return self.target_logprobs_with_auxiliary(
-            tokens, targets, sequence_lengths, head_chunk_size=head_chunk_size
-        )[0]
-
-    def target_logprobs_with_auxiliary(
-        self, tokens, targets, sequence_lengths=None, *, head_chunk_size=None
-    ):
-        """One model evaluation with the existing microbatch router statistic.
-
-        The auxiliary term includes physical padding, as ``loss`` always has.
-        Its coefficient and supervised-token scaling belong to the objective.
-        """
-        hidden, auxiliary = self.hidden(tokens, sequence_lengths)
-        return (
-            target_logprobs(hidden, self.lm_head, targets, chunk_size=head_chunk_size),
-            auxiliary,
+        hidden, _ = self.hidden(tokens, sequence_lengths)
+        return target_logprobs(
+            hidden, self.lm_head, targets, chunk_size=head_chunk_size
         )
+
+    token_outputs = token_outputs
 
     def loss(
         self,

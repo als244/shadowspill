@@ -75,7 +75,7 @@ class OperationContract:
         paths = {("inputs", *path) for path in self.outputs.model_inputs} | {
             ("loss_inputs", *path) for path in self.outputs.loss_inputs
         }
-        participation = self.objective.definition.participation.path
+        participation = self.objective.participation.path
         if self.key.operation != "forward" and participation:
             paths.add(("loss_inputs", *participation))
         return tuple(sorted(paths))

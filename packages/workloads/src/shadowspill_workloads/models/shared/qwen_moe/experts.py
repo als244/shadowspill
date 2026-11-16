@@ -8,6 +8,7 @@ from torch import nn
 
 from ..expert_parallel import parallel_forward
 from ..routed_lora import factors, reset_factors
+from ..router_statistics import masked_statistics
 from .initialization import Linear
 
 
@@ -58,7 +59,7 @@ class MoE(nn.Module):
             if getattr(self, "lora_config", None) is not None:
                 reset_factors(self)
 
-    def forward(self, hidden, residual):
+    def forward(self, hidden, residual, *, router_mask=None):
         c = self.config
         lora = getattr(self, "lora_config", None)
         routing = {"top_k": c.top_k, "routing_mode": "topk_then_softmax"}
@@ -82,4 +83,13 @@ class MoE(nn.Module):
             )
         if self.shared is not None:
             output = output + self.shared(hidden)
+        if router_mask is not None:
+            counts, probability_sum = masked_statistics(
+                hidden,
+                self.router.weight
+                if self.experts is None
+                else self.experts.router_weight,
+                router_mask,
+                **routing,
+            )
         return output, counts, probability_sum

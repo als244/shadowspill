@@ -245,14 +245,46 @@ and `padding_safe=False`. Its loss and gradients can change with the selected
 buffer size, padding and split calls. Preparation records this distinction; it
 does not change batching, capacity limits or all-masked update skipping.
 
-`shadowspill/qwen_moe_cross_entropy@1` preserves Qwen's existing router balancing.
-It adds `router_aux_loss_coef * auxiliary * valid_tokens` to the caller-weighted
-cross-entropy sum. The coefficient defaults to the model's configured value and
-can be overridden per call. The auxiliary statistic includes physical padding;
-token weights affect cross entropy only. Use final `grad_scale` to scale both
-terms together. `ce_sum`, `auxiliary_sum`, `loss_sum` and `valid_tokens` are reported
-separately. Whole and split runs require their own microbatch-aware oracles;
-the generic `shadowspill/cross_entropy@1` remains the token-only summed objective.
+`shadowspill/moe_balance@1` supplies reusable softmax router balancing. Compose
+it with cross entropy, clipped policy or another compatible token objective:
+
+```python
+objective = Objective.sum(
+    {
+        "tokens": Objective("shadowspill/cross_entropy@1"),
+        "balance": Objective("shadowspill/moe_balance@1"),
+    },
+    weights={"balance": 0.001},
+)
+```
+
+The default excludes artificial padding. Its optional aligned `router_mask`
+defaults to true for real input positions and false for padding, independently
+of the prediction mask: real prompt tokens still contribute routing statistics.
+`config={"include_padding": True}` explicitly counts all physical rows.
+The buffer's full allocated size still counts against the scheduled token cap.
+The balancing value is scaled by the supervised-token count; primary token
+weights do not scale balancing. The caller chooses its coefficient through
+`balance.weight`. All-masked prediction supervision still skips the update.
+
+The default `layer_reduction="combined"` combines counts/probability sums across
+layers before computing balancing, with `normalize_top_k=False`, matching Qwen's
+aggregation. `layer_reduction="sum", normalize_top_k=True` uses OLMoE's existing
+sum of per-layer terms, dividing assignment frequency by top-k. `"mean"` averages
+per-layer terms. With clipped policy, set `participation_field="response_mask"`;
+otherwise it defaults to `"loss_mask"`. Padding exclusion does not make this
+microbatch statistic additive: whole and split calls need their own oracles.
+
+A compatible model declares `router_statistics` and implements
+`token_outputs(targets=None, router_mask=None, **inputs)`. It returns per-layer
+`router_counts` and differentiable full-softmax `router_probability_sum` tensors
+of shape `[layers, experts]`, scalar `router_rows` (selected positions per layer),
+integer `router_top_k`, and aligned `logprobs` when targets are supplied. A null
+router mask explicitly means all physical rows. Qwen and OLMoE supply this hook;
+their `loss` methods continue to count all physical rows during caller migration.
+Compatible primary and secondary terms share one transformer evaluation. The
+current fused provider lacks masked statistics, so exclusion adds a bounded router
+projection/selection per layer; its work and storage must be captured and admitted.
 
 The developing input pipeline validates owned binary snapshots with these same
 schemas before packing. It checks every supplied field, shared dimension, numeric

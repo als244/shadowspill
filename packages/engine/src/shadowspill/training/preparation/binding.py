@@ -196,7 +196,7 @@ class OperationBinding:
                 "config": dict(objective.config),
                 "padding_safe": objective.definition.padding_safe,
                 "physical_batch_loss": objective.definition.physical_batch_loss,
-                "participation": objective.definition.participation.to_dict(),
+                "participation": objective.participation.to_dict(),
                 "reduction": objective.definition.reduction,
             },
             "inputs": self.inputs.signature(),

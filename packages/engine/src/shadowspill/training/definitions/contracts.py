@@ -169,7 +169,9 @@ class ObjectiveDefinition:
     )
     default_outputs: str = "metrics"
     requires: Sequence[str] = ()
-    participation: Participation = field(default_factory=Participation)
+    participation: Participation | Callable[[Any], Participation] = field(
+        default_factory=Participation
+    )
     reduction: Literal["sum", "custom"] = "sum"
     bind: Callable[[Any, OperationKey], Computation] | None = None
     padding_safe: bool | Callable[[Any], bool] = False
@@ -188,7 +190,10 @@ class ObjectiveDefinition:
             raise TypeError("inputs must be an InputSchema or a schema resolver")
         if (
             not isinstance(self.controls, ControlSchema) and not callable(self.controls)
-        ) or not isinstance(self.participation, Participation):
+        ) or not (
+            isinstance(self.participation, Participation)
+            or callable(self.participation)
+        ):
             raise TypeError("objective requires declared controls and participation")
         if self.reduction not in ("sum", "custom"):
             raise ValueError("declare summed or custom objective semantics")
