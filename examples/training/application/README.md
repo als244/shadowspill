@@ -13,8 +13,9 @@ closing the client also fails.
 [cli.py](cli.py) handles HTTP/SSH connection options and exact saved-settings
 checks. Application entry points supply their configuration and data choices.
 
-[parallelism.py](parallelism.py) builds the existing DP/EP wire declarations from
-caller-supplied input fields, output rules and expert parameter names. The engine's
+[Client parallelism](../../../packages/client/src/shadowspill_client/parallelism.py)
+builds the existing DP/EP wire declarations from input placement, output rules
+and expert parameter names. Basic DP infers input fields from schemas. The engine's
 generic ownership interfaces remain unchanged; the client needs no engine import.
 
 [loop.py](loop.py) provides one `update()` function for whole `step()` calls or

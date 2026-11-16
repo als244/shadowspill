@@ -8,7 +8,9 @@ These guides cover optional controls, custom definitions and detailed diagnostic
 | Task | Guide |
 | --- | --- |
 | Accumulate gradients, evaluate and resume | [Complete workflow](training-workflow.md) |
+| Pretrain, fine-tune, run GRPO/PPO actor updates or distill responses | [Objectives](objectives.md) |
 | Tune preparation, reuse Plans or reconnect | [Service client reference](service-client.md) |
+| Download Plans and start on other physical GPUs | [Saved Plans](saved-plans.md) |
 | Supply a model, objective or optimizer | [Step-by-step guide](custom-definitions.md), [hook reference](definitions.md) |
 | Work directly with build/profile/plan/execute | [Phase guide](../phases.md), [custom models](../custom-models.md) |
 

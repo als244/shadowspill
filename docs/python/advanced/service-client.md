@@ -24,14 +24,39 @@ from shadowspill.server import Allocation, Server
 # SHADOWSPILL_TOKEN supplies the same credential used by the client.
 server = Server(
     allocation=Allocation.from_environment(),
-    storage_root="/path/to/service-data",
+    service_root="/path/to/service-data",
     workload_packages=["shadowspill", "shadowspill-workloads"],
 )
 server.serve(host="127.0.0.1", port=8000)
 ```
 
 List only installed definition packages; add a custom package when using its
-definitions. Construction snapshots deployment
+definitions. Omitting `workload_packages` enables the engine's built-ins and
+`shadowspill-workloads` when installed; it does not load unrelated extension
+packages. An explicit list replaces those defaults. Omitting `allocation` takes
+the same environment snapshot as `Allocation.from_environment()`.
+
+To reuse checkpoints already stored on the server:
+
+```python
+server = Server(
+    service_root="runs/service",
+    model_root="/home/shein/Documents/grad_school/research/models",
+)
+server.serve()
+```
+
+`model_root` is optional and separate from mutable run storage. For an unpinned
+`Model.from_pretrained("Qwen/Qwen3.5-9B")`, the server looks for
+`model_root/Qwen/Qwen3.5-9B` or `model_root/Qwen3.5-9B`. Distinct matches are an
+error. A match uses the installed local checkpoint reader, validates architecture
+and file contents, and records the absolute source and content checksums in the
+resolved settings. It never writes to the checkpoint directory. A missing match
+uses the ordinary installed reference resolver. Explicit revisions and already
+resolved configurations retain their exact source; lookup never substitutes a
+local directory for an explicitly pinned remote revision.
+
+Construction snapshots deployment
 settings; `serve` discovers assigned resources, recovers stored records and starts
 the listener. The allocation adapter supports a local machine or an
 assigned single-node Slurm step. The server never requests a scheduler allocation.
@@ -101,6 +126,9 @@ Pool bounds, preparation memory admission and the scheduled token cap remain
 enforced in either mode.
 
 ## Saved Plans and reconnect
+
+See [download and reuse saved Plans](saved-plans.md) for single-GPU and distributed
+examples, including selecting different physical GPUs on the target service.
 
 Creation accepts raw setup keywords directly, or `config=preview.config`.
 `plans=training.plans` with the same computation settings skips preparation.
@@ -523,6 +551,25 @@ Pass `runtime_trace=True` to a compute call to record that invocation. Its
 Each archive contains a request/Plan/rank/update association in `manifest.json`,
 the existing `step.json` diagnostic view, and its `step.events.npz` event columns.
 The artifacts remain downloadable after the training client closes.
+
+Each trace also includes a standalone `report.html` comparing measured execution
+with the exact saved Plan used by that invocation:
+
+```python
+result = training.step(batch, optim={"lr": 0.0003}, runtime_trace=True).result()
+for worker, trace in enumerate(result.traces):
+    trace.download_report(f"runtime-{worker}.html").result()
+```
+
+The HTML labels the measured and predicted clocks. Memory curves reconstruct
+object lifetimes using traced timings; interpolated lease times and transfers
+without timing evidence remain explicit. The device timeline excludes client
+upload and report generation. `download_report` streams the verified archive
+through a temporary local disk file, then copies only its bounded HTML member;
+the laptop needs no engine or plotting libraries. Downloads do not overwrite
+existing files. Use `trace.download("trace.zip").result()` for raw diagnostics.
+If HTML rendering fails, `report_issue.json` records the reason and the raw trace
+remains available; `download_report` raises that error without replaying training.
 
 Optional trace assembly or publication failures appear in
 `result.artifact_issues`; a confirmed update still succeeds and must not be

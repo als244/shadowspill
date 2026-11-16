@@ -342,9 +342,10 @@ def test_documentation_index_exposes_reading_paths() -> None:
 
 def test_root_readme_remains_a_minimal_entrypoint() -> None:
     readme = (ROOT / "README.md").read_text()
-    assert len(readme.splitlines()) <= 60
+    # Installation plus the three requested, realistic training examples.
+    assert len(readme.splitlines()) <= 200
     assert "](docs/README.md)" in readme
-    assert "](docs/examples/client-training.md)" in readme
+    assert "](docs/examples/client-training.md#prepare-ultrachat)" in readme
     assert "](docs/python/client.md)" in readme
     assert "](docs/python/advanced/README.md)" in readme
     assert "](docs/development/repository.md#setup)" in readme
@@ -798,6 +799,8 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
         and not path.is_relative_to(DOCS / "integrations")
         and path
         not in {
+            ROOT / "README.md",  # Concrete server installation prerequisites.
+            DOCS / "python/advanced/saved-plans.md",  # Concrete GPU remapping.
             ROOT / "reference/training/README.md",
             ROOT / "benchmarks/quickstart.md",
             ROOT / "benchmarks/stage_traces/README.md",

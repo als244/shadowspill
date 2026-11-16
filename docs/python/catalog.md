@@ -81,7 +81,8 @@ objective = Objective.sum(
 Padding is excluded from balancing by default. Balancing statistics are computed
 per physical microbatch, so splitting a batch can change that term. Token losses
 are weighted sums; choose input weights or `grad_scale` for your normalization.
-See [objective settings and inputs](advanced/definitions.md#text-objectives).
+See the [objective recipes](advanced/objectives.md) and
+[objective settings and inputs](advanced/definitions.md#text-objectives).
 
 ## LoRA and trainable parameters
 
