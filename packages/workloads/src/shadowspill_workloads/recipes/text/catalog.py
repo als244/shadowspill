@@ -68,7 +68,7 @@ def inputs(options, *, rank=0, split="train"):
 
 def _expert_setup(options, precision):
     from shadowspill_workloads.models.catalog import entry
-    from shadowspill_workloads.recipes.text.expert_parallel import resources
+    from shadowspill_workloads.models.shared.expert_parallel import resources
 
     item, config = entry(options["model"]), model_config(options)
     if not item.expert_parallel or config.n_experts % options["ranks"]:
@@ -104,7 +104,7 @@ def setup(options, *, rank=0):
     )
     precision.apply()
     if options["parallelism"] == "ep":
-        from shadowspill_workloads.recipes.text.expert_parallel import resources
+        from shadowspill_workloads.models.shared.expert_parallel import resources
 
         item, config, provider, resource, parallelism = _expert_setup(
             options, precision
@@ -152,7 +152,7 @@ def initializer(options, metadata, *, rank=0):
         entry(options["model"]).family, model_config(options), seed=options["seed"]
     )
     if options["parallelism"] == "ep":
-        from shadowspill_workloads.recipes.text.expert_parallel.initialization import (
+        from shadowspill_workloads.initialization.expert_parallel import (
             Initialize as ExpertInitialize,
         )
         from shadowspill_workloads.recipes.text.precision import Precision
