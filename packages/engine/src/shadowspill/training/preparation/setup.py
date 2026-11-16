@@ -291,6 +291,7 @@ def _describe(
         model=resolved_model.settings,
         objective=replace(
             objective,
+            definition=resolved_objective.definition.id,
             config=resolved_objective.config,
             defaults=resolved_objective.defaults,
         ),
@@ -361,6 +362,7 @@ def _recheck(registry: Registry, config: ResolvedTraining) -> ResolvedSetup:
     )
     if (
         model.settings != config.model
+        or objective.definition.id != config.objective.definition
         or objective.config != config.objective.config
         or objective.defaults != config.objective.defaults
         or (None if optimizer is None else optimizer.settings) != config.optimizer

@@ -75,6 +75,8 @@ class LoRA(Record):
 
 @dataclass(frozen=True)
 class Model(Record):
+    """Select an installed architecture by name and declare its training settings."""
+
     definition: str | None = None
     config: Mapping[str, Value] = field(default_factory=dict)
     initialize: Weights | None = None
@@ -113,6 +115,7 @@ class Model(Record):
         implementation: str | None = None,
         config: Mapping[str, Value] | None = None,
         precision: Mapping[str, Value] | None = None,
+        trainable: Sequence[str] | None = None,
     ) -> Model:
         return cls(
             initialize=Weights.pretrained(reference, revision=revision),
@@ -120,11 +123,14 @@ class Model(Record):
             implementation=implementation,
             config=config or {},
             precision=precision or {},
+            trainable=trainable,
         )
 
 
 @dataclass(frozen=True)
 class Objective(Record):
+    """Select an installed objective by name, with structural and call defaults."""
+
     definition: str
     config: Mapping[str, Value] = field(default_factory=dict)
     defaults: Mapping[str, Value] = field(default_factory=dict)
@@ -171,6 +177,8 @@ class Objective(Record):
 
 @dataclass(frozen=True)
 class Optimizer(Record):
+    """Select an installed update rule; per-update controls belong in ``optim``."""
+
     definition: str
     defaults: Mapping[str, Value] = field(default_factory=dict)
     config: Mapping[str, Value] = field(default_factory=dict)

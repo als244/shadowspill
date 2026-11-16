@@ -219,7 +219,7 @@ def training_settings(options):
         model=Model.from_dict(options["model"]),
         objective=Objective.from_dict(options["objective"]),
         optimizer=Optimizer(
-            "mlops/adamw@1",
+            "adamw",
             defaults=options["optim"],
             precision={
                 "gradient_dtype": options.get("gradient_dtype", "float32"),

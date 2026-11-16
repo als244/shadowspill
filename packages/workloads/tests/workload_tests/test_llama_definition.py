@@ -3,6 +3,7 @@
 import subprocess
 import sys
 from contextlib import ExitStack, contextmanager
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -61,6 +62,30 @@ def settings(*, capacity=4, lora=None):
         lora=lora,
         initialize=Weights.random(seed=17),
     )
+
+
+@pytest.mark.parametrize("adapters", [False, True])
+def test_trainable_settings_select_head_and_optional_adapters_after_construction(
+    adapters,
+):
+    requested = replace(
+        settings(lora=LoRA(2, targets=["blocks.*.attn.wq"]) if adapters else None),
+        definition="llama3",
+        trainable=["*.lora_*", "lm_head.weight"] if adapters else ["lm_head.weight"],
+    )
+    resolved = load_registry(["shadowspill-workloads"]).resolve_model(
+        "llama3", settings=requested
+    )
+    with torch.device("meta"):
+        model = resolved.create()
+    actual = {
+        name for name, parameter in model.named_parameters() if parameter.requires_grad
+    }
+    expected = {"lm_head.weight"}
+    if adapters:
+        expected |= {"blocks.0.attn.wq.lora_a", "blocks.0.attn.wq.lora_b"}
+    assert actual == expected
+    assert not model.embed.weight.requires_grad
 
 
 def prepared(*, cap=8, length=4, count=4, sizes=(8,), counts=(1,), lora=None):

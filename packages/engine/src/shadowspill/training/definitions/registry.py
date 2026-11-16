@@ -42,6 +42,29 @@ if TYPE_CHECKING:
     from shadowspill.training.inputs.validation import ValidatedBatch
 
 
+def _lookup[Definition](
+    definitions: Mapping[str, tuple[Definition, DefinitionSource]],
+    name: str,
+    kind: str,
+) -> tuple[Definition, DefinitionSource]:
+    """Resolve a unique public name or an exact ID in the installed registry."""
+    if name in definitions:
+        return definitions[name]
+    matches = sorted(
+        identity
+        for identity in definitions
+        if identity.rpartition("@")[0].rsplit("/", 1)[-1] == name
+    )
+    if not matches:
+        raise ValueError(f"{kind} definition is not installed: {name}")
+    if len(matches) != 1:
+        raise ValueError(
+            f"ambiguous {kind} name {name!r}; select an exact definition ID: "
+            + ", ".join(matches)
+        )
+    return definitions[matches[0]]
+
+
 def _configuration(
     factory: Configuration, values: Mapping[str, Value]
 ) -> tuple[Any, Mapping[str, Value]]:
@@ -311,8 +334,9 @@ class Registry:
     """One explicit registry for supplied and external installed definitions.
 
     Startup code registers trusted callables with their immutable distribution
-    provenance. Lookup uses exact IDs only, including on remote requests. No
-    dynamic module names, uploaded Python or model-family branches are involved.
+    provenance. Model, objective and optimizer requests accept unique short names
+    or exact IDs. Resolved settings retain exact IDs for saved Plans and state.
+    No dynamic module names, uploaded Python or model-family branches are involved.
     """
 
     def __init__(self) -> None:
@@ -360,6 +384,9 @@ class Registry:
         weights = requested.initialize
         if weights is None or weights.kind != "pretrained" or weights.reference is None:
             raise ValueError("metadata resolution requires pretrained weights")
+        if requested.definition is not None:
+            model, _ = _lookup(self._models, requested.definition, "model")
+            requested = replace(requested, definition=model.id)
         matches = [
             (definition, source)
             for definition, source in self._references.values()
@@ -451,12 +478,7 @@ class Registry:
         source: DefinitionSource | None = None,
         settings: Optimizer | None = None,
     ) -> ResolvedOptimizer:
-        try:
-            optimizer, installed = self._optimizers[definition]
-        except KeyError as error:
-            raise ValueError(
-                f"optimizer definition is not installed: {definition}"
-            ) from error
+        optimizer, installed = _lookup(self._optimizers, definition, "optimizer")
         if source is not None and source != installed:
             raise ValueError(f"optimizer definition source changed: {definition}")
         if settings is not None:
@@ -468,6 +490,7 @@ class Registry:
                 raise ValueError(
                     "optimizer settings cannot overlap another configuration"
                 )
+            settings = replace(settings, definition=optimizer.id)
             config = constructor_config(settings, optimizer.configure)
             defaults = cast(Mapping[str, Scalar], settings.defaults)
         configured, values = _configuration(
@@ -523,17 +546,13 @@ class Registry:
         source: DefinitionSource | None = None,
         settings: Model | None = None,
     ) -> ResolvedModel:
-        try:
-            model, installed = self._models[definition]
-        except KeyError as error:
-            raise ValueError(
-                f"model definition is not installed: {definition}"
-            ) from error
+        model, installed = _lookup(self._models, definition, "model")
         if source is not None and source != installed:
             raise ValueError(f"model definition source changed: {definition}")
         if settings is not None:
             if settings.definition != definition or config is not None:
                 raise ValueError("model settings cannot overlap another configuration")
+            settings = replace(settings, definition=model.id)
             config = constructor_config(settings, model.configure)
         configured, values = _configuration(
             model.config, {} if config is None else config
@@ -564,12 +583,7 @@ class Registry:
             from .composition import resolve_sum
 
             return resolve_sum(self, model, config, defaults, source)
-        try:
-            objective, installed = self._objectives[definition]
-        except KeyError as error:
-            raise ValueError(
-                f"objective definition is not installed: {definition}"
-            ) from error
+        objective, installed = _lookup(self._objectives, definition, "objective")
         if source is not None and source != installed:
             raise ValueError(f"objective definition source changed: {definition}")
         if missing := set(objective.requires) - set(model.definition.capabilities):

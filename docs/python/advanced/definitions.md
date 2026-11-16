@@ -1,9 +1,59 @@
-# Installed model and objective definitions
+# Custom models, objectives and optimizers
 
-Register a custom model or objective through `shadowspill.training.definitions`.
+Register custom definitions through `shadowspill.training.definitions`.
 Install the engine's `training` extra on the server to use these hooks. Portable
 input and control schemas come from `shadowspill_client.protocol`. Start with
-[basic training](../../examples/client-training.md) if you are using a supplied model.
+[the catalog](../catalog.md) if you are selecting built-ins or configuring LoRA
+and trainable parameters.
+
+| Extension | What you implement |
+| --- | --- |
+| `ModelDefinition` | A configuration type, model factory, input schema and weight initializer; optional packing, precision and LoRA hooks. |
+| `ObjectiveDefinition` | A loss function, its input/control/output declarations and padding semantics. |
+| `OptimizerDefinition` | An optimizer factory and the scalar controls its captured update accepts. |
+
+All three live in your installed server package. Register them in that package's
+`register(registry)` entry point, enable the package in the server configuration,
+then select their names from the client. The engine does not need changes, and
+the client does not import your implementation.
+
+The [external classifier example](../../../packages/engine/tests/engine_tests/fixtures/external_definition.py)
+contains a complete model factory, masked weighted objective, input schemas,
+bounded random initializer and registration. Use its structure with your own
+model and loss. The [optimizer example below](#optimizer-definitions) shows the
+corresponding factory and registration for an update rule.
+
+## Registration and client selection
+
+Definition authors assign an exact identity, such as `my_project/image_classifier@1`,
+and source provenance. Callers normally select the unique short name:
+
+```python
+from shadowspill_client import Model, Objective, Optimizer, Weights
+
+model = Model("image_classifier", config={"num_classes": 3},
+              initialize=Weights.random(seed=0), trainable=["head.*"])
+objective = Objective("classification")
+optimizer = Optimizer("sgd")
+```
+
+Resolution pins exact IDs and source versions in saved configuration, Plans and
+checkpoints. If two installed packages or versions share a short name, setup
+rejects it and lists the exact IDs you can select instead. It never chooses a
+provider or a newer version implicitly. This applies equally to built-ins and
+custom definitions, including terms inside `Objective.sum(...)`.
+
+Publish a registration hook in your package's `pyproject.toml`:
+
+```toml
+[project.entry-points."shadowspill.definitions"]
+models = "my_project.definitions:register"
+```
+
+After installing that package on the server, include its distribution name in
+`Server(..., workload_packages=["my-project", "shadowspill"])`. The optional
+`"shadowspill"` entry enables built-in AdamW; omit it when your package supplies
+its own optimizer. The separate `shadowspill-workloads` catalog is optional.
 
 ## Model and objective hooks
 
@@ -27,24 +77,17 @@ declared tensor outputs and scalar metrics without computing a training loss.
 Register both with a `Registry` using `add_model` and `add_objective`. Each
 registration supplies a `DefinitionSource`: distribution name, version and
 SHA-256 digest of the definition's source closure, including model and objective
-dependencies. IDs contain an explicit version, for example
-`my_project/image_classifier@1`. Re-registering an ID is an error. Lookups do not
+dependencies. Registered IDs contain an explicit version. Re-registering an ID
+is an error. Lookups do not
 import Python modules named by requests. Supplying an expected source rejects
 changed definitions, including changes in editable installations.
-
-An installed package can publish CPU registration hooks in its `pyproject.toml`:
-
-```toml
-[project.entry-points."shadowspill.definitions"]
-models = "my_project.definitions:register"
-```
 
 `load_registry(["my-project-workloads"])` loads only the configured distributions,
 calls each `register(registry)` hook in entry-point name order, and returns the
 ordinary `Registry`. Hooks register in place and return `None`; they still supply
 the source closures described above. Missing packages, duplicate package/entry
 names and registration failures are errors. These package names belong to trusted
-server configuration; model and compute requests continue to use definition IDs.
+server configuration; model and compute requests select installed definitions.
 The supplied workloads wheel publishes the same entry-point group. This is the
 common loader for controller and fresh-phase startup.
 
@@ -56,7 +99,7 @@ shows the full interface. The supplied
 uses the same registry and its existing model. Importing either description
 requires no Torch import; model construction is explicit.
 
-`shadowspill/llama3@1` supplies packed preparation, with BF16 compute and FP32
+`llama3` supplies packed preparation, with BF16 compute and FP32
 gradients by default. `Model.precision` accepts `compute_dtype`, `grad_dtype` and `lora_dtype`
 (FP32 or BF16); optimizer masters are a separate optimizer setting. `config`
 selects a named `preset` (default `tiny`) and optional `architecture` overrides.
@@ -72,7 +115,7 @@ Explicit candidate lists replace those choices. Physical sequence slots include
 separate padding segments, preserving caller boundaries even with empty Datums.
 Every named output closure is packed and validated by the generic engine.
 
-`shadowspill/qwen3moe@1` and `shadowspill/qwen35moe@1` use the same packed
+`qwen3moe` and `qwen35moe` use the same packed
 preparation contract. They expose target logprobs and router statistics, so the
 caller explicitly chooses token-only training or a composed balancing objective.
 Settings select `preset`, architecture overrides, precision and optional LoRA;
@@ -89,7 +132,7 @@ rules and allocation contracts. The compiler fuses eligible complete, contiguous
 gradients; unsupported crops or dtype transformations retain ordinary accumulation.
 
 
-`shadowspill/olmoe@1` uses that same packed preparation, precision/LoRA settings
+`olmoe` uses that same packed preparation, precision/LoRA settings
 and bounded random initializer. Its model exposes the same router-statistics
 capability; no OLMoE-specific loss is required. To retain OLMoE's layer aggregation,
 configure the shared balancing term with `layer_reduction="sum"` and
@@ -109,8 +152,8 @@ worker treats that installed provider snapshot as immutable for its lifetime.
 
 ## Text objectives
 
-The workloads entry point also installs `shadowspill/cross_entropy@1` and
-`shadowspill/clipped_policy@1`. A compatible model declares the `target_logprobs`
+The workloads entry point also installs `cross_entropy` and
+`clipped_policy`. A compatible model declares the `target_logprobs`
 capability, a bounded integer `tokens` field with one symbolic position dimension,
 and a `target_logprobs(targets=..., **inputs)` method returning aligned target
 logprobs. The model owns its fused or chunked head; the objective never asks it
@@ -372,14 +415,14 @@ and `padding_safe=False`. Its loss and gradients can change with the selected
 buffer size, padding and split calls. Preparation records this distinction; it
 does not change batching, capacity limits or all-masked update skipping.
 
-`shadowspill/moe_balance@1` supplies reusable softmax router balancing. Compose
+`moe_balance` supplies reusable softmax router balancing. Compose
 it with cross entropy, clipped policy or another compatible token objective:
 
 ```python
 objective = Objective.sum(
     {
-        "tokens": Objective("shadowspill/cross_entropy@1"),
-        "balance": Objective("shadowspill/moe_balance@1"),
+        "tokens": Objective("cross_entropy"),
+        "balance": Objective("moe_balance"),
     },
     weights={"balance": 0.001},
 )
@@ -562,9 +605,46 @@ Static options and unused tensors cannot be advertised as runtime overrides.
 The registry resolves nonsticky defaults before construction; it does not run
 optimizer steps or introduce another optimizer implementation.
 
+For example, this factory wraps PyTorch SGD. Put it in your server package and
+call `register_optimizer` from its registration entry point:
+
+```python
+from shadowspill.training.definitions import OptimizerDefinition
+from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
+
+
+def create_sgd(model, config, controls):
+    import torch
+
+    return torch.optim.SGD(
+        (parameter for parameter in model.parameters() if parameter.requires_grad),
+        lr=controls["lr"],
+        foreach=False,
+    )
+
+
+def register_optimizer(registry, source):
+    registry.add_optimizer(
+        OptimizerDefinition(
+            "my_project/sgd@1",
+            create_sgd,
+            ControlSchema({"lr": ScalarControl(0.01, minimum=0)}),
+            {"lr": ("optimizer_group.0.lr",)},
+        ),
+        source=source,
+    )
+```
+
+`source` is the package's `DefinitionSource`, covering this factory and its
+implementation dependencies. The default LR is used for preparation and omitted
+controls; callers normally supply `optim={"lr": ...}` to each update. Your
+optimizer's update must be capturable by the existing engine. Custom optimizer
+functions can be exposed through the same factory contract; arbitrary Python
+functions are not uploaded or executed from client requests.
+
 The engine distribution publishes an optional optimizer registration hook. Include
 `"shadowspill"` in the server's `workload_packages` alongside your installed model
-package to enable `Optimizer("mlops/adamw@1")`. This requires MLOps on the server;
+package to enable `Optimizer("adamw")`. This requires MLOps on the server;
 external packages can supply their own optimizers without loading this hook.
 Registration hashes the installed provider source without importing Torch or
 constructing an optimizer. Construction calls the existing `mlops.optim.AdamW`.
@@ -583,12 +663,12 @@ its default is `None` (no master copy). Unsupported groups and precision
 options fail during description. For the existing FP32 regression recipe, specify
 `precision={"opt_state_dtype": "float32"}` to preserve its optimizer settings.
 
-The supplied `shadowspill/regression@1` definition accepts explicit
+The supplied `regression` definition accepts explicit
 `Weights.random(seed=...)` initialization and compatible checkpoints. Seed zero
 reproduces the original regression recipe's initialization, independently of
 worker ownership and loader chunk sizes. Its `predictions` output needs only
 `Datum.inputs["value"]` (16 FP32 values), and evaluation leaves the model's
-training counter unchanged. `shadowspill/weighted_squared_error@1` takes eight
+training counter unchanged. `weighted_squared_error` takes eight
 FP32 targets per Datum, optional scalar `weights` and boolean `valid`, and returns
 the weighted squared-error sum. To reproduce the original global mean, supply
 `weights=1 / (8 * number_of_global_examples)`; the engine adds no normalization.
@@ -600,6 +680,4 @@ Saved geometry, parameter ownership and physical storage bindings remain distinc
 The inventory serializes without importing Torch or the SDK. It detects layout,
 optimizer-family and alias conflicts when matching state between Programs, and
 refuses to alias different logical workers. This is the shared description for
-shared mutable Executor Plans and upcoming checkpoint conversion. The current
-public Trainer still accepts its existing step/evaluation interface; the client
-service integration is under development.
+shared mutable Executor Plans and checkpoint conversion.

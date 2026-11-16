@@ -30,13 +30,13 @@ from shadowspill_client import BatchConfig, Memory, Model, Objective, Optimizer,
 
 training = service.create_training_client(
     model=Model(
-        "shadowspill/llama3@1",
+        "llama3",
         config={"preset": "tiny"},
         initialize=Weights.random(seed=0),
     ),
-    objective=Objective("shadowspill/cross_entropy@1"),
+    objective=Objective("cross_entropy"),
     optimizer=Optimizer(
-        "mlops/adamw@1",
+        "adamw",
         precision={"gradient_dtype": "float32", "opt_state_dtype": "float32",
                    "master_dtype": "float32"},
     ),
@@ -62,6 +62,10 @@ weights and starts workers. `.result()` waits until the training client is ready
 Do this once before the loop; each `step()` then supplies only a batch and any
 per-update settings. The [complete example](../examples/client-training.md) also
 sets the vocabulary size from your corpus and constructs its input batches.
+
+The [catalog](catalog.md) lists built-in models, optimizers and objectives, with
+examples for LoRA, freezing parameters and combining objectives. Installed custom
+definitions use the same settings.
 
 Python's `**settings` notation would expand a dictionary into these same named
 arguments. It is ordinary Python syntax, not an additional setup object or a

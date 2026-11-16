@@ -5,6 +5,7 @@
 model and workers; the client submits batches and reads results.
 
 - [Client API](python/client.md): training settings, updates and checkpoints.
+- [Models, optimizers and objectives](python/catalog.md): built-ins, LoRA and freezing.
 - [Examples](examples/README.md): Llama, Qwen and custom training workflows.
 - [Advanced usage](python/advanced/README.md): preparation tuning, split updates,
   custom definitions, recovery and diagnostics.

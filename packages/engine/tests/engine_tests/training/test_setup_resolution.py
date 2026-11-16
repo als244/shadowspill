@@ -54,6 +54,62 @@ def arguments():
     )
 
 
+def short_arguments():
+    args = arguments()
+    for kind in ("model", "objective", "optimizer"):
+        args[kind] = replace(
+            args[kind], definition=args[kind].definition.split("/")[-1].split("@")[0]
+        )
+    return args
+
+
+def test_short_names_pin_the_same_complete_setup_as_exact_ids():
+    registry = installed()
+    expected = resolve_training(registry, **arguments()).config
+    actual = resolve_training(registry, **short_arguments()).config
+    assert encode(actual) == encode(expected)
+    assert resolve_training(registry, config=decode(encode(actual))).config == expected
+
+
+@pytest.mark.parametrize("kind", ["model", "objective", "optimizer"])
+@pytest.mark.parametrize("collision", ["other_package", "another_version"])
+def test_short_name_collisions_reject_new_requests_but_preserve_saved_pins(
+    kind, collision
+):
+    registry = installed()
+    setup = resolve_training(registry, **short_arguments())
+    resolved = getattr(setup, kind)
+    original = resolved.definition.id
+    alternate = (
+        "other/" + original.split("/")[-1]
+        if collision == "other_package"
+        else original.rsplit("@", 1)[0] + "@2"
+    )
+    getattr(registry, f"add_{kind}")(
+        replace(resolved.definition, id=alternate), source=resolved.source
+    )
+    with pytest.raises(ValueError, match=f"ambiguous {kind} name") as error:
+        resolve_training(registry, **short_arguments())
+    assert original in str(error.value) and alternate in str(error.value)
+    assert resolve_training(registry, config=setup.config).config == setup.config
+
+
+@pytest.mark.parametrize("kind", ["model", "objective", "optimizer"])
+def test_saved_settings_require_canonical_ids_instead_of_new_name_lookups(kind):
+    registry = installed()
+    config = resolve_training(registry, **short_arguments()).config
+    changed = replace(
+        config,
+        **{
+            kind: replace(
+                getattr(config, kind), definition=short_arguments()[kind].definition
+            )
+        },
+    )
+    with pytest.raises(ValueError, match="not fully resolved"):
+        resolve_training(registry, config=changed)
+
+
 def test_inspection_and_creation_use_one_snapshot_without_model_construction():
     m, _, p = definitions()
 
@@ -207,7 +263,12 @@ def test_every_requested_batch_is_retained_and_multiworker_placement_is_explicit
         )
 
 
-def test_pretrained_metadata_pins_revision_preserves_overrides_and_rechecks_that_pin():
+@pytest.mark.parametrize(
+    "name", [None, "image_classifier", "external/image_classifier@1"]
+)
+def test_pretrained_metadata_pins_revision_preserves_overrides_and_rechecks_that_pin(
+    name,
+):
     registry = installed()
     revisions = []
 
@@ -229,8 +290,9 @@ def test_pretrained_metadata_pins_revision_preserves_overrides_and_rechecks_that
     registry.add_model_reference(resolver, source=SOURCE)
     args = {
         **arguments(),
-        "model": Model.from_pretrained(
-            "fixture://classifier", config={"num_classes": 5}
+        "model": replace(
+            Model.from_pretrained("fixture://classifier", config={"num_classes": 5}),
+            definition=name,
         ),
     }
     prepared = resolve_training(registry, **args)
@@ -457,8 +519,8 @@ def test_generic_trainable_selection_preserves_ties_and_checks_all_names_first()
     assert not any(p.requires_grad for p in model.parameters())
     assert id(model.right.weight) == identity
     resolved = installed().resolve_model(
-        "external/image_classifier@1",
-        settings=Model("external/image_classifier@1", trainable=["head.weight"]),
+        "image_classifier",
+        settings=Model("image_classifier", trainable=["head.weight"]),
     )
     created = resolved.create()
     assert created.head.weight.requires_grad and not created.head.bias.requires_grad

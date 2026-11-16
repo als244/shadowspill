@@ -23,6 +23,7 @@ from workload_tests.test_llama_definition import settings
 def options(policy=False, *, seed=17, initial_weights=None):
     requested = replace(
         settings(lora=LoRA(2, targets=["blocks.*.attn.wq"]) if policy else None),
+        definition="llama3",
         precision={"compute_dtype": "bfloat16", "lora_dtype": "bfloat16"},
         initialize=Weights.random(seed=seed),
     )
@@ -168,10 +169,10 @@ def options(policy=False, *, seed=17, initial_weights=None):
     return {
         "model": requested.to_dict(),
         "objective": Objective(
-            "shadowspill/clipped_policy@1", config={"reference_penalty": "k3"}
+            "clipped_policy", config={"reference_penalty": "k3"}
         ).to_dict()
         if policy
-        else Objective("shadowspill/cross_entropy@1").to_dict(),
+        else Objective("cross_entropy").to_dict(),
         "optim": optim,
         "controls": controls,
         "records": records,

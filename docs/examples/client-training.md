@@ -54,15 +54,15 @@ if len(tokens) < steps * window:
 def prepare_training(service):
     return service.create_training_client(
         model=Model(
-            "shadowspill/llama3@1",
+            "llama3",
             config={"preset": "tiny", "architecture": {
                 "vocab_size": vocab_size, "max_seq_len": sequence_length,
             }},
             initialize=Weights.random(seed=0),
         ),
-        objective=Objective("shadowspill/cross_entropy@1"),
+        objective=Objective("cross_entropy"),
         optimizer=Optimizer(
-            "mlops/adamw@1",
+            "adamw",
             precision={"gradient_dtype": "float32", "opt_state_dtype": "float32",
                        "master_dtype": "float32"},
         ),

@@ -110,8 +110,10 @@ from engine_tests.fixtures.external_definition import register
 from shadowspill.training.definitions import Registry
 registry = Registry()
 register(registry)
-model = registry.resolve_model('external/image_classifier@1')
-objective = registry.resolve_objective('external/classification@1', model=model)
+model = registry.resolve_model('image_classifier')
+objective = registry.resolve_objective('classification', model=model)
+assert model.definition.id == 'external/image_classifier@1'
+assert objective.definition.id == 'external/classification@1'
 assert objective.defaults == {'temperature': 1.0}
 assert 'torch' not in sys.modules
 assert model.create().head.out_features == 3

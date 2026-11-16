@@ -60,7 +60,12 @@ def test_resolved_weight_metadata_is_owned_and_roundtrips_with_the_model():
             initialize=Weights.random(seed=123),
             trainable=["projection.weight"],
         ),
-        Model.from_pretrained("org/model", revision="exact-revision", lora=LoRA(8)),
+        Model.from_pretrained(
+            "org/model",
+            revision="exact-revision",
+            lora=LoRA(8),
+            trainable=["*.lora_*", "head.weight"],
+        ),
         Objective("clipped_policy", config={"reference_penalty": "k3"}),
         Optimizer("adamw", defaults={"lr": 0.001}, groups={"head": ["head.weight"]}),
         BatchConfig(limits={"max_examples": 64}, typical={"height": 224}),
@@ -157,9 +162,10 @@ class Block(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, Block())
 from shadowspill_client import Model, LoRA, BatchConfig, Objective
 from shadowspill_client.protocol.codec import encode, decode
-model = Model.from_pretrained('org/model', lora=LoRA(8))
+model = Model.from_pretrained('org/model', lora=LoRA(8), trainable=['head.weight'])
 assert decode(encode(model)) == model
 assert model.initialize.reference == 'org/model'
+assert model.trainable == ('head.weight',)
 assert BatchConfig(limits={'max_examples': 4})
 assert Objective('external/classification@1')
 """,

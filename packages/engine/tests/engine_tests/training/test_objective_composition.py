@@ -127,6 +127,38 @@ def fixture(*, second=None):
     return registry, model, settings, resolved
 
 
+def test_composed_short_objective_names_pin_every_child_definition():
+    registry, model, settings, expected = fixture()
+    short = Objective.sum(
+        {
+            "squared": Objective("squared", defaults={"offset": 0.2}),
+            "absolute": Objective("absolute"),
+        },
+        weights={"absolute": 0.3},
+    )
+    actual = registry.resolve_objective(
+        short.definition, model=model, config=short.config, defaults=short.defaults
+    )
+    assert actual.config == expected.config
+    assert actual.source == expected.source
+    assert actual.defaults == expected.defaults
+    assert actual.config["terms"]["squared"]["definition"] == "external/squared@1"
+    squared = registry.resolve_objective("squared", model=model)
+    registry.add_objective(
+        replace(squared.definition, id="other/squared@1"), source=SOURCE
+    )
+    with pytest.raises(ValueError, match="ambiguous objective name"):
+        registry.resolve_objective(short.definition, model=model, config=short.config)
+    pinned = registry.resolve_objective(
+        settings.definition,
+        model=model,
+        config=actual.config,
+        defaults=actual.defaults,
+        source=actual.source,
+    )
+    assert pinned.config == actual.config
+
+
 @pytest.mark.parametrize("split", [False, True])
 def test_weighted_sum_two_updates_and_each_gradient_use_one_evaluation(split):
     _, description, _, objective = fixture()

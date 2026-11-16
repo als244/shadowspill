@@ -48,10 +48,10 @@ from shadowspill_client import (
 )
 
 setup = dict(
-    model=Model("shadowspill/regression@1", initialize=Weights.random(seed=0)),
-    objective=Objective("shadowspill/weighted_squared_error@1"),
+    model=Model("regression", initialize=Weights.random(seed=0)),
+    objective=Objective("weighted_squared_error"),
     optimizer=Optimizer(
-        "mlops/adamw@1",
+        "adamw",
         precision={"gradient_dtype": "float32", "opt_state_dtype": "float32"},
     ),
     batch=BatchConfig(limits={"max_examples": 8}),
