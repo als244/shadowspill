@@ -2,7 +2,7 @@
 
 from shadowspill.integrations.mlops import operator_chunk_rules, sonicmoe_chunk_rules
 from shadowspill_workloads.models.shared.execution import text_execution_chunks
-from shadowspill_workloads.recipes.text.retention import graph_pair_policy
+from shadowspill_workloads.models.shared.retention import graph_pair_policy
 
 
 def build_options(options, batch_size):

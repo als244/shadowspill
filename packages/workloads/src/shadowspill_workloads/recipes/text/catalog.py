@@ -92,8 +92,8 @@ def setup(options, *, rank=0):
     from shadowspill import Parallelism
     from shadowspill.training.preparation.contracts import BuildSetup
     from shadowspill_workloads.models.catalog import entry
+    from shadowspill_workloads.models.shared.execution_policies import build_options
     from shadowspill_workloads.models.shared.preparation import operator_preparations
-    from shadowspill_workloads.recipes.text.execution_policies import build_options
     from shadowspill_workloads.recipes.text.objectives import (
         normalized_next_token_prediction,
     )
