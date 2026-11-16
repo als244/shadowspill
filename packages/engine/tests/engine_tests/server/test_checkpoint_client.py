@@ -7,7 +7,7 @@ from threading import Event
 
 import pytest
 
-from engine_tests.server.test_http import TOKEN, endpoint
+from engine_tests.server.test_http import TOKEN, controller_lifecycle, endpoint
 from engine_tests.server.test_request_records import IDENTITY
 from engine_tests.server.test_request_records import store as records_store
 from engine_tests.server.test_service_client import address
@@ -85,6 +85,7 @@ def connected(root, *, completed_updates=0, weights=False):
                     plans=http.artifacts.get("plans"),
                     initial_history_id="history",
                 )
+                http.service.jobs = controller_lifecycle(info, lambda: workers.closed)
                 client = TrainingClient(service, info, config, records.writer)
                 yield client, service, http, records, controller, workers
         finally:

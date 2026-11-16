@@ -39,6 +39,24 @@ OTHER_TOKEN = "other-test-" + "b" * 32
 ROOT = "/v1/runs/session/run"
 
 
+def controller_lifecycle(info, closed):
+    """Read-only lifecycle for fixtures owning workers without creation jobs."""
+    return SimpleNamespace(
+        storage=SimpleNamespace(
+            catalog=SimpleNamespace(
+                get=lambda identity: (
+                    replace(info, state="closed") if closed() else info
+                )
+                if (identity.owner_id, identity.session_id, identity.run_id)
+                == (info.owner_id, info.session_id, info.run_id)
+                else None
+            )
+        ),
+        available=lambda _: not closed(),
+        retired=lambda _: closed(),
+    )
+
+
 @contextmanager
 def endpoint(
     tmp_path,

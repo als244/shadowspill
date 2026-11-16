@@ -242,9 +242,13 @@ def test_manifest_failure_retains_files_and_retries_after_confirmed_worker_exit(
             owner = ctx.owners[0]
             node = owner._node
             monkeypatch.setattr(live_module, "finalize_manifest", publish)
+            closing = training.close()
             try:
-                result = training.close().result(5)
-                assert result.state_valid and failed.wait(5)
+                assert failed.wait(5)
+                status = training.requests.status(closing.request_id).result(5)
+                assert status.result is not None and status.result.state_valid
+                with pytest.raises(TimeoutError):
+                    closing.result(0.01)
                 assert node.lease.closed and not node.closed and not owner.closed
                 assert ctx.disk.used[0] > 0 and not ctx.node.used.devices
                 assert training.nsys().result(5).record.status == "pending"
@@ -253,7 +257,8 @@ def test_manifest_failure_retains_files_and_retries_after_confirmed_worker_exit(
                 )
             finally:
                 retry.set()
-            until(lambda: ctx.jobs.used == (0, 0))
+            result = closing.result(5)
+            assert ctx.jobs.used == (0, 0)
             capture = training.nsys().result(5)
             assert capture.record.status == "ready"
             assert node.closed and owner.closed and ctx.disk.used == (0, 0)

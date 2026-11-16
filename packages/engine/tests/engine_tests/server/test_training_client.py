@@ -3,12 +3,11 @@
 from contextlib import contextmanager
 from dataclasses import replace
 from threading import Event, Thread
-from types import SimpleNamespace
 
 import pytest
 
 from engine_tests.fixtures.definition_operations import records
-from engine_tests.server.test_http import ROOT, TOKEN, endpoint
+from engine_tests.server.test_http import ROOT, TOKEN, controller_lifecycle, endpoint
 from engine_tests.server.test_http_creation import endpoint as creation_endpoint
 from engine_tests.server.test_jobs import until
 from engine_tests.server.test_local_creation import configured as creation_service
@@ -47,22 +46,7 @@ def runtime(tmp_path, **options):
             # This fixture owns a controller directly, without creation jobs.
             # Its worker close is its entire retirement boundary. Real service
             # lifetime/creation envelopes are exercised separately below.
-            ctx.service.jobs = SimpleNamespace(
-                storage=SimpleNamespace(
-                    catalog=SimpleNamespace(
-                        get=lambda identity: (
-                            replace(info, state="closed")
-                            if run.workers.closed
-                            else info
-                        )
-                        if (identity.owner_id, identity.session_id, identity.run_id)
-                        == (info.owner_id, info.session_id, info.run_id)
-                        else None
-                    )
-                ),
-                available=lambda _: not run.workers.closed,
-                retired=lambda _: run.workers.closed,
-            )
+            ctx.service.jobs = controller_lifecycle(info, lambda: run.workers.closed)
             writer = service._request("POST", ROOT + "/writers/client", WriterLease)
             training = TrainingClient(
                 service, info, run.controller._prepared.setup.config, writer
