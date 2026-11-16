@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tarfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import replace
@@ -117,30 +118,47 @@ def read_rank(
         manifest = _manifest(archive, state)
         omitted = validate_restore(state, manifest, frozen_state_id)
         chunks = {chunk.name: chunk for chunk in state.tensor_chunks()}
-        reader = _Reader(archive, manifest, chunks, omitted)
-        stored = {name: chunks[name] for name in reader.entries}
-        if any(chunk.dtype.itemsize > chunk_bytes for chunk in stored.values()):
-            raise ValueError("checkpoint source chunk budget cannot hold one element")
-        width = min(
-            chunk_bytes, max((e["bytes"] for e in reader.entries.values()), default=0)
-        )
-        scratch = torch.empty(width, dtype=torch.uint8, device="cpu")
-        for name, chunk in stored.items():
-            entry = reader.entries[name]
-            step = chunk_bytes // chunk.dtype.itemsize
-            elements = entry["bytes"] // chunk.dtype.itemsize
-            for start in range(0, elements, step):
-                count = min(step, elements - start)
-                part = scratch[: count * chunk.dtype.itemsize].view(chunk.dtype)
-                reader.fill(replace(chunk, offset=chunk.region_offset + start), part)
-                del part
-        del scratch
-        if _signature(archive.fileobj) != initial:
-            raise ValueError("checkpoint source changed during verification")
-        source = RankReader(reader, stored, manifest, chunk_bytes)
-        try:
+        with _verified_reader(
+            archive, manifest, chunks, omitted, chunk_bytes=chunk_bytes, initial=initial
+        ) as source:
             yield source
-            if _signature(archive.fileobj) != initial:
-                raise ValueError("checkpoint source changed during conversion")
-        finally:
-            source.closed = True
+
+
+@contextmanager
+def _verified_reader(
+    archive: tarfile.TarFile,
+    manifest: dict[str, Any],
+    chunks: dict[str, TensorChunk],
+    omitted: set[str],
+    *,
+    chunk_bytes: int,
+    initial: tuple[int, ...],
+) -> Iterator[RankReader]:
+    """Shared payload verification and borrowed-reader lifetime after validation."""
+    reader = _Reader(archive, manifest, chunks, omitted)
+    stored = {name: chunks[name] for name in reader.entries}
+    if any(chunk.dtype.itemsize > chunk_bytes for chunk in stored.values()):
+        raise ValueError("checkpoint source chunk budget cannot hold one element")
+    width = min(
+        chunk_bytes, max((e["bytes"] for e in reader.entries.values()), default=0)
+    )
+    scratch = torch.empty(width, dtype=torch.uint8, device="cpu")
+    for name, chunk in stored.items():
+        entry = reader.entries[name]
+        step = chunk_bytes // chunk.dtype.itemsize
+        elements = entry["bytes"] // chunk.dtype.itemsize
+        for start in range(0, elements, step):
+            count = min(step, elements - start)
+            part = scratch[: count * chunk.dtype.itemsize].view(chunk.dtype)
+            reader.fill(replace(chunk, offset=chunk.region_offset + start), part)
+            del part
+    del scratch
+    if _signature(archive.fileobj) != initial:
+        raise ValueError("checkpoint source changed during verification")
+    source = RankReader(reader, stored, manifest, chunk_bytes)
+    try:
+        yield source
+        if _signature(archive.fileobj) != initial:
+            raise ValueError("checkpoint source changed during conversion")
+    finally:
+        source.closed = True
