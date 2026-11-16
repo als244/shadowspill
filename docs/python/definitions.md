@@ -90,15 +90,18 @@ pending gradients, masked updates skip, and checkpoint continuation is bitwise
 identical. The strict FP32 oracle test uses IEEE Triton products; production
 provider defaults are unchanged. Qwen3 BF16 full/LoRA public training also passes
 independent CPU update checks and bitwise checkpoint continuation on Chicago's
-fallback provider. Its numerical checks compare each parameter's update norm,
-including signed token contributions, with FP32 master weights and AdamW moments.
+fallback provider and H100 Sonic kernels. Its numerical checks compare each
+parameter's update norm, including signed token contributions, with FP32 master
+weights and AdamW moments.
 
 BF16 MoE definitions request the existing provider preparation lifecycle and pin
 Quack, SonicMoE and Cutlass sources. The provider selects supported kernels during
 build and restores the saved choices during execution. Allocation contracts cover
-ordinary unquantized BF16 Sonic calls and their prepared activation wrapper;
-H100 execution qualification remains pending. FP8, expert parallelism and fused
-gradient-destination variants require separate contracts and qualification.
+ordinary unquantized BF16 Sonic calls and their prepared activation wrapper.
+The H100 checks confirm actual Sonic calls and saved preparation manifests in
+both full and LoRA Plans. They cover BF16 compute/gradients; cold-cache execution
+without compilation, FP32-gradient production paths, FP8, expert parallelism and
+fused gradient-destination variants require separate qualification.
 
 `shadowspill/olmoe@1` uses that same packed preparation, precision/LoRA settings
 and bounded random initializer. Its model exposes the same router-statistics
