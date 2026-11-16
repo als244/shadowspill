@@ -108,8 +108,9 @@ def checkpoint(directory, family, model):
 @pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("lora", [False, True])
 @pytest.mark.parametrize("dtype", ["float32", "bfloat16"])
+@pytest.mark.parametrize("source_kind", ["hub", "local"])
 def test_pretrained_chunks_reproduce_weights_rotary_and_fresh_lora(
-    tmp_path, monkeypatch, family, lora, dtype
+    tmp_path, monkeypatch, family, lora, dtype, source_kind
 ):
     import huggingface_hub as provider
 
@@ -135,7 +136,7 @@ def test_pretrained_chunks_reproduce_weights_rotary_and_fresh_lora(
         provider, "try_to_load_from_cache", lambda ref, name, **k: str(source / name)
     )
     requested = Model.from_pretrained(
-        f"fixture/{family}",
+        f"fixture/{family}" if source_kind == "hub" else str(source),
         lora=desired.lora,
         config={"architecture": {"max_seq_len": 8}},
         precision={"compute_dtype": dtype, "lora_dtype": "float32"},

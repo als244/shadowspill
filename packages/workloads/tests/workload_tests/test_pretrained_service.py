@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -21,8 +22,9 @@ from workload_tests.test_pretrained_metadata import REVISION
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("policy", [False, True])
+@pytest.mark.parametrize("source_kind", ["hub", "local"])
 def test_public_pretrained_step_split_and_checkpoint_resume(
-    tmp_path, monkeypatch, policy
+    tmp_path, monkeypatch, policy, source_kind
 ):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -38,20 +40,23 @@ def test_public_pretrained_step_split_and_checkpoint_resume(
     source.mkdir()
     checkpoint(source, "llama3", base)
     value["model"] = Model.from_pretrained(
-        "fixture/llama",
-        revision=REVISION,
+        "fixture/llama" if source_kind == "hub" else str(source),
+        revision=REVISION if source_kind == "hub" else None,
         lora=requested.lora,
         precision=requested.precision,
         config=requested.config,
     ).to_dict()
     value["exact_resume"] = True
     value["fresh_saved_plans"] = options(policy, seed=29)
-    value["model_description"] = "pretrained packed Llama over bounded HTTP" + (
+    value["model_description"] = f"pretrained packed Llama from {source_kind}" + (
         ", LoRA policy" if policy else ", full CE"
     )
     (tmp_path / "setup.json").write_text(json.dumps(value))
-    with serve_hub(source) as (endpoint, requests):
-        monkeypatch.setenv("HF_ENDPOINT", endpoint)
+    original = {p.name: p.read_bytes() for p in source.iterdir()}
+    connection = serve_hub(source) if source_kind == "hub" else nullcontext((None, []))
+    with connection as (endpoint, requests):
+        if endpoint is not None:
+            monkeypatch.setenv("HF_ENDPOINT", endpoint)
         monkeypatch.setenv("HF_HOME", str(tmp_path / "isolated-hub-cache"))
         server = subprocess.run(
             [
@@ -74,7 +79,12 @@ def test_public_pretrained_step_split_and_checkpoint_resume(
     assert receipt["whole_split_equivalence"] and receipt["evaluation_isolation"]
     assert receipt["adamw_resume"] and receipt["exact_resume"]
     assert receipt["fresh_saved_plans"] and len(receipt["runs"]) == 4
-    assert any(
-        method == "GET" and name.endswith(".safetensors") for method, name in requests
-    )
+    if source_kind == "hub":
+        assert any(
+            method == "GET" and name.endswith(".safetensors")
+            for method, name in requests
+        )
+    else:
+        assert not requests
+    assert {p.name: p.read_bytes() for p in source.iterdir()} == original
     assert not list((tmp_path / "cache").glob("initialization-*"))

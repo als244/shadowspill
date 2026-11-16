@@ -251,8 +251,20 @@ It imports no tensor framework and executes no repository Python. An explicit
 capacity; overrides that change stored tensor geometry are rejected. Other model
 settings, including explicit precision and LoRA targets, remain caller-owned.
 Installed compute/gradient precision defaults apply independently of the stored
-weight dtype. The server's ordinary Hub authentication and endpoint settings apply;
-the client supplies a repository ID, never a path on the server.
+weight dtype. For Hub references, the server's ordinary Hub authentication and
+endpoint settings apply, and the client supplies a repository ID.
+
+The supplied `shadowspill/local_safetensors@1` resolver also accepts an absolute
+server path through the same `Model.from_pretrained("/checkpoints/model", ...)`
+call. It supports those same four families and checkpoint overrides. First
+resolution fingerprints the files with bounded SHA256 reads; this scans the
+checkpoint payload once without constructing tensors. Reusing the resolved setup
+rechecks bounded config/index/header metadata without repeating that scan.
+Workers verify all content checksums before and after initialization. The source
+must stay unchanged while it is read. A private temporary directory exposes only
+the pinned files through links, then is removed; the source checkpoint is neither
+modified nor copied. Local loading uses the same bounded readers and initializer
+limits as Hub loading. Paths are interpreted on the server, never on the laptop.
 
 The supplied pretrained loader verifies content checksums, streams downloads in
 1 MiB chunks and uses the existing parameter-range readers. Compatible cached Hub

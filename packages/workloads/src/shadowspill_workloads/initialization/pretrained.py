@@ -5,7 +5,7 @@ from dataclasses import asdict
 
 from shadowspill.training.definitions import ModelInitialization
 
-from . import hub_files, weight_files
+from . import hub_files, local_files, weight_files
 from .hub import immutable_revision
 
 
@@ -32,6 +32,29 @@ def describe(family, config, context):
             peak_bytes=(32 << 20) + 32 * width,
             chunk_bytes=1 << 20,
             open=open_random,
+        )
+    if weights.kind == "pretrained" and local_files.accepts(weights.reference):
+        if set(weights.metadata) != {"files"}:
+            raise ValueError("local checkpoint requires a resolved file manifest")
+        manifest = weight_files.files(weights.metadata["files"])
+        if weights.revision != local_files.revision(manifest):
+            raise ValueError("local checkpoint manifest differs from its revision")
+
+        @contextmanager
+        def open_local(runtime):
+            from .text import FromCheckpoint
+
+            with (
+                local_files.snapshot(weights.reference, manifest, runtime) as directory,
+                FromCheckpoint(family, directory, **asdict(config)) as loader,
+            ):
+                yield loader
+
+        return ModelInitialization(
+            peak_bytes=(224 << 20) + 32 * width,
+            chunk_bytes=1 << 20,
+            open=open_local,
+            disk_bytes=local_files.disk_bytes(manifest),
         )
     if weights.kind != "pretrained" or not immutable_revision(weights.revision):
         raise ValueError("catalog initialization requires random or pinned Hub weights")

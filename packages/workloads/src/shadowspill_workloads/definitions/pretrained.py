@@ -5,7 +5,7 @@ from importlib import import_module
 
 from shadowspill.training.definitions import ModelReferenceDefinition
 from shadowspill_client._records import plain
-from shadowspill_workloads.initialization import hub, hub_files
+from shadowspill_workloads.initialization import hub, hub_files, local_files
 
 from .source import definition_source
 
@@ -93,6 +93,27 @@ def _supported(text, config, family):
 def resolve(requested):
     weights = requested.initialize
     revision, metadata = hub.config(weights.reference, weights.revision)
+    return _resolved(
+        requested, revision, metadata, hub_files.describe(weights.reference, revision)
+    )
+
+
+def resolve_local(requested):
+    weights = requested.initialize
+    if weights.metadata and set(weights.metadata) != {"files"}:
+        raise ValueError("local checkpoint requires a resolved file manifest")
+    reference, metadata, manifest = local_files.describe(
+        weights.reference, weights.metadata.get("files")
+    )
+    revision = local_files.revision(manifest)
+    if weights.revision is not None and weights.revision != revision:
+        raise ValueError("local checkpoint differs from its pinned content revision")
+    requested = replace(requested, initialize=replace(weights, reference=reference))
+    return _resolved(requested, revision, metadata, [asdict(file) for file in manifest])
+
+
+def _resolved(requested, revision, metadata, manifest):
+    weights = requested.initialize
     config = plain(requested.config)
     overrides = config.get("architecture", {})
     if not isinstance(overrides, dict):
@@ -105,26 +126,35 @@ def resolve(requested):
         initialize=replace(
             weights,
             revision=revision,
-            metadata={"files": hub_files.describe(weights.reference, revision)},
+            metadata={"files": manifest},
         ),
     )
 
 
 def register(registry):
-    registry.add_model_reference(
-        ModelReferenceDefinition("shadowspill/huggingface@1", hub.accepts, resolve),
-        source=definition_source(
-            (
-                "definitions/pretrained.py",
-                "initialization/hub.py",
-                "initialization/hub_files.py",
-                "initialization/weight_files.py",
-                "models/llama3/config.py",
-                "models/olmoe/config.py",
-                "models/qwen3moe/config.py",
-                "models/qwen35moe/config.py",
-                "models/shared/qwen_moe/config.py",
-            ),
-            providers=("huggingface_hub", "httpx", "httpcore", "httpx2", "httpcore2"),
+    source = definition_source(
+        (
+            "definitions/pretrained.py",
+            "initialization/hub.py",
+            "initialization/hub_files.py",
+            "initialization/weight_files.py",
+            "initialization/local_files.py",
+            "initialization/headers.py",
+            "models/llama3/config.py",
+            "models/olmoe/config.py",
+            "models/qwen3moe/config.py",
+            "models/qwen35moe/config.py",
+            "models/shared/qwen_moe/config.py",
         ),
+        providers=("huggingface_hub", "httpx", "httpcore", "httpx2", "httpcore2"),
     )
+    for name, accepts, resolve_reference in (
+        ("huggingface", hub.accepts, resolve),
+        ("local_safetensors", local_files.accepts, resolve_local),
+    ):
+        registry.add_model_reference(
+            ModelReferenceDefinition(
+                f"shadowspill/{name}@1", accepts, resolve_reference
+            ),
+            source=source,
+        )
