@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import os
 import zipfile
-from collections.abc import Buffer, Mapping
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any
 
+from shadowspill.artifacts._bounded_io import _BoundedWriter
 from shadowspill.artifacts._values import encoded
 from shadowspill_client._records import integer
 
@@ -54,26 +54,6 @@ def _hash(path: Path) -> str:
         while chunk := stream.read(_COPY_BYTES):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-class _BoundedWriter(io.BufferedIOBase):
-    def __init__(self, stream: BinaryIO, limit: int) -> None:
-        self._stream, self._limit = stream, limit
-
-    def write(self, buffer: Buffer, /) -> int:
-        data = memoryview(buffer)
-        if self.tell() + data.nbytes > self._limit:
-            raise ValueError("preparation export exceeds its reserved disk envelope")
-        return self._stream.write(data)
-
-    def tell(self) -> int:
-        return self._stream.tell()
-
-    def seek(self, offset: int, whence: int = 0) -> int:
-        return self._stream.seek(offset, whence)
-
-    def flush(self) -> None:
-        self._stream.flush()
 
 
 def export_measurements(
