@@ -12,7 +12,7 @@ import pytest
 from examples.regression_training import main
 from examples.training.application.setup import start
 from examples.training.regression.data import SyntheticBatches
-from examples.training.regression.setup import APPLICATION, Settings, parallelism
+from examples.training.regression.settings import APPLICATION, Settings, parallelism
 from shadowspill.parallelism import Parallelism
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.layouts import prepare_layouts

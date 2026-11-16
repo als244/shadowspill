@@ -12,7 +12,7 @@ from examples.training.application.cli import (
 from examples.training.application.setup import close_after, start
 from examples.training.regression.data import SyntheticBatches
 from examples.training.regression.loop import export_wandb, train
-from examples.training.regression.setup import Settings
+from examples.training.regression.settings import Settings
 
 
 def arguments(argv=None):

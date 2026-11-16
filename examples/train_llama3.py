@@ -10,7 +10,7 @@ from examples.training.application.cli import (
 )
 from examples.training.application.setup import close_after, start
 from examples.training.llama3.loop import train
-from examples.training.llama3.setup import Settings
+from examples.training.llama3.settings import Settings
 from examples.training.text_data import TokenBatches, validate_vocabulary
 
 

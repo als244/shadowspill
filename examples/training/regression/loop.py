@@ -5,7 +5,7 @@ import json
 from examples.training.application.loop import update
 from examples.training.application.records import save_checkpoint
 
-from .setup import APPLICATION
+from .settings import APPLICATION
 
 
 def train(training, settings, source, directory, *, cursor=0):

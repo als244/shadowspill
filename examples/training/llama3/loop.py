@@ -6,7 +6,7 @@ from examples.training.application.loop import update
 from examples.training.application.records import save_checkpoint
 from shadowspill_client.schedules import WarmupCosine
 
-from .setup import APPLICATION
+from .settings import APPLICATION
 
 
 def train(training, settings, source, validation, directory, *, cursor=0):
