@@ -123,11 +123,21 @@ def check(training, options, index, budget, *, expected_initial=None):
             # incorrectly scaled updates. Independent eager activation derivatives
             # and fused GPU kernels can still differ at BF16 rounding boundaries.
             baseline = np.asarray(initial[name], dtype=np.float32)
+            actual_delta, expected_delta = actual[name] - baseline, value - baseline
+            absolute = options.get("weight_atol", 1e-5)
+            if "weight_norm_rtol" in options:
+                # Signed token contributions can nearly cancel individual BF16
+                # derivatives. Bound every parameter's complete update error,
+                # and separately reject outliers relative to its largest update.
+                error = np.linalg.norm(actual_delta - expected_delta)
+                bound = options["weight_norm_rtol"] * np.linalg.norm(expected_delta)
+                assert error <= bound + 1e-7, (name, error, bound)
+                absolute += options["weight_max_rtol"] * np.max(np.abs(expected_delta))
             np.testing.assert_allclose(
-                actual[name] - baseline,
-                value - baseline,
+                actual_delta,
+                expected_delta,
                 rtol=options.get("weight_rtol", 0.03),
-                atol=options.get("weight_atol", 1e-5),
+                atol=absolute,
                 err_msg=name,
             )
     check_logprobs(training, options, index, budget)

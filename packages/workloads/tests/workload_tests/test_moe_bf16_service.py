@@ -138,6 +138,12 @@ def bf16_options(lora):
         "device_gib": 6,
         "weight_rtol": 0.04,
         "weight_atol": 2e-5,
+        # Eager GPU/CPU and captured GPU derivatives differ at BF16 cancellation
+        # boundaries. Compare updates (never full weights) with a per-parameter
+        # norm bound as well as an element bound; large parameters cannot hide
+        # omitted or incorrectly scaled optimizer updates.
+        "weight_norm_rtol": 0.03,
+        "weight_max_rtol": 0.20,
         "logprob_rtol": 0.003,
         "logprob_atol": 0.008,
         "loss_rtol": 0.003,
