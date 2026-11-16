@@ -66,6 +66,7 @@ from .checkpoint_conversion import prepare_state
 from .checkpoint_restore import CheckpointResolver
 from .creation_records import load_creation
 from .live import LiveRun
+from .model_sources import local_model_source
 from .plan_summaries import publish_summary
 from .preparation_reuse import stage_preparation_reuse
 from .records.requests import RunIdentity
@@ -129,10 +130,12 @@ class LocalCreationFactory:
         limits: LocalCreationLimits,
         disk: BufferBudget,
         base_host_bytes: int,
+        model_root: Path | None = None,
     ) -> None:
         self.storage, self.node = storage, node
         self.packages = names(packages, "definition packages")
         self.root, self.cache = root, cache
+        self.model_root = model_root
         self.environment = MappingProxyType(dict(environment))
         self.limits, self.disk = limits, disk
         # Permanent service arenas (including all registry job slots) cannot be
@@ -146,7 +149,9 @@ class LocalCreationFactory:
 
     def describe(self, settings: TrainingSetup | ResolvedTraining) -> TrainingPreview:
         """Use the same CPU resolver; the caller owns the control-memory envelope."""
-        return resolve_training(load_registry(self.packages), settings).preview()
+        return resolve_training(
+            load_registry(self.packages), local_model_source(settings, self.model_root)
+        ).preview()
 
 
 class LocalCreation:

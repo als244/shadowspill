@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import ssl
 from collections.abc import Sequence
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from threading import Event, RLock, Thread
 from typing import Self
@@ -40,18 +41,30 @@ class Server:
     def __init__(
         self,
         *,
-        allocation: Allocation,
+        allocation: Allocation | None = None,
         storage_root: str | Path,
-        workload_packages: Sequence[str] = (),
+        workload_packages: Sequence[str] | None = None,
+        model_root: str | Path | None = None,
         cache_root: str | Path | None = None,
         authentication: BearerTokens | None = None,
         limits: ServerLimits | None = None,
     ) -> None:
+        if allocation is None:
+            allocation = Allocation.from_environment()
         if not isinstance(allocation, Allocation):
             raise TypeError("server requires an existing Allocation")
         self.allocation = allocation
         self.root = Path(storage_root)
+        self.model_root = None if model_root is None else Path(model_root).absolute()
         self.cache = self.root / ".cache" if cache_root is None else Path(cache_root)
+        if workload_packages is None:
+            workload_packages = ["shadowspill"]
+            try:
+                distribution("shadowspill-workloads")
+            except PackageNotFoundError:
+                pass
+            else:
+                workload_packages.append("shadowspill-workloads")
         self.packages = names(workload_packages, "definition packages")
         self.limits = ServerLimits() if limits is None else limits
         if not isinstance(self.limits, ServerLimits):
@@ -99,6 +112,8 @@ class Server:
 
     def _open(self, host: str, port: int, tls: ssl.SSLContext | None) -> None:
         limits = self.limits
+        if self.model_root is not None and not self.model_root.is_dir():
+            raise ValueError("model_root must be an existing checkpoint directory")
         self.cache.mkdir(parents=True, exist_ok=True)
         load_registry(self.packages)  # Reject unavailable installed definitions first.
         self._node = self.allocation._local_node(
@@ -149,6 +164,7 @@ class Server:
             limits=limits.creation,
             disk=self._disk,
             base_host_bytes=limits.fixed_host_bytes,
+            model_root=self.model_root,
         )
         self._jobs = RunJobs(
             self._storage,
