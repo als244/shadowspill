@@ -170,7 +170,7 @@ def options(policy=False):
         "trainable": list(trained),
         "oracle": oracle,
         "loss_parts": parts,
-        "client_script": "_llama_service_client.py",
+        "client_script": "_text_service_client.py",
         "model_description": "supplied packed Llama, BF16 compute and FP32 masters"
         + (", LoRA policy" if policy else ", full CE"),
         "oracle_description": (
