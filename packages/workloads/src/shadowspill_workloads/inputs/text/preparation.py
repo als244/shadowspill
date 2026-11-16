@@ -1,4 +1,4 @@
-"""Packed token views, sequence boundaries and inspectable Llama preparation."""
+"""Packed token views and sequence boundaries shared by supplied text models."""
 
 from math import ceil
 
@@ -12,7 +12,6 @@ from shadowspill.training.inputs.shapes import BufferShape
 from shadowspill_client import BuildCandidates, PlanningOptions, Preparation
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 
-PRESET = "shadowspill/llama3_packed@1"
 TOKENS = ("inputs", "tokens")
 LENGTHS = ("inputs", "sequence_lengths")
 
@@ -107,7 +106,7 @@ def _check(context):
     return placement.partition_count
 
 
-def defaults(context):
+def defaults(context, *, preset):
     partitions = _check(context)
     sizes = set()
     for batch in context.batches:
@@ -115,7 +114,7 @@ def defaults(context):
         full = max(1, cap // partitions)
         sizes.update((max(1, full // 2), full))
     return Preparation(
-        preset=PRESET,
+        preset=preset,
         candidates=BuildCandidates(microbatch_sizes=sorted(sizes)),
         planning=PlanningOptions(microbatch_counts=[1, 2]),
     )

@@ -1,5 +1,6 @@
 """Installed packed Llama using the same extension hooks as custom models."""
 
+from functools import partial
 from hashlib import sha256
 from importlib.metadata import version
 from importlib.util import find_spec
@@ -7,8 +8,11 @@ from pathlib import Path
 
 from shadowspill.training.definitions import ModelDefinition, PreparationDefinition
 from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_workloads.inputs.text import preparation as inputs
 
-from . import configuration, inputs
+from . import configuration
+
+PRESET = "shadowspill/llama3_packed@1"
 
 
 def register(registry):
@@ -16,7 +20,10 @@ def register(registry):
     digest = sha256()
     # Include model, LoRA, initializer and provider semantics without importing
     # any of them in the CPU controller. Editable dependency changes are pinned.
-    paths = [root / "recipes/text/initialization.py"]
+    paths = [
+        root / "recipes/text/initialization.py",
+        root / "inputs/text/preparation.py",
+    ]
     for name in ("definitions/llama", "models/llama3", "models/shared", "lora"):
         paths.extend(sorted((root / name).rglob("*.py")))
     for path in paths:
@@ -34,7 +41,10 @@ def register(registry):
     )
     registry.add_preparation(
         PreparationDefinition(
-            inputs.PRESET, inputs.defaults, inputs.buffers, inputs.representative
+            PRESET,
+            partial(inputs.defaults, preset=PRESET),
+            inputs.buffers,
+            inputs.representative,
         ),
         source=source,
     )
@@ -46,7 +56,7 @@ def register(registry):
             inputs.schema,
             capabilities=("target_logprobs",),
             input_adapter=inputs.adapter,
-            preparation=inputs.PRESET,
+            preparation=PRESET,
             configure=configuration.configure,
             build=configuration.build,
             capture_context=configuration.capture_context,
