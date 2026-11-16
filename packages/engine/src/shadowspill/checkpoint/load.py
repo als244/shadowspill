@@ -244,6 +244,44 @@ class _Reader:
             consume(end, source_end)
 
 
+def _initialize(
+    executor: Executor,
+    reader: _Reader,
+    manifest: dict[str, Any],
+    chunks: dict[str, TensorChunk],
+    omitted: set[str],
+    *,
+    chunk_bytes: int,
+    fill_tensor: Callable[[TensorChunk, torch.Tensor], None] | None,
+) -> None:
+    """Apply verified selections through the existing Executor initialization."""
+    derived = manifest["derived_tensors"]
+    gathered = manifest["gathered_tensors"]
+
+    def fill(chunk: TensorChunk, tensor: torch.Tensor) -> None:
+        if chunk.name in omitted:
+            assert fill_tensor is not None
+            fill_tensor(chunk, tensor)
+        elif chunk.name in derived:
+            reader.derive(chunks[derived[chunk.name]], chunk, tensor, chunk_bytes)
+        elif chunk.name in gathered:
+            # Every valid element is filled after the coordinated local
+            # reads. Avoid an unnecessary full-replica zeroing pass.
+            return
+        else:
+            reader.fill(chunk, tensor)
+
+    executor.initialize(
+        fill,
+        chunk_bytes=chunk_bytes,
+        restore=True,
+        replicated_copies={
+            name: (item["source"], GroupRef(name, item["groups"]))
+            for name, item in gathered.items()
+        },
+    )
+
+
 def load_checkpoint(
     executor: Executor,
     path: str | os.PathLike[str],
@@ -275,30 +313,14 @@ def load_checkpoint(
             )
         chunks = {chunk.name: chunk for chunk in executor.tensor_chunks()}
         reader = _Reader(archive, manifest, chunks, omitted)
-        derived = manifest["derived_tensors"]
-        gathered = manifest["gathered_tensors"]
-
-        def fill(chunk: TensorChunk, tensor: torch.Tensor) -> None:
-            if chunk.name in omitted:
-                assert fill_tensor is not None
-                fill_tensor(chunk, tensor)
-            elif chunk.name in derived:
-                reader.derive(chunks[derived[chunk.name]], chunk, tensor, chunk_bytes)
-            elif chunk.name in gathered:
-                # Every valid element is filled after the coordinated local
-                # reads. Avoid an unnecessary full-replica zeroing pass.
-                return
-            else:
-                reader.fill(chunk, tensor)
-
-        executor.initialize(
-            fill,
+        _initialize(
+            executor,
+            reader,
+            manifest,
+            chunks,
+            omitted,
             chunk_bytes=chunk_bytes,
-            restore=True,
-            replicated_copies={
-                name: (item["source"], GroupRef(name, item["groups"]))
-                for name, item in gathered.items()
-            },
+            fill_tensor=fill_tensor,
         )
         return dict(manifest["metadata"])
 
