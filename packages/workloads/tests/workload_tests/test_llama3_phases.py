@@ -2,11 +2,8 @@
 
 import json
 import math
-import os
-import shutil
 import subprocess
 import sys
-import tarfile
 from pathlib import Path
 
 import numpy as np
@@ -95,106 +92,34 @@ def test_inputs_use_normalized_calls_and_restore_next_example(tmp_path):
 
 @pytest.mark.cuda
 @pytest.mark.slow
-def test_recipe_runs_with_saved_plans_after_original_caches_are_deleted(tmp_path):
+def test_llama_client_example_resumes_from_cold_saved_plans(tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    pytest.importorskip("mlops")
-    data, root = tmp_path / "data", tmp_path / "run"
-    data.mkdir()
-    values = np.arange(4096, dtype=np.uint32) % 32
-    values.tofile(data / "train.bin")
-    ((values + 7) % 32).tofile(data / "val.bin")
-    (data / "meta.json").write_text(json.dumps({"vocab_size": 512}))
-    build_cache = tmp_path / "preparation-cache"
-    environment = {
-        **os.environ,
-        "TRITON_CACHE_DIR": str(build_cache / "triton"),
-        "TORCHINDUCTOR_CACHE_DIR": str(build_cache / "inductor"),
-    }
-    command = [
-        sys.executable,
-        *(["-S"] if sys.flags.no_site else []),
-        "-m",
-        "examples.train_llama3",
-        "--data",
-        str(data),
-        "--run-dir",
-        str(root),
-        "--model",
-        "llama3-tiny",
-        "--sequence-length",
-        "16",
-        "--sequences-per-step",
-        "4",
-        "--sequences-per-example",
-        "2",
-        "--steps",
-        "3",
-        "--learning-rate",
-        "0.001",
-        "--checkpoint-every",
-        "1",
-        "--execution-gib",
-        "2",
-        "--spill-gib",
-        "0.125",
-        "--warmup-seconds",
-        "0.001",
-        "--measure-seconds",
-        "0.002",
-        "--no-plots",
-    ]
-    child = subprocess.run(
-        command, env=environment, capture_output=True, text=True, timeout=600
-    )
-    logs = "\n".join(path.read_text() for path in (root / "logs").glob("*.log"))
-    assert child.returncode == 0, child.stdout + child.stderr + logs
-    metrics = [
-        json.loads(line)
-        for line in (root / "training/metrics.jsonl").read_text().splitlines()
-    ]
-    assert len(metrics) == 3
-    assert metrics[-1]["train/loss"] < metrics[0]["train/loss"]
-    assert (root / "reports/training/index.html").is_file()
-    assert not list(root.rglob("*.cubin"))
-    shutil.rmtree(build_cache)  # No original compiler or Triton cache remains.
-    cold = tmp_path / "cold"
-    cold.mkdir()
-    (cold / "training").mkdir()
-    shutil.copy2(root / "config.json", cold / "config.json")
-    shutil.copytree(root / "plans", cold / "plans")
-    hashes = []
-    for mode in ("complete", "resume"):
-        if mode == "resume":
-            options = json.loads((cold / "config.json").read_text())
-            options["resume"] = str(cold / "training/checkpoints/step_00000001.ssp")
-            (cold / "config.json").write_text(json.dumps(options))
-        worker = subprocess.run(
-            [
-                sys.executable,
-                *(["-S"] if sys.flags.no_site else []),
-                str(Path(__file__).with_name("_llama3_execute.py")),
-                str(cold),
-            ],
-            env={
-                **os.environ,
-                "TRITON_CACHE_DIR": str(tmp_path / f"{mode}-triton"),
-                "TORCHINDUCTOR_CACHE_DIR": str(tmp_path / f"{mode}-inductor"),
-            },
-            capture_output=True,
-            text=True,
-            timeout=300,
+    (tmp_path / "setup.json").write_text(
+        json.dumps(
+            {
+                "client_script": "_llama_example_client.py",
+                "cold_llama_workers": True,
+                "model_description": "Llama tiny public client application",
+                "oracle_description": (
+                    "exact resumed losses, schedules and all checkpoint tensors"
+                ),
+            }
         )
-        assert worker.returncode == 0, worker.stdout + worker.stderr
-        assert "Qualified cold text execution" in worker.stdout
-        with tarfile.open(cold / "training/checkpoints/step_00000003.ssp") as archive:
-            manifest = json.loads(archive.extractfile("manifest.json").read())
-        hashes.append({e["name"]: e["blake3"] for e in manifest["tensors"]})
-    assert hashes[0] == hashes[1]
-    repeated = [
-        json.loads(line)
-        for line in (cold / "training/metrics.jsonl").read_text().splitlines()
-    ]
-    assert [m["train/loss"] for m in repeated] == [
-        m["train/loss"] for m in (*metrics, *metrics[1:])
-    ]
+    )
+    child = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("_catalog_service_server.py")),
+            str(tmp_path),
+        ],
+        text=True,
+        capture_output=True,
+        timeout=900,
+    )
+    (tmp_path / "server.stdout").write_text(child.stdout)
+    (tmp_path / "server.stderr").write_text(child.stderr)
+    assert child.returncode == 0, child.stdout + child.stderr
+    receipt = json.loads((tmp_path / "receipt.json").read_text())
+    assert receipt["actual_example"] and receipt["exact_checkpoint_continuation"]
+    assert receipt["all_server_claims_released"]

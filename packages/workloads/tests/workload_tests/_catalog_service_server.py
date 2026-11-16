@@ -4,6 +4,7 @@ import importlib.abc
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from dataclasses import replace
@@ -30,6 +31,22 @@ from shadowspill.server.authentication import BearerTokens  # noqa: E402
 
 root = Path(sys.argv[1])
 options = json.loads((root / "setup.json").read_text())
+if options.get("cold_llama_workers"):
+    import shadowspill.training.worker.launch as worker_launch
+
+    def cold_command(module, arguments):
+        assert module == "shadowspill.training.worker.bootstrap"
+        # Only these fixture-owned caches are removed, after preparation exits.
+        for name in ("inductor", "triton"):
+            shutil.rmtree(root / name, ignore_errors=True)
+        return [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            str(Path(__file__).with_name("_llama_cold_worker.py")),
+            *map(str, arguments),
+        ]
+
+    worker_launch.worker_command = cold_command
 token = "regression-" + os.urandom(32).hex()
 limits = ServerLimits()
 limits = replace(

@@ -9,8 +9,8 @@ import pytest
 
 @pytest.mark.parametrize(
     "package",
-    ["shadowspill_workloads.recipes.text.llama3", "shadowspill.training.preparation"],
-    ids=["llama3", "shared"],
+    ["shadowspill.training.preparation"],
+    ids=["shared"],
 )
 @pytest.mark.parametrize("phase", ["plan", "execute"])
 def test_recipe_import_boundary(package, phase):

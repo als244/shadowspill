@@ -67,7 +67,8 @@ names for Llama, OLMoE, dense Qwen and Qwen MoE full training, plus checkpoint
 sources for Qwen3.5 MoE and GLM Flash LoRA. It owns build/profile/plan/execute;
 model adapters supply construction, bounded initialization and resumable text
 inputs. See the [commented script](../../../../examples/train_text.py). The standalone
-[Llama phase modules](recipes/text/llama3) also illustrate direct phase control.
+[Llama application](../../../../examples/training/llama3/README.md) now uses the
+public service client, with setup separate from its input and training loop.
 The [configured text runner](recipes/text/experiment) follows the same phases,
 preserving document packing, runtime norm logging, held-out evaluation and resume.
 The [distributed regression example](recipes/regression) uses the same driver

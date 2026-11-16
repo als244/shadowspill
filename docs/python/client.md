@@ -14,6 +14,11 @@ or service restart. Explicit file and checkpoint downloads can retain verified
 progress for resume; uploads are still being implemented.
 Existing phase and Trainer APIs remain available during migration.
 
+The [Llama application](../../examples/training/llama3/README.md) now uses this
+client end to end. Its setup function resolves settings and creates workers
+through the service; its loop submits whole or split updates, evaluates and saves
+checkpoints. It imports no engine or model framework on the client.
+
 Start the service on Chicago or another machine with an existing GPU allocation:
 
 ```python

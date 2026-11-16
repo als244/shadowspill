@@ -102,7 +102,7 @@ def _readers(path: Path) -> list[Path]:
     """
 
     recipe_packages = {
-        ROOT / "examples/train_llama3.py": (CATALOG / "recipes/text/llama3",),
+        ROOT / "examples/train_llama3.py": (ROOT / "examples/training/llama3",),
         CATALOG / "recipes/text/qwen3/arguments.py": (
             ".",
             "../phases",
