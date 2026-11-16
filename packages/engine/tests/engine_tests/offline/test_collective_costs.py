@@ -57,6 +57,13 @@ def test_measurement_requires_exact_group_geometry_dtype_and_setup(tmp_path):
     loaded = CommunicationInfo.load(tmp_path / "communication.ssp")
     assert cost(loaded).source == "measurement"
     assert cost(loaded).duration_seconds == 0.001
+    estimated = replace(
+        loaded,
+        metadata={**loaded.metadata, "timing_kind": "estimated"},
+        measurements=({**measurement, "duration_seconds": 0.002},),
+    )
+    assert cost(estimated).source == "estimate"
+    assert cost(estimated).duration_seconds == 0.002
     assert cost(loaded, setup={"gpu": "different"}).source == "ring"
     assert cost(loaded, ranks=tuple(reversed(range(8)))).source == "ring"
     assert cost(loaded, "reduce_scatter").source == "ring"

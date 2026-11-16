@@ -5,6 +5,7 @@ import importlib.abc
 import json
 import runpy
 import socket
+import subprocess
 import sys
 import zipfile
 from dataclasses import replace
@@ -28,24 +29,50 @@ from shadowspill_client import (
     Weights,
 )
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.protocol.requests import ArtifactRef
 
 
-def check_reused_training(client, settings, prepared, initial):
+def check_reused_training(client, settings, prepared, initial, *, local=None):
     checks = runpy.run_path(
         str(Path(__file__).with_name("_regression_service_client.py"))
     )
-    training = client.create_training_client(
-        **{
-            **settings,
-            "model": replace(settings["model"], initialize=Weights.random(seed=0)),
-            "memory": Memory(device_gib=3, spill_gib=0.125),
-            "prepare": replace(
-                settings["prepare"],
-                planning=PlanningOptions(microbatch_counts=[1]),
-                reuse=prepared.reuse,
-            ),
-        }
-    ).result(300)
+    training_settings = {
+        **settings,
+        "model": replace(settings["model"], initialize=Weights.random(seed=0)),
+        "memory": Memory(device_gib=3, spill_gib=0.125),
+        "prepare": replace(
+            settings["prepare"],
+            planning=PlanningOptions(microbatch_counts=[1, 2] if local else [1]),
+            reuse=prepared.reuse,
+        ),
+    }
+    if local:
+        root, options = local
+        preview = client.describe_training(**training_settings).result(30)
+        (root / "config.json").write_text(json.dumps(preview.config.to_dict()))
+        planned = subprocess.run(
+            [
+                options["planner_python"],
+                "-I",
+                str(Path(__file__).with_name("_submit_local_plans.py")),
+                str(root),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert planned.returncode == 0, planned.stdout + planned.stderr
+        proposed = json.loads((root / "proposal.json").read_text())
+        uploaded = client.artifacts.upload(
+            root / "local-plans.ssp",
+            reference=ArtifactRef.from_dict(proposed["reference"]),
+        ).result(60)
+        training = client.create_training_client(
+            config=preview.config, plans=uploaded
+        ).result(120)
+        assert training.plans.reference != uploaded.reference
+    else:
+        training = client.create_training_client(**training_settings).result(300)
     memory = BufferBudget(64 << 20, 8)
     checkpoint = training.save_checkpoint().result(60)
     rows = []
@@ -73,12 +100,25 @@ def check_reused_training(client, settings, prepared, initial):
         checks["check"](training, oracle, memory, counter=2 if split else 1)
         assert result.completed_updates == 1
         rows.append(result.record.to_dict())
+    if local:
+        checkpoint = training.save_checkpoint().result(60)
+        plans = training.plans
+        training.close().result(60)
+        training = client.create_training_client(
+            plans=plans, checkpoint=checkpoint
+        ).result(120)
+        checks["check"](training, oracle, memory, counter=2)
     training.close().result(60)
     assert memory.used == (0, 0)
     return {
         "reused_training": True,
         "whole_split_oracles": rows,
         "training_run": training.run_id,
+        **(
+            {"local_planning": proposed, "native_saved_plan_resume": True}
+            if local
+            else {}
+        ),
     }
 
 
@@ -149,7 +189,13 @@ def main():
         rejoined = client.get_preparation(prepared.info.run_id).result(30)
         assert rejoined.info == prepared.info
         reuse = (
-            check_reused_training(client, settings, prepared, options["initial"])
+            check_reused_training(
+                client,
+                settings,
+                prepared,
+                options["initial"],
+                local=(root, options) if options.get("local_planning") else None,
+            )
             if options.get("reuse")
             else {}
         )

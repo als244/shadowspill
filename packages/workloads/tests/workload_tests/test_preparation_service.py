@@ -13,7 +13,7 @@ import pytest
 
 @pytest.mark.cuda
 @pytest.mark.slow
-@pytest.mark.parametrize("reuse", [False, True])
+@pytest.mark.parametrize("reuse", [False, True, "local"])
 def test_public_measurement_exports_all_cases_to_cpu_planning(tmp_path, reuse):
     import torch
 
@@ -29,6 +29,10 @@ def test_public_measurement_exports_all_cases_to_cpu_planning(tmp_path, reuse):
                 "oracle_description": "Original phase hashes and actual CPU replanning",
                 "reuse": reuse,
                 "guard_measurement_reuse": reuse,
+                "local_planning": reuse == "local",
+                "planner_python": os.environ.get(
+                    "SHADOWSPILL_DEMO_PLANNER_PYTHON", sys.executable
+                ),
                 "initial": {
                     name: value.detach().tolist()
                     for name, value in initialized().named_parameters()
@@ -56,6 +60,9 @@ def test_public_measurement_exports_all_cases_to_cpu_planning(tmp_path, reuse):
     assert receipt["captures"] >= 2
     if reuse:
         assert receipt["reused_training"] and len(receipt["whole_split_oracles"]) == 2
+    if reuse == "local":
+        assert receipt["local_planning"]["framework_free"]
+        assert receipt["native_saved_plan_resume"]
     destination = tmp_path / "measurements.zip"
     if host := os.environ.get("SHADOWSPILL_DEMO_CLIENT_HOST"):
         copied = subprocess.run(

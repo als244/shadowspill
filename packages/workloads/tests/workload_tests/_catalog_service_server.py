@@ -31,6 +31,17 @@ from shadowspill.server.authentication import BearerTokens  # noqa: E402
 
 root = Path(sys.argv[1])
 options = json.loads((root / "setup.json").read_text())
+if options.get("local_planning"):
+    import shadowspill.planning.plan as planner
+    import shadowspill.server.local_creation as creation
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError(
+            "local Plan submission attempted server preparation/search"
+        )
+
+    creation.prepare_job = forbidden
+    planner.plan_program = forbidden
 if options.get("guard_measurement_reuse"):
     import shadowspill.training.preparation.phases as preparation_phases
 

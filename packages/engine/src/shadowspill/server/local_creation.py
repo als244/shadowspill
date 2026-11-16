@@ -31,8 +31,15 @@ from shadowspill.orchestration.launch.processes import worker_command
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.bundle import TrainingBundle
 from shadowspill.training.preparation.job import BUNDLE_NAME, measure_job, prepare_job
+from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.local_plans import (
+    LOCAL_PLANS_MEDIA_TYPE,
+    LocalPlans,
+)
+from shadowspill.training.preparation.local_reconciliation import reconcile_local_plans
 from shadowspill.training.preparation.measurement_export import export_measurements
 from shadowspill.training.preparation.setup import resolve_training
+from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.worker.checkpoint_records import RankRestore
 from shadowspill.training.worker.initialization import (
@@ -393,7 +400,75 @@ class LocalCreation:
                         digest.update(block)
                 if digest.hexdigest() != plans.sha256:
                     raise ValueError("saved Plans failed their content checksum")
-                bundle = TrainingBundle.load(path)
+                if plans.media_type == LOCAL_PLANS_MEDIA_TYPE:
+                    submitted = LocalPlans.load(path)
+                    path.unlink()  # Owned upload scratch; the original remains stored.
+                    if submitted.config != creation.config:
+                        raise ValueError(
+                            "local Plans differ from the resolved configuration"
+                        )
+                    self._admit_host(
+                        limits.transfer_bytes + limits.preparation_host_bytes,
+                        1,
+                        wait=creation.wait_for_resources,
+                    )
+                    receipt = stage_preparation_reuse(
+                        self._artifacts,
+                        factory.storage.catalog,
+                        creation.config,
+                        job_root,
+                        packages=factory.packages,
+                        context={
+                            "server_incarnation": factory.storage.incarnation,
+                            "devices": list(devices),
+                        },
+                        max_disk_bytes=limits.preparation_disk_bytes,
+                        max_files=limits.max_preparation_files,
+                    )
+                    if receipt is None or not receipt["calibration_reused"]:
+                        raise ValueError(
+                            "local Plans require compatible measured target calibration"
+                        )
+                    self._progress("plan")
+                    bundle, edits = reconcile_local_plans(
+                        submitted,
+                        job_root,
+                        capture_inventory(prepare_layouts(setup)),
+                    )
+                    bundle.save(job_root / BUNDLE_NAME)
+                    evidence = root / "local-planning.json"
+                    evidence.write_text(
+                        json.dumps(
+                            {
+                                "source": receipt["source"],
+                                "submission": plans.to_dict(),
+                                "edits": edits,
+                                "local_rejections": dict(submitted.rejected),
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                    if evidence.stat().st_size > 16 << 20:
+                        raise ValueError(
+                            "local planning evidence exceeds its metadata bound"
+                        )
+                    self._check_files()
+                    changes = self._publish_file(
+                        evidence, "local-planning", media_type="application/json"
+                    )
+                    plans = self._publish_file(job_root / BUNDLE_NAME, "bundle")
+                    self._publish_metadata(
+                        "local-planning",
+                        {
+                            **self.identity.to_dict(),
+                            "plans": plans.to_dict(),
+                            "evidence": changes.to_dict(),
+                        },
+                    )
+                    self._archive_preparation()
+                    self._release_host()
+                else:
+                    bundle = TrainingBundle.load(path)
                 if bundle.config != creation.config:
                     raise ValueError(
                         "saved Plans differ from the exact resolved configuration"

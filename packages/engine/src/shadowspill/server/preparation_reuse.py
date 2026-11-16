@@ -23,11 +23,11 @@ def stage_preparation_reuse(
     context: Mapping[str, Any],
     max_disk_bytes: int,
     max_files: int,
-) -> None:
+) -> Mapping[str, Any] | None:
     """The source must be this authenticated owner's completed service job."""
     reuse = config.preparation.reuse
     if not reuse:
-        return
+        return None
     source = reuse.get("measurements")
     if (
         set(reuse) != {"measurements"}
@@ -52,7 +52,7 @@ def stage_preparation_reuse(
     with artifacts.open(info.preparation_export) as stream:
         root.mkdir()
         requested.save(root / JOB_NAME)
-        stage_measurements(
+        return stage_measurements(
             stream,
             info.preparation_export,
             root,

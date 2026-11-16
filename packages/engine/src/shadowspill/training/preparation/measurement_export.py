@@ -17,6 +17,7 @@ from shadowspill_client._records import integer
 from .job import JOB_NAME, load_job
 from .job_artifacts import admitted_inventory
 from .measurement_reuse import REUSE_NAME
+from .planning_requests import planning_requests
 
 _STAGES = ("programs", "profiled", "calibrated", "communication", "failures")
 _COPY_BYTES = 64 << 10
@@ -124,6 +125,7 @@ def export_measurements(
             "version": 1,
             "context": {} if context is None else dict(context),
             "configuration": original.layouts.setup.config.to_dict(),
+            "planning": planning_requests(inventory),
             "files": descriptions,
             "captures": {
                 key: {

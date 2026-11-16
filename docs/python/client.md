@@ -132,8 +132,8 @@ profiles, target memory calibration and communication measurements retain their
 existing formats for inspection and the CPU planning APIs. It contains no
 initialized training state or selected Plan bundle. The ordinary client needs
 only NumPy to download and inspect the manifest; native planning requires the
-optional engine installation. Locally planned bundle submission is still being
-implemented.
+optional engine installation. The export also describes the operation/count
+variants for CPU planning without installing the model package.
 
 Pass `Preparation(reuse=prepared.reuse, ...)` with the desired preparation settings
 to reuse compatible measured cases in a new preparation or training run. For
@@ -145,6 +145,41 @@ assignment within the same service allocation. Changed cases are prepared throug
 the ordinary phases. The new run records its source and copied file checksums;
 phase workers recheck target/toolchain compatibility before planning. Reuse requires
 a completed preparation owned by the authenticated caller.
+
+With the optional CPU planner installed, load the export and submit selected
+schedules through the ordinary artifact and creation methods:
+
+```python
+from dataclasses import replace
+from shadowspill.training.preparation.local_planning import PlanningInputs
+
+# Keep the measured shapes/counts; choose initialization and budgets in setup.
+setup["prepare"] = replace(setup["prepare"], reuse=prepared.reuse)
+config = service.describe_training(**setup).result().config
+inputs = PlanningInputs.load("measured-inputs.zip")
+proposal = inputs.plan(config=config)
+reference = proposal.write("local-plans.ssp")
+uploaded = service.artifacts.upload("local-plans.ssp", reference=reference).result()
+training = service.create_training_client(config=config, plans=uploaded).result()
+```
+
+`inputs.sources[key].profiles` returns an editable copy. Pass edited copies as
+`profiles={key: costs}` and edited `CommunicationInfo` records as
+`communication={key: costs}` to `inputs.plan`. Changed task timing requires
+`metadata["duration_kind"] = "estimated"`; changed communication timing requires
+`metadata["timing_kind"] = "estimated"`. Resource-phase durations must still sum
+to the task duration. Original files and measured memory facts stay unchanged.
+Use `candidates=[...]` to select exported alternatives explicitly; omitted
+candidates cannot be recovered through hidden preparation or search.
+
+The proposal contains numeric profiles and schedule metadata, with no executable
+binaries. The server obtains code from the authenticated preparation, checks
+Program identity, schedule replay, input coverage and joint memory admission,
+then publishes the ordinary executable Plan bundle in `training.plans`. Timing
+edits and their measured values are retained as preparation evidence. That bundle
+uses the existing saved-Plan/checkpoint resume path. Local proposals currently
+require the same measured capture inventory and physical assignment in the same
+service allocation; new shapes/counts or target calibration need another export.
 
 After disconnecting, reconnect to the same session and call
 `service.get_preparation(pending.run_id).result()`. This only queries the original

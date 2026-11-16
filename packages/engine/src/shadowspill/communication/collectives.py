@@ -126,7 +126,9 @@ def collective_cost(
             return CollectiveCost(
                 row["duration_seconds"],
                 traffic,
-                "measurement",
+                "estimate"
+                if info.metadata.get("timing_kind") == "estimated"
+                else "measurement",
                 (
                     "transfer_bytes uses ring-equivalent per-rank traffic; "
                     "the measured backend algorithm is not inferred",

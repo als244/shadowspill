@@ -279,20 +279,36 @@ def instantiate_template(
     template: CaptureTemplate, use: TemplateUse, program: Program
 ) -> Program:
     """Select/derive saved forms on CPU, without capture or kernel compilation."""
+    validate_template(template, program)
+    if use.template != template.id or type(use.count) is not int or use.count < 1:
+        raise ValueError("saved capture differs from the requested template")
+    return instantiate_program(use, program)
+
+
+def instantiate_program(use: TemplateUse, program: Program) -> Program:
+    """CPU derivation also used by exported requests, without installed models.
+
+    This is not an execution admission check. The service separately validates
+    the capture against its installed definition and retained measured bytes.
+    """
     from shadowspill.planning.training.backward import backward_program
     from shadowspill.planning.training.examples import instantiate_examples
     from shadowspill.planning.training.operations import optimizer_program
 
-    validate_template(template, program)
-    if use.template != template.id or type(use.count) is not int or use.count < 1:
+    kind = program.bindings.get("kind")
+    if (
+        program.bindings.get("preparation_template", {}).get("id") != use.template
+        or type(use.count) is not int
+        or use.count < 1
+    ):
         raise ValueError("saved capture differs from the requested template")
     if use.kind == "optim_step":
-        if template.kind != "step" or use.count != 1:
+        if kind != "step" or use.count != 1:
             raise ValueError("optimizer requires one saved step template")
         return optimizer_program(program)
-    if use.kind == "forward_backward" and template.kind == "step":
+    if use.kind == "forward_backward" and kind == "step":
         program = backward_program(program)
-    elif use.kind != template.kind:
+    elif use.kind != kind:
         raise ValueError("saved template cannot supply the requested operation")
     # Even forward count one uses the grouped ABI expected by service staging and
     # output publication. Ordinary core forward Programs keep their original ABI.
