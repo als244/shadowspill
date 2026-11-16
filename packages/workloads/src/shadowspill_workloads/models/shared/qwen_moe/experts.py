@@ -64,7 +64,9 @@ class MoE(nn.Module):
         lora = getattr(self, "lora_config", None)
         routing = {"top_k": c.top_k, "routing_mode": "topk_then_softmax"}
         if self.experts is not None:
-            routed, counts, probability_sum = parallel_forward(self.experts, hidden)
+            routed, counts, probability_sum = parallel_forward(
+                self.experts, hidden, router_mask=router_mask
+            )
             output = residual + routed
         elif lora is None:
             output, _auxiliary, counts, probability_sum = mlops.moe(
@@ -83,12 +85,10 @@ class MoE(nn.Module):
             )
         if self.shared is not None:
             output = output + self.shared(hidden)
-        if router_mask is not None:
+        if router_mask is not None and self.experts is None:
             counts, probability_sum = masked_statistics(
                 hidden,
-                self.router.weight
-                if self.experts is None
-                else self.experts.router_weight,
+                self.router.weight,
                 router_mask,
                 **routing,
             )

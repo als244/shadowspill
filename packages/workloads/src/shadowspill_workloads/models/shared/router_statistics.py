@@ -17,9 +17,14 @@ def masked_statistics(hidden, weight, mask, *, top_k, routing_mode):
     flat = hidden.reshape(-1, hidden.shape[-1])
     logits = routing_logits(flat, weight)
     _, ids = routing(logits, top_k, routing_mode)
+    return masked_summaries(logits, ids, mask)
+
+
+def masked_summaries(logits, ids, mask):
+    """Reduce already selected routes without another projection or top-k call."""
     active = mask.reshape(-1)
-    assignments = active[:, None].expand(-1, top_k).reshape(-1).long()
-    counts = torch.zeros(weight.shape[0], dtype=torch.int64, device=hidden.device)
+    assignments = active[:, None].expand_as(ids).reshape(-1).long()
+    counts = torch.zeros(logits.shape[1], dtype=torch.int64, device=logits.device)
     counts = counts.scatter_add(0, ids.reshape(-1).long(), assignments)
     probabilities = torch.where(active[:, None], logits.softmax(-1), 0.0).sum(0)
     return counts, probabilities

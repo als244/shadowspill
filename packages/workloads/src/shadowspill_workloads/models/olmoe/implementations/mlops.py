@@ -131,7 +131,9 @@ class MoE(nn.Module):
         # Softmax-then-top-k balances experts over the whole microbatch, so
         # where its sequences begin is no concern of the router's.
         if self.experts is not None:
-            routed, counts, probability_sum = parallel_forward(self.experts, hidden)
+            routed, counts, probability_sum = parallel_forward(
+                self.experts, hidden, router_mask=router_mask
+            )
             rows = hidden.numel() // self.config.d_model
             frequency = counts.float() / (rows * self.config.top_k)
             auxiliary = (
@@ -155,15 +157,14 @@ class MoE(nn.Module):
                 )
             )
         if router_mask is not None:
-            counts, probability_sum = masked_statistics(
-                hidden,
-                self.router.weight
-                if self.experts is None
-                else self.experts.router_weight,
-                router_mask,
-                top_k=self.config.top_k,
-                routing_mode="softmax_then_topk",
-            )
+            if self.experts is None:
+                counts, probability_sum = masked_statistics(
+                    hidden,
+                    self.router.weight,
+                    router_mask,
+                    top_k=self.config.top_k,
+                    routing_mode="softmax_then_topk",
+                )
             rows = router_mask.sum().clamp_min(1)
             frequency = counts.float() / (rows * self.config.top_k)
             auxiliary = (
