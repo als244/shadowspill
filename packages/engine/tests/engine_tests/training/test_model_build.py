@@ -126,8 +126,11 @@ for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads', 'not_imported'
     sys.modules[name] = None
 from dataclasses import replace
 from engine_tests.training import test_model_build as fixture
+def unexpected(config):
+    raise AssertionError('compiler hook during CPU description')
 model = replace(fixture.definitions()[0].definition,
-                config=fixture.Config, build=fixture.describe)
+                config=fixture.Config, build=fixture.describe,
+                gradient_destination_rules=unexpected)
 _, inventory = fixture.prepare(model)
 assert len(inventory.templates) == 6
 """

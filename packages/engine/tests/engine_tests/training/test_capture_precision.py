@@ -30,12 +30,15 @@ def create(config):
     return Classifier()
 
 
-def prepared(master, grad="float32", capture_context=None):
+def prepared(
+    master, grad="float32", capture_context=None, gradient_destination_rules=None
+):
     model = replace(
         definitions()[0].definition,
         create=create,
         build=lambda config, context: ModelBuild(asdict(config), grad_dtype=grad),
         capture_context=capture_context,
+        gradient_destination_rules=gradient_destination_rules,
     )
     registry = installed(model=model)
     adamw.register(registry)

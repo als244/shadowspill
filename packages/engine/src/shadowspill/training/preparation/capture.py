@@ -46,6 +46,10 @@ def build_template(
             max_bytes=setup.config.execution.max_staging_bytes,
         ) as example,
     ):
+        if template.kind != "forward" and not template.output_only:
+            options["gradient_destination_rules"] = (
+                setup.model.gradient_destination_rules(template.model_build)
+            )
         with torch.device("meta"):
             model = setup.model.create(build=template.model_build)
         program = build_operation(

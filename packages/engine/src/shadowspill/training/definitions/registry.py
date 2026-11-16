@@ -37,6 +37,7 @@ from .references import ModelReferenceDefinition
 from .settings import constructor_config
 
 if TYPE_CHECKING:
+    from shadowspill.pytorch.capture.gradients import GradientDestinationRule
     from shadowspill.training.inputs.adapters import InputBinding, InputLayout
     from shadowspill.training.inputs.validation import ValidatedBatch
 
@@ -155,6 +156,25 @@ class ResolvedModel:
             return nullcontext()
         configured, _ = _configuration(self.definition.config, build.config)
         return self.definition.capture_context(configured)
+
+    def gradient_destination_rules(
+        self, build: ModelBuild
+    ) -> tuple[GradientDestinationRule, ...]:
+        """Resolve existing compiler contracts only in a training capture worker.
+
+        Configuration and installed definition source pin the factory. Compiled
+        operations retain the resulting mutations, with no runtime callback.
+        """
+        if self.definition.gradient_destination_rules is None:
+            return ()
+        from shadowspill.pytorch.capture.gradients.destinations import (
+            normalize_gradient_destination_rules,
+        )
+
+        configured, _ = _configuration(self.definition.config, build.config)
+        return normalize_gradient_destination_rules(
+            self.definition.gradient_destination_rules(configured)
+        )
 
     def default_parallelism(self, schema: InputSchema) -> Parallelism:
         if self.definition.default_parallelism is None:

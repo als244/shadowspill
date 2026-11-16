@@ -19,6 +19,7 @@ from .allocations import allocation_invariants
 
 if TYPE_CHECKING:
     from shadowspill.parallelism import Parallelism
+    from shadowspill.pytorch.capture.gradients import GradientDestinationRule
     from shadowspill.training.inputs.adapters import InputAdapter, InputLayout
     from shadowspill.training.inputs.validation import ValidatedBatch
 
@@ -74,6 +75,9 @@ class ModelDefinition:
     temporary_initialization: (
         Callable[[Any, InitializationContext], ModelInitialization] | None
     ) = None
+    gradient_destination_rules: (
+        Callable[[Any], Sequence[GradientDestinationRule]] | None
+    ) = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -102,6 +106,10 @@ class ModelDefinition:
             raise TypeError("build must be an installed CPU description function")
         if self.capture_context is not None and not callable(self.capture_context):
             raise TypeError("capture_context must be an installed context factory")
+        if self.gradient_destination_rules is not None and not callable(
+            self.gradient_destination_rules
+        ):
+            raise TypeError("gradient_destination_rules must be an installed factory")
         for name in ("initialization", "temporary_initialization"):
             hook = getattr(self, name)
             if hook is not None and not callable(hook):

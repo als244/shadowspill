@@ -217,6 +217,16 @@ it enables the existing master-parameter capture. Both choices enter capture
 identity. The ordinary builder retains one compute/optimizer/gradient inventory;
 backward and optimizer-only Plans derive from the same step capture.
 
+`ModelDefinition.capture_context(config)` optionally scopes provider precision or
+dispatch during capture. An installed `gradient_destination_rules(config)` factory
+may supply the existing `GradientDestinationRule` contracts for backward operators
+that write into accumulated gradients. Both hooks receive the normalized build
+configuration. CPU inspection never calls them; forward-only capture does not
+request gradient rules. The ordinary compiler validates and lowers those rules,
+and saved workers execute the resulting operations without calling the factory.
+Opaque replacements still require their exact allocation contracts. These are
+model integration hooks; runtime clients keep submitting settings and inputs.
+
 An installed `ModelReferenceDefinition` resolves pretrained metadata on CPU and
 pins a model definition and immutable weight revision. It may fill missing fields
 inside nested configuration or precision mappings. Every explicit value remains
