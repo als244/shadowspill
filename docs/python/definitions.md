@@ -97,8 +97,9 @@ and bounded random initializer. Its model exposes the same router-statistics
 capability; no OLMoE-specific loss is required. To retain OLMoE's layer aggregation,
 configure the shared balancing term with `layer_reduction="sum"` and
 `normalize_top_k=True`. Padding is still excluded by default. CPU setup, packed
-objectives, all gradients and initialization checks pass; public GPU service
-qualification is in progress.
+objectives, all gradients and initialization checks pass. Public full-training and
+LoRA calls also pass independent whole/split update oracles and exact checkpoint
+continuation from a NumPy-only remote client.
 
 Definition provenance hashes provider Python and installed extension binaries
 without importing their implementations in the controller. Each controller or
