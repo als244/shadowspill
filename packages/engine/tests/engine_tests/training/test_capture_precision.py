@@ -61,10 +61,13 @@ def prepared(master, grad="float32", capture_context=None):
     return registry, setup, capture_inventory(prepare_layouts(setup))
 
 
+@pytest.mark.cuda
 @pytest.mark.parametrize("master", [None, "float32"])
 def test_bfloat16_model_fp32_gradients_and_optional_masters_reach_actual_capture(
     monkeypatch, master
 ):
+    if not torch.cuda.is_available():
+        pytest.skip("fake CUDA autograd capture requires a representative GPU")
     registry, setup, inventory = prepared(master)
     template = next(t for t in inventory.templates.values() if t.kind == "step")
     assert setup.optimizer.master_dtype == master
