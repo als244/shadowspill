@@ -13,6 +13,7 @@ def register(registry):
     from .pretrained import register as register_pretrained
     from .qwen_moe import register as register_qwen_moe
     from .regression import register as register_regression
+    from .text_policies import register as register_text_policies
     from .token import register as register_token
 
     register_regression(registry)
@@ -22,3 +23,4 @@ def register(registry):
     register_qwen_moe(registry)
     register_olmoe(registry)
     register_pretrained(registry)
+    register_text_policies(registry)

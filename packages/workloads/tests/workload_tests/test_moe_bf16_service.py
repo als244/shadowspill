@@ -180,12 +180,10 @@ def test_bf16_oracle_keeps_master_precision_and_independent_trajectories(lora):
     assert value["oracles"]["whole"][1] != value["oracles"]["split"][1]
 
 
-@pytest.mark.cuda
-@pytest.mark.parametrize("lora", [False, True])
-def test_public_bf16_moe_provider_step_split_and_saved_plan_resume(tmp_path, lora):
+def qualify(tmp_path, options, *, lora):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    (tmp_path / "setup.json").write_text(json.dumps(bf16_options(lora)))
+    (tmp_path / "setup.json").write_text(json.dumps(options))
     server = subprocess.run(
         [
             sys.executable,
@@ -245,3 +243,10 @@ def test_public_bf16_moe_provider_step_split_and_saved_plan_resume(tmp_path, lor
         )
         + "\n"
     )
+    return bundle
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("lora", [False, True])
+def test_public_bf16_moe_provider_step_split_and_saved_plan_resume(tmp_path, lora):
+    qualify(tmp_path, bf16_options(lora), lora=lora)

@@ -17,6 +17,7 @@ from shadowspill_client import (
     SSH,
     BatchConfig,
     BuildCandidates,
+    BuildOptions,
     Datum,
     Memory,
     Model,
@@ -196,6 +197,7 @@ def qualify(client, options, budget):
             "forward": ["logprobs"],
         },
         prepare=Preparation(
+            build=BuildOptions.from_dict(options.get("build", {})),
             candidates=BuildCandidates(
                 microbatch_sizes=options.get("microbatch_sizes", [4, 8])
             ),

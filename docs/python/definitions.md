@@ -488,6 +488,39 @@ partition, chunking or graph-pair policy consumed by the existing phase engine.
 Request strings never name modules to import. The built-in partition definition
 supports the engine's `auto` and `whole` choices.
 
+The workloads package registers `shadowspill/text_chunks@1` and
+`shadowspill/text_retention@1` around the existing unquantized text policies.
+For packed inputs, `token_capacity` in the chunk policy is the physical buffer
+width. Keep it paired with the corresponding microbatch size using complete cases:
+
+```python
+from shadowspill_client import BuildCandidates, BuildCase, BuildOptions, Policy, Preparation
+
+prepare = Preparation(
+    candidates=BuildCandidates(cases=[
+        BuildCase(size, BuildOptions(
+            chunking=Policy("shadowspill/text_chunks@1", {
+                "token_capacity": size,
+                "chunk_size": 4096,
+                "expert_chunk_size": 8192,
+            }),
+            graph_pair_policy=Policy("shadowspill/text_retention@1", {
+                "name": "cost-input", "chunked": True,
+            }),
+        ))
+        for size in (8192, 32768)
+    ]),
+)
+```
+
+The expert chunk size defaults to the ordinary chunk size. Retention supports
+`cost-input`, `cost-attention` and `attention-input`; `chunked=True` preserves the
+existing provider-local scratch rules. These settings affect internal execution,
+not logical update boundaries, objective normalization or the scheduled token cap.
+Factories remain in build workers; setup inspection loads only descriptions and
+source identities. Saved Plans restore the selected execution without recreating
+these policies on each training call.
+
 `OptimizerDefinition` registers a factory for an ordinary capturable optimizer.
 The factory receives `(model, config, controls)`, where the build worker provides
 tensor-valued runtime controls. Each advertised control explicitly names its
