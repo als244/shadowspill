@@ -311,6 +311,7 @@ def _infer(
             "slice_backward",
             "select_backward",
             "constant_pad_nd",
+            "pad",
             "linear",
             "_assert_tensor_metadata",
         }
@@ -375,9 +376,18 @@ def _infer(
             if isinstance(args[0], ChunkAxis)
             else args[0]
         )
-    if name == "constant_pad_nd":
+    if name in {"constant_pad_nd", "pad"}:
         padding = arguments[1]
-        fill = arguments[2] if len(arguments) > 2 else keywords.get("value", 0)
+        if name == "pad":
+            mode = (
+                arguments[2] if len(arguments) > 2 else keywords.get("mode", "constant")
+            )
+            if mode != "constant":
+                raise CaptureError("axis chunking only supports constant padding")
+            fill = arguments[3] if len(arguments) > 3 else keywords.get("value")
+            fill = 0 if fill is None else fill
+        else:
+            fill = arguments[2] if len(arguments) > 2 else keywords.get("value", 0)
         if not isinstance(padding, (tuple, list)) or any(
             not isinstance(value, int) for value in padding
         ):

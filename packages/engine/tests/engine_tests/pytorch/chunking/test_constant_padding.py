@@ -8,6 +8,7 @@ from engine_tests.pytorch.chunking.test_axis_vjp import executable
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.export import capture_forward, inference_artifact
 from shadowspill.pytorch.chunking import AxisChunks, ChunkAxis
 from shadowspill.pytorch.chunking.transform import chunk_artifact
 
@@ -80,4 +81,69 @@ def test_nonzero_padding_of_reduction_is_refused():
         kind="forward", graph_module=graph, example_inputs=(x,)
     )
     with pytest.raises(CaptureError, match="adds a shared value to a row reduction"):
+        chunk_artifact(artifact, (ChunkAxis(0),), 17, AxisChunks(7, {0: 0}))
+
+
+def exported_padding(function, inputs):
+    class Model(torch.nn.Module):
+        def forward(self, *values):
+            return function(*values)
+
+    artifact = inference_artifact(capture_forward(Model(), inputs))
+    assert "aten.pad.default" in artifact.operator_targets
+    return artifact
+
+
+@pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("fill", [None, 1.25])
+def test_forward_export_padding_alias_preserves_independent_and_shared_values(
+    shared, fill
+):
+    inputs = (torch.randn(17, 5), torch.randn(2 if shared else 8, 7))
+
+    def region(x, weight):
+        if shared:
+            weight = torch.nn.functional.pad(weight, (0, 0, 1, 2), value=fill)
+        else:
+            x = torch.nn.functional.pad(x, (2, 1), value=fill)
+        return (x @ weight,)
+
+    artifact = exported_padding(region, inputs)
+    chunked = chunk_artifact(artifact, (ChunkAxis(0), None), 17, AxisChunks(7, {0: 0}))
+    torch.testing.assert_close(executable(chunked)(*inputs), region(*inputs))
+
+
+@pytest.mark.parametrize("padding", [(0, 0, 1, 0), (0, 0, -1, 0)])
+def test_forward_padding_alias_cannot_change_token_coordinates(padding):
+    inputs = (torch.randn(17, 5),)
+    artifact = exported_padding(
+        lambda x: (torch.nn.functional.pad(x, padding),), inputs
+    )
+    with pytest.raises(CaptureError, match="changes the logical chunk axis"):
+        chunk_artifact(artifact, (ChunkAxis(0),), 17, AxisChunks(7, {0: 0}))
+
+
+@pytest.mark.parametrize("fill", [None, 2.0])
+def test_forward_padding_alias_preserves_reduction_safety(fill):
+    inputs = (torch.randn(17, 5),)
+
+    def region(x):
+        return (torch.nn.functional.pad(x.sum(0), (2, 1), value=fill),)
+
+    artifact = exported_padding(region, inputs)
+    if fill is not None:
+        with pytest.raises(CaptureError, match="adds a shared value"):
+            chunk_artifact(artifact, (ChunkAxis(0),), 17, AxisChunks(7, {0: 0}))
+    else:
+        chunked = chunk_artifact(artifact, (ChunkAxis(0),), 17, AxisChunks(7, {0: 0}))
+        torch.testing.assert_close(executable(chunked)(*inputs), region(*inputs))
+
+
+@pytest.mark.parametrize("mode", ["reflect", "replicate", "circular"])
+def test_forward_padding_alias_requires_constant_mode(mode):
+    inputs = (torch.randn(17, 5),)
+    artifact = exported_padding(
+        lambda x: (torch.nn.functional.pad(x, (1, 1), mode=mode),), inputs
+    )
+    with pytest.raises(CaptureError, match="constant padding"):
         chunk_artifact(artifact, (ChunkAxis(0),), 17, AxisChunks(7, {0: 0}))
