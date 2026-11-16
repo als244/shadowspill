@@ -51,6 +51,24 @@ def build_operation(
     kind = binding.contract.key.operation
     if kind == "step" and optimizer is None and not output_only:
         raise ValueError("step requires a resolved optimizer")
+    if (
+        kind != "forward"
+        and not output_only
+        and optimizer is not None
+        and optimizer.gradient_dtype is not None
+    ):
+        import torch
+
+        gradient_dtype = (
+            None
+            if optimizer.gradient_dtype == "parameter"
+            else getattr(torch, optimizer.gradient_dtype)
+        )
+        if "grad_dtype" in settings and settings["grad_dtype"] != gradient_dtype:
+            raise ValueError(
+                "build gradient dtype differs from the optimizer definition"
+            )
+        settings["grad_dtype"] = gradient_dtype
     arguments = binding.arguments(example)
     program: Program
     modes = [(module, module.training) for module in model.modules()]
@@ -121,6 +139,7 @@ def build_operation(
             "defaults": dict(optimizer.defaults),
             "bindings": dict(optimizer.definition.control_bindings),
             "master_dtype": optimizer.master_dtype,
+            "gradient_dtype": optimizer.gradient_dtype,
         }
     provenance = {
         **binding.signature(),

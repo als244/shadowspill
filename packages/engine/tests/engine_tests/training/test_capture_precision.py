@@ -31,7 +31,11 @@ def create(config):
 
 
 def prepared(
-    master, grad="float32", capture_context=None, gradient_destination_rules=None
+    master,
+    grad="float32",
+    capture_context=None,
+    gradient_destination_rules=None,
+    optimizer_grad="float32",
 ):
     model = replace(
         definitions()[0].definition,
@@ -50,7 +54,7 @@ def prepared(
                 "mlops/adamw@1",
                 precision={
                     "master_dtype": master,
-                    "gradient_dtype": "float32",
+                    "gradient_dtype": optimizer_grad,
                     "opt_state_dtype": "float32",
                 },
             ),
@@ -66,15 +70,16 @@ def prepared(
 
 @pytest.mark.cuda
 @pytest.mark.parametrize("master", [None, "bfloat16", "float32"])
+@pytest.mark.parametrize("gradient", ["float32", "bfloat16"])
 def test_bfloat16_model_fp32_gradients_and_optional_masters_reach_actual_capture(
-    monkeypatch, master
+    monkeypatch, master, gradient
 ):
     if not torch.cuda.is_available():
         pytest.skip("fake CUDA autograd capture requires a representative GPU")
-    registry, setup, inventory = prepared(master)
+    registry, setup, inventory = prepared(master, optimizer_grad=gradient)
     template = next(t for t in inventory.templates.values() if t.kind == "step")
     assert setup.optimizer.master_dtype == master
-    assert template.signature()["model_build"]["grad_dtype"] == "float32"
+    assert template.signature()["model_build"]["grad_dtype"] == gradient
     assert template.signature()["optimizer_master_dtype"] == master
     assert resolve_training(registry, setup.config).config == setup.config
 
@@ -83,7 +88,7 @@ def test_bfloat16_model_fp32_gradients_and_optional_masters_reach_actual_capture
 
     def capture(model, *, objective, example_args, optimizer, **options):
         # Exercise real core captures, stopping before CUDA compilation/profiling.
-        assert options["grad_dtype"] == torch.float32
+        assert options["grad_dtype"] == getattr(torch, gradient)
         assert options.get("master_dtype") == (
             None if master is None else getattr(torch, master)
         )
@@ -94,7 +99,7 @@ def test_bfloat16_model_fp32_gradients_and_optional_masters_reach_actual_capture
             {},
             num_examples=1,
             example_calls=None,
-            fuse_narrow_gradient_accumulation=False,
+            fuse_narrow_gradient_accumulation=True,
             partition="whole",
             graph_pair_policy=None,
             gradient_dtype=options["grad_dtype"],
@@ -119,7 +124,7 @@ def test_bfloat16_model_fp32_gradients_and_optional_masters_reach_actual_capture
         )
         assert bool(copies) == (master == "float32")
         assert all(b.tensor.dtype == torch.bfloat16 for b in copies)
-        assert all(b.tensor.dtype == torch.float32 for b in gradients)
+        assert all(b.tensor.dtype == getattr(torch, gradient) for b in gradients)
         assert update.gradient_scale_control is not None
         setup.optimizer.definition.validate_capture(update.captured)
         raise Captured
@@ -130,7 +135,7 @@ def test_bfloat16_model_fp32_gradients_and_optional_masters_reach_actual_capture
 
 
 def test_precision_changes_capture_identity_and_invalid_choices_fail_on_cpu():
-    _, _, default = prepared(None, None)
+    _, _, default = prepared(None, None, optimizer_grad="bfloat16")
     _, _, gradients = prepared(None)
     _, _, masters = prepared("float32")
     assert default.templates.keys().isdisjoint(gradients.templates)

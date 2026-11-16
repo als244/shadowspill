@@ -135,7 +135,14 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
         construction_key = layout_key(binding.inputs.layout)
         if construction_key not in constructions:
             constructions[construction_key] = setup.model.describe_build(
-                ModelBuildContext(binding.inputs.layout, model_family, parallelism)
+                ModelBuildContext(
+                    binding.inputs.layout,
+                    model_family,
+                    parallelism,
+                    gradient_dtype=None
+                    if setup.optimizer is None
+                    else setup.optimizer.gradient_dtype,
+                )
             )
         model_build = constructions[construction_key]
         provenance = {

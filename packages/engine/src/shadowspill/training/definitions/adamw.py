@@ -130,6 +130,7 @@ def register(registry: Registry) -> None:
             config=AdamWConfig,
             configure=configure,
             master_dtype=lambda config: config.master_dtype,
+            gradient_dtype=lambda config: config.gradient_dtype,
             # These exact provider forms allocate only fixed-geometry outputs;
             # the out/in-place kernels use preallocated tensors and no scratch.
             # Scalar values (including zero LR) cannot change that geometry.

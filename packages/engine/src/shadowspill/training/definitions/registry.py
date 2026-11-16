@@ -182,7 +182,15 @@ class ResolvedModel:
             raise TypeError("model build hook must return ModelBuild")
         _, normalized = _configuration(self.definition.config, description.config)
         validate_resources(description.resources, context.parallelism)
-        return replace(description, config=normalized)
+        return replace(
+            description,
+            config=normalized,
+            grad_dtype=description.grad_dtype
+            if context.gradient_dtype is None
+            else None
+            if context.gradient_dtype == "parameter"
+            else context.gradient_dtype,
+        )
 
     def capture_context(self, build: ModelBuild) -> AbstractContextManager[Any]:
         """Open provider precision/dispatch settings only in a capture worker.
@@ -336,6 +344,11 @@ class ResolvedOptimizer:
     def master_dtype(self) -> str | None:
         assert not callable(self.definition.master_dtype)
         return self.definition.master_dtype
+
+    @property
+    def gradient_dtype(self) -> str | None:
+        assert not callable(self.definition.gradient_dtype)
+        return self.definition.gradient_dtype
 
     def create(self, model: Any, controls: Mapping[str, Any]) -> Any:
         if controls.keys() != self.definition.controls.fields.keys():
@@ -517,6 +530,9 @@ class Registry:
             master_dtype=optimizer.master_dtype(configured)
             if callable(optimizer.master_dtype)
             else optimizer.master_dtype,
+            gradient_dtype=optimizer.gradient_dtype(configured)
+            if callable(optimizer.gradient_dtype)
+            else optimizer.gradient_dtype,
         )
         controls = optimizer.controls.resolve(
             defaults=optimizer.defaults, overrides=defaults

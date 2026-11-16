@@ -30,6 +30,8 @@ class OptimizerDefinition:
     ``master_dtype`` may be a dtype name or CPU config resolver; it selects the
     existing optimizer-parameter capture, without changing model dtype. Ordinary
     parameters need no separate copy when they already meet that precision.
+    ``gradient_dtype`` sets stored gradients and their accumulation. None leaves
+    this to the model build; "parameter" uses each parameter's native dtype.
     """
 
     id: str
@@ -41,6 +43,7 @@ class OptimizerDefinition:
     configure: Callable[[Optimizer], Mapping[str, Value]] | None = None
     allocation_invariants: Mapping[str, str] = field(default_factory=dict)
     master_dtype: str | Callable[[Any], str | None] | None = None
+    gradient_dtype: str | Callable[[Any], str | None] | None = None
 
     def __post_init__(self) -> None:
         versioned_id(self.id)
@@ -56,6 +59,17 @@ class OptimizerDefinition:
             "float64",
         ):
             raise ValueError("optimizer master_dtype must name a floating dtype")
+        if not callable(self.gradient_dtype) and self.gradient_dtype not in (
+            None,
+            "parameter",
+            "float16",
+            "bfloat16",
+            "float32",
+            "float64",
+        ):
+            raise ValueError(
+                "optimizer gradient_dtype must name a floating dtype or parameter"
+            )
         if not isinstance(self.controls, ControlSchema):
             raise TypeError("optimizer requires a ControlSchema")
         if self.control_bindings.keys() != self.controls.fields.keys():

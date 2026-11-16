@@ -121,6 +121,7 @@ def create(config):
 
 
 def build(config, context):
+    config = training_options.for_build(config, context)
     if config.implementation == "mlops_ep":
         return expert_parallel.build(
             config, config.catalog.Config(**config.architecture), config.family, context

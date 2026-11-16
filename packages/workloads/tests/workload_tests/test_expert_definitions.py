@@ -92,7 +92,7 @@ def prepared(family, *, parallelism=None, grad_dtype="float32"):
         ),
         memory=Memory(1, 1),
         parallelism=parallelism,
-        optimizer=Optimizer("mlops/adamw@1"),
+        optimizer=Optimizer("mlops/adamw@1", precision={"gradient_dtype": grad_dtype}),
         operations={
             "step": ["metrics"],
             "forward_backward": ["metrics"],

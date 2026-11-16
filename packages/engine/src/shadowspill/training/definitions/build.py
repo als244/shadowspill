@@ -22,13 +22,28 @@ class ModelBuildContext:
     Shared provider capacities can cover the family once, independently of the
     current physical shape. Logical ranks and groups are explicit; no physical
     device, process group or live allocation is exposed during description.
+    ``gradient_dtype`` carries the optimizer's gradient choice so providers can
+    produce directly into the same storage. None leaves the model build default;
+    "parameter" requests native parameter precision.
     """
 
     layout: InputLayout
     family: Sequence[InputLayout]
     parallelism: Parallelism
+    gradient_dtype: str | None = None
 
     def __post_init__(self) -> None:
+        if self.gradient_dtype not in (
+            None,
+            "parameter",
+            "float16",
+            "bfloat16",
+            "float32",
+            "float64",
+        ):
+            raise ValueError(
+                "build gradient_dtype must name a floating dtype or parameter"
+            )
         family = tuple(self.family)
         if (
             not isinstance(self.layout, InputLayout)
@@ -53,7 +68,8 @@ class ModelBuild:
     The same ordinary model factory receives this normalized config at capture.
     Existing Resource and OperatorPreparation APIs own creation, binary capture,
     measurement, restoration and cleanup. ``grad_dtype`` selects the existing
-    captured gradient storage/accumulation precision; None keeps the core default.
+    captured gradient storage/accumulation precision when the optimizer does not
+    select one; None keeps the core default.
     Policies and optimizer options remain separate and cannot be replaced by
     this hook.
     """

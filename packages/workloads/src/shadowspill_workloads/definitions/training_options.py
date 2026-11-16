@@ -1,6 +1,7 @@
 """Shared precision and LoRA support for supplied MLOps model definitions."""
 
 from contextlib import contextmanager
+from dataclasses import replace
 from importlib.util import find_spec
 
 from shadowspill_client import LoRA
@@ -53,6 +54,20 @@ def adapt(model, config):
             factor_dtype=config.lora_dtype,
         )
     return model
+
+
+def for_build(config, context):
+    """One optimizer precision choice also controls provider gradient production."""
+    if context.gradient_dtype is None:
+        return config
+    return replace(
+        config,
+        grad_dtype=(
+            config.compute_dtype
+            if context.gradient_dtype == "parameter"
+            else context.gradient_dtype
+        ),
+    )
 
 
 @contextmanager

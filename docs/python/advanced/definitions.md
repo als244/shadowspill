@@ -666,8 +666,12 @@ omitted values use the immutable setup defaults. Structural `config` supports
 `float32`, `float16` or `bfloat16`), plus `parameter_rounding` and
 `opt_state_rounding` (`nearest` or `stochastic`). Defaults match MLOps: BF16 update
 gradients and moments, nearest rounding. These dtype settings describe the
-optimizer's input conversion and moment storage; they do not change model or
-gradient-accumulation storage. `master_dtype` accepts `float32`, `float16` or
+stored/accumulated gradients, the optimizer's gradient inputs and moment storage;
+they do not change model compute precision. The optimizer's `gradient_dtype` also
+reaches model/provider preparation through `ModelBuildContext.gradient_dtype`.
+Fused accumulation is enabled by default wherever a kernel supports it, including
+BF16; unsupported destinations retain ordinary accumulation. `master_dtype`
+accepts `float32`, `float16` or
 `bfloat16`; its default is `None`. Ordinary parameters use separate master storage
 only when promotion to that dtype requires it. For example, BF16 master dtype
 adds no copies to a BF16 model, and its FP32 exceptions remain FP32. FP32 master

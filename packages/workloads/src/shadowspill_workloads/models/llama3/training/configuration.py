@@ -63,6 +63,7 @@ def create(config):
 
 
 def build(config, context):
+    config = training_options.for_build(config, context)
     return ModelBuild(
         asdict(config), grad_dtype=config.grad_dtype, allocation_invariants=CONTRACTS
     )
