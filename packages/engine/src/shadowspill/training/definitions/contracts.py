@@ -119,7 +119,10 @@ class ObjectiveDefinition:
     ``padding_safe`` asserts that schema/adapter padding contributes no loss or
     scalar totals and preserves outputs for real data. Declaring a participation
     field alone does not prove that a callable honors it. The preparation binder
-    requires this guarantee for padded operation families.
+    requires this guarantee for padded operation families. A custom objective
+    that intentionally includes padding in microbatch statistics must instead
+    declare ``physical_batch_loss=True``. Its loss and gradients may change
+    with padding or partitioning; it does not claim logical-batch equivalence.
 
     ``configure(values, model)`` can resolve model-dependent structural settings
     on CPU. Inputs, controls and outputs may resolve from the typed configuration.
@@ -143,6 +146,7 @@ class ObjectiveDefinition:
     reduction: Literal["sum", "custom"] = "sum"
     bind: Callable[[Any, OperationKey], Computation] | None = None
     padding_safe: bool = False
+    physical_batch_loss: bool = False
     allocation_invariants: Mapping[str, str] = field(default_factory=dict)
     configure: (
         Callable[[Mapping[str, Value], ResolvedModel], Mapping[str, Value]] | None
@@ -162,6 +166,14 @@ class ObjectiveDefinition:
             raise ValueError("declare summed or custom objective semantics")
         if type(self.padding_safe) is not bool:
             raise TypeError("objective padding_safe must be boolean")
+        if type(self.physical_batch_loss) is not bool:
+            raise TypeError("objective physical_batch_loss must be boolean")
+        if self.physical_batch_loss and (
+            self.padding_safe or self.reduction != "custom"
+        ):
+            raise ValueError(
+                "physical batch loss requires custom reduction and padding_safe=False"
+            )
         if self.configure is not None and not callable(self.configure):
             raise TypeError("configure must be an installed CPU settings function")
         outputs = None if callable(self.outputs) else dict(self.outputs)

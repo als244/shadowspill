@@ -165,6 +165,36 @@ def test_padding_claims_and_output_shapes_fail_before_preparation():
                 binding.forward(model.create(), *args)
 
 
+def test_physical_batch_loss_is_explicit_custom_semantics_and_source_pinned():
+    model, objective, _ = definitions()
+    definition = objective.definition
+    for settings in (
+        {"physical_batch_loss": True},
+        {"physical_batch_loss": True, "padding_safe": False},
+        {"physical_batch_loss": "yes"},
+    ):
+        with pytest.raises(
+            (ValueError, TypeError), match=r"physical batch|physical_batch"
+        ):
+            replace(definition, **settings)
+    physical = replace(
+        objective,
+        definition=replace(
+            definition,
+            padding_safe=False,
+            reduction="custom",
+            physical_batch_loss=True,
+        ),
+    )
+    with example(model, physical, "step") as (binding, _):
+        signature = binding.signature()["objective"]
+        assert signature["physical_batch_loss"]
+        assert not signature["padding_safe"]
+        assert signature["reduction"] == "custom"
+    with example(model, objective, "step") as (binding, _):
+        assert not binding.signature()["objective"]["physical_batch_loss"]
+
+
 def test_operation_builder_rejects_binding_overrides_before_gpu_access():
     model, objective, _ = definitions()
     with example(model, objective, "step") as (binding, adapted):

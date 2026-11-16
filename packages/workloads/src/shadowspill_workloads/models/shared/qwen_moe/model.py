@@ -160,9 +160,22 @@ class QwenMoE(nn.Module):
         This exposes the token distribution. The existing ``loss`` method owns
         the separately weighted router-balancing term and retains its semantics.
         """
-        hidden, _ = self.hidden(tokens, sequence_lengths)
-        return target_logprobs(
-            hidden, self.lm_head, targets, chunk_size=head_chunk_size
+        return self.target_logprobs_with_auxiliary(
+            tokens, targets, sequence_lengths, head_chunk_size=head_chunk_size
+        )[0]
+
+    def target_logprobs_with_auxiliary(
+        self, tokens, targets, sequence_lengths=None, *, head_chunk_size=None
+    ):
+        """One model evaluation with the existing microbatch router statistic.
+
+        The auxiliary term includes physical padding, as ``loss`` always has.
+        Its coefficient and supervised-token scaling belong to the objective.
+        """
+        hidden, auxiliary = self.hidden(tokens, sequence_lengths)
+        return (
+            target_logprobs(hidden, self.lm_head, targets, chunk_size=head_chunk_size),
+            auxiliary,
         )
 
     def loss(

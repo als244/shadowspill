@@ -63,7 +63,10 @@ class OperationBinding:
             raise ValueError("physical inputs must match the selected required fields")
         if (
             not inputs.adapter.padding_safe
-            or not contract.objective.definition.padding_safe
+            or not (
+                contract.objective.definition.padding_safe
+                or contract.objective.definition.physical_batch_loss
+            )
         ):
             raise ValueError("model adapter and objective must declare padding safety")
         self.model, self.contract = model, contract
@@ -192,6 +195,7 @@ class OperationBinding:
                 "source": objective.source.to_dict(),
                 "config": dict(objective.config),
                 "padding_safe": objective.definition.padding_safe,
+                "physical_batch_loss": objective.definition.physical_batch_loss,
                 "participation": objective.definition.participation.to_dict(),
                 "reduction": objective.definition.reduction,
             },

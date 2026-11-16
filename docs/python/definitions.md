@@ -202,9 +202,23 @@ An optional model `input_adapter(config, layout)` returns fixed views and bounde
 generated metadata for the selected physical buffer. The ordinary independent,
 fixed stacked case needs no custom adapter. Packed, variable or grouped model
 inputs require an explicit adapter, including sequence/group boundaries when
-needed. Both the adapter and objective must declare `padding_safe=True` to use
-padded operation families: padding must preserve real outputs and contribute no
-loss or scalar totals. A validity field alone does not establish this guarantee.
+needed. The adapter declares `padding_safe=True`: padding preserves real model
+outputs. The objective normally declares the same guarantee, with padding
+contributing no loss or scalar totals. A validity field alone does not establish
+this guarantee. A custom objective that deliberately uses physical microbatch
+statistics instead declares `physical_batch_loss=True`, `reduction="custom"`
+and `padding_safe=False`. Its loss and gradients can change with the selected
+buffer size, padding and split calls. Preparation records this distinction; it
+does not change batching, capacity limits or all-masked update skipping.
+
+`shadowspill/qwen_moe_cross_entropy@1` preserves Qwen's existing router balancing.
+It adds `router_aux_loss_coef * auxiliary * valid_tokens` to the caller-weighted
+cross-entropy sum. The coefficient defaults to the model's configured value and
+can be overridden per call. The auxiliary statistic includes physical padding;
+token weights affect cross entropy only. Use final `grad_scale` to scale both
+terms together. `ce_sum`, `auxiliary_sum`, `loss_sum` and `valid_tokens` are reported
+separately. Whole and split runs require their own microbatch-aware oracles;
+the generic `shadowspill/cross_entropy@1` remains the token-only summed objective.
 
 The developing input pipeline validates owned binary snapshots with these same
 schemas before packing. It checks every supplied field, shared dimension, numeric
