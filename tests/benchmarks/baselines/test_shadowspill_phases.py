@@ -92,7 +92,7 @@ def test_execution_supplies_the_complete_rank_assignment(monkeypatch):
         assert RankAssignment.resolve(2, rank_map).logical_by_worker == (0, 1)
         raise ReachedAdmission
 
-    monkeypatch.setattr(execute, "Trainer", admit)
+    monkeypatch.setattr(execute, "Executor", admit)
     with pytest.raises(ReachedAdmission):
         execute.train(case, None)
 

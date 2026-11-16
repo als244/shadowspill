@@ -4,14 +4,16 @@ import statistics
 
 import torch
 
+from shadowspill.execution import TrainingResult
+from shadowspill.training.observations import StepObservations
 from shadowspill_workloads.full_model import HEAD_LOSS_METRIC
 
 from .microbatches import split_microbatches
 from .reference import create
 
 
-def measure(case, clock, trainer, geometry, data, stack):
-    model, access, reference = create(case, trainer, geometry, stack)
+def measure(case, clock, executor, geometry, data, stack):
+    model, access, reference = create(case, executor, geometry, stack)
     device_used, evidence = [], None
     clock.ready()
     for step in range(clock.steps):
@@ -34,13 +36,23 @@ def measure(case, clock, trainer, geometry, data, stack):
             )
         )
         clock.begin(step)
-        result = trainer.step(args=args)
-        loss = float(sum(result.losses)) * case.world
+        pending = executor.run(args=args)
+        result = pending.result()
+        try:
+            if not isinstance(result, TrainingResult):
+                raise TypeError("training Plan returned an invalid result")
+            observed = StepObservations.collect(
+                result.losses, result.metrics, result.parameter_metrics
+            )
+        finally:
+            executor.synchronize()
+            del result, pending
+        loss = float(sum(observed.losses)) * case.world
         head = sum(
             float(metrics.get(HEAD_LOSS_METRIC, part * case.world))
             if isinstance(metrics, dict)
             else float(part) * case.world
-            for part, metrics in zip(result.losses, result.metrics, strict=True)
+            for part, metrics in zip(observed.losses, observed.metrics, strict=True)
         )
         clock.end(step, loss, head)
         free, total = torch.cuda.mem_get_info(case.device)

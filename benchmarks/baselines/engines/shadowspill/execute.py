@@ -10,8 +10,7 @@ import torch.distributed as dist
 from benchmarks.baselines.common import runner
 from benchmarks.baselines.common.provenance import hardware_identity
 from benchmarks.quickstart.phases.common import write
-from shadowspill import Plan
-from shadowspill.training import Trainer
+from shadowspill import Executor, Plan
 
 from . import settings as engine_settings
 from .initialize import Initialize
@@ -41,8 +40,8 @@ def train(case, clock):
     case.stage = "admission"
     preflight(case, plan)
     with ExitStack() as stack:
-        trainer = stack.enter_context(
-            Trainer(
+        executor = stack.enter_context(
+            Executor(
                 plan,
                 device=case.local_rank,
                 rank_map={rank: rank for rank in range(case.world)},
@@ -54,14 +53,14 @@ def train(case, clock):
         case.record["hardware"] = hardware_identity()
         case.stage = "initialization"
         with Initialize(case.settings) as fill:
-            trainer.initialize(fill)
+            executor.initialize(fill)
             if fill.checkpoint is not None:
                 case.record["checkpoint"] = {
                     "directory": str(Path(case.settings.checkpoint).resolve()),
                     "config": asdict(fill.checkpoint.config),
                 }
                 case.record["loaded"] = fill.report()
-        runtime = trainer.executor.runtime
+        runtime = executor.runtime
         case.record.update(
             plan={
                 "file": str(saved_plan),
@@ -90,7 +89,7 @@ def train(case, clock):
         config = case.settings.request().entry.config(**case.settings.model_config)
         data = case.data(config.vocab_size)
         case.stage = "training"
-        observed = measure(case, clock, trainer, geometry, data, stack)
+        observed = measure(case, clock, executor, geometry, data, stack)
         pools = {
             name: pool_record(runtime.pool_statistics(name))
             for name in ("execution", "spill")

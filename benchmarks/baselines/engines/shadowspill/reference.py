@@ -108,12 +108,12 @@ class Snapshot(Access):
         return counts
 
 
-def create(case, trainer, geometry, stack):
+def create(case, executor, geometry, stack):
     if not case.settings.verify_reference:
         return None, None, None
     request = case.settings.request()
     model = TrainingModel(request, geometry, dtype=case.precision.model_dtype)
-    access = Snapshot(trainer.executor, model, case.device)
+    access = Snapshot(executor, model, case.device)
     access.refresh()
     group = None
     if case.world > 1:
