@@ -6,6 +6,7 @@ import socket
 import sys
 import tarfile
 from dataclasses import replace
+from math import prod
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -37,7 +38,19 @@ def exported(training, trained, initial, *, separate_masters=True):
     handle = training.export_weights().result(120)
     with TemporaryDirectory(prefix="shadowspill-llama-weights-") as directory:
         root = handle.download(Path(directory) / "weights").result(60)
-        with tarfile.open(root / "ranks/rank-00000.ssp") as archive:
+        return read_weights(root, trained, initial, separate_masters=separate_masters)
+
+
+def read_weights(root, trained, initial, *, separate_masters=True):
+    """Independent NumPy reconstruction of small qualification exports.
+
+    Saved logical coordinates describe expert/model shards; storage regions
+    describe flat optimizer shards. Check coverage and equal replicas rather
+    than assuming every rank contains a complete contiguous parameter.
+    """
+    manifests = []
+    for path in sorted((root / "ranks").glob("rank-*.ssp")):
+        with tarfile.open(path) as archive:
             manifest = json.loads(archive.extractfile("manifest.json").read())
             arrays = {}
             endian = "<" if manifest["byteorder"] == "little" else ">"
@@ -52,38 +65,65 @@ def exported(training, trained, initial, *, separate_masters=True):
                 if dtype == "bfloat16":
                     value = (value.astype(np.uint32) << 16).view(np.float32)
                 arrays[row["name"]] = value
-            values, masters = {}, set()
-            for row in manifest["model_tensors"]:
-                view, identity = row["view"], row["tensor"]["identity"]
-                assert view["shape"] == view["local_shape"] and not any(view["origin"])
-                if identity["role"] == "master":
-                    assert row["tensor"]["geometry"]["dtype"] == "torch.float32"
-                    masters.add(identity["name"])
-                if row["archive"] in manifest["omitted_parameters"]:
-                    assert manifest["frozen_state_id"] is not None
-                    assert identity["name"] not in trained
-                    values[identity["name"]] = np.asarray(
-                        initial[identity["name"]], dtype=np.float32
-                    )
-                    continue
-                array = arrays[
-                    manifest["derived_tensors"].get(row["archive"], row["archive"])
-                ]
-                values[identity["name"]] = np.ndarray(
-                    tuple(view["shape"]),
-                    dtype=array.dtype,
-                    buffer=array,
-                    offset=(view["storage_offset"] - view["region_offset"])
-                    * array.itemsize,
-                    strides=tuple(s * array.itemsize for s in view["stride"]),
-                ).copy()
-            assert masters == (set(trained) if separate_masters else set()), (
-                masters,
-                trained,
+            manifests.append((manifest, arrays))
+    assert manifests, "weights export contains no ranks"
+    masters = {
+        row["tensor"]["identity"]["name"]
+        for manifest, _ in manifests
+        for row in manifest["model_tensors"]
+        if row["tensor"]["identity"]["role"] == "master"
+    }
+    assert masters == (set(trained) if separate_masters else set()), (masters, trained)
+    values, coverage = {}, {}
+    for manifest, arrays in manifests:
+        for row in manifest["model_tensors"]:
+            view, identity = row["view"], row["tensor"]["identity"]
+            name, role = identity["name"], identity["role"]
+            if name not in initial or role != (
+                "master" if name in masters else "parameter"
+            ):
+                continue
+            assert not identity["component_path"], "encoded values need an explicit map"
+            shape = tuple(view["shape"])
+            assert shape == np.shape(initial[name]), name
+            if name not in values:
+                values[name] = np.empty(shape, dtype=np.float32)
+                coverage[name] = np.zeros(shape, dtype=bool)
+            if row["archive"] in manifest["omitted_parameters"]:
+                assert manifest["frozen_state_id"] is not None and name not in trained
+                values[name][...] = initial[name]
+                coverage[name][...] = True
+                continue
+            if not view["region_elements"]:
+                continue
+            array = arrays[
+                manifest["derived_tensors"].get(row["archive"], row["archive"])
+            ]
+            assert role != "master" or (array.dtype.kind == "f" and array.itemsize == 4)
+            # Enumerate only these small test models; production reconstruction
+            # uses the engine's bounded readers and span intersections instead.
+            indices = np.indices(view["local_shape"]).reshape(
+                len(shape), prod(view["local_shape"])
             )
-            if not separate_masters:
-                assert all(values[name].dtype == np.float32 for name in trained)
-            return values
+            offsets = (
+                view["storage_offset"]
+                + np.asarray(view["stride"], dtype=np.int64) @ indices
+            )
+            offsets -= view["region_offset"]
+            selected = (offsets >= 0) & (offsets < view["region_elements"])
+            coordinates = tuple(
+                indices[:, selected] + np.asarray(view["origin"])[:, None]
+            )
+            incoming = array[offsets[selected]]
+            previous = coverage[name][coordinates]
+            np.testing.assert_array_equal(
+                values[name][coordinates][previous], incoming[previous]
+            )
+            values[name][coordinates] = incoming
+            coverage[name][coordinates] = True
+    assert values.keys() == initial.keys(), (values.keys(), initial.keys())
+    assert all(mask.all() for mask in coverage.values()), "incomplete logical weights"
+    return values
 
 
 def logprobs(training, records, budget, output_name="logprobs"):
