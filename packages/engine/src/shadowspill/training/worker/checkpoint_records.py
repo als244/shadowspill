@@ -11,6 +11,7 @@ from shadowspill_client._records import Record, Value, integer, mapping, record
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
     RANK_MEDIA_TYPE,
+    WEIGHTS_MEDIA_TYPE,
     WEIGHTS_RANK_MEDIA_TYPE,
     SavedRank,
     SaveInfo,
@@ -38,6 +39,33 @@ class RankRestore(Record):
             or self.rank.rank >= self.info.world_size
         ):
             raise ValueError("restore rank differs from its checkpoint generation")
+
+
+@dataclass(frozen=True)
+class RankWeights(Record):
+    """An exported source and its admitted model-only target rank generation."""
+
+    artifact: ArtifactRef
+    generation: ArtifactRef
+    info: SaveInfo
+    rank: SavedRank
+
+    def __post_init__(self) -> None:
+        for name, kind in (
+            ("artifact", ArtifactRef),
+            ("generation", ArtifactRef),
+            ("info", SaveInfo),
+            ("rank", SavedRank),
+        ):
+            object.__setattr__(self, name, record(kind, getattr(self, name), name))
+        if (
+            self.artifact.media_type != WEIGHTS_MEDIA_TYPE
+            or self.generation.media_type != WEIGHTS_MEDIA_TYPE
+            or self.info.kind != "weights"
+            or self.rank.archive.media_type != WEIGHTS_RANK_MEDIA_TYPE
+            or self.rank.rank >= self.info.world_size
+        ):
+            raise ValueError("initial weights rank differs from its weights generation")
 
 
 @dataclass(frozen=True)

@@ -23,7 +23,7 @@ from shadowspill_client.protocol.requests import ArtifactRef
 
 from .bindings import BoundWorkerCall, WorkerBindings
 from .checkpoint_reader import WorkerCheckpointReader, validate_rank
-from .checkpoint_records import RankRestore
+from .checkpoint_records import RankRestore, RankWeights
 from .checkpoint_writer import WorkerCheckpointWriter
 from .execution import WorkerExecution
 from .frozen import fresh_base
@@ -40,6 +40,8 @@ from .output_frame import WorkerOutputFrame, prepare_output_frames
 from .protocol import WorkerCall, WorkerScope, WorkerStartup
 from .startup import await_start, report_ready
 from .trace_files import TraceBudget, TraceFiles, family_trace_budgets
+from .weights_reader import initialize_weights
+from .weights_reader import validate_rank as validate_weights_rank
 
 if TYPE_CHECKING:
     from shadowspill.execution.executor import Executor
@@ -61,6 +63,7 @@ class PreparedWorker:
     traces: Mapping[tuple[str, bool], TraceBudget]
     restore: RankRestore | None = None
     frozen_base: FrozenBase | None = None
+    initial_weights: RankWeights | None = None
 
     @property
     def chunk_bytes(self) -> int:
@@ -83,6 +86,7 @@ class PreparedWorker:
         rank_map: Mapping[int, int] | None = None,
         restore: RankRestore | None = None,
         weights: Sequence[ArtifactRef] = (),
+        initial_weights: RankWeights | None = None,
     ) -> "PreparedWorker":
         bindings = WorkerBindings(prepared, scope)
         NsysCapture.from_settings(bindings.setup.config.execution.nsys)
@@ -93,25 +97,37 @@ class PreparedWorker:
         for plan in plans.values():
             require_compiled_device(plan.program, 0)
         primary = plans[bindings.primary]
-        if restore is not None and (
-            restore.rank.rank != scope.rank
-            or restore.info.world_size != len(assignment.logical_by_worker)
+        if restore is not None and initial_weights is not None:
+            raise ValueError("worker startup cannot combine weights and a checkpoint")
+        saved = restore if restore is not None else initial_weights
+        if saved is not None and (
+            saved.rank.rank != scope.rank
+            or saved.info.world_size != len(assignment.logical_by_worker)
         ):
-            raise ValueError("checkpoint initialization differs from worker assignment")
+            raise ValueError("saved initialization differs from worker assignment")
+        if initial_weights is not None:
+            selected = bindings.setup.config.model.initialize
+            if (
+                selected is None
+                or selected.kind != "artifact"
+                or selected.reference != initial_weights.artifact.id
+                or initial_weights.info.plans != bundle
+            ):
+                raise ValueError(
+                    "initial weights differ from the selected source or Plans"
+                )
         base = (
-            fresh_base(prepared, weights)
-            if restore is None
-            else restore.info.frozen_base
+            fresh_base(prepared, weights) if saved is None else saved.info.frozen_base
         )
         if (
-            restore is not None
-            and restore.info.frozen_state_id is not None
+            saved is not None
+            and saved.info.frozen_state_id is not None
             and base is None
         ):
-            raise ValueError("checkpoint has no declared frozen-base restore identity")
+            raise ValueError("saved state has no declared frozen-base identity")
         initial = (
             prepare_initialization(bindings.setup)[scope.rank]
-            if restore is None
+            if saved is None
             else None
             if base is None
             else prepare_frozen_initialization(bindings.setup, base, scope.rank)
@@ -125,10 +141,8 @@ class PreparedWorker:
             _, initial_bytes = restore_staging(
                 initial, bindings.setup.config.execution.max_staging_bytes
             )
-        if restore is not None and initial_bytes < 2:
-            raise StagingLimitError(
-                "checkpoint initialization needs two staging chunks"
-            )
+        if saved is not None and initial_bytes < 2:
+            raise StagingLimitError("saved initialization needs two staging chunks")
         outputs = prepare_output_frames(prepared, scope.rank)
         traces = family_trace_budgets(plans)
         staging = max(
@@ -147,6 +161,7 @@ class PreparedWorker:
         )
         signature = {
             "checkpoint": None if restore is None else restore.to_dict(),
+            "weights": None if initial_weights is None else initial_weights.to_dict(),
             "initializer": None if initial is None else initial.signature(),
             "frozen_base": None if base is None else base.to_dict(),
             "staging_bytes": staging,
@@ -161,7 +176,16 @@ class PreparedWorker:
             staging,
             max(trace.host_bytes for trace in traces.values()),
         )
-        return cls(bindings, initial, description, outputs, traces, restore, base)
+        return cls(
+            bindings,
+            initial,
+            description,
+            outputs,
+            traces,
+            restore,
+            base,
+            initial_weights,
+        )
 
     @contextmanager
     def open(
@@ -218,7 +242,18 @@ class PreparedWorker:
                         runtime=runtime,
                         frozen_base=self.frozen_base,
                     )
-                    if self.restore is None:
+                    if self.initial_weights is not None:
+                        initialize_weights(
+                            executor,
+                            resolve(self.initial_weights.rank.archive),
+                            self.initial_weights,
+                            self.initialization,
+                            runtime,
+                            budget,
+                            chunk_bytes=self.chunk_bytes,
+                        )
+                        randomness.initialize(self.bindings.setup.config.execution.seed)
+                    elif self.restore is None:
                         assert self.initialization is not None
                         initialize(executor, self.initialization, runtime, budget)
                         randomness.initialize(self.bindings.setup.config.execution.seed)
@@ -308,21 +343,32 @@ class PreparedWorker:
         with ExitStack() as cleanup:
             cleanup.callback(reader.close)
             cleanup.callback(writer.close)
-            if self.restore is not None:
+            if self.restore is not None or self.initial_weights is not None:
                 from shadowspill.checkpoint.state import PlanState
 
                 plans = dict(self.bindings.prepared.plans[self.startup.scope.rank])
                 primary = plans.pop(self.bindings.primary)
                 # Every worker completes this CPU check before any receives the
                 # existing startup release into collective initialization.
-                validate_rank(
-                    PlanState(primary, plans, logical_rank=self.startup.scope.rank),
-                    resolve(self.restore.rank.archive),
-                    self.restore,
-                    chunk_bytes=self.chunk_bytes,
-                    world_size=len(self.startup.logical_by_worker),
-                    require_randomness=True,
-                )
+                state = PlanState(primary, plans, logical_rank=self.startup.scope.rank)
+                if self.initial_weights is not None:
+                    validate_weights_rank(
+                        state,
+                        resolve(self.initial_weights.rank.archive),
+                        self.initial_weights,
+                        chunk_bytes=self.chunk_bytes,
+                        world_size=len(self.startup.logical_by_worker),
+                    )
+                else:
+                    assert self.restore is not None
+                    validate_rank(
+                        state,
+                        resolve(self.restore.rank.archive),
+                        self.restore,
+                        chunk_bytes=self.chunk_bytes,
+                        world_size=len(self.startup.logical_by_worker),
+                        require_randomness=True,
+                    )
             await_start(self.startup, reader, writer)
             with self.open(
                 runtime,

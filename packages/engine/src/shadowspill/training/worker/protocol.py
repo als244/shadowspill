@@ -17,7 +17,7 @@ from shadowspill_client.protocol.requests import (
 )
 from shadowspill_client.protocol.results import ArtifactIssue
 
-from .checkpoint_records import RankRestore, RankSave, RankSaved
+from .checkpoint_records import RankRestore, RankSave, RankSaved, RankWeights
 from .conversion_records import (
     ConversionCommand,
     ConversionFailed,
@@ -113,6 +113,7 @@ class WorkerLaunch(Record):
     packages: Sequence[str]
     weights: Sequence[ArtifactRef] = ()
     restore: RankRestore | None = None
+    initial_weights: RankWeights | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -130,19 +131,27 @@ class WorkerLaunch(Record):
         ):
             raise ValueError("worker initialization artifact IDs must be distinct")
         object.__setattr__(self, "weights", weights)
-        if self.restore is not None:
-            object.__setattr__(
-                self, "restore", record(RankRestore, self.restore, "restore")
-            )
-            base = self.restore.info.frozen_base
+        if self.restore is not None and self.initial_weights is not None:
+            raise ValueError("worker startup cannot combine weights and a checkpoint")
+        saved_types: tuple[tuple[str, type[RankRestore] | type[RankWeights]], ...] = (
+            ("restore", RankRestore),
+            ("initial_weights", RankWeights),
+        )
+        for name, kind in saved_types:
+            saved = getattr(self, name)
+            if saved is None:
+                continue
+            saved = record(kind, saved, name)
+            object.__setattr__(self, name, saved)
+            base = saved.info.frozen_base
             required = () if base is None or base.artifact is None else (base.artifact,)
             if (
                 weights != required
-                or self.restore.rank.rank != self.startup.scope.rank
-                or self.restore.info.world_size != len(self.startup.logical_by_worker)
+                or saved.rank.rank != self.startup.scope.rank
+                or saved.info.world_size != len(self.startup.logical_by_worker)
             ):
                 raise ValueError(
-                    "checkpoint startup requires its rank and exact frozen base; "
+                    "saved-state startup requires its rank and exact frozen base; "
                     "no fresh weights"
                 )
 

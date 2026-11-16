@@ -40,6 +40,7 @@ def serve(
         rank_map=dict(enumerate(launch.startup.logical_by_worker)),
         restore=launch.restore,
         weights=launch.weights,
+        initial_weights=launch.initial_weights,
     )
     if prepared.startup != launch.startup:
         raise ProtocolError("worker preflight differs from the admitted startup")
@@ -57,6 +58,8 @@ def serve(
         raise ValueError("worker weight grants differ from its initialization")
     if launch.restore is not None:
         verify_file(files, launch.restore.rank.archive)
+    if launch.initial_weights is not None:
+        verify_file(files, launch.initial_weights.rank.archive)
 
     def artifact(identity: str) -> Path:
         if identity not in weights:

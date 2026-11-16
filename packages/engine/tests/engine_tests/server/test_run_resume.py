@@ -123,7 +123,7 @@ def test_resume_skips_fresh_initializer_and_preserves_ready_lineage(
         conversions.append(reference)
         return resolved
 
-    monkeypatch.setattr(local_creation.LocalCreation, "_convert_checkpoint", convert)
+    monkeypatch.setattr(local_creation.LocalCreation, "_convert_state", convert)
     with configured(
         tmp_path,
         monkeypatch,

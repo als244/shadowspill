@@ -352,6 +352,31 @@ after workers close. Request lookup exposes `.weights`, while `.checkpoint` is
 absent. An inference export cannot be passed to `load_checkpoint` or used for
 optimizer resume.
 
+Use an owned export as `Model(..., initialize=Weights.artifact(weights.id))` to
+start fresh training from its model values. The server checks its dependencies,
+maps the saved tensors to the new Plans and verifies every worker's archive before
+initialization. Optimizer moments, gradient buffers and controls use fresh defaults;
+RNG streams use the new run's `Execution.seed`, and its update count starts at zero.
+Partial exports retain their exact frozen-base dependency. Complete exports need
+no historical initializer. Custom artifact formats still use the installed model's
+initializer.
+
+For the same computation, reuse the saved Plans and change only initialization:
+
+```python
+from dataclasses import replace
+from shadowspill_client import Weights
+
+weights = training.export_weights().result()
+plans = training.plans
+config = training.get_config()
+config = replace(config, model=replace(
+    config.model, initialize=Weights.artifact(weights.id)
+))
+training.close().result()
+fresh = service.create_training_client(config=config, plans=plans).result()
+```
+
 `load_checkpoint` accepts an immutable ID or run-local name. Ordered acceptance
 pins the name to an immutable checkpoint, exposed by the future's
 `accepted().result().checkpoint`; moving the name later cannot retarget the load.

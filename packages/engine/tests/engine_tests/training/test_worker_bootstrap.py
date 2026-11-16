@@ -87,6 +87,7 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
             "rank_map": {0: 0},
             "restore": None,
             "weights": (),
+            "initial_weights": None,
         }
         events.append("preflight")
         return SimpleNamespace(
@@ -99,7 +100,7 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
                     weights=SimpleNamespace(kind="artifact", reference="missing")
                     if issue == "weights"
                     else SimpleNamespace(kind="random")
-                )
+                ),
             ),
             outputs={},
             traces={},

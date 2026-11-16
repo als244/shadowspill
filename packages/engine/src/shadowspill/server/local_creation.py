@@ -41,7 +41,7 @@ from shadowspill.training.preparation.measurement_export import export_measureme
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
-from shadowspill.training.worker.checkpoint_records import RankRestore
+from shadowspill.training.worker.checkpoint_records import RankRestore, RankWeights
 from shadowspill.training.worker.initialization import (
     prepare_frozen_initialization,
     prepare_initialization,
@@ -53,6 +53,7 @@ from shadowspill.training.worker.resources import WorkerHost
 from shadowspill.training.worker.runtime import PreparedWorker
 from shadowspill_client._records import integer, names
 from shadowspill_client.buffers import BufferBudget, BufferLease
+from shadowspill_client.protocol.checkpoints import WEIGHTS_MEDIA_TYPE
 from shadowspill_client.protocol.preparation import PREPARATION_MEDIA_TYPE
 from shadowspill_client.protocol.preview import TrainingPreview
 from shadowspill_client.protocol.requests import ArtifactRef
@@ -69,6 +70,7 @@ from .plan_summaries import publish_summary
 from .preparation_reuse import stage_preparation_reuse
 from .records.requests import RunIdentity
 from .storage import ServiceStorage
+from .weights_initialization import ResolvedWeights, resolve_weights
 
 
 @dataclass(frozen=True)
@@ -244,20 +246,8 @@ class LocalCreation:
                     configuration=setup.config,
                 ).resolve(creation.checkpoint)
             )
-            # A complete checkpoint is the initializer. Historical fresh-weight
-            # provenance in saved Plans never requires opening that old source.
-            if checkpoint is None and creation.kind == "training":
-                prepare_initialization(setup)
-            elif (
-                checkpoint is not None
-                and checkpoint.manifest.info.frozen_base is not None
-            ):
-                for rank in range(setup.context.parallelism.world_size):
-                    initial_base = prepare_frozen_initialization(
-                        setup, checkpoint.manifest.info.frozen_base, rank
-                    )
-                    restore_staging(initial_base, execution.max_staging_bytes)
             weights = []
+            weights_source = None
             initial = creation.config.model.initialize
             if (
                 checkpoint is None
@@ -271,9 +261,21 @@ class LocalCreation:
                     raise ValueError(
                         "initial weights are not in this owner's artifact storage"
                     )
-                weights.append(ref)
-            if checkpoint is not None:
-                base = checkpoint.manifest.info.frozen_base
+                if ref.media_type == WEIGHTS_MEDIA_TYPE:
+                    weights_source = resolve_weights(self._artifacts, ref, setup.config)
+                else:
+                    weights.append(ref)
+            saved = checkpoint if checkpoint is not None else weights_source
+            # Complete saved state supplies all model values. Only declared
+            # frozen omissions need an installed base initializer and its source.
+            if saved is None and creation.kind == "training":
+                prepare_initialization(setup)
+            elif saved is not None:
+                base = saved.manifest.info.frozen_base
+                if base is not None:
+                    for rank in range(setup.context.parallelism.world_size):
+                        initial_base = prepare_frozen_initialization(setup, base, rank)
+                        restore_staging(initial_base, execution.max_staging_bytes)
                 if base is not None and base.artifact is not None:
                     weights.append(base.artifact)
             ranks = setup.context.parallelism.world_size
@@ -484,8 +486,18 @@ class LocalCreation:
                 plans = self._publish_file(path, "bundle")
             publish_summary(self._artifacts, plans, family)
             if checkpoint is not None and checkpoint.manifest.info.plans != plans:
-                checkpoint = self._convert_checkpoint(
+                checkpoint = self._convert_state(
                     checkpoint,
+                    plans,
+                    setup.config,
+                    ranks,
+                    root,
+                    wait=creation.wait_for_resources,
+                )
+            initial_weights = None
+            if weights_source is not None:
+                initial_weights = self._convert_state(
+                    weights_source,
                     plans,
                     setup.config,
                     ranks,
@@ -510,6 +522,14 @@ class LocalCreation:
                         checkpoint.reference,
                         checkpoint.manifest.info,
                         checkpoint.manifest.ranks[rank],
+                    ),
+                    initial_weights=None
+                    if initial_weights is None or weights_source is None
+                    else RankWeights(
+                        weights_source.reference,
+                        initial_weights.reference,
+                        initial_weights.manifest.info,
+                        initial_weights.manifest.ranks[rank],
                     ),
                 )
                 for rank in sorted(family.plans)
@@ -576,20 +596,20 @@ class LocalCreation:
             "\0".join((self.identity.session_id, self.identity.run_id, name)).encode()
         ).hexdigest()
 
-    def _convert_checkpoint(
+    def _convert_state[Saved: (ResolvedCheckpoint, ResolvedWeights)](
         self,
-        checkpoint: ResolvedCheckpoint,
+        saved: Saved,
         plans: ArtifactRef,
         config: ResolvedTraining,
         world_size: int,
         root: Path,
         *,
         wait: bool,
-    ) -> ResolvedCheckpoint:
+    ) -> Saved:
         factory, limits = self._factory, self._factory.limits
         assert self._artifacts is not None
         if limits.preparation_host_bytes < 1 << 20:
-            raise ValueError("checkpoint conversion host envelope is too small")
+            raise ValueError("saved-state conversion host envelope is too small")
         self._admit_host(
             limits.preparation_host_bytes + limits.transfer_bytes, 2, wait=wait
         )
@@ -621,7 +641,7 @@ class LocalCreation:
             )
             return prepare_state(
                 self._artifacts,
-                checkpoint,
+                saved,
                 child,
                 plans=plans,
                 configuration=self.info.configuration,
