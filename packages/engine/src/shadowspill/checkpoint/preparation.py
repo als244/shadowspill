@@ -15,7 +15,6 @@ from shadowspill.training.worker.checkpoint_reader import rank_randomness
 from shadowspill.training.worker.checkpoint_records import (
     RankRestore,
     RankSave,
-    RankSaved,
 )
 from shadowspill.training.worker.conversion_records import (
     ConversionPrepared,
@@ -37,7 +36,7 @@ from .random_streams import (
     read_snapshot,
     snapshot,
 )
-from .save import checkpoint_size, write_checkpoint
+from .save import checkpoint_size
 from .staging import staging_bytes
 from .state import PlanState
 
@@ -195,7 +194,7 @@ def prepare(request: ConversionRequest) -> PreparedConversion:
 
 
 def materialize(prepared: PreparedConversion) -> ConversionWritten:
-    from .preparation_files import file_digest, verified_file
+    from .preparation_files import verified_file, write_ranks
 
     request, description = prepared.request, prepared.description
     info = description.info
@@ -226,24 +225,9 @@ def materialize(prepared: PreparedConversion) -> ConversionWritten:
             != mapping(prepared.source_metadata[0], "saved boundary")
         ):
             raise ValueError("checkpoint rank metadata differs from its generation")
-        completed = []
-        for rank in description.ranks:
-            path = Path(request.directory) / f"rank-{rank.rank}.ssp"
-            with path.open("xb") as stream:
-                manifest = write_checkpoint(
-                    converted.ranks[rank.rank],
-                    stream,
-                    metadata=rank.metadata(info),
-                    chunk_bytes=prepared.scratch_bytes // 2,
-                    weights=info.weights,
-                    frozen_state_id=info.frozen_state_id,
-                )
-                if stream.tell() != rank.size_bytes:
-                    raise ValueError("converted rank size differs from its admission")
-            rank.confirm(info, manifest)
-            with path.open("rb") as stream:
-                sha256, size = file_digest(stream)
-            if size != rank.size_bytes:
-                raise ValueError("converted rank size changed before completion")
-            completed.append(RankSaved(sha256, rank.confirmation(info)))
-    return ConversionWritten(completed)
+        return write_ranks(
+            converted,
+            description,
+            Path(request.directory),
+            chunk_bytes=prepared.scratch_bytes // 2,
+        )
