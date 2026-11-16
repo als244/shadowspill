@@ -104,8 +104,11 @@
       if (index === selected) return;
       location.hash = "view-" + index; location.reload();
     }
-    element("h2", "Prepared builds and Plans");
-    element("p", "Estimated times come from measured task profiles and schedule simulation. They are not measured end-to-end request latency. Every retained worker Plan is available below, including accumulation paths.");
+    const runtime = DOCUMENT.kind === "runtime_trace";
+    element("h2", runtime ? "Measured runtime and predicted Plan" : "Prepared builds and Plans");
+    element("p", runtime
+      ? "Measured execution and transfer timings come from this invocation's device trace. Switch to the saved Plan to compare predicted timings. Memory occupancy is reconstructed from the Plan's object lifetimes on the traced clock; interpolated lease times and missing timings are labeled. These timelines exclude client upload and report generation."
+      : "Estimated times come from measured task profiles and schedule simulation. They are not measured end-to-end request latency. Every retained worker Plan is available below, including accumulation paths.");
     const choice = element("select", ""); choice.setAttribute("aria-label", "Worker Plan report");
     DOCUMENT.views.forEach((view, index) => {
       const option = element("option", "Rank " + view.rank + " · " + view.mode + " · " + view.id.slice(0, 12) + " · " + fmtDuration(view.data.end_seconds), choice);
@@ -113,7 +116,7 @@
     });
     choice.addEventListener("change", () => openView(+choice.value));
     const rows = DOCUMENT.rows || [];
-    table("Prepared candidates", ["Operation", "Batch", "Build", "Microbatches", "Estimated step / call", "Reports"],
+    if (!runtime) table("Prepared candidates", ["Operation", "Batch", "Build", "Microbatches", "Estimated step / call", "Reports"],
       rows.filter(row => row.kind === "candidate").map(({values: v}) => [
         v.operation.operation + "/" + (v.operation.outputs || "none") + " (" + v.operation.mode + ")",
         v.batch, v.case, v.count, fmtDuration(v.simulated_seconds), cell => {
@@ -127,11 +130,11 @@
           });
         }
       ]));
-    table("Build configurations", ["Build", "Settings"], rows.filter(row => row.kind === "build_case").map(({values: v}) => [v.index, JSON.stringify(v)]));
+    if (!runtime) table("Build configurations", ["Build", "Settings"], rows.filter(row => row.kind === "build_case").map(({values: v}) => [v.index, JSON.stringify(v)]));
     const rejected = rows.filter(row => row.kind === "rejected_candidate");
     if (rejected.length) table("Rejected candidates", ["Operation", "Build", "Stage", "Reason"], rejected.map(({values: v}) => [v.operation.operation, v.case, v.stage, v.reason]));
     const details = element("details", "");
-    element("summary", "Configuration, coverage and memory metadata", details);
+    element("summary", runtime ? "Invocation and saved Plan identity" : "Configuration, coverage and memory metadata", details);
     element("pre", JSON.stringify(rows.filter(row => !["candidate", "worker_plan", "build_case", "rejected_candidate"].includes(row.kind)), null, 2), details);
   }
 

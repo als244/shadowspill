@@ -53,7 +53,9 @@ def traced_call():
     )
 
 
-@pytest.mark.parametrize("fault", [None, "decode", "write", "capacity", "completion"])
+@pytest.mark.parametrize(
+    "fault", [None, "report", "decode", "write", "capacity", "completion"]
+)
 def test_trace_publication_preserves_completed_effects_and_owned_file_lifetime(
     tmp_path, monkeypatch, fault
 ):
@@ -70,6 +72,7 @@ def test_trace_publication_preserves_completed_effects_and_owned_file_lifetime(
                     TraceCapacities(1024, 1024),
                     1 << 20,
                     1 if fault == "capacity" else 1 << 20,
+                    1024 if fault == "report" else 0,
                 )
             },
             bundle=ArtifactRef("plans", "a" * 64, 100),
@@ -134,7 +137,7 @@ def test_trace_publication_preserves_completed_effects_and_owned_file_lifetime(
                     trace_issue=result.trace_issue,
                 )
                 assert CODEC.decode(CODEC.encode(reply)) == reply
-                if fault:
+                if fault not in (None, "report"):
                     assert result.trace is None
                     assert result.trace_issue.code == "runtime_trace_failed"
                     assert result.trace_issue.artifact_id == owner.spec.id
@@ -144,17 +147,24 @@ def test_trace_publication_preserves_completed_effects_and_owned_file_lifetime(
                         owner.verify(result.trace)
             assert scratch.used == (0, 0) and disk.used[0] >= owner.spec.size_bytes
             owner.finished()
-            if fault is None:
+            if fault in (None, "report"):
                 owner.verify(result.trace)
                 with owner.open(result.trace) as source:
                     payload = source.read()
                 assert hashlib.sha256(payload).hexdigest() == result.trace.sha256
                 with ZipFile(io.BytesIO(payload)) as archive:
-                    assert set(archive.namelist()) == {
+                    expected = {
                         "manifest.json",
                         "step.json",
                         "step.events.npz",
                     }
+                    if fault == "report":
+                        expected.add("report_issue.json")
+                        assert (
+                            "no corresponding saved Plan"
+                            in json.loads(archive.read("report_issue.json"))["message"]
+                        )
+                    assert set(archive.namelist()) == expected
                     manifest = json.loads(archive.read("manifest.json"))
                     assert (
                         manifest["request"] == bound.command.request.identity.to_dict()

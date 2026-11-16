@@ -1,5 +1,6 @@
 """Use the detailed occupancy renderer with the public, saved Plan artifacts."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from shadowspill.artifacts.plan import Plan
@@ -8,7 +9,12 @@ from shadowspill.diagnostics.occupancy.page import page_data
 from shadowspill.planner.serialization.simulation_result import simulation_result_value
 
 
-def occupancy_data(plan: Plan, *, description: str = "") -> dict[str, Any]:
+def occupancy_data(
+    plan: Plan,
+    *,
+    description: str = "",
+    diagnostics: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Attribute recorded schedules and physical leases; never simulate again."""
     communication = plan.communication_info
     rates = {}
@@ -38,6 +44,7 @@ def occupancy_data(plan: Plan, *, description: str = "") -> dict[str, Any]:
             },
         },
         plan._costed_program.to_dict(),
+        diagnostics=diagnostics,
     )
     data = page_data(result, plan=description or plan.program.name or "Plan")
     data["allocation"] = plan.summary

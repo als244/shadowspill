@@ -11,6 +11,7 @@ from ._async import CallFuture
 from .checkpoints import CheckpointHandle
 from .protocol.requests import RequestIdentity
 from .protocol.results import Acceptance, OperationResult, RequestStatus
+from .traces import TraceHandle
 from .weights import WeightsHandle
 
 if TYPE_CHECKING:
@@ -48,7 +49,9 @@ class TrainingResult:
                 for name, reference in record.outputs.items()
             }
         )
-        self.traces = tuple(service.artifact(reference) for reference in record.traces)
+        self.traces = tuple(
+            TraceHandle(reference, service) for reference in record.traces
+        )
         self.checkpoint = (
             None
             if record.checkpoint is None

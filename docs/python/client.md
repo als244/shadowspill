@@ -88,6 +88,18 @@ These are simulated predictions from the measured profiles.
 Reports remain available after closing training. See the
 [Plan guide](advanced/plan-report.md) for saved summaries and direct engine usage.
 
+To compare a real training step with its predicted Plan:
+
+```python
+result = training.step(batch, optim={"lr": 0.0003}, runtime_trace=True).result()
+result.traces[0].download_report("runtime.html").result()
+```
+
+The offline page opens on measured compute and transfer timings; switch views to
+see the matching prediction. Memory occupancy is reconstructed from the Plan's
+lifetimes on the traced clock, with interpolation labeled. Distributed calls
+return one trace per worker. Tracing adds overhead only when requested.
+
 ## Runtime operations
 
 | Call | What it does |

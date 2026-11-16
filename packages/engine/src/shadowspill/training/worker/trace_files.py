@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import IO, TYPE_CHECKING, BinaryIO, cast
+from typing import IO, TYPE_CHECKING, Any, BinaryIO, cast
 from zipfile import ZIP_STORED, ZipFile
 
 from shadowspill.artifacts.plan import Plan
@@ -43,6 +43,7 @@ class TraceBudget:
     capacities: TraceCapacities
     host_bytes: int
     file_bytes: int
+    report_bytes: int = 0
 
 
 def plan_trace_budget(plan: Plan) -> TraceBudget:
@@ -96,9 +97,12 @@ def plan_trace_budget(plan: Plan) -> TraceBudget:
     # The uncompressed column archive is smaller than the ABI rows; include
     # ZIP/NPY headers. Runtime rings, copied rows, NumPy column scratch, Python
     # projections and encoder chunks can coexist before publication completes.
-    file_bytes = metadata + raw + (1 << 20)
-    host_bytes = 8 * metadata + 4 * raw + (32 << 20)
-    return TraceBudget(capacities, host_bytes, file_bytes)
+    # Two occupancy views retain sampled memory rows, labels and one bounded HTML
+    # buffer. A rendering failure preserves the original diagnostic archive.
+    report_bytes = 2 * metadata + (4 << 20)
+    file_bytes = metadata + raw + report_bytes + (1 << 20)
+    host_bytes = 16 * metadata + 4 * raw + (64 << 20)
+    return TraceBudget(capacities, host_bytes, file_bytes, report_bytes)
 
 
 def family_trace_budgets(
@@ -156,8 +160,10 @@ class TraceFiles:
         *,
         bundle: ArtifactRef,
         root: Path,
+        plans: Mapping[str, Plan] | None = None,
     ) -> None:
         self.budgets, self.bundle, self.root = budgets, bundle, root
+        self.plans = plans
 
     def budget(self, call: BoundWorkerCall) -> TraceBudget | None:
         if not call.command.request.runtime_trace or call.plan is None:
@@ -214,30 +220,68 @@ class TraceFiles:
         from shadowspill.diagnostics.step_file import write_step_events
 
         command = call.command
+        manifest = {
+            "version": 1,
+            "kind": "runtime_trace",
+            "request": command.request.identity.to_dict(),
+            "operation": command.request.operation,
+            "history_id": command.history_id,
+            "completed_updates_before": command.completed_updates,
+            "rank": command.scope.rank,
+            "invocation": command.invocation,
+            "plans": self.bundle.to_dict(),
+            "plan": call.plan,
+            "accumulate_gradients": command.accumulate_gradients,
+            "skipped": command.skipped,
+        }
+        evidence = diagnostics.as_dict(events=False)
         stream = _Stream(output)
         with ZipFile(cast(BinaryIO, stream), "w", compression=ZIP_STORED) as archive:
             with archive.open("manifest.json", "w", force_zip64=True) as member:
-                _json(
-                    member,
-                    {
-                        "version": 1,
-                        "kind": "runtime_trace",
-                        "request": command.request.identity.to_dict(),
-                        "operation": command.request.operation,
-                        "history_id": command.history_id,
-                        "completed_updates_before": command.completed_updates,
-                        "rank": command.scope.rank,
-                        "invocation": command.invocation,
-                        "plans": self.bundle.to_dict(),
-                        "plan": call.plan,
-                        "accumulate_gradients": command.accumulate_gradients,
-                        "skipped": command.skipped,
-                    },
-                )
+                _json(member, manifest)
             with archive.open("step.json", "w", force_zip64=True) as member:
-                _json(member, diagnostics.as_dict(events=False))
+                _json(member, evidence)
             with archive.open("step.events.npz", "w", force_zip64=True) as member:
                 write_step_events(member, diagnostics)
+            budget = self.budget(call)
+            assert budget is not None
+            if budget.report_bytes:
+                self._report(archive, call, evidence, manifest, budget.report_bytes)
         return ArtifactRef(
             spec.id, stream.digest.hexdigest(), stream.size, spec.media_type
         )
+
+    def _report(
+        self,
+        archive: ZipFile,
+        call: BoundWorkerCall,
+        evidence: Mapping[str, Any],
+        manifest: Mapping[str, Any],
+        max_bytes: int,
+    ) -> None:
+        from shadowspill.reporting.runtime import runtime_html
+
+        try:
+            if self.plans is None or call.plan is None or call.plan not in self.plans:
+                raise ValueError("runtime report has no corresponding saved Plan")
+            original = self.plans[call.plan]
+            plan = (
+                original._accumulation_plan
+                if call.command.accumulate_gradients
+                else original
+            )
+            if plan is None:
+                raise ValueError("runtime report has no saved accumulation Plan")
+            report = runtime_html(
+                plan, evidence, invocation=manifest, max_bytes=max_bytes
+            )
+        except Exception as error:
+            with archive.open("report_issue.json", "w", force_zip64=True) as member:
+                _json(member, {"message": (str(error) or type(error).__name__)[:1024]})
+            return
+        with (
+            archive.open("report.html", "w", force_zip64=True) as member,
+            memoryview(report) as view,
+        ):
+            for offset in range(0, len(view), COPY_BYTES):
+                member.write(view[offset : offset + COPY_BYTES])

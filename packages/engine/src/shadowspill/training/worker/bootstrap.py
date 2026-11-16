@@ -82,7 +82,10 @@ def serve(
         lambda reference: resolve_file(files, reference),
         FileOutputs(prepared.outputs, root=outputs),
         traces=TraceFiles(
-            prepared.traces, bundle=prepared.startup.bundle, root=outputs
+            prepared.traces,
+            bundle=prepared.startup.bundle,
+            root=outputs,
+            plans=prepared.bindings.prepared.plans[prepared.startup.scope.rank],
         ),
         capture_progress=None
         if nsys_progress is None
