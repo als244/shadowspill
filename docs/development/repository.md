@@ -4,7 +4,7 @@
 
 ```text
 shadowspill/
-├── packages/client/       portable client settings and logical example records
+├── packages/client/       lightweight service/training clients and portable records
 ├── packages/engine/       installable engine distribution
 │   ├── src/shadowspill/   Python phase APIs and runtime bindings
 │   ├── csrc/             native planner, runtime, backends and adapter
@@ -36,14 +36,16 @@ The throughput gate is the package beside it,
 runs: the manifest and its budgets, the readings taken off the runtime, the
 phases (calibrate, plan, warm, measure), and the verdict each gate reaches.
 
-`shadowspill_workloads` supplies optional model and data recipes; qualification budgets and
+`shadowspill_workloads` supplies optional architectures, registered definitions,
+input/objective implementations and remaining recipes. Qualification budgets and
 acceptance rules live under `qualification/`. Build accepts ordinary user models
-and call examples. `shadowspill.training.Trainer` drives an Executor from saved
-Plans and iterable inputs, without importing recipes. Recipe-specific optimizer
-defaults live beside the recipes. Generic saved-phase preparation lives in
-`shadowspill.training.preparation`, and bounded initialization/copy helpers live
-in `shadowspill.checkpoint`. The catalog installs independently from
-`packages/workloads`; training dependencies are selected with its `training` extra.
+and call examples. The public [training client](../python/client.md) submits global
+batches to the installed service, which owns preparation and execution. Generic
+saved-phase preparation lives in `shadowspill.training.preparation`, and bounded
+initialization/copy helpers live in `shadowspill.checkpoint`. The catalog installs
+independently from `packages/workloads`; custom definitions need no catalog.
+The saved-Plan `shadowspill.training.Trainer` supports recipe loops built directly
+from phase artifacts; see its [API reference](../python/api/training.md).
 Saved recipe configurations record exact adapter module names. A renamed or
 changed adapter requires a fresh recipe directory; module identities are never
 silently rewritten when reusing artifacts.
@@ -51,6 +53,12 @@ silently rewritten when reusing artifacts.
 `shadowspill_client` supplies portable settings and Datum records with NumPy as
 its only required dependency. Install `./packages/client` independently of the
 engine or catalog; see its [current scope](../../packages/client/README.md).
+
+Within the engine, `server/http.py` owns authenticated, bounded socket exchanges.
+`server/routes/` separates artifact transfers, run creation and saved Plan names,
+request submission/polling, and metrics/reports. These routes call the existing
+owners in `server/records/` and `training/`; they contain no model construction or
+training loop. Server startup remains separate from the live request path.
 
 `shadowspill.integrations` contains optional, caller-selected library adapters.
 Operator libraries own their output-axis, reduction, mutation and layout facts;
@@ -109,7 +117,8 @@ packages/engine/src/shadowspill/
 ├── preparation/           provider-owned binary capture and saved task binding
 ├── reporting/             CPU-only reports and timeline/summary output
 ├── server/                service storage and transport boundaries
-│   └── records/           durable bounded journal and committed-prefix recovery
+│   ├── records/           durable bounded journal and committed-prefix recovery
+│   └── routes/            run, request, artifact and observation HTTP adapters
 ├── ir/                    framework-neutral values and indexed projections
 │   └── program/           the program: its vocabularies, specs, alternatives,
 │                          and the checks it must satisfy
