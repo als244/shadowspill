@@ -261,6 +261,26 @@ def test_failure_before_creation_thread_records_a_single_failed_identity(
         assert not ctx.made or ctx.made[0].starts == 0
 
 
+@pytest.mark.parametrize("boundary", [" ", "\n", "\t"])
+def test_truncated_creation_error_retires_and_records_failure(
+    tmp_path, monkeypatch, boundary
+):
+    message = "diagnostic " + "x" * (1023 - len("diagnostic "))
+
+    def failed(self):
+        raise RuntimeError(message + boundary + "additional phase log lines")
+
+    monkeypatch.setattr(Job, "start", failed)
+    with configured(tmp_path) as ctx:
+        create(ctx.jobs)
+        until(lambda: ctx.jobs.used == (0, 0))
+        info = ctx.service.catalog.get(IDENTITY)
+        assert info.state == "failed" and info.error.code == "creation_failed"
+        assert info.error.message == message
+        assert not ctx.jobs.failures() and ctx.memory.used == (0, 0)
+        assert ctx.made[0].closed
+
+
 def test_shutdown_during_factory_keeps_admission_until_construction_returns(
     tmp_path, monkeypatch
 ):

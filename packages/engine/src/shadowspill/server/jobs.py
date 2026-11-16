@@ -57,7 +57,7 @@ class _Job:
 
 
 def _diagnostic(error: BaseException) -> str:
-    return (str(error).strip() or type(error).__name__)[:1024]
+    return (str(error).strip() or type(error).__name__)[:1024].rstrip()
 
 
 class RunJobs:
