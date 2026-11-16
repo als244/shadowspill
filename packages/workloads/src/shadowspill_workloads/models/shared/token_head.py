@@ -11,7 +11,26 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .decoder import SequenceLengths
+
 TARGET_LOGIT_BYTES = 64 << 20
+
+
+def decoder_target_logprobs(
+    self,
+    tokens: torch.Tensor,
+    targets: torch.Tensor,
+    sequence_lengths: SequenceLengths = None,
+    *,
+    head_chunk_size: int | None = None,
+) -> torch.Tensor:
+    """Shared model method for decoders exposing ``hidden`` and ``lm_head``."""
+    return target_logprobs(
+        self.hidden(tokens, sequence_lengths),
+        self.lm_head,
+        targets,
+        chunk_size=head_chunk_size,
+    )
 
 
 def target_logprobs(

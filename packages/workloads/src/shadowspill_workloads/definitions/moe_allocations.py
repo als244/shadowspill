@@ -7,42 +7,31 @@ never allocation. LoRA uses those same bounded operators and fixed factor sizes.
 The trace-visible MoE provider splits the same operations into prepare/finish
 regions, with the same assignment, expert-bank and tile-prefix extents.
 
-Partial RoPE writes input-sized outputs. FLA norm outputs/partials depend on
-rows, widths and device geometry. Packed convolution and DeltaNet always receive
-the model's fixed-capacity cumulative/chunk tensors: NT is their allocated row
-count, not the number of nonempty chunks. Histories, per-chunk weight partials,
-WY factors and offsets consequently have fixed extents even for empty slots.
-MLOps disables FLA's tensor cache so replay does not retain index allocations.
-
 These guarantees pin provider Python and extension code through registration.
 They do not replace profiling or joint admission, or cover a different provider.
 In particular, SonicMoE/EP paths require their own contracts and qualification.
 """
 
+from .hybrid_allocations import CONTRACTS as HYBRID_CONTRACTS
 from .text_allocations import CONTRACTS as TEXT_CONTRACTS
 
 CONTRACT_ID = "shadowspill/moe-fixed-provider-allocation@1"
 
 CONTRACTS = {
     **TEXT_CONTRACTS,
+    **HYBRID_CONTRACTS,
     **{
         f"torch.ops.mlops.{name}_{direction}.default": CONTRACT_ID
         for name in (
-            "partial_rope_builtin_triton",
             "moe_builtin_grouped_gemm",
             "moe_builtin_grouped_gemm_prepare",
             "moe_builtin_grouped_gemm_finish",
-            "causal_conv_silu_fla",
-            "l2_norm_fla",
-            "gated_rms_norm_fla",
-            "linear_attention_fla_gated_delta_rule",
         )
         for direction in ("fwd", "bwd")
     },
     **{
         f"torch.ops.mlops.{name}.default": CONTRACT_ID
         for name in (
-            "causal_conv_silu_fla_input_bwd",
             "lora_router_logits",
             "lora_router_logits_bwd",
             "lora_route",
