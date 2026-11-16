@@ -3,7 +3,12 @@
 from shadowspill.training.inputs.adapters import InputAdapter, InputLayout, InputView
 
 from .build import ModelBuild, ModelBuildContext
-from .contracts import ModelDefinition, ObjectiveDefinition, simple_loss
+from .contracts import (
+    ModelDefinition,
+    ObjectiveDefinition,
+    ObjectiveEvaluation,
+    simple_loss,
+)
 from .initialization import (
     InitializationContext,
     InitializationRuntime,
@@ -30,6 +35,7 @@ __all__ = [
     "ModelInitialization",
     "ModelReferenceDefinition",
     "ObjectiveDefinition",
+    "ObjectiveEvaluation",
     "OptimizerDefinition",
     "PolicyDefinition",
     "PreparationContext",

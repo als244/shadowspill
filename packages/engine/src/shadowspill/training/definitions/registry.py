@@ -22,6 +22,7 @@ from .contracts import (
     Configuration,
     ModelDefinition,
     ObjectiveDefinition,
+    ObjectiveEvaluation,
     Schema,
 )
 from .initialization import InitializationContext, ModelInitialization
@@ -212,8 +213,16 @@ class ResolvedObjective:
         assert not callable(self.definition.outputs)
         return self.definition.outputs
 
-    def computation(self, key: OperationKey | None = None) -> Computation:
-        key = key or OperationKey("step", self.definition.default_outputs)
+    def evaluation(self, key: OperationKey) -> ObjectiveEvaluation | None:
+        if self.definition.evaluate is None:
+            return None
+        configured, _ = _configuration(self.definition.config, self.config)
+        result = self.definition.evaluate(configured, key)
+        if not isinstance(result, ObjectiveEvaluation):
+            raise TypeError("evaluate must return ObjectiveEvaluation")
+        return result
+
+    def reducer(self, key: OperationKey) -> Computation:
         if key.outputs not in self.outputs:
             raise ValueError(f"unknown output set: {key.outputs}")
         if self.definition.bind is None:
@@ -223,6 +232,19 @@ class ResolvedObjective:
         if not callable(computation):
             raise TypeError("objective binding must return a callable")
         return computation
+
+    def computation(self, key: OperationKey | None = None) -> Computation:
+        key = key or OperationKey("step", self.definition.default_outputs)
+        reducer = self.reducer(key)
+        evaluation = self.evaluation(key)
+        if evaluation is None:
+            return reducer
+
+        def compute(model: Any, inputs: Any, loss_inputs: Any, loss_params: Any) -> Any:
+            values = evaluation.compute(model, inputs, loss_inputs, evaluation.requests)
+            return reducer(values, inputs, loss_inputs, loss_params)
+
+        return compute
 
 
 @dataclass(frozen=True)
@@ -451,7 +473,7 @@ class Registry:
             source, DefinitionSource
         ):
             raise TypeError("register an ObjectiveDefinition with DefinitionSource")
-        if definition.id in self._objectives:
+        if definition.id == "shadowspill/sum@1" or definition.id in self._objectives:
             raise ValueError(f"objective already registered: {definition.id}")
         self._objectives[definition.id] = (definition, source)
 
@@ -500,6 +522,10 @@ class Registry:
         defaults: Mapping[str, Scalar] | None = None,
         source: DefinitionSource | None = None,
     ) -> ResolvedObjective:
+        if definition == "shadowspill/sum@1":
+            from .composition import resolve_sum
+
+            return resolve_sum(self, model, config, defaults, source)
         try:
             objective, installed = self._objectives[definition]
         except KeyError as error:
@@ -529,6 +555,12 @@ class Registry:
                 )
         objective = replace(
             objective,
+            padding_safe=objective.padding_safe(configured)
+            if callable(objective.padding_safe)
+            else objective.padding_safe,
+            physical_batch_loss=objective.physical_batch_loss(configured)
+            if callable(objective.physical_batch_loss)
+            else objective.physical_batch_loss,
             controls=objective.controls(configured)
             if callable(objective.controls)
             else objective.controls,

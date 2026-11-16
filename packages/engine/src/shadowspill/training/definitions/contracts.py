@@ -9,7 +9,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 from shadowspill_client import Model
-from shadowspill_client._records import Value
+from shadowspill_client._records import Value, mapping
 from shadowspill_client.protocol.controls import ControlSchema
 from shadowspill_client.protocol.definitions import OutputSet, Participation
 from shadowspill_client.protocol.inputs import InputSchema
@@ -113,6 +113,31 @@ class ModelDefinition:
 
 
 @dataclass(frozen=True)
+class ObjectiveEvaluation:
+    """Explicit shared model evaluation for independently reduced loss terms.
+
+    ``compute(model, inputs, loss_inputs, requests)`` returns values consumed by
+    objective reducers. Compatible terms use the same versioned ID and callable;
+    their request mappings are merged, rejecting conflicting values. The hook
+    must evaluate the model once and must not mutate its returned values.
+    """
+
+    id: str
+    compute: Callable[
+        [Any, Mapping[str, Any], Mapping[str, Any], Mapping[str, Value]], Any
+    ]
+    requests: Mapping[str, Value] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        versioned_id(self.id)
+        if not callable(self.compute):
+            raise TypeError("objective evaluation compute must be callable")
+        object.__setattr__(
+            self, "requests", mapping(self.requests, "evaluation requests")
+        )
+
+
+@dataclass(frozen=True)
 class ObjectiveDefinition:
     """Installed objective semantics, including its explicit padding guarantee.
 
@@ -128,6 +153,8 @@ class ObjectiveDefinition:
     on CPU. Inputs, controls and outputs may resolve from the typed configuration.
     ``bind(config, OperationKey)`` selects the captured computation; a forward
     output override declares its separate input/control/result contract.
+    With ``evaluate(config, key)``, compute/bind instead receive the shared
+    evaluation's result as their first argument. Reducers must not mutate it.
     """
 
     id: str
@@ -145,8 +172,9 @@ class ObjectiveDefinition:
     participation: Participation = field(default_factory=Participation)
     reduction: Literal["sum", "custom"] = "sum"
     bind: Callable[[Any, OperationKey], Computation] | None = None
-    padding_safe: bool = False
-    physical_batch_loss: bool = False
+    padding_safe: bool | Callable[[Any], bool] = False
+    physical_batch_loss: bool | Callable[[Any], bool] = False
+    evaluate: Callable[[Any, OperationKey], ObjectiveEvaluation] | None = None
     allocation_invariants: Mapping[str, str] = field(default_factory=dict)
     configure: (
         Callable[[Mapping[str, Value], ResolvedModel], Mapping[str, Value]] | None
@@ -164,16 +192,20 @@ class ObjectiveDefinition:
             raise TypeError("objective requires declared controls and participation")
         if self.reduction not in ("sum", "custom"):
             raise ValueError("declare summed or custom objective semantics")
-        if type(self.padding_safe) is not bool:
+        if type(self.padding_safe) is not bool and not callable(self.padding_safe):
             raise TypeError("objective padding_safe must be boolean")
-        if type(self.physical_batch_loss) is not bool:
+        if type(self.physical_batch_loss) is not bool and not callable(
+            self.physical_batch_loss
+        ):
             raise TypeError("objective physical_batch_loss must be boolean")
-        if self.physical_batch_loss and (
-            self.padding_safe or self.reduction != "custom"
+        if self.physical_batch_loss is True and (
+            self.padding_safe is True or self.reduction != "custom"
         ):
             raise ValueError(
                 "physical batch loss requires custom reduction and padding_safe=False"
             )
+        if self.evaluate is not None and not callable(self.evaluate):
+            raise TypeError("evaluate must be an installed objective evaluation hook")
         if self.configure is not None and not callable(self.configure):
             raise TypeError("configure must be an installed CPU settings function")
         outputs = None if callable(self.outputs) else dict(self.outputs)

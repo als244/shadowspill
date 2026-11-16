@@ -123,6 +123,40 @@ Like input schemas, controls and output mappings can be functions of that typed
 configuration. These functions run during setup, never during runtime requests.
 The resulting concrete contracts are validated and pinned in the saved setup.
 
+`Objective.sum({"main": main_objective, "regularizer": other_objective},
+weights={"regularizer": 0.01})` combines named installed objectives. Coefficients
+default to one; per-call `loss_params={"regularizer.weight": 0.02}` overrides one
+coefficient without changing later calls. Child controls and results are prefixed
+by their term name, for example `main.clip_ratio` or `main.loss_sum`. Training
+returns the weighted total as `loss_sum`; each child metric retains its original,
+unweighted meaning. `grad_scale` still applies once to the accumulated gradient.
+Zero coefficients do not change participation or skip evaluation of a term.
+
+To compose, an objective declares `evaluate(config, key) -> ObjectiveEvaluation`.
+Its `compute`/`bind` reducer then receives evaluated values as its first argument.
+The evaluation record names a versioned interface, its installed callable, and
+portable `requests`. The callable takes `(model, inputs, loss_inputs, requests)`.
+All terms must share that interface and callable. Setup merges their requests,
+rejects conflicting values, and execution evaluates the model once before running
+the reducers. Reducers must not mutate shared values. An ordinary model-aware
+objective without this hook still works alone; composition requires an explicit
+hook rather than automatically repeating or memoizing model calls.
+
+Terms share loss-input names and must agree on overlapping field schemas,
+capacities and the participation field. Use distinct names for distinct inputs.
+`weight` is reserved as a child control. Nested sums must be flattened into named
+terms. The resolved setup pins every child source; changing any child invalidates
+the saved composition. Custom installed objectives use this engine feature with
+no catalog dependency, and constructing the settings needs only the client.
+
+The sum's `metrics` output selects each term's default. Other output names are
+the union of the terms' additional output sets. Training selects that set where
+available and the default for other terms, so requesting tensors retains every
+loss term. An output-only `forward` selects only terms declaring that output;
+it needs their declared forward fields/controls and returns their prefixed
+outputs. Forward returns per-term metrics without a total training loss or
+requiring composition coefficients.
+
 Models that need geometry-dependent construction or provider resources can supply
 `build(config, ModelBuildContext)`. This CPU hook returns `ModelBuild` with complete
 constructor settings, existing `Resource` descriptions and optional

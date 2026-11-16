@@ -128,6 +128,40 @@ class Objective(Record):
         object.__setattr__(self, "config", mapping(self.config, "config"))
         object.__setattr__(self, "defaults", mapping(self.defaults, "defaults"))
 
+    @classmethod
+    def sum(
+        cls,
+        terms: Mapping[str, Objective],
+        *,
+        weights: Mapping[str, float] | None = None,
+    ) -> Objective:
+        """Combine named installed objectives sharing one model evaluation.
+
+        Each coefficient defaults to one and is overridable as ``name.weight``.
+        Child controls and results use the same ``name.`` prefix. Compatibility
+        of evaluation, input schemas and participation is checked during setup.
+        """
+        if not isinstance(terms, Mapping) or not terms:
+            raise ValueError("an objective sum requires named terms")
+        for name, term in terms.items():
+            if not isinstance(name, str) or not name.isidentifier():
+                raise ValueError("objective term names must be identifiers")
+            if not isinstance(term, Objective):
+                raise TypeError("objective terms must be Objective settings")
+            if term.definition == "shadowspill/sum@1":
+                raise ValueError("flatten nested objective sums into named terms")
+        weights = {} if weights is None else weights
+        if set(weights) - terms.keys():
+            raise ValueError("objective weights reference unknown terms")
+        return cls(
+            "shadowspill/sum@1",
+            config={"terms": {name: term.to_dict() for name, term in terms.items()}},
+            defaults={
+                f"{name}.weight": number(value, f"{name}.weight")
+                for name, value in weights.items()
+            },
+        )
+
 
 @dataclass(frozen=True)
 class Optimizer(Record):
