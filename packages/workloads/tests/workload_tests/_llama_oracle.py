@@ -9,6 +9,7 @@ implementation is used. Ordinary autograd still computes activation derivatives.
 import torch
 
 from shadowspill_workloads.models.shared.decoder import RMSNorm
+from shadowspill_workloads.models.shared.qwen_moe.attention import RMSNorm as QwenNorm
 
 
 class WeightGradients:
@@ -33,7 +34,7 @@ class WeightGradients:
                     values["weight"].index_add_(
                         0, x.reshape(-1), dy.reshape(-1, dy.shape[-1]).float()
                     )
-                elif isinstance(module, RMSNorm):
+                elif isinstance(module, (RMSNorm, QwenNorm)):
                     assert not module.zero_centered
                     source = x.float()
                     normalized = (

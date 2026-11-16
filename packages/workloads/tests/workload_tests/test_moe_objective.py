@@ -132,19 +132,28 @@ def physical(tokens, lengths, *, weighted, size=8):
     return inputs, loss_inputs
 
 
-def independent(model, inputs, fields, coefficient, *, include_padding, policy=False):
+def independent(
+    model,
+    inputs,
+    fields,
+    coefficient,
+    *,
+    include_padding,
+    policy=False,
+    router_observer=None,
+):
     """Full head and separately constructed router formula, with no loss helper."""
     logits = []
-    hooks = [
-        block.moe.register_forward_pre_hook(
-            lambda module, args: logits.append(
-                F.linear(args[0].float(), module.router.weight.float()).reshape(
-                    -1, model.config.n_experts
-                )
-            )
+
+    def observe(module, args):
+        routed = F.linear(args[0].float(), module.router.weight.float()).reshape(
+            -1, model.config.n_experts
         )
-        for block in model.blocks
-    ]
+        logits.append(routed)
+        if router_observer is not None:
+            router_observer(module, args[0], routed)
+
+    hooks = [block.moe.register_forward_pre_hook(observe) for block in model.blocks]
     try:
         output = model(**inputs).float()
     finally:

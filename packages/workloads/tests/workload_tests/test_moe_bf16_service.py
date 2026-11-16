@@ -15,12 +15,14 @@ from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.bundle import TrainingBundle
 from shadowspill_workloads.initialization.text import Initialize
+from workload_tests._moe_oracle import WeightGradients
 from workload_tests.test_moe_definitions import settings
 from workload_tests.test_moe_objective import independent
 from workload_tests.test_moe_service import options
 
 
-def bf16_options(lora, *, lora_rank=2):
+def bf16_options(lora, *, lora_rank=2, grad_dtype="bfloat16"):
+    assert grad_dtype in ("bfloat16", "float32")
     value = options(lora=lora)
     # Keep tiny, signed BF16 derivatives well conditioned through AdamW. With
     # eps=1e-3, a <0.6% gradient-norm difference at one nearly cancelled LoRA
@@ -37,7 +39,7 @@ def bf16_options(lora, *, lora_rank=2):
         requested,
         precision={
             **requested.precision,
-            "grad_dtype": "bfloat16",
+            "grad_dtype": grad_dtype,
             "lora_dtype": "bfloat16",
         },
     )
@@ -52,7 +54,7 @@ def bf16_options(lora, *, lora_rank=2):
             )
     records = value["records"]
 
-    def loss(model, rows):
+    def loss(model, rows, observer=None):
         tokens = [token for row in rows for token in row["inputs"]["tokens"]]
         padding = 8 - len(tokens)
         inputs = {
@@ -78,6 +80,7 @@ def bf16_options(lora, *, lora_rank=2):
             fields,
             value["controls"]["balance.weight"],
             include_padding=False,
+            router_observer=observer.router if observer is not None else None,
         )[0]
 
     def snapshot(model, masters):
@@ -118,14 +121,24 @@ def bf16_options(lora, *, lora_rank=2):
             foreach=False,
         )
         trajectory = [snapshot(model, masters)]
+        observer = WeightGradients(model) if grad_dtype == "float32" else None
         for index, scale in enumerate((0.25, 1.0)):
             for rows in (
                 (records[:1], records[1:]) if split and index == 0 else (records,)
             ):
-                loss(model, rows).backward()
+                loss(model, rows, observer).backward()
+            if observer is not None:
+                assert observer.values.keys() == masters.keys()
             for name, parameter in model.named_parameters():
                 if name in masters:
-                    masters[name].grad = parameter.grad.float() * scale
+                    gradient = (
+                        parameter.grad.float()
+                        if observer is None
+                        else observer.values[name]
+                    )
+                    masters[name].grad = gradient * scale
+            if observer is not None:
+                observer.values.clear()
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
             with torch.no_grad():
@@ -134,6 +147,8 @@ def bf16_options(lora, *, lora_rank=2):
                         parameter.copy_(masters[name])
             model.zero_grad(set_to_none=True)
             trajectory.append(snapshot(model, masters))
+        if observer is not None:
+            observer.close()
         oracles["split" if split else "whole"] = trajectory
     return {
         **value,
@@ -143,7 +158,7 @@ def bf16_options(lora, *, lora_rank=2):
         "loss_parts": [
             float(loss(initial, rows).detach()) for rows in (records[:1], records[1:])
         ],
-        "gradient_dtype": "bfloat16",
+        "gradient_dtype": grad_dtype,
         "separate_fp32_masters": True,
         "device_gib": 6,
         "weight_rtol": 0.04,
@@ -158,18 +173,28 @@ def bf16_options(lora, *, lora_rank=2):
         "logprob_atol": 0.008,
         "loss_rtol": 0.003,
         "loss_atol": 0.008,
-        "model_description": "Qwen3 BF16 compute/gradients, FP32 AdamW masters/moments"
+        "model_description": (
+            f"Qwen3 BF16 compute/{grad_dtype} gradients, FP32 AdamW masters/moments"
+        )
         + (f", LoRA rank {lora_rank}" if lora else ", full training"),
         "oracle_description": (
-            "independent CPU BF16 autograd, explicit router formula and FP32 "
-            "master AdamW; separate whole/split trajectories"
+            "independent CPU BF16 activations, explicit router formula and FP32 "
+            "master AdamW; separate whole/split trajectories; "
+            + (
+                "FP32 weight reductions observed before BF16 leaf rounding"
+                if grad_dtype == "float32"
+                else "BF16 autograd gradients"
+            )
         ),
     }
 
 
 @pytest.mark.parametrize("lora,rank", [(False, 2), (True, 2), (True, 16)])
-def test_bf16_oracle_keeps_master_precision_and_independent_trajectories(lora, rank):
-    value = bf16_options(lora, lora_rank=rank)
+@pytest.mark.parametrize("grad_dtype", ["bfloat16", "float32"])
+def test_bf16_oracle_keeps_master_precision_and_independent_trajectories(
+    lora, rank, grad_dtype
+):
+    value = bf16_options(lora, lora_rank=rank, grad_dtype=grad_dtype)
     assert json.loads(json.dumps(value)) == value
     initial = value["oracles"]["whole"][0]["weights"]
     for trajectory in value["oracles"].values():
