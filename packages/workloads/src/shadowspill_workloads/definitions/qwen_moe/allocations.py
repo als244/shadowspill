@@ -1,0 +1,55 @@
+"""Exact fixed-geometry contracts for the Qwen MLOps/FLA path.
+
+Dropless routed experts allocate T*K assignment rows, E+1 offsets and fixed
+expert banks. Sorting changes row order only. Grouped GEMMs allocate full row
+outputs and E+1 tile-prefix entries; the device-side counts change execution,
+never allocation. LoRA uses those same bounded operators and fixed factor sizes.
+
+Partial RoPE writes input-sized outputs. FLA norm outputs/partials depend on
+rows, widths and device geometry. Packed convolution and DeltaNet always receive
+the model's fixed-capacity cumulative/chunk tensors: NT is their allocated row
+count, not the number of nonempty chunks. Histories, per-chunk weight partials,
+WY factors and offsets consequently have fixed extents even for empty slots.
+MLOps disables FLA's tensor cache so replay does not retain index allocations.
+
+These guarantees pin provider Python and extension code through registration.
+They do not replace profiling or joint admission, or cover a different provider.
+In particular, SonicMoE/EP paths require their own contracts and qualification.
+"""
+
+from ..text_allocations import CONTRACTS as TEXT_CONTRACTS
+
+CONTRACT_ID = "shadowspill/qwen-fixed-provider-allocation@1"
+
+CONTRACTS = {
+    **TEXT_CONTRACTS,
+    **{
+        f"torch.ops.mlops.{name}_{direction}.default": CONTRACT_ID
+        for name in (
+            "partial_rope_builtin_triton",
+            "moe_builtin_grouped_gemm",
+            "causal_conv_silu_fla",
+            "l2_norm_fla",
+            "gated_rms_norm_fla",
+            "linear_attention_fla_gated_delta_rule",
+        )
+        for direction in ("fwd", "bwd")
+    },
+    **{
+        f"torch.ops.mlops.{name}.default": CONTRACT_ID
+        for name in (
+            "causal_conv_silu_fla_input_bwd",
+            "lora_router_logits",
+            "lora_router_logits_bwd",
+            "lora_route",
+            "lora_route_bwd",
+            "lora_assignment_layout",
+            "lora_dispatch",
+            "lora_dispatch_bwd",
+            "lora_combine",
+            "lora_combine_bwd",
+            "lora_grouped_linear_fwd",
+            "lora_grouped_linear_bwd",
+        )
+    },
+}

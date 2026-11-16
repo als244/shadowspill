@@ -75,6 +75,21 @@ Explicit candidate lists replace those choices. Physical sequence slots include
 separate padding segments, preserving caller boundaries even with empty Datums.
 Every named output closure is packed and validated by the generic engine.
 
+`shadowspill/qwen3moe@1` and `shadowspill/qwen35moe@1` use the same packed
+preparation contract. They expose target logprobs and router statistics, so the
+caller explicitly chooses token-only training or a composed balancing objective.
+Settings select `preset`, architecture overrides, precision and optional LoRA;
+Qwen3.5 recurrent decay parameters retain FP32 storage with BF16 projections.
+Initialization accepts random weights or a training checkpoint. CPU setup,
+packing, initialization and objective/provider captures are checked; complete
+public-service admission and training remain under qualification. The supplied
+allocation contracts cover the fixed-geometry builtin MoE and FLA operators;
+SonicMoE and expert-parallel providers require separate admission evidence.
+
+Definition provenance hashes provider Python and installed extension binaries
+without importing their implementations in the controller. Each controller or
+worker treats that installed provider snapshot as immutable for its lifetime.
+
 The workloads entry point also installs `shadowspill/cross_entropy@1` and
 `shadowspill/clipped_policy@1`. A compatible model declares the `target_logprobs`
 capability, a bounded integer `tokens` field with one symbolic position dimension,
