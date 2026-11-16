@@ -29,7 +29,7 @@ def reconcile_local_plans(
 ) -> tuple[TrainingBundle, Mapping[str, Any]]:
     """The caller authenticates/stages a completed preparation before this call.
 
-    No client native bytes are loaded. Original captures supply all executable
+    No client executable bytes are loaded. Original captures supply all executable
     payloads; CPU re-derivation verifies every proposed Program and schedule.
     This never invokes build/profile, per-Plan search, or a workload factory.
     """

@@ -22,7 +22,7 @@ LOCAL_PLANS_MEDIA_TYPE = "application/vnd.shadowspill.local-plans+zip"
 class LocalPlans(Artifact):
     """Selected CPU schedules awaiting server coverage and physical admission.
 
-    Unlike an executable TrainingBundle, this contains no native payloads. The
+    Unlike an executable TrainingBundle, this contains no executable payloads. The
     receiving service supplies those from the authenticated preparation job.
     Rejected local searches are diagnostics, never new memory evidence.
     """
