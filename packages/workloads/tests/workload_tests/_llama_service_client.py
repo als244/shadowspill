@@ -30,7 +30,7 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload_io import read_payload
 
 
-def exported(training, trained):
+def exported(training, trained, initial):
     handle = training.export_weights().result(120)
     with TemporaryDirectory(prefix="shadowspill-llama-weights-") as directory:
         root = handle.download(Path(directory) / "weights").result(60)
@@ -56,6 +56,13 @@ def exported(training, trained):
                 if identity["role"] == "master":
                     assert row["tensor"]["geometry"]["dtype"] == "torch.float32"
                     masters.add(identity["name"])
+                if row["archive"] in manifest["omitted_parameters"]:
+                    assert manifest["frozen_state_id"] is not None
+                    assert identity["name"] not in trained
+                    values[identity["name"]] = np.asarray(
+                        initial[identity["name"]], dtype=np.float32
+                    )
+                    continue
                 array = arrays[
                     manifest["derived_tensors"].get(row["archive"], row["archive"])
                 ]
@@ -91,8 +98,8 @@ def logprobs(training, records, budget):
 
 def check(training, options, index, budget):
     expected = options["oracle"][index]
-    actual = exported(training, options["trainable"])
     initial = options["oracle"][0]["weights"]
+    actual = exported(training, options["trainable"], initial)
     for name, value in expected["weights"].items():
         value = np.asarray(value, dtype=np.float32)
         if index == 0 or name not in options["trainable"]:
@@ -109,13 +116,17 @@ def check(training, options, index, budget):
                 atol=1e-5,
                 err_msg=name,
             )
+    check_logprobs(training, options, index, budget)
+    return actual
+
+
+def check_logprobs(training, options, index, budget):
     for actual_row, expected_row in zip(
         logprobs(training, options["records"], budget),
-        expected["logprobs"],
+        options["oracle"][index]["logprobs"],
         strict=True,
     ):
         np.testing.assert_allclose(actual_row, expected_row, rtol=0.003, atol=0.008)
-    return actual
 
 
 def close(client, training):
@@ -179,7 +190,9 @@ def qualify(client, options, budget):
                     result.loss, options["loss_parts"][part], rtol=0.003, atol=0.008
                 )
                 observations.append(result.record.to_dict())
-                check(training, options, 0, budget)
+                # Export/checkpoint is intentionally forbidden while gradients
+                # are pending. Read-only forward is the isolation check here.
+                check_logprobs(training, options, 0, budget)
             result = training.optim_step(grad_scale=0.25).result(120)
         else:
             result = training.step(

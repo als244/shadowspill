@@ -62,34 +62,37 @@ def options(policy=False):
     controls = {"clip_ratio": 0.17, "reference_beta": 0.03} if policy else {}
 
     def loss(rows):
-        total = torch.zeros(())
-        for row in rows:
-            fields = row["loss_inputs"]
-            logits = model(torch.tensor([row["inputs"]["tokens"]])).float()[0]
-            current = (
-                logits.log_softmax(-1)
-                .gather(-1, torch.tensor(fields["target_tokens"]).unsqueeze(-1))
-                .squeeze(-1)
+        # One packed projection accumulates each parameter VJP before its BF16
+        # cast. Separate model calls would round every sequence's weight VJP
+        # first, losing accuracy under signed-weight cancellation. Attention is
+        # still independent per sequence in the pure PyTorch implementation.
+        lengths = tuple(len(row["inputs"]["tokens"]) for row in rows)
+        tokens = [token for row in rows for token in row["inputs"]["tokens"]]
+        fields = {
+            name: [value for row in rows for value in row["loss_inputs"][name]]
+            for name in rows[0]["loss_inputs"]
+        }
+        logits = model(torch.tensor([tokens]), lengths).float()[0]
+        current = (
+            logits.log_softmax(-1)
+            .gather(-1, torch.tensor(fields["target_tokens"]).unsqueeze(-1))
+            .squeeze(-1)
+        )
+        if policy:
+            ratio = (current - torch.tensor(fields["old_logprobs"])).exp()
+            advantages = torch.tensor(fields["advantages"])
+            term = -torch.minimum(
+                ratio * advantages,
+                ratio.clamp(1 - controls["clip_ratio"], 1 + controls["clip_ratio"])
+                * advantages,
             )
-            if policy:
-                ratio = (current - torch.tensor(fields["old_logprobs"])).exp()
-                advantages = torch.tensor(fields["advantages"])
-                term = -torch.minimum(
-                    ratio * advantages,
-                    ratio.clamp(1 - controls["clip_ratio"], 1 + controls["clip_ratio"])
-                    * advantages,
-                )
-                delta = torch.tensor(fields["reference_logprobs"]) - current
-                term = term + controls["reference_beta"] * (delta.exp() - 1 - delta)
-            else:
-                term = -current
-            total = (
-                total
-                + (
-                    term * torch.tensor(fields[mask]) * torch.tensor(fields["weights"])
-                ).sum()
-            )
-        return total
+            delta = torch.tensor(fields["reference_logprobs"]) - current
+            term = term + controls["reference_beta"] * (delta.exp() - 1 - delta)
+        else:
+            term = -current
+        return (
+            term * torch.tensor(fields[mask]) * torch.tensor(fields["weights"])
+        ).sum()
 
     trained = {
         name: value for name, value in model.named_parameters() if value.requires_grad
@@ -166,7 +169,7 @@ def options(policy=False):
         "model_description": "supplied packed Llama, BF16 compute and FP32 masters"
         + (", LoRA policy" if policy else ", full CE"),
         "oracle_description": (
-            "independent PyTorch Llama per-sequence logits/loss/autograd and FP32 "
+            "independent PyTorch Llama packed autograd, per-sequence logits and FP32 "
             "AdamW; BF16 VJP rounding tolerance documented in client"
         ),
     }
