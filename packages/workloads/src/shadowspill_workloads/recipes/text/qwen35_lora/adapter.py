@@ -121,10 +121,10 @@ def initializer(options, metadata, *, rank=0):
     if metadata != describe(options):
         raise ValueError("checkpoint/corpus metadata differs from the build")
     if options["initialization"] == "random":
-        from shadowspill_workloads.models.qwen35moe.config import from_huggingface
-        from shadowspill_workloads.recipes.text.initialization import (
+        from shadowspill_workloads.initialization.text import (
             Initialize as RandomInitialize,
         )
+        from shadowspill_workloads.models.qwen35moe.config import from_huggingface
 
         config = from_huggingface(
             metadata["checkpoint_config"], max_seq_len=options["sequence_length"]

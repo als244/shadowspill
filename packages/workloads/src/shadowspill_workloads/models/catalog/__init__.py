@@ -127,7 +127,7 @@ def build_from_checkpoint(
     on ``meta`` at the checkpoint's configuration with ``changes`` (such as
     ``max_seq_len``) over it: structure in ``dtype``, LoRA applied when
     ``lora`` names its options. The form a fine-tuning config names, beside
-    ``shadowspill_workloads.recipes.text.initialization.from_checkpoint``."""
+    ``shadowspill_workloads.initialization.text.from_checkpoint``."""
 
     from ..construction import build_on_meta as declare
 

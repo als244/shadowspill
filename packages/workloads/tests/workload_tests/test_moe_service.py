@@ -12,9 +12,9 @@ import torch
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.training.definitions import load_registry
 from shadowspill_client import Objective
-from shadowspill_workloads.recipes.text.initialization import Initialize
+from shadowspill_workloads.initialization.text import Initialize
+from workload_tests.test_moe_definitions import settings
 from workload_tests.test_moe_objective import independent
-from workload_tests.test_qwen_definition import settings
 
 
 def options(family="qwen3moe", *, lora=False):

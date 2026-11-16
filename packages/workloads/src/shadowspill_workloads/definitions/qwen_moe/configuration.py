@@ -14,7 +14,7 @@ from shadowspill_client._records import plain
 from shadowspill_workloads.models.qwen3moe import config as qwen3
 from shadowspill_workloads.models.qwen35moe import config as qwen35
 
-from .allocations import CONTRACTS
+from ..moe_allocations import CONTRACTS
 
 
 @dataclass(frozen=True)
@@ -165,7 +165,7 @@ def initialization(config, context):
 
     @contextmanager
     def open_loader(runtime):
-        from shadowspill_workloads.recipes.text.initialization import Initialize
+        from shadowspill_workloads.initialization.text import Initialize
 
         yield Initialize(
             config.family,

@@ -11,10 +11,10 @@ import pytest
 import torch
 
 from shadowspill.execution.tensors import TensorChunk
+from shadowspill_workloads.initialization.text import Initialize
 from shadowspill_workloads.inputs.text.calls import Inputs
 from shadowspill_workloads.models.llama3.config import LLAMA_3_1_ROPE_SCALING, Config
 from shadowspill_workloads.models.shared.decoder import RotaryEmbedding
-from shadowspill_workloads.recipes.text.initialization import Initialize
 
 
 @pytest.mark.parametrize("scaling", [None, LLAMA_3_1_ROPE_SCALING])

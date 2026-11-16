@@ -88,7 +88,7 @@ The shared workers have one purpose each; recipe modules delegate to them:
 | [Shared communicate](../../../../../../engine/src/shadowspill/training/preparation/communicate.py) | Host copies, collectives, communication memory and supported paired task interference | `communication/`, `overlap/`, enriched `profiles/` and `profiled/` |
 | [Shared plan](../../../../../../engine/src/shadowspill/training/preparation/plan.py) | Microbatch, chunk, retention and ordering search under memory budgets | `search.json`, `selected.json`, `plans/training.ssp`, `reports/` |
 | [Shared execute](../../../../../../engine/src/shadowspill/training/preparation/execute.py) | Fresh worker, bounded initialization, Trainer updates/checkpoint | `training/rank-NNNNN/` |
-| [Text initialization](../initialization.py) | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
+| [Text initialization](../../../initialization/text.py) | Identical random tensor values across shards/chunk sizes | Fills Executor buffers |
 
 `microbatch_sizes` lists the exact positive divisors of `sequences_per_step` to
 build and profile. Repeated entries are built once. Changing the list requires a

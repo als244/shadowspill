@@ -145,8 +145,8 @@ def setup(options, *, rank=0):
 
 @contextmanager
 def initializer(options, metadata, *, rank=0):
+    from shadowspill_workloads.initialization.text import Initialize
     from shadowspill_workloads.models.catalog import entry
-    from shadowspill_workloads.recipes.text.initialization import Initialize
 
     initialize = Initialize(
         entry(options["model"]).family, model_config(options), seed=options["seed"]

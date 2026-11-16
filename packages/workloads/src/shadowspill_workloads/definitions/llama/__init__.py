@@ -21,7 +21,7 @@ def register(registry):
     # Include model, LoRA, initializer and provider semantics without importing
     # any of them in the CPU controller. Editable dependency changes are pinned.
     paths = [
-        root / "recipes/text/initialization.py",
+        root / "initialization/text.py",
         root / "inputs/text/preparation.py",
         root / "definitions/text_allocations.py",
     ]

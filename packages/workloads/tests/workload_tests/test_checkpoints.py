@@ -276,7 +276,7 @@ def test_a_checkpoint_initializes_a_run_chunk_by_chunk(tmp_path, family):
     """A fine-tune's tensors come from the checkpoint in bounded chunks; the
     rotary tables and LoRA factors it does not hold are generated as the
     catalog generates them, the same whatever the chunking."""
-    from shadowspill_workloads.recipes.text.initialization import from_checkpoint
+    from shadowspill_workloads.initialization.text import from_checkpoint
 
     name = f"{family}-tiny"
     changes = PUBLISHED.get(family, {})

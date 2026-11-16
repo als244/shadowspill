@@ -123,7 +123,7 @@ def initialization(config, context):
 
     @contextmanager
     def open_loader(runtime):
-        from shadowspill_workloads.recipes.text.initialization import Initialize
+        from shadowspill_workloads.initialization.text import Initialize
 
         yield Initialize(
             "llama3", Config(**config.architecture), seed=context.weights.seed

@@ -57,7 +57,7 @@
   "execution_gib": 20,
   "spill_gib": 32,
   "initialize": {
-    "@call": "shadowspill_workloads.recipes.text.initialization:from_catalog",
+    "@call": "shadowspill_workloads.initialization.text:from_catalog",
     "model": "llama3-numerical",
     "max_seq_len": 2048,
     "seed": 0

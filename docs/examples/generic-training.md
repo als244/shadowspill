@@ -97,7 +97,7 @@ from pathlib import Path
 
 from shadowspill import Plan, Trainer
 from shadowspill_workloads.inputs.text.calls import Inputs
-from shadowspill_workloads.recipes.text.initialization import from_catalog
+from shadowspill_workloads.initialization.text import from_catalog
 
 settings = json.loads(Path("inputs.json").read_text())
 source = Inputs(settings)

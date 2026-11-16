@@ -27,7 +27,7 @@ objects. The model, data and objective remain workload choices.
 | `model`, `data`, `objective`, `objective_args` | Model constructor, packed corpus and objective `(model, batch)`; batch is `[tokens, targets, seq_lens]`. `data` given as a directory alone is `PackedTokens` over it; the objective defaults to next-token prediction. |
 | `checkpoint` | A family and a local Hugging Face checkpoint directory, standing for `model` built at the checkpoint's configuration and `initialize` streaming it in: `implementation`, `dtype` and `lora` go to the model, `seed` to the initializer (the run's seed otherwise), any other option such as `max_seq_len` (the run's otherwise) to both. |
 | `optimizer`, `optimizer_args` | Optimizer constructor (default: the mlops AdamW) and arguments. |
-| `initialize` | Callable `(request, destination)` filling Executor-provided bounded CPU chunks. It may also be a context manager, such as a checkpoint reader; `shadowspill_workloads.recipes.text.initialization:from_checkpoint` is the supplied one for a local Hugging Face checkpoint. |
+| `initialize` | Callable `(request, destination)` filling Executor-provided bounded CPU chunks. It may also be a context manager, such as a checkpoint reader; `shadowspill_workloads.initialization.text:from_checkpoint` is the supplied one for a local Hugging Face checkpoint. |
 | `max_seq_len`, `max_tokens_per_step` | Packed sequence cap and total token capacity per update. |
 | `max_tokens_per_microbatch` | Fixed example capacity; alternatively use `planning_min_tokens_per_microbatch` and `planning_max_tokens_per_microbatch` for a geometry sweep. |
 | `build` | Additional public `build_step` options, such as partitioning and operator recomputation. |

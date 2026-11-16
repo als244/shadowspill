@@ -19,7 +19,7 @@ They do not replace profiling or joint admission, or cover a different provider.
 In particular, SonicMoE/EP paths require their own contracts and qualification.
 """
 
-from ..text_allocations import CONTRACTS as TEXT_CONTRACTS
+from .text_allocations import CONTRACTS as TEXT_CONTRACTS
 
 CONTRACT_ID = "shadowspill/qwen-fixed-provider-allocation@1"
 

@@ -16,9 +16,10 @@ def register(registry):
         source = definition_source(
             (
                 "definitions/qwen_moe",
+                "definitions/moe_allocations.py",
                 "definitions/text_allocations.py",
                 "inputs/text/preparation.py",
-                "recipes/text/initialization.py",
+                "initialization/text.py",
                 f"models/{family}",
                 "models/shared",
                 "lora",

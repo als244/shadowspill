@@ -11,11 +11,11 @@ import torch
 
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill_client import LoRA, Objective
+from shadowspill_workloads.initialization.text import Initialize
 from shadowspill_workloads.models.llama3.config import Config
 from shadowspill_workloads.models.llama3.implementations.pytorch import (
     Model as Reference,
 )
-from shadowspill_workloads.recipes.text.initialization import Initialize
 from workload_tests._llama_oracle import WeightGradients
 from workload_tests.test_llama_definition import settings
 
