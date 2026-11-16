@@ -263,6 +263,19 @@ def _describe(
         origins["parallelism.inputs"] = "engine_default"
     else:
         origins["parallelism.inputs"] = origins["parallelism"]
+        if not parallelism.inputs.fields:
+            if any(len(group) != 1 for group in parallelism.inputs.partitions.groups):
+                raise ValueError(
+                    "cooperating input workers require explicit field placement"
+                )
+            parallelism = replace(
+                parallelism,
+                inputs=replace(
+                    parallelism.inputs,
+                    fields=[InputFieldPlacement(tuple(f.path)) for f in schema.fields],
+                ),
+            )
+            origins["parallelism.inputs.fields"] = "engine_default"
     context = PreparationContext(resolved_model, schema, batches, parallelism)
     preset_name = (
         prepare.preset

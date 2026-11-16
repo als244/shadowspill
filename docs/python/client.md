@@ -100,8 +100,11 @@ Reports remain available after closing training. See the
 | `training.close().result()` | Release the run's workers. |
 
 A batch is a list of `Datum` records containing model inputs and objective inputs.
-For text, `text_datum(tokens)` creates aligned next-token inputs and targets.
-Tokenization stays in your application.
+For text, `text_batch(token_sequences)` creates aligned next-token inputs and
+targets, weighted by the whole batch's unmasked target count. Optional
+`loss_masks=...` marks supervised tokens in the original sequences. Tokenization
+stays in your application. Use `text_datum(tokens)` for explicit weights or a
+token sum; it does not normalize a batch.
 
 The setup chooses which compute operations are available. The default prepares
 `step`; see the [split-update example](advanced/training-workflow.md) to prepare
@@ -112,9 +115,9 @@ learning rate on each `step` or `optim_step` with `optim={"lr": ...}`; this can 
 from your learning-rate schedule. `forward_backward` only accumulates gradients
 and takes no learning rate. Optional `Optimizer(defaults=...)` values are fallbacks
 for omitted controls; a call's settings do not change the next call's defaults.
-Objective sums are
-not automatically averaged: use input weights or an explicit `grad_scale`. The
-text example supplies weights for a mean token loss.
+Objective sums are not automatically averaged: use input weights or an explicit
+`grad_scale`. `text_batch` supplies weights for a mean token loss. Construct it
+once before splitting the resulting list across backward calls for one update.
 
 Batch limits include scheduled padding. For example, a 128K-token cap cannot
 execute three 64K microbatches.

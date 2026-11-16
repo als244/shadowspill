@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from shadowspill_client import Datum
-from shadowspill_client.text import text_datum
+from shadowspill_client.text import text_batch, text_datum
 
 
 def test_text_shift_preserves_target_mask_and_signed_weights():
@@ -49,3 +49,41 @@ def test_default_fields_remain_schema_defaults_and_explicit_datum_is_unshifted()
 def test_malformed_text_fields_are_refused(tokens, options):
     with pytest.raises(ValueError):
         text_datum(tokens, **options)
+
+
+def test_batch_mean_counts_unmasked_targets_across_unequal_sequences():
+    batch = text_batch(
+        [[1, 2, 3, 4], [5, 6], [7, 8, 9]],
+        loss_masks=[[True, True, False, True], [False, True], [True, False, False]],
+    )
+    # Three trained targets across all records, not an average of record means.
+    losses = [np.array([2.0, 100.0, 4.0]), np.array([6.0]), np.array([90.0, 90.0])]
+
+    def loss(records, values):
+        return sum(
+            np.sum(value * d.loss_inputs["weights"] * d.loss_inputs["loss_mask"])
+            for d, value in zip(records, values, strict=True)
+        )
+
+    expected = np.mean([2.0, 4.0, 6.0])
+    assert loss(batch, losses) == pytest.approx(expected)
+    # Worker partitions or split backward calls keep the original denominator.
+    assert loss(batch[:1], losses[:1]) + loss(batch[1:], losses[1:]) == pytest.approx(
+        expected
+    )
+    assert all(np.allclose(d.loss_inputs["weights"], 1 / 3) for d in batch)
+
+
+def test_batch_mean_without_masks_uses_target_count():
+    batch = text_batch(iter([[1, 2], [3, 4, 5, 6]]))
+    assert all("loss_mask" not in d.loss_inputs for d in batch)
+    assert all(np.allclose(d.loss_inputs["weights"], 1 / 4) for d in batch)
+
+
+@pytest.mark.parametrize(
+    "sequences,masks",
+    [([], None), ([[1, 2]], [[True, False]]), ([[1, 2]], []), ([], [[True, True]])],
+)
+def test_empty_supervision_and_misaligned_batch_masks_are_refused(sequences, masks):
+    with pytest.raises(ValueError):
+        text_batch(sequences, loss_masks=masks)

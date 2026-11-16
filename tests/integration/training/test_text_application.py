@@ -14,6 +14,42 @@ from shadowspill_client import Model, Objective
 from shadowspill_client.parallelism import data_parallel, expert_parallel
 
 
+@pytest.mark.parametrize("family", ["llama3", "qwen3moe"])
+def test_dp_fields_are_resolved_from_model_and_objective_before_build(family):
+    from shadowspill_client import BatchConfig, Memory, Optimizer
+
+    setup = resolve_training(
+        load_registry(["shadowspill", "shadowspill-workloads"]),
+        model=Model(family, config={"preset": "tiny"}),
+        objective=Objective("cross_entropy"),
+        optimizer=Optimizer("adamw"),
+        batch=BatchConfig(
+            limits={
+                "token_capacity": 32,
+                "max_sequence_length": 4,
+                "max_sequences": 8,
+            }
+        ),
+        memory=Memory(4, 1),
+        parallelism=Parallelism.from_dict(data_parallel(8)),
+    )
+    placement = setup.context.parallelism.inputs
+    assert placement.partition_count == 8
+    assert {field.path for field in placement.fields} == {
+        tuple(field.path) for field in setup.context.schema.fields
+    }
+    assert all(field.mode == "replicate" for field in placement.fields)
+    assert setup.config.to_dict()["parallelism"]["inputs"] == placement.to_dict()
+    assert setup.config.origins["parallelism.inputs.fields"] == "engine_default"
+    # Saved resolved settings have complete placement and survive re-resolution.
+    assert (
+        resolve_training(
+            load_registry(["shadowspill", "shadowspill-workloads"]), setup.config
+        ).config
+        == setup.config
+    )
+
+
 @pytest.mark.parametrize("family", ["llama3", "qwen3moe", "qwen35moe", "olmoe"])
 def test_common_settings_prepare_multiple_models_with_the_same_scheduled_cap(family):
     settings = TextSettings(

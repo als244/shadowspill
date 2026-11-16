@@ -1,5 +1,6 @@
 """CPU text conveniences; arbitrary Datum fields are never shifted implicitly."""
 
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -45,4 +46,50 @@ def text_datum(tokens: Any, *, loss_mask: Any = None, weights: Any = None) -> Da
     return Datum(inputs={"tokens": values[:-1]}, loss_inputs=loss_inputs)
 
 
-__all__ = ["text_datum"]
+def text_batch(
+    sequences: Iterable[Any], *, loss_masks: Iterable[Any] | None = None
+) -> list[Datum]:
+    """Next-token examples weighted by the whole batch's supervised token count.
+
+    Masks align with original tokens, just as in ``text_datum``. Masked targets
+    and the first token of each sequence do not enter the denominator. Packing,
+    microbatching and worker placement may subsequently divide this batch without
+    changing its weights. For split accumulation, construct the whole update's
+    batch once, then submit slices of the resulting list.
+
+    Use ``text_datum`` for explicit weights or unnormalized objectives. This
+    helper does not change the objective's additive reduction or normalize other
+    objective terms.
+    """
+    batch = (
+        [text_datum(tokens) for tokens in sequences]
+        if loss_masks is None
+        else [
+            text_datum(tokens, loss_mask=mask)
+            for tokens, mask in zip(sequences, loss_masks, strict=True)
+        ]
+    )
+    count = sum(
+        datum.loss_inputs["target_tokens"].size
+        if "loss_mask" not in datum.loss_inputs
+        else int(np.count_nonzero(datum.loss_inputs["loss_mask"]))
+        for datum in batch
+    )
+    if not count:
+        raise ValueError("text_batch requires at least one unmasked target token")
+    weight = np.asarray(1 / count, dtype=np.float32)
+    return [
+        Datum(
+            inputs=datum.inputs,
+            loss_inputs={
+                **datum.loss_inputs,
+                "weights": np.broadcast_to(
+                    weight, datum.loss_inputs["target_tokens"].shape
+                ),
+            },
+        )
+        for datum in batch
+    ]
+
+
+__all__ = ["text_batch", "text_datum"]

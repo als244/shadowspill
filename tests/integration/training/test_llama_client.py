@@ -50,6 +50,25 @@ def test_global_windows_preserve_previous_shift_and_update_normalization(tmp_pat
         batches[len(batches)]
 
 
+def test_corpus_masks_use_one_global_supervised_target_denominator(tmp_path):
+    data = corpus(tmp_path / "masked")
+    masks = np.zeros(97, dtype=np.uint8)
+    masks[[0, 1, 3, 8, 12]] = 1
+    masks.tofile(data / "train.mask.bin")
+    batch = TokenBatches(data, 4, 3)[0]
+    assert sum(np.count_nonzero(d.loss_inputs["loss_mask"]) for d in batch) == 4
+    assert all(np.allclose(d.loss_inputs["weights"], 1 / 4) for d in batch)
+    assert sum(
+        float((d.loss_inputs["weights"] * d.loss_inputs["loss_mask"]).sum())
+        for d in batch
+    ) == pytest.approx(1)
+    unnormalized = TokenBatches(data, 4, 3, normalize=False)[0]
+    assert all(np.all(d.loss_inputs["weights"] == 1) for d in unnormalized)
+    (data / "train.mask.bin").write_bytes(b"\x00")
+    with pytest.raises(ValueError, match="one byte per token"):
+        TokenBatches(data, 4, 3)
+
+
 def test_setup_uses_installed_definitions_and_caps_scheduled_padding(tmp_path):
     settings = Settings(
         str(tmp_path),

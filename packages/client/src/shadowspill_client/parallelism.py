@@ -7,9 +7,15 @@ from typing import Any
 def data_parallel(
     ranks: int,
     *,
-    fields: Sequence[Sequence[str]],
+    fields: Sequence[Sequence[str]] | None = None,
     outputs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Declare data parallelism before build/profile/plan.
+
+    Each worker receives an independent input partition. Omitted ``fields``
+    are filled from the model/objective schema during setup. Explicit fields
+    and output assembly rules are available for custom definitions.
+    """
     return {
         "ranks_per_replica": ranks,
         "num_replicas": 1,
@@ -29,7 +35,7 @@ def data_parallel(
             "partitions": {"name": "inputs", "groups": [[r] for r in range(ranks)]},
             "fields": [
                 {"path": list(path), "mode": "replicate", "axis": None}
-                for path in fields
+                for path in (() if fields is None else fields)
             ],
             "loss": "leader",
             "outputs": {} if outputs is None else outputs,

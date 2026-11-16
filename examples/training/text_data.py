@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from shadowspill_client.text import text_datum
+from shadowspill_client.text import text_batch, text_datum
 
 
 class TokenBatches:
@@ -44,7 +44,7 @@ class TokenBatches:
         self.positions = sequence_length * sequences_per_step
         if type(normalize) is not bool:
             raise TypeError("normalize must be boolean")
-        self.weight = 1 / self.positions if normalize else 1.0
+        self.normalize = normalize
         self.identity = {
             "path": str(path),
             "size_bytes": facts.st_size,
@@ -53,6 +53,20 @@ class TokenBatches:
             "sequence_length": self.length,
             "sequences_per_step": self.count,
         }
+        mask_path = root / f"{split}.mask.bin"
+        self.masks = None
+        if mask_path.exists():
+            mask_facts = mask_path.stat()
+            if mask_facts.st_size != len(self.tokens):
+                raise ValueError("corpus loss mask must contain one byte per token")
+            self.masks = np.memmap(mask_path, dtype=np.uint8, mode="r")
+            self.identity["mask"] = {
+                "path": str(mask_path),
+                "size_bytes": mask_facts.st_size,
+                "mtime_ns": mask_facts.st_mtime_ns,
+            }
+        elif metadata.get("mask") is not None:
+            raise ValueError("corpus metadata declares a missing loss mask")
         if not len(self):
             raise ValueError("corpus is shorter than one complete update")
 
@@ -63,14 +77,27 @@ class TokenBatches:
         if type(index) is not int or not 0 <= index < len(self):
             raise IndexError("update lies outside the corpus")
         start = index * self.positions
+        offsets = range(start, start + self.positions, self.length)
+        sequences = [
+            self.tokens[offset : offset + self.length + 1] for offset in offsets
+        ]
+        masks = [
+            None
+            if self.masks is None
+            else self.masks[offset : offset + self.length + 1]
+            for offset in offsets
+        ]
+        if self.normalize:
+            return text_batch(sequences, loss_masks=masks)
         # Each Datum attends independently. Composed objectives can use unit
         # weights and apply their common normalization at the optimizer instead.
         return [
             text_datum(
-                self.tokens[offset : offset + self.length + 1],
-                weights=self.weight,
+                tokens,
+                loss_mask=mask,
+                weights=1.0,
             )
-            for offset in range(start, start + self.positions, self.length)
+            for tokens, mask in zip(sequences, masks, strict=True)
         ]
 
 
