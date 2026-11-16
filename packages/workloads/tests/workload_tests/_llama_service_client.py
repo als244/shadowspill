@@ -105,9 +105,9 @@ def check(training, options, index, budget):
         if index == 0 or name not in options["trainable"]:
             np.testing.assert_array_equal(actual[name], value)
         else:
-            # The independent eager BF16 reference rounds weight VJPs to BF16;
-            # capture retains FP32 gradients. Compare the update itself so large
-            # unchanged weights cannot hide a missing or incorrectly scaled update.
+            # Compare updates, so large unchanged weights cannot hide missing or
+            # incorrectly scaled updates. Independent eager activation derivatives
+            # and fused GPU kernels can still differ at BF16 rounding boundaries.
             baseline = np.asarray(initial[name], dtype=np.float32)
             np.testing.assert_allclose(
                 actual[name] - baseline,

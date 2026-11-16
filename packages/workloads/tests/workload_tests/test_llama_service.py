@@ -16,6 +16,7 @@ from shadowspill_workloads.models.llama3.implementations.pytorch import (
     Model as Reference,
 )
 from shadowspill_workloads.recipes.text.initialization import Initialize
+from workload_tests._llama_oracle import WeightGradients
 from workload_tests.test_llama_definition import settings
 
 
@@ -140,17 +141,21 @@ def options(policy=False):
 
     parts = [float(loss(rows).detach()) for rows in (records[:1], records[1:])]
     oracle = [snapshot()]
+    gradients = WeightGradients(model)
     for scale in (0.25, 1):
         loss(records).backward()
+        assert gradients.values.keys() == trained.keys()
         for name, value in trained.items():
-            masters[name].grad = value.grad.float() * scale
+            masters[name].grad = gradients.values[name] * scale
             value.grad = None
+        gradients.values.clear()
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
         with torch.no_grad():
             for name, value in trained.items():
                 value.copy_(masters[name])
         oracle.append(snapshot())
+    gradients.close()
     return {
         "model": requested.to_dict(),
         "objective": Objective(
@@ -169,8 +174,8 @@ def options(policy=False):
         "model_description": "supplied packed Llama, BF16 compute and FP32 masters"
         + (", LoRA policy" if policy else ", full CE"),
         "oracle_description": (
-            "independent PyTorch Llama packed autograd, per-sequence logits and FP32 "
-            "AdamW; BF16 VJP rounding tolerance documented in client"
+            "independent PyTorch Llama packed autograd, explicit FP32 weight VJPs, "
+            "per-sequence logits and FP32 AdamW"
         ),
     }
 
