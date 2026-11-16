@@ -40,7 +40,7 @@
   "wandb_project": "shadowspill-training",
   "schedules": {
     "optimizer_group.0.lr": {
-      "@call": "shadowspill.training.schedules:WarmupCosine",
+      "@call": "shadowspill_client.schedules:WarmupCosine",
       "lr": 0.0003,
       "min_lr": 3e-05,
       "warmup_steps": 100,

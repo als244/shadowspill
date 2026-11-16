@@ -11,7 +11,7 @@ from engine_tests.execution._cold import forbid_preparation
 forbid_preparation()
 
 from shadowspill import Plan, Trainer  # noqa: E402
-from shadowspill.training.schedules import WarmupCosine  # noqa: E402
+from shadowspill_client.schedules import WarmupCosine  # noqa: E402
 from shadowspill_workloads.inputs.text.calls import Inputs  # noqa: E402
 
 root, output = map(Path, sys.argv[1:3])

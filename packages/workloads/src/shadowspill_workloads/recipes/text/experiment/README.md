@@ -64,7 +64,7 @@ it is given as. For example:
   },
   "schedules": {
     "optimizer_group.0.lr": {
-      "@call": "shadowspill.training.schedules:WarmupCosine",
+      "@call": "shadowspill_client.schedules:WarmupCosine",
       "lr": 0.001,
       "min_lr": 0.0001,
       "warmup_steps": 10,

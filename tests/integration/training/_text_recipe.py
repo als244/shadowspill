@@ -31,7 +31,7 @@ def _config(tmp_path):
         "max_tokens_per_microbatch": 2048,
         "schedules": {
             "lr": {
-                "@call": "shadowspill.training.schedules:WarmupCosine",
+                "@call": "shadowspill_client.schedules:WarmupCosine",
                 "lr": 0.01,
                 "min_lr": 0.001,
                 "warmup_steps": 2,

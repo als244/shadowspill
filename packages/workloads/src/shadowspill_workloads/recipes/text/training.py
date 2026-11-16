@@ -115,7 +115,7 @@ def training_metrics(observations):
 
 
 def trainer_options(options, metadata):
-    from shadowspill.training.schedules import WarmupCosine
+    from shadowspill_client.schedules import WarmupCosine
 
     return dict(
         schedules={

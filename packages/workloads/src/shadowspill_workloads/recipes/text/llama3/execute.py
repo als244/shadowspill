@@ -5,7 +5,7 @@ import sys
 
 from shadowspill import Plan, Trainer
 from shadowspill.training.preparation.phases import settings
-from shadowspill.training.schedules import WarmupCosine
+from shadowspill_client.schedules import WarmupCosine
 from shadowspill_workloads.inputs.text.calls import Inputs
 
 from ..initialization import Initialize

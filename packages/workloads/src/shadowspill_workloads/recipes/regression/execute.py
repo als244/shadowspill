@@ -8,7 +8,7 @@ import torch.distributed as dist
 from shadowspill import Plan, Trainer
 from shadowspill.training.logging import DistributedLogger
 from shadowspill.training.preparation.phases import settings
-from shadowspill.training.schedules import Constant
+from shadowspill_client.schedules import Constant
 
 from .data import Inputs
 from .initialize import fill_tensor
