@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from examples.training.qwen35_lora.loop import train
-from examples.training.qwen35_lora.settings import Settings
-from examples.training.qwen35_lora.setup import start
+from examples.training.qwen.loop import train
+from examples.training.qwen.settings import Settings
+from examples.training.qwen.setup import start
 from examples.training.text_data import TokenBatches
 from shadowspill_client import SSH, ServiceClient
 

@@ -46,9 +46,9 @@ losses use the same normalization. `--backward-pieces` submits separate
 can differ between those contributions and a whole `step()`; each describes its
 own microbatch statistic.
 
-[Settings](qwen35_lora/settings.py) contain portable training choices.
-[Setup](qwen35_lora/setup.py) resolves model metadata and search controls and returns
-a ready client. The [runtime loop](qwen35_lora/loop.py) accepts that client and owns
+[Settings](qwen/settings.py) contain portable training choices.
+[Setup](qwen/setup.py) resolves model metadata and search controls and returns
+a ready client. The [runtime loop](qwen/loop.py) accepts that client and owns
 only batches, schedules, evaluation and checkpoint cadence. Setup can run in a
 separate component without changing the runtime loop. The installed engine's
 build/profile/plan/execute phases and generic parallelism remain the same.

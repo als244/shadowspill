@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 
 from examples.train_qwen35_lora import arguments, main
-from examples.training.qwen35_lora.loop import update
-from examples.training.qwen35_lora.settings import Settings
-from examples.training.qwen35_lora.setup import (
+from examples.training.qwen.loop import update
+from examples.training.qwen.settings import Settings
+from examples.training.qwen.setup import (
     APPLICATION,
     data_identity,
     read_resume,
@@ -219,7 +219,7 @@ import sys
 for name in ('torch', 'triton', 'mlops', 'shadowspill', 'shadowspill_workloads'):
     sys.modules[name] = None
 from examples.train_qwen35_lora import arguments
-from examples.training.qwen35_lora.settings import Settings
+from examples.training.qwen.settings import Settings
 args = arguments(['--run-dir', '/tmp/unused', '--data', '/tmp/data',
                   '--checkpoint', '/server/only', '--ssh', 'chicago'])
 assert args.ssh == 'chicago'
