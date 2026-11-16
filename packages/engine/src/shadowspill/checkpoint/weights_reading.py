@@ -1,4 +1,4 @@
-"""Read native inference exports through the existing verified tensor reader."""
+"""Read inference exports through the existing verified tensor reader."""
 
 from __future__ import annotations
 
