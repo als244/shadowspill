@@ -358,8 +358,9 @@ maps the saved tensors to the new Plans and verifies every worker's archive befo
 initialization. Optimizer moments, gradient buffers and controls use fresh defaults;
 RNG streams use the new run's `Execution.seed`, and its update count starts at zero.
 Partial exports retain their exact frozen-base dependency. Complete exports need
-no historical initializer. Custom artifact formats still use the installed model's
-initializer.
+no historical weight source. Derived buffers, such as rotary position tables,
+are recreated from the installed model definition. Custom artifact formats still
+use the installed model's initializer.
 
 For the same computation, reuse the saved Plans and change only initialization:
 
