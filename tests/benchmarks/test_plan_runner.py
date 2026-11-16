@@ -202,11 +202,19 @@ def test_runner_initializes_after_allocator_and_publishes_after_cleanup(
     monkeypatch.setenv("RANK", "0")
     monkeypatch.setattr(shadowspill.Plan, "load", lambda path: plan)
 
-    class Trainer:
+    from benchmarks.plan_runner import updates
+    from shadowspill.execution import TrainingResult
+
+    times = iter((0.0, 1.0, 2.0, 3.0))
+    monkeypatch.setattr(
+        updates, "time", SimpleNamespace(perf_counter=lambda: next(times))
+    )
+
+    class Executor:
         def __init__(self, loaded, **options):
             assert loaded is plan
             actions.append("allocator")
-            self.executor = SimpleNamespace(spill_capacity_bytes=123)
+            self.plan, self.spill_capacity_bytes = plan, 123
 
         def __enter__(self):
             return self
@@ -219,22 +227,25 @@ def test_runner_initializes_after_allocator_and_publishes_after_cleanup(
             assert fill == "source"
             actions.append("initialized")
 
-        def fit(self, source, *, callbacks, **options):
-            assert list(source) == [{"args": [(1,)], "runtime_trace": False}]
-            assert options["checkpoint_every"] == options["tables_every"] == 0
-            assert options["startup_diagnostics"] is False
+        def run(self, **inputs):
+            import torch
+
+            assert inputs == {
+                "args": [(1,)],
+                "runtime_trace": False,
+                "hyperparams": {},
+                "collect_parameter_norms": False,
+            }
             if fail:
                 raise RuntimeError("step failed")
-            for step in range(1, options["steps"] + 1):
-                callbacks[0](
-                    self,
-                    SimpleNamespace(
-                        step=step,
-                        seconds=1.0,
-                        loss=2.0,
-                        summary=SimpleNamespace(scalars={}),
-                    ),
-                )
+            return SimpleNamespace(
+                result=lambda: TrainingResult((torch.tensor(2.0),), ())
+            )
+
+        def synchronize(self):
+            actions.append("synchronized")
+
+    monkeypatch.setattr(shadowspill, "Executor", Executor)
 
     @contextmanager
     def initializer(context):
@@ -246,13 +257,12 @@ def test_runner_initializes_after_allocator_and_publishes_after_cleanup(
 
     def inputs(context):
         assert actions[-1] == "source_closed"
-        return iter([{"args": [(1,)]}])
+        return iter([{"args": [(1,)]}] * 2)
 
     kwargs = dict(
         initializer=initializer,
         inputs=inputs,
         output_dir=tmp_path,
-        trainer_type=Trainer,
         steps=2,
         monitor=False,
         trace_final_step=False,
@@ -355,7 +365,8 @@ def test_recipe_bridge_reuses_hooks_without_changing_saved_inputs(
         assert options["resume"] is None
         assert options["eval_every"] == options["checkpoint_every"] == 0
         assert rank == 3 and calls[0][2] == 3
-        assert kwargs["trainer_options"](context) == {"frozen_state_id": "saved"}
+        assert kwargs["execution_options"] == {}
+        assert kwargs["schedules"] is kwargs["metric_reducer"] is None
 
     monkeypatch.setattr(recipe, "run", capture)
     recipe.worker(output)
@@ -364,10 +375,13 @@ def test_recipe_bridge_reuses_hooks_without_changing_saved_inputs(
 
 @pytest.mark.slow
 def test_real_two_rank_gloo_coordination_and_logical_rank_permutation(tmp_path):
-    from shadowspill.orchestration.launch.processes import worker_command
+    from shadowspill.orchestration.launch.processes import distributed_command
 
     result = subprocess.run(
-        worker_command("tests.benchmarks._plan_runner", [tmp_path], ranks=2),
+        distributed_command(
+            [sys.executable, "-m", "tests.benchmarks._plan_runner", str(tmp_path)],
+            ranks=2,
+        ),
         capture_output=True,
         text=True,
         timeout=90,

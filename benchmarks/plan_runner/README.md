@@ -1,7 +1,7 @@
 # Saved-Plan benchmarks
 
 Run a selected training Plan repeatedly without rebuilding, reprofiling or
-replanning it. This harness uses `Trainer`, so the saved execution, chunking,
+replanning it. This harness invokes `Executor` directly, so the saved execution, chunking,
 checkpoint-region, retention and parallelism choices remain the ones in the
 Plan. Normal device compatibility, physical memory admission and spill sizing
 checks still apply. A Plan does not become portable to an incompatible GPU
@@ -35,7 +35,7 @@ if __name__ == "__main__":
 
 `benchmark` starts fresh workers on the current node, using the saved rank
 count. It reuses the selected recipe's initializer, real input source, metric
-reducer and Trainer settings. It does not import a particular architecture or
+reducer, schedules and execution settings. It does not import a particular architecture or
 choose sequence lengths, batch geometry, precisions or budgets. Those belong
 to the saved run. Use a separately selected run directory for each budget or
 geometry. Source artifacts are read-only; each attempt needs a new output path.
@@ -43,9 +43,9 @@ geometry. Source artifacts are read-only; each attempt needs a new output path.
 Random host initialization versus checkpoint loading comes from the saved
 configuration. Benchmark runs start at update zero and disable evaluation,
 checkpoint writes, resume, startup diagnostics and metric tables. They retain
-normal Trainer scalar logging and workload metric reducers. Use the public
+normal scalar logging and workload metric reducers. Use the public
 training recipe for evaluation/checkpoint/resume qualification. Initialization
-is still bounded by Trainer's host buffers; the harness never creates a second
+is still bounded by Executor's host buffers; the harness never creates a second
 full copy of the model.
 
 The optional command is `python -m benchmarks.plan_runner RUN --output-dir OUT`.
@@ -87,7 +87,7 @@ appropriate host permissions; this API does not elevate privileges. One Nsight
 collector runs **inside the distributed launcher for each global rank**. Before
 starting that collector, the wrapper restricts `CUDA_VISIBLE_DEVICES` to the
 rank's assigned GPU. `--gpu-metrics-devices=cuda-visible` therefore samples only
-that device. The shared Trainer adapter uses rank barriers and **each rank's**
+that device. The shared update capture uses rank barriers and **each rank's**
 cudaProfilerApi start/stop,
 labels `train/step=N/rank=R`, and enables the existing
 `profiler_annotations=True` task/transfer ranges only during captured updates.
@@ -162,7 +162,7 @@ def initializer(context):
 
 
 def inputs(context):
-    # Each item contains kwargs for Trainer.step: args/kwargs or input_loader,
+    # Each item contains kwargs for Executor.run: args/kwargs or input_loader,
     # and optionally hyperparams. Use context.rank for logical data sharding.
     return make_input_source(rank=context.rank, world_size=context.world_size)
 
@@ -179,11 +179,13 @@ if __name__ == "__main__":
 ```
 
 `Context` holds the loaded Plan, logical `rank`, process `worker_rank` and
-`world_size`. Hooks are invoked after runtime creation. `trainer_options` can
-be a mapping or a `context -> mapping` callable for schedules, metric reducers,
-spill configuration or other normal Trainer options. The runner owns the
-Executor, rank mapping and device; an optional `trainer_type` supports existing
-Trainer subclasses. This API accepts **training Plans from `build_step`**.
+`world_size`. Initialization and input hooks are invoked after runtime creation.
+`execution_options` accepts a mapping or a `context -> mapping` callable for
+spill configuration and other Executor settings. Pass `schedules` (captured
+control names mapped to functions of completed updates), `metric_reducer` and
+`parameter_norms_every` separately. Per-input hyperparameters override scheduled
+values. The runner owns the Executor, rank mapping and device. This API accepts
+**training Plans from `build_step`**.
 
 Run the custom script directly on one GPU. For multiple GPUs use the normal
 launcher, e.g. `torchrun --standalone --nproc-per-node=8 -m shadowspill.orchestration.launch.rank_device script.py`.
@@ -204,7 +206,7 @@ the initial `warmup_steps` and that final traced update. At least one untraced
 measured update must remain. Set `trace_final_step=False` (CLI `--no-final-trace`)
 for a throughput-only run. The runner owns the per-input `runtime_trace` setting.
 
-For each update, take the maximum of all rank `Trainer.step` times, then take the
+For each update, take the maximum of all rank execution times, then take the
 median of the untraced measured updates. Throughput
 uses **global** units divided by this median. Losses and extra scalars remain
 per rank; the runner does not assume arbitrary workload losses can be summed.
@@ -222,10 +224,12 @@ update. Detailed trace analysis belongs in CPU work after releasing the GPUs.
 
 Per-rank journals
 separately time imports, Plan loading, communicator opening, runtime creation,
-initialization, input creation, fit, runtime cleanup and result gathering. The
+initialization, input creation, updates, runtime cleanup and result gathering. The
 parent launcher also times fresh-process startup and final process exit.
-`Trainer.step` excludes input production, metric reducers and logging; the
-`training.fit` span includes them. Phase journals do not synchronize CUDA.
+Update timing covers `Executor.run`, completion, owned host-result copies and
+synchronization. It excludes input production, schedules, metric reducers and
+logging; the `training.updates` span includes them. Phase journals do not
+synchronize CUDA.
 
 An external `nvidia-smi` process samples utilization, memory, power, clocks and
 temperature every second through startup, training and cleanup. The saved-run

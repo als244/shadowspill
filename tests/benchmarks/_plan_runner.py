@@ -45,6 +45,8 @@ def distributed_coordination(directory):
 
     import shadowspill
     from benchmarks.plan_runner import run
+    from benchmarks.plan_runner import updates as runner_updates
+    from shadowspill.execution import TrainingResult
 
     rank = int(os.environ["RANK"])
     root = Path(directory)
@@ -60,10 +62,11 @@ def distributed_coordination(directory):
     )
     shadowspill.Plan.load = lambda path: plan
 
-    class Trainer:
-        def __init__(self, plan, *, rank_map):
+    class Executor:
+        def __init__(self, plan, *, rank_map, parameter_norms):
             assert rank_map == {0: 1, 1: 0}
-            self.executor = SimpleNamespace(spill_capacity_bytes=128 + rank)
+            assert parameter_norms is False
+            self.plan, self.spill_capacity_bytes = plan, 128 + rank
 
         def __enter__(self):
             return self
@@ -75,18 +78,23 @@ def distributed_coordination(directory):
         def initialize(self, fill):
             assert fill == 1 - rank
 
-        def fit(self, source, *, callbacks, steps, **options):
-            assert list(source) == [{"args": [(1 - rank,)], "runtime_trace": False}]
-            for step in range(1, steps + 1):
-                callbacks[0](
-                    self,
-                    SimpleNamespace(
-                        step=step,
-                        seconds=1 + rank,
-                        loss=1.5 + rank,
-                        summary=SimpleNamespace(scalars={}),
-                    ),
-                )
+        def run(self, **inputs):
+            assert inputs == {
+                "args": [(1 - rank,)],
+                "runtime_trace": False,
+                "hyperparams": {},
+                "collect_parameter_norms": False,
+            }
+            return SimpleNamespace(
+                result=lambda: TrainingResult((torch.tensor(1.5 + rank),), ())
+            )
+
+        def synchronize(self):
+            pass
+
+    shadowspill.Executor = Executor
+    times = iter((0, 1 + rank, 0, 1 + rank))
+    runner_updates.time = SimpleNamespace(perf_counter=lambda: next(times))
 
     result = run(
         "unused.ssp",
@@ -95,9 +103,8 @@ def distributed_coordination(directory):
         monitor=False,
         trace_final_step=False,
         rank_map={0: 1, 1: 0},
-        trainer_type=Trainer,
         initializer=lambda context: nullcontext(context.rank),
-        inputs=lambda context: [{"args": [(context.rank,)]}],
+        inputs=lambda context: [{"args": [(context.rank,)]}] * 2,
     )
     if rank == 0:
         assert result["median_seconds"] == 2

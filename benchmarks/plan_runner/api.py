@@ -6,6 +6,7 @@ import json
 import math
 import os
 import statistics
+import time
 from collections.abc import Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -69,8 +70,10 @@ def run(
     output_dir,
     steps=7,
     warmup_steps=1,
-    trainer_options=None,
-    trainer_type=None,
+    execution_options=None,
+    schedules=None,
+    metric_reducer=None,
+    parameter_norms_every=0,
     rank_map=None,
     units_per_step=None,
     unit_label="items",
@@ -80,10 +83,12 @@ def run(
 ):
     """Execute a saved training Plan in each participating fresh worker.
 
-    ``initializer(context)`` is a context manager yielding Trainer's bounded
+    ``initializer(context)`` is a context manager yielding Executor's bounded
     ``fill_tensor(chunk, destination)`` callback. ``inputs(context)`` returns an
-    iterable of Trainer.step keyword mappings. Both run after Executor installs
-    its allocator. Trainer options may be a mapping or a context-taking factory.
+    iterable of Executor.run keyword mappings for complete updates. Both run
+    after Executor installs its allocator. Execution options may be a mapping
+    or a context-taking factory. Schedules and metric reduction run in this
+    benchmark caller, outside the measured Executor/host-result interval.
 
     Launch distributed workers with torchrun and
     shadowspill.orchestration.launch.rank_device; each process must see its
@@ -99,6 +104,8 @@ def run(
     from steady timing; run() does not launch a collector inside an existing worker.
     """
     validate(steps, warmup_steps, units_per_step, trace_final_step, nsys)
+    if type(parameter_norms_every) is not int or parameter_norms_every < 0:
+        raise ValueError("parameter_norms_every must be a nonnegative integer")
     worker_rank = int(os.environ.get("RANK", "0"))
     root = Path(output_dir)
     local = root / f"rank-{worker_rank:05d}"
@@ -122,8 +129,10 @@ def run(
                 timing,
                 steps,
                 warmup_steps,
-                trainer_options,
-                trainer_type,
+                execution_options,
+                schedules,
+                metric_reducer,
+                parameter_norms_every,
                 rank_map,
                 units_per_step,
                 unit_label,
@@ -141,8 +150,10 @@ def _execute(
     timing,
     steps,
     warmup_steps,
-    trainer_options,
-    trainer_type,
+    execution_options,
+    schedules,
+    metric_reducer,
+    parameter_norms_every,
     rank_map,
     units_per_step,
     unit_label,
@@ -150,8 +161,11 @@ def _execute(
     nsys,
 ):
     with timing.phase("imports"):
-        from shadowspill import Plan, Trainer
+        from shadowspill import Executor, Plan
         from shadowspill.orchestration.launch.workers import workers
+        from shadowspill.training._logs import emit
+
+        from .updates import updates
 
     with timing.phase("plans.load"):
         plan = Plan.load(path)
@@ -165,7 +179,7 @@ def _execute(
     records = []
     diagnostics = None
 
-    def completed(owner, result):
+    def completed(result):
         nonlocal diagnostics
         if not math.isfinite(result.loss) or not math.isfinite(result.seconds):
             raise FloatingPointError("training returned a nonfinite loss or duration")
@@ -191,52 +205,52 @@ def _execute(
         context = Context(plan, group.logical_rank, group.rank, group.count)
         with timing.phase("configuration"):
             options = (
-                trainer_options(context)
-                if callable(trainer_options)
-                else trainer_options
+                execution_options(context)
+                if callable(execution_options)
+                else execution_options
             )
             options = dict(options or {})
             forbidden = {
-                "executor",
-                "evaluation_plan",
+                "plans",
                 "rank_map",
                 "device",
+                "parameter_norms",
             } & options.keys()
             if forbidden:
                 raise ValueError(
-                    f"runner owns these Trainer options: {sorted(forbidden)}"
+                    f"runner owns these Executor options: {sorted(forbidden)}"
                 )
         with ExitStack() as runtime:
             with timing.phase("runtime.create"):
-                factory = trainer_type or Trainer
-                if nsys is not None:
-                    from shadowspill.orchestration.capture.nsys import nsight_trainer
-
-                    factory = nsight_trainer(factory)
-                    options.update(
-                        nsys_start_step=nsys.start_step, nsys_steps=nsys.steps
-                    )
-                elif options.get("nsys_steps", 0):
-                    raise ValueError(
-                        "runner owns Nsight capture; use nsys=NsysCapture(...)"
-                    )
-                trainer = factory(plan, rank_map=group.rank_map, **options)
-                runtime.enter_context(timing.managed("runtime", trainer))
+                executor = Executor(
+                    plan,
+                    rank_map=group.rank_map,
+                    parameter_norms=parameter_norms_every > 0,
+                    **options,
+                )
+                runtime.enter_context(timing.managed("runtime", executor))
+                started = time.perf_counter()
             with timing.phase("weights.initialize"), initializer(context) as initialize:
-                trainer.initialize(initialize)
+                executor.initialize(initialize)
             with timing.phase("inputs.create"):
                 source = inputs(context)
-            with timing.phase("training.fit"):
-                trainer.fit(
+            with (
+                timing.phase("training.updates"),
+                (local / "metrics.jsonl").open("x", buffering=1) as stream,
+            ):
+                for result in updates(
+                    executor,
                     _traced_inputs(source, steps, trace_final_step),
                     steps=steps,
-                    run_dir=local,
-                    callbacks=[completed],
-                    checkpoint_every=0,
-                    tables_every=0,
-                    startup_diagnostics=False,
-                )
-            capacity = trainer.executor.spill_capacity_bytes
+                    schedules=schedules,
+                    metric_reducer=metric_reducer,
+                    parameter_norms_every=parameter_norms_every,
+                    nsys=nsys,
+                    rank=group.rank,
+                ):
+                    emit(result, time.perf_counter() - started, stream, None)
+                    completed(result)
+            capacity = executor.spill_capacity_bytes
         trace = None
         if diagnostics is not None:
             with timing.phase("trace.write"):
@@ -299,7 +313,7 @@ def _traced_inputs(source, steps, trace_final_step):
     for index, data in enumerate(source, 1):
         if not isinstance(data, Mapping):
             raise TypeError(
-                "each source item must contain keyword arguments for Trainer.step"
+                "each source item must contain keyword arguments for Executor.run"
             )
         if "runtime_trace" in data:
             raise ValueError("plan_runner owns runtime_trace; use trace_final_step")
@@ -350,7 +364,7 @@ def summarize(
         unit_label=unit_label,
         units_per_second=None if units_per_step is None else units_per_step / median,
         timing_definition=(
-            "median of per-update maximum rank Trainer.step seconds, "
+            "median of per-update maximum rank Executor/host-result seconds, "
             "excluding warmup and traced updates"
         ),
     )

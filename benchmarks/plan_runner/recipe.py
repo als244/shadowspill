@@ -136,6 +136,15 @@ def worker(directory):
     from shadowspill.training.preparation.configuration import adapter
 
     definition = adapter(options["recipe"])
+    runtime = dict(definition.trainer_options(options, metadata))
+    # Saved recipe progress is not restored by this measurement-only caller.
+    # The initializer still owns loading exactly the saved model's weights.
+    from shadowspill.checkpoint.frozen import validate_identity
+
+    validate_identity(runtime.pop("frozen_state_id", None))
+    schedules = runtime.pop("schedules", None)
+    reducer = runtime.pop("metric_reducer", None)
+    norms_every = runtime.pop("parameter_norms_every", 0)
     # The adapter's model-specific initializer is entered only inside run(),
     # after the Executor installs its allocator. No setup/build hook is called.
     return run(
@@ -147,7 +156,10 @@ def worker(directory):
             options, metadata, rank=context.rank
         ),
         inputs=lambda context: definition.inputs(options, rank=context.rank),
-        trainer_options=lambda context: definition.trainer_options(options, metadata),
+        execution_options=runtime,
+        schedules=schedules,
+        metric_reducer=reducer,
+        parameter_norms_every=norms_every,
     )
 
 

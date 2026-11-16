@@ -2,7 +2,7 @@
 
 ``benchmark`` launches a saved public recipe in fresh single-node workers.
 ``run`` accepts arbitrary workload hooks in an already launched worker.
-Both use the public Trainer and retain its normal execution checks.
+Both use the public Executor and retain its normal execution checks.
 """
 
 __all__ = ["Context", "NsysCapture", "benchmark", "run"]

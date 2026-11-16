@@ -103,8 +103,9 @@ def report(directory):
         notes=[
             "Phase durations use the originating host's monotonic clock; "
             "device timestamps are UTC.",
-            "Nested phases must not be added. Trainer.step seconds exclude "
-            "input production, metric reducers and logging.",
+            "Nested phases must not be added. Update seconds include execution "
+            "and owned host results, excluding inputs, schedules, reducers "
+            "and logging.",
             "Device utilization is sampled activity, not achieved FLOPs. "
             "Missing samples remain missing, not zero.",
             "One-second device sampling can miss short phases and memory peaks. "
