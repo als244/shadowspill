@@ -56,6 +56,9 @@ Pool bounds and planned memory admission always apply.
 with the Qwen3.5 LoRA application. [Shared setup](application/setup.py) creates
 or resumes the ready client using the same lifecycle as Llama and regression.
 The [runtime loop](application/loop.py) handles data, schedules, calls and results.
+[Shared text configuration](text/README.md) owns batch, chunk, profiling and
+search choices; Qwen settings retain model selection and presets.
+
 Advanced measurement reuse and CPU planning use the service APIs described in
 the [client guide](../../docs/python/client.md).
 

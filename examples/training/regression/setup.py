@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from examples.training.application.parallelism import data_parallel
 from shadowspill_client import (
     BatchConfig,
     BuildCandidates,
@@ -19,43 +20,16 @@ APPLICATION = "shadowspill.example.regression@1"
 
 
 def parallelism(ranks):
-    """The existing generic Parallelism.dp record, without importing the engine."""
-    return {
-        "ranks_per_replica": ranks,
-        "num_replicas": 1,
-        "groups": {"all_ranks": [list(range(ranks))]},
-        "default_parameter_placement": {"kind": "Replicated", "group": "all_ranks"},
-        "parameter_placements": {},
-        "default_parameter_storage": {
-            "group": "all_ranks",
-            "weights": "sharded",
-            "gradients": "sharded",
-            "optimizer": "sharded",
-            "weight_group": None,
-            "gradient_group": None,
-            "optimizer_group": None,
-            "min_shard_bytes": 0,
-        },
-        "parameter_storage": {},
-        "inputs": {
-            "version": 1,
-            "partitions": {
-                "name": "inputs",
-                "groups": [[rank] for rank in range(ranks)],
-            },
-            "fields": [
-                {"path": path, "mode": "replicate", "axis": None}
-                for path in (
-                    ["inputs", "value"],
-                    ["loss_inputs", "targets"],
-                    ["loss_inputs", "valid"],
-                    ["loss_inputs", "weights"],
-                )
-            ],
-            "loss": "leader",
-            "outputs": {"prediction": {"mode": "leader", "axis": None}},
-        },
-    }
+    return data_parallel(
+        ranks,
+        fields=(
+            ("inputs", "value"),
+            ("loss_inputs", "targets"),
+            ("loss_inputs", "valid"),
+            ("loss_inputs", "weights"),
+        ),
+        outputs={"prediction": {"mode": "leader", "axis": None}},
+    )
 
 
 @dataclass(frozen=True)

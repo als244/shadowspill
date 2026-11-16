@@ -13,6 +13,10 @@ closing the client also fails.
 [cli.py](cli.py) handles HTTP/SSH connection options and exact saved-settings
 checks. Application entry points supply their configuration and data choices.
 
+[parallelism.py](parallelism.py) builds the existing DP/EP wire declarations from
+caller-supplied input fields, output rules and expert parameter names. The engine's
+generic ownership interfaces remain unchanged; the client needs no engine import.
+
 [loop.py](loop.py) provides one `update()` function for whole `step()` calls or
 split `forward_backward()` contributions followed by `optim_step()`. The caller
 chooses optimizer controls and optional final gradient scaling. Scaling is applied

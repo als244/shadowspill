@@ -54,6 +54,9 @@ only batches, schedules, evaluation and checkpoint cadence. Setup can run in a
 separate component without changing the runtime loop. The installed engine's
 build/profile/plan/execute phases and generic parallelism remain the same.
 
+[Shared text configuration](text/README.md) owns batch, chunk, profiling and
+search choices; Qwen settings retain model selection and presets.
+
 The [application integration test](../../packages/workloads/tests/workload_tests/test_qwen_client_service.py)
 runs this CLI from a NumPy-only Tubingen client against Chicago. Whole and split
 updates match independent small FP32 references, including validation and bitwise
