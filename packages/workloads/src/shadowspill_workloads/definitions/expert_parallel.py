@@ -9,6 +9,7 @@ from shadowspill.parallelism.selectors import select
 from shadowspill.training.definitions import ModelBuild
 from shadowspill_client._records import plain
 
+from .expert_allocations import CONTRACTS as EXPERT_CONTRACTS
 from .moe_allocations import CONTRACTS
 
 
@@ -152,9 +153,8 @@ def build(config, architecture, family, context):
         resources={name: resource},
         grad_dtype=config.grad_dtype,
         # No Sonic preparation is attached to Quack EP. Its resource owns fixed
-        # GEMM choices. EP operators need their own audited allocation contracts;
-        # until supplied, ordinary opaque-allocation admission still rejects them.
-        allocation_invariants=CONTRACTS,
+        # GEMM choices; the exact BF16 calls have separate allocation contracts.
+        allocation_invariants={**CONTRACTS, **EXPERT_CONTRACTS},
     )
 
 

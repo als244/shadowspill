@@ -130,8 +130,7 @@ def test_exact_shapes_have_distinct_resources_and_operations_reuse_them(family):
     assert set(resources[8].options["layers"]).isdisjoint(
         resources[16].options["layers"]
     )
-    # CPU setup does not certify the as-yet unaudited EP allocator.
-    assert not any("mlops_ep_quack" in name for name in build.allocation_invariants)
+    assert not any("fp8" in name for name in build.allocation_invariants)
 
 
 @pytest.mark.parametrize("family", FAMILIES)

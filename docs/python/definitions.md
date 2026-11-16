@@ -121,9 +121,11 @@ The three MoE definitions also describe `implementation="mlops_ep"` for the
 existing Quack expert provider. Setup uses generic parameter/input placement,
 BF16 compute and bounded random initialization. Each prepared physical token
 size has a distinct communication resource; operations at the same size share
-it, and parameter state remains common across sizes. This setup is CPU-qualified.
-EP allocation contracts and public distributed training are still being qualified;
-it is not yet an admitted training path. EP LoRA and pretrained loading are not
+it, and parameter state remains common across sizes. Setup and bounded
+initialization are CPU-qualified, and training/evaluation accelerator captures
+pass. Exact BF16 allocation contracts cover the fixed MoonEP buffers and Quack
+operators; native profiling, joint admission and public distributed training
+still require H100 qualification. EP LoRA and pretrained loading are not
 advertised by these definitions.
 
 Definition provenance hashes provider Python and installed extension binaries

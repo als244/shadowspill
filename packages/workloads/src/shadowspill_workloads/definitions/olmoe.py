@@ -169,6 +169,7 @@ def register(registry):
         (
             "definitions/olmoe.py",
             "definitions/expert_parallel.py",
+            "definitions/expert_allocations.py",
             "definitions/moe_allocations.py",
             "definitions/moe_provider.py",
             "definitions/text_allocations.py",
