@@ -10,7 +10,7 @@ import pytest
 import torch
 
 from shadowspill.artifacts.tensors import TensorChunk
-from shadowspill_client import LoRA, Objective
+from shadowspill_client import LoRA, Objective, Weights
 from shadowspill_workloads.initialization.text import Initialize
 from shadowspill_workloads.models.llama3.config import Config
 from shadowspill_workloads.models.llama3.implementations.pytorch import (
@@ -20,10 +20,11 @@ from workload_tests._llama_oracle import WeightGradients
 from workload_tests.test_llama_definition import settings
 
 
-def options(policy=False):
+def options(policy=False, *, seed=17):
     requested = replace(
         settings(lora=LoRA(2, targets=["blocks.*.attn.wq"]) if policy else None),
         precision={"compute_dtype": "bfloat16", "lora_dtype": "bfloat16"},
+        initialize=Weights.random(seed=seed),
     )
     architecture = Config(**requested.config["architecture"])
     model = Reference(architecture).bfloat16()
@@ -31,7 +32,7 @@ def options(policy=False):
         from shadowspill_workloads.lora import configure_lora
 
         model = configure_lora(model, rank=2, alpha=2, targets=requested.lora.targets)
-    fill = Initialize("llama3", architecture, seed=17)
+    fill = Initialize("llama3", architecture, seed=seed)
     with torch.no_grad():
         for name, value in (*model.named_parameters(), *model.named_buffers()):
             fill(

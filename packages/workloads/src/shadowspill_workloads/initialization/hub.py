@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 
 from shadowspill.checkpoint.inspection import check_json
 
-CONFIG_BYTES = 1 << 20
+from .hub_files import CONFIG_BYTES, HubFile, fetch
 
 
 def immutable_revision(value):
@@ -47,7 +47,6 @@ def config(reference, revision):
     """
     from huggingface_hub import (
         get_hf_file_metadata,
-        hf_hub_download,
         hf_hub_url,
         try_to_load_from_cache,
     )
@@ -66,8 +65,11 @@ def config(reference, revision):
     if type(info.size) is not int or not 0 < info.size <= CONFIG_BYTES:
         raise ValueError("pretrained config.json exceeds the metadata byte limit")
     with TemporaryDirectory(prefix="shadowspill-model-metadata-") as cache:
-        path = hf_hub_download(
-            reference, "config.json", revision=info.commit_hash, cache_dir=cache
+        path = fetch(
+            reference,
+            info.commit_hash,
+            HubFile("config.json", info.size, info.etag),
+            Path(cache),
         )
         metadata = read_config(path)
     return info.commit_hash, metadata

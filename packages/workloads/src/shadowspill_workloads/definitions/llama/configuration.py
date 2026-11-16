@@ -5,9 +5,10 @@ from dataclasses import asdict, dataclass, field, replace
 from importlib.util import find_spec
 from math import isfinite
 
-from shadowspill.training.definitions import ModelBuild, ModelInitialization
+from shadowspill.training.definitions import ModelBuild
 from shadowspill_client import LoRA
 from shadowspill_client._records import plain
+from shadowspill_workloads.initialization.pretrained import describe, normalize_files
 from shadowspill_workloads.models.llama3.config import PRESETS, Config
 
 from ..text_allocations import CONTRACTS
@@ -22,6 +23,7 @@ class Settings:
     grad_dtype: str = "float32"
     lora_dtype: str = "bfloat16"
     lora: dict | None = None
+    weight_files: list[dict] | None = None
 
     def __post_init__(self):
         if self.preset not in PRESETS:
@@ -58,6 +60,7 @@ class Settings:
                 raise ValueError("the installed Llama LoRA provider requires dropout=0")
             object.__setattr__(self, "lora", lora.to_dict())
         object.__setattr__(self, "architecture", asdict(config))
+        object.__setattr__(self, "weight_files", normalize_files(self.weight_files))
 
 
 def configure(model):
@@ -116,23 +119,6 @@ def capture_context(config):
 
 
 def initialization(config, context):
-    if context.weights.kind != "random":
-        raise ValueError(
-            "installed Llama currently requires random weights or a checkpoint"
-        )
-
-    @contextmanager
-    def open_loader(runtime):
-        from shadowspill_workloads.initialization.text import Initialize
-
-        yield Initialize(
-            "llama3", Config(**config.architecture), seed=context.weights.seed
-        )
-
-    # Existing generator uses 256K-element deterministic blocks. This covers its
-    # random and rotary temporaries, the destination and frequency vector; no
-    # model-sized tensor is constructed by the loader.
-    width = config.architecture["d_model"] // config.architecture["n_heads"]
-    return ModelInitialization(
-        peak_bytes=(32 << 20) + 32 * width, chunk_bytes=1 << 20, open=open_loader
+    return describe(
+        "llama3", Config(**config.architecture), context, config.weight_files
     )

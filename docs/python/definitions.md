@@ -66,8 +66,8 @@ default. `Model.precision` accepts `compute_dtype`, `grad_dtype` and `lora_dtype
 (FP32 or BF16); optimizer masters are a separate optimizer setting. `config`
 selects a named `preset` (default `tiny`) and optional `architecture` overrides.
 LoRA uses the family's existing targets unless supplied explicitly; its current
-provider supports zero dropout. Initialization uses explicit random weights or a
-native training checkpoint; the bounded pretrained worker loader remains to migrate.
+provider supports zero dropout. Initialization supports explicit random weights,
+pinned pretrained Hub weights and native training checkpoint resume.
 
 The Llama batch declares `token_capacity`, `max_sequence_length` and
 `max_sequences`. An optional `typical={"sequence_length": ...}` affects timing
@@ -213,15 +213,29 @@ fixed, including nulls and complete sequences; changed or removed values are
 rejected. The same resolved settings are rechecked when creating a training run.
 
 The supplied `shadowspill/huggingface@1` resolver accepts Hub repository IDs for
-Llama 3, Qwen3 MoE, the Qwen3.5 MoE text decoder and OLMoE. It fetches only a bounded
-`config.json`, pins the immutable Hub commit and uses the existing catalog parsers.
+Llama 3, Qwen3 MoE, the Qwen3.5 MoE text decoder and OLMoE. It reads bounded
+config/index metadata and shard sizes/checksums, pins the immutable Hub commit and
+uses the existing catalog parsers. Tensor payloads are fetched only after worker
+resources are reserved.
 It imports no tensor framework and executes no repository Python. An explicit
 `config={"architecture": {"max_seq_len": ...}}` replaces the metadata's context
 capacity; overrides that change stored tensor geometry are rejected. Other model
 settings, including explicit precision and LoRA targets, remain caller-owned.
 Installed compute/gradient precision defaults apply independently of the stored
-weight dtype. Metadata resolution is available; pretrained worker loading is a
-separate migration requirement.
+weight dtype. The server's ordinary Hub authentication and endpoint settings apply;
+the client supplies a repository ID, never a path on the server.
+
+The supplied pretrained loader verifies content checksums, streams downloads in
+1 MiB chunks and uses the existing parameter-range readers. Compatible cached Hub
+files are read without modification. New files live in a private temporary directory
+and are removed when the loader closes, including on failure; a later restore can
+fetch the same pinned source again. Config/index/aggregate-header bounds are
+1/4/4 MiB, with at most 512 shards and 65,536 tensor declarations. The declared host
+allowance covers metadata decoding, retained reader state, conversion and generated
+buffers; full model tensors are never assembled by the loader. Derived rotary
+buffers and fresh LoRA factors use the existing deterministic initializer (seed zero
+for referenced weights). Native resumable checkpoints preserve trained adapters
+and optimizer state through the engine's checkpoint path.
 
 Fresh worker initialization uses an optional
 `initialization(config, InitializationContext)` hook. It describes the pinned

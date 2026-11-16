@@ -6,7 +6,7 @@ from importlib import import_module
 from shadowspill.training.definitions import ModelReferenceDefinition
 from shadowspill_client import Weights
 from shadowspill_client._records import plain
-from shadowspill_workloads.initialization import hub
+from shadowspill_workloads.initialization import hub, hub_files
 
 from .source import definition_source
 
@@ -102,7 +102,11 @@ def resolve(requested):
     return replace(
         requested,
         definition=f"shadowspill/{family}@1",
-        config={**config, "architecture": values},
+        config={
+            **config,
+            "architecture": values,
+            "weight_files": hub_files.describe(weights.reference, revision),
+        },
         initialize=Weights.pretrained(weights.reference, revision=revision),
     )
 
@@ -114,12 +118,13 @@ def register(registry):
             (
                 "definitions/pretrained.py",
                 "initialization/hub.py",
+                "initialization/hub_files.py",
                 "models/llama3/config.py",
                 "models/olmoe/config.py",
                 "models/qwen3moe/config.py",
                 "models/qwen35moe/config.py",
                 "models/shared/qwen_moe/config.py",
             ),
-            providers=("huggingface_hub",),
+            providers=("huggingface_hub", "httpx", "httpcore", "httpx2", "httpcore2"),
         ),
     )

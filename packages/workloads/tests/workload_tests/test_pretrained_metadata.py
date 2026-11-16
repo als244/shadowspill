@@ -1,5 +1,6 @@
 """Pinned metadata, explicit overrides and CPU-only supplied model resolution."""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -12,10 +13,14 @@ import pytest
 from shadowspill.training.definitions import load_registry
 from shadowspill_client import LoRA, Model, Weights
 from shadowspill_workloads.definitions import pretrained
-from shadowspill_workloads.initialization import hub
+from shadowspill_workloads.initialization import hub, hub_files
 
 REVISION = "a" * 40
 FAMILIES = ("llama3", "qwen3moe", "qwen35moe", "olmoe")
+FILES = [
+    {"name": "config.json", "size": 1000, "checksum": "b" * 40},
+    {"name": "model.safetensors", "size": 4096, "checksum": "c" * 64},
+]
 
 
 def metadata(family):
@@ -66,6 +71,7 @@ def test_public_resolution_pins_metadata_preserves_overrides_and_rechecks(
         return REVISION, metadata(family)
 
     monkeypatch.setattr(hub, "config", read)
+    monkeypatch.setattr(hub_files, "describe", lambda *a: FILES)
     registry = load_registry(["shadowspill-workloads"])
     requested = replace(
         Model.from_pretrained(
@@ -144,24 +150,24 @@ def test_hub_predicate_rejects_paths_urls_and_noncanonical_ids(reference):
 def test_download_is_metadata_only_pinned_and_temporary(tmp_path, monkeypatch):
     import huggingface_hub as provider
 
+    payload = json.dumps(metadata("llama3")).encode()
     monkeypatch.setattr(provider, "try_to_load_from_cache", lambda *a, **k: None)
     monkeypatch.setattr(
         provider,
         "get_hf_file_metadata",
         lambda *a, **k: SimpleNamespace(
             commit_hash=REVISION,
-            size=100,
+            size=len(payload),
+            etag=hashlib.sha256(payload).hexdigest(),
         ),
     )
     downloads = []
 
-    def download(reference, filename, *, revision, cache_dir):
-        downloads.append((reference, filename, revision, cache_dir))
-        path = Path(cache_dir) / filename
-        path.write_text(json.dumps(metadata("llama3")))
-        return str(path)
+    def download(reference, revision, file, destination):
+        downloads.append((reference, file.name, revision, str(destination.parent)))
+        destination.write_bytes(payload)
 
-    monkeypatch.setattr(provider, "hf_hub_download", download)
+    monkeypatch.setattr(hub_files, "download", download)
     revision, values = hub.config("fixture/model", "release")
     assert revision == REVISION
     assert values["model_type"] == "llama"
@@ -228,8 +234,9 @@ def guarded(name, *args, **kwargs):
 builtins.__import__ = guarded
 from shadowspill.training.definitions import load_registry
 from shadowspill_client import Model
-from shadowspill_workloads.initialization import hub
+from shadowspill_workloads.initialization import hub, hub_files
 hub.config = lambda *a: ({REVISION!r}, {metadata("qwen35moe")!r})
+hub_files.describe = lambda *a: {FILES!r}
 registry = load_registry(['shadowspill-workloads'])
 model, _, _ = registry.resolve_model_reference(Model.from_pretrained('fixture/model'))
 resolved = registry.resolve_model(model.definition, settings=model)

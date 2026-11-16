@@ -9,11 +9,11 @@ from math import isfinite
 from shadowspill.training.definitions import (
     ModelBuild,
     ModelDefinition,
-    ModelInitialization,
     PreparationDefinition,
 )
 from shadowspill_client import LoRA
 from shadowspill_client._records import plain
+from shadowspill_workloads.initialization.pretrained import describe, normalize_files
 from shadowspill_workloads.inputs.text import preparation as inputs
 from shadowspill_workloads.models.olmoe.config import PRESETS, Config
 
@@ -32,6 +32,7 @@ class Settings:
     grad_dtype: str = "float32"
     lora_dtype: str = "bfloat16"
     lora: dict | None = None
+    weight_files: list[dict] | None = None
 
     def __post_init__(self):
         if self.preset not in PRESETS:
@@ -69,6 +70,7 @@ class Settings:
                 raise ValueError("the installed OLMoE LoRA provider requires dropout=0")
             object.__setattr__(self, "lora", lora.to_dict())
         object.__setattr__(self, "architecture", asdict(config))
+        object.__setattr__(self, "weight_files", normalize_files(self.weight_files))
 
 
 def configure(model):
@@ -130,23 +132,8 @@ def capture_context(config):
 
 
 def initialization(config, context):
-    if context.weights.kind != "random":
-        raise ValueError(
-            "installed OLMoE currently requires random weights or a checkpoint"
-        )
-
-    @contextmanager
-    def open_loader(runtime):
-        from shadowspill_workloads.initialization.text import Initialize
-
-        yield Initialize(
-            "olmoe", Config(**config.architecture), seed=context.weights.seed
-        )
-
-    return ModelInitialization(
-        peak_bytes=(32 << 20) + 32 * config.architecture["head_dim"],
-        chunk_bytes=1 << 20,
-        open=open_loader,
+    return describe(
+        "olmoe", Config(**config.architecture), context, config.weight_files
     )
 
 
@@ -157,7 +144,7 @@ def register(registry):
             "definitions/moe_allocations.py",
             "definitions/text_allocations.py",
             "inputs/text/preparation.py",
-            "initialization/text.py",
+            "initialization",
             "models/olmoe",
             "models/shared",
             "lora",
@@ -167,6 +154,11 @@ def register(registry):
             "flash_attn_interface",
             "flash_attn_3",
             "flash_attn_config",
+            "huggingface_hub",
+            "httpx",
+            "httpcore",
+            "httpx2",
+            "httpcore2",
         ),
     )
     registry.add_preparation(

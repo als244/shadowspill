@@ -1,44 +1,35 @@
 """Installed packed Llama using the same extension hooks as custom models."""
 
 from functools import partial
-from hashlib import sha256
-from importlib.metadata import version
-from importlib.util import find_spec
-from pathlib import Path
 
 from shadowspill.training.definitions import ModelDefinition, PreparationDefinition
-from shadowspill_client.protocol.definitions import DefinitionSource
 from shadowspill_workloads.inputs.text import preparation as inputs
 
+from ..source import definition_source
 from . import configuration
 
 PRESET = "shadowspill/llama3_packed@1"
 
 
 def register(registry):
-    root = Path(__file__).resolve().parents[2]
-    digest = sha256()
-    # Include model, LoRA, initializer and provider semantics without importing
-    # any of them in the CPU controller. Editable dependency changes are pinned.
-    paths = [
-        root / "initialization/text.py",
-        root / "inputs/text/preparation.py",
-        root / "definitions/text_allocations.py",
-    ]
-    for name in ("definitions/llama", "models/llama3", "models/shared", "lora"):
-        paths.extend(sorted((root / name).rglob("*.py")))
-    for path in paths:
-        digest.update(str(path.relative_to(root)).encode())
-        digest.update(path.read_bytes())
-    spec = find_spec("mlops")
-    if spec is not None and spec.origin is not None:
-        provider = Path(spec.origin).parent
-        digest.update(version("mlops").encode())
-        for path in sorted(provider.rglob("*.py")):
-            digest.update(str(path.relative_to(provider)).encode())
-            digest.update(path.read_bytes())
-    source = DefinitionSource(
-        "shadowspill-workloads", version("shadowspill-workloads"), digest.hexdigest()
+    source = definition_source(
+        (
+            "definitions/llama",
+            "definitions/text_allocations.py",
+            "inputs/text/preparation.py",
+            "initialization",
+            "models/llama3",
+            "models/shared",
+            "lora",
+        ),
+        providers=(
+            "mlops",
+            "huggingface_hub",
+            "httpx",
+            "httpcore",
+            "httpx2",
+            "httpcore2",
+        ),
     )
     registry.add_preparation(
         PreparationDefinition(

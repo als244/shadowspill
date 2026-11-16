@@ -19,7 +19,7 @@ def register(registry):
                 "definitions/moe_allocations.py",
                 "definitions/text_allocations.py",
                 "inputs/text/preparation.py",
-                "initialization/text.py",
+                "initialization",
                 f"models/{family}",
                 "models/shared",
                 "lora",
@@ -30,6 +30,11 @@ def register(registry):
                 "flash_attn_interface",
                 "flash_attn_3",
                 "flash_attn_config",
+                "huggingface_hub",
+                "httpx",
+                "httpcore",
+                "httpx2",
+                "httpcore2",
             ),
         )
         registry.add_preparation(
