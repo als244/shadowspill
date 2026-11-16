@@ -102,9 +102,11 @@ BF16 LoRA definitions also supply the provider's existing gradient-destination
 rules and allocation contracts. The compiler fuses eligible complete, contiguous
 gradients; unsupported crops or dtype transformations retain ordinary accumulation.
 The H100 checks confirm actual Sonic calls and saved preparation manifests in
-both full and LoRA Plans. They cover BF16 compute/gradients; cold-cache execution
-without compilation, FP32-gradient production paths, FP8, expert parallelism and
-fused gradient-destination variants require separate qualification.
+both full and LoRA Plans, with BF16 compute and either BF16 or FP32 gradients.
+Aligned-rank LoRA checks also exercise both Sonic destination accumulation
+operators. These small-model cases compare independent updates and exact
+checkpoint continuation. Cold-cache execution without compilation, production
+shapes, FP8 and expert parallelism require separate qualification.
 
 `shadowspill/olmoe@1` uses that same packed preparation, precision/LoRA settings
 and bounded random initializer. Its model exposes the same router-statistics
