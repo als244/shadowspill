@@ -3,6 +3,7 @@
 Lightweight service connections, training submissions, portable configuration and
 explicit artifact downloads. Public `ServiceClient` owns description and creation;
 `TrainingClient` submits runtime operations against ready server workers. See the
+[complete example](../../docs/examples/client-training.md) and
 [client guide](../../docs/python/client.md) for current APIs and remaining work.
 
 ```python
@@ -22,7 +23,7 @@ acceptance and completion remain separate observations.
 The separate `shadowspill_client.text.text_datum` helper constructs shifted,
 aligned next-token inputs without a tokenizer or model import.
 
-Install `./packages/client` for these records. The package has no dependency on
+Install `./packages/client` for the service client. The package has no dependency on
 the engine, model catalog or a GPU framework. Its optional `planning` extra adds
 the existing engine; use a qualified CPU-only engine wheel for offline planning.
 
@@ -87,5 +88,7 @@ ordered stream, returns saved caller metadata and starts a new history segment.
 `service.create_training_client(plans=training.plans, checkpoint=handle)` starts
 a new run from the saved update, with new history and parent-checkpoint lineage.
 Setup and bounded archive validation remain separate from runtime submissions;
-the checkpoint replaces fresh-weight initialization. State ownership must match.
-Layout conversion and resumable transfers are still in development.
+the checkpoint replaces fresh-weight initialization. Compatible changed layouts
+use the existing bounded conversion path. Explicit uploads and resumable downloads
+are implemented. Actual cross-GPU-count resume and broader deployment qualification
+remain unfinished; see [current coverage](../../docs/python/client.md#current-coverage).

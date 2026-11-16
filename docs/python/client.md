@@ -14,10 +14,37 @@ or service restart. Explicit file and checkpoint downloads can retain verified
 progress for resume; explicit artifact and checkpoint uploads are supported.
 Existing phase and Trainer APIs remain available during migration.
 
-The [Llama application](../../examples/training/llama3/README.md) now uses this
-client end to end. Its setup function resolves settings and creates workers
-through the service; its loop submits whole or split updates, evaluates and saves
-checkpoints. It imports no engine or model framework on the client.
+Start with the [complete client example](../examples/client-training.md) for
+settings, inputs, setup, whole/split updates and checkpoint resume. The
+[Llama](../../examples/training/llama3/README.md),
+[Qwen3](../../examples/training/qwen3.md) and
+[Qwen3.5 LoRA](../../examples/training/qwen35_lora.md) applications use this client
+end to end. Their setup code creates a ready client separately from the runtime
+loop. They import no engine or model framework on the client.
+
+## Current coverage
+
+The development branch has actual end-to-end results for the cases below.
+These are small correctness checks at recorded source revisions, not a blanket
+qualification of every model, precision, size or GPU count.
+
+| Path | Evidence scope |
+| --- | --- |
+| NumPy-only Tubingen client → Chicago service | Llama, Qwen3, Qwen3.5 and regression; whole/split calls, evaluation, artifacts and checkpoint continuation across the tested cases |
+| Installed text definitions | Llama, Qwen3, Qwen3.5 and OLMoE full/LoRA cases; independent loss/update references and exact resume in the relevant numerical suites |
+| Two-H100 DP | Regression with distinct input owners, independent updates and checkpoint resume |
+| Two-H100 EP | Small Qwen3 full training, BF16 compute/gradients with FP32 masters/moments; whole/split independent references, empty owners, evaluation and exact resume |
+| Custom definitions | External non-text integration using the same public registration path; the supplied model catalog is optional |
+
+GLM migration and FP8-base LoRA training remain unfinished. The supplied public
+EP definitions currently support full training and random initialization/resume;
+they reject LoRA. Eight-H100 GLM DP results from the recipe runner do not establish
+EP8 or new service coverage. FP32-gradient EP hardware qualification, multi-node
+service bootstrap, actual cross-GPU-count resume, production-size memory/long-context
+campaigns, real media inputs and Apple Silicon installation remain release work.
+Historical recipe/model support does not imply public-service qualification.
+
+## Connection and setup
 
 Start the service on Chicago or another machine with an existing GPU allocation:
 
@@ -28,12 +55,13 @@ from shadowspill.server import Allocation, Server
 server = Server(
     allocation=Allocation.from_environment(),
     storage_root="/path/to/service-data",
-    workload_packages=["shadowspill-workloads", "my-workloads"],
+    workload_packages=["shadowspill", "shadowspill-workloads"],
 )
 server.serve(host="127.0.0.1", port=8000)
 ```
 
-List only installed definition packages. Construction snapshots deployment
+List only installed definition packages; add a custom package when using its
+definitions. Construction snapshots deployment
 settings; `serve` discovers assigned resources, recovers stored records and starts
 the listener. The current allocation adapter supports a local machine or an
 assigned single-node Slurm step. Multi-node agent bootstrap remains unfinished
@@ -204,10 +232,44 @@ After disconnecting, reconnect to the same session and call
 job; it never repeats measurement. A timeout or client disconnect leaves accepted
 server work running. Restarted unfinished jobs are reported as stopped.
 
-Runtime methods are `step`, `forward_backward`, `optim_step`, `forward`,
-`discard_gradients`, `save_checkpoint`, `export_weights`, `load_checkpoint` and
-ordered `close`, all returning futures. Input arrays and
-controls are copied before the submission returns. Bounded staging/pending counts
+## Runtime operations
+
+Each call below returns a future. Setup has already selected the model, objectives,
+supported operations, input limits, precision and memory budgets; the runtime loop
+only supplies inputs, per-call controls and consumes results.
+
+| Method | Effect |
+| --- | --- |
+| `step(global_batch, optim=None, loss_params=None, grad_scale=1, outputs=None, runtime_trace=False)` | Forward, backward and one optimizer update; requires no open accumulation. |
+| `forward_backward(global_batch, loss_params=None, outputs=None, runtime_trace=False)` | Add this batch's gradients to the current accumulation, without an optimizer update. |
+| `optim_step(optim=None, grad_scale=1, runtime_trace=False)` | Apply the accumulated gradients once, then clear the accumulation. |
+| `forward(global_batch, outputs=None, mode="evaluation", loss_params=None, runtime_trace=False)` | Evaluate/predict without an optimizer update; evaluation mode preserves training state. |
+| `discard_gradients()` | End the current accumulation without applying an update. |
+
+`global_batch` is a sequence of `Datum` records. Per-call controls are keyword-only.
+`optim` and `loss_params` override installed optimizer/objective defaults for this
+call. They do not rewrite the saved configuration. An objective may expose
+multiple named terms through `Objective.sum(...)`; its per-term controls retain
+their names. See [definitions and objective composition](definitions.md).
+
+Normalization is explicit. For an additive objective that sums one loss per
+record, either call `step(batch, grad_scale=1 / len(batch))`, or submit all pieces
+with `forward_backward(piece)` and then call
+`optim_step(grad_scale=1 / len(batch))`. Apply that final scale once for the complete
+update. For token-mean loss, use the total number of valid target tokens instead.
+The engine does not infer either denominator. Objectives with microbatch-dependent
+statistics, such as MoE balancing, can have different whole/split trajectories.
+Artificial padding is excluded from the balancing objective by default, while
+every scheduled padding position still counts toward the hard token cap.
+
+All-masked work follows the objective's declared participation rules and can be
+skipped; zero-valued gradients from valid data still constitute an update. Finish
+an accumulation with `optim_step` or `discard_gradients` before starting a complete
+`step` or saving a checkpoint. Closing a run does not apply pending gradients.
+
+Other runtime methods are `save_checkpoint`, `export_weights`, `load_checkpoint`
+and ordered `close`, all returning futures. Input arrays and controls are copied
+before the submission returns. Bounded staging/pending counts
 apply backpressure, and snapshots that cannot fit fail promptly. Earlier pending
 requests become explicit dependencies, so a rejected backward contribution cannot
 be silently omitted from an already submitted optimizer update. A transport error

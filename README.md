@@ -9,36 +9,36 @@ the device, spill to host or external storage, and recompute during backward.
 
 | Goal | Guide |
 | --- | --- |
-| Train a supported model | [Python training](packages/workloads/src/shadowspill_workloads/recipes/README.md): model, data, budgets and search options |
+| Train through the public service | [Complete client example](docs/examples/client-training.md), [client API](docs/python/client.md): settings, global inputs and results |
+| Run a supplied text application | [Llama](examples/training/llama3/README.md), [Qwen3](examples/training/qwen3.md), [Qwen3.5 LoRA](examples/training/qwen35_lora.md) |
 | Bring a custom model or control each phase | [Custom models](docs/python/custom-models.md), [build/profile/plan/execute](docs/python/phases.md), [complete example](docs/examples/generic-training.md) |
 | Tune or extend the system | [Advanced guides](docs/python/advanced/README.md): partitioning, chunking, diagnostics and operator integration |
 
-The new training service is under construction. Its lightweight
-[client records](packages/client/README.md) are available independently; the
-training runner below remains the current execution interface.
+The service prepares and executes training through the existing engine. The
+lightweight client needs Python and NumPy; model and GPU libraries stay on the
+server. Migrated applications work end to end, with remaining model, precision
+and deployment gaps listed in the [client guide](docs/python/client.md#current-coverage).
 
 ## Start training
 
-Use the shared Python runner for build, profiling, search and training:
+After defining training settings and a global batch, the runtime API is:
 
 ```python
-from shadowspill_workloads.recipes import Model, train
+from shadowspill_client import SSH, ServiceClient
 
-model = Model.from_config("llama3-1b")  # Full training from random weights.
-train(model, {
-    "run_dir": "runs/llama-pretrain",
-    "data": "/data/fineweb-llama",      # Text tokenized for this model.
-    "sequence_length": 2048,
-    "sequences_per_step": 4,
-    "microbatch_sizes": [1, 2, 4],     # Measure candidates and select a Plan.
-    "execution_gib": 24,               # Per-GPU budget; adapt to your hardware.
-    "spill_gib": 64,                   # Maximum pinned host capacity per rank.
-    "steps": 100,
-})
+with ServiceClient(ssh=SSH("chicago", 8000)) as service:
+    training = service.create_training_client(**setup).result()
+    try:
+        result = training.step(batch, optim={"lr": 0.001}).result()
+        print(result.completed_updates, result.loss)
+    finally:
+        training.close().result()
 ```
 
-Run once from a configured checkout, without an outer `torchrun`. The runner
-measures candidates, selects the fastest predicted Plan that fits, and saves
-artifacts under `run_dir`. See the [training guide](packages/workloads/src/shadowspill_workloads/recipes/README.md)
-for supported models, data preparation, LoRA and distributed settings, or edit
-the [commented training script](examples/train_text.py).
+The [complete example](docs/examples/client-training.md) defines `setup` and
+`batch`, starts the server, and shows split updates, evaluation and checkpoint
+resume. Setup and worker initialization happen before the runtime loop.
+
+The [Python recipe runner](packages/workloads/src/shadowspill_workloads/recipes/README.md)
+remains for callers still being migrated, including GLM. Direct build/profile/plan/
+execute APIs remain available; the refactor is not release-complete.

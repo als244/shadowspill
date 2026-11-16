@@ -33,7 +33,11 @@ This directory holds example configs and launchers for the optional
 `shadowspill_workloads.recipes.text` recipe. Text packing and its token-normalized objective
 are recipe behavior, and can be replaced without changing the trainer.
 
-## Getting started
+## Recipe quickstart (migration in progress)
+
+The configuration-driven runner below still uses the old `Trainer`. For the
+public service, start with the [complete client example](../../docs/examples/client-training.md)
+or the migrated Llama/Qwen applications above.
 
 A fine-tune of a local Hugging Face checkpoint is a config of six keys:
 

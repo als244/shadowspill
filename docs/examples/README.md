@@ -1,23 +1,26 @@
 # Examples
 
-These examples compose the public build, profiling, planning and execution APIs
-from `shadowspill`. Preparation produces saved artifacts; fresh execution workers
-consume Plans. See the [phase guide](../python/phases.md) for the
-API boundaries and the [Python reference](../python/README.md) for details.
+Start with the lightweight client for global-batch training. The service owns
+preparation and workers. Direct phase examples also compose the existing build,
+profiling, planning and execution APIs from `shadowspill`. See the
+[Python reference](../python/README.md) for both interfaces.
 
 ## Start here
 
-1. [Commented training script](../../examples/train_text.py) — the shared
-   runner with a real language model and next-token loss.
-2. [Training and checkpointing](generic-training.md) — build/profile, CPU planning,
-   bounded initialization and a Trainer loop in a fresh worker.
-3. [Forward-only execution](forward-only.md) — save and execute a prediction Plan,
+1. [Client training and resume](client-training.md) — complete settings and inputs,
+   separate setup/runtime, whole and split updates, evaluation and checkpoints.
+2. [Qwen3 application](../../examples/qwen3.py), [Llama application](../../examples/training/llama3/README.md)
+   and [Qwen3.5 LoRA](../../examples/training/qwen35_lora.md) — real token corpora
+   through the same public client.
+3. [Direct phases and saved-Plan Trainer](generic-training.md) — build/profile, CPU
+   planning, bounded initialization and a saved-Plan loop in a fresh worker.
+4. [Forward-only execution](forward-only.md) — save and execute a prediction Plan,
    or share model tensors with training for evaluation.
-4. [Reusable planning and budget sweeps](reusable-planning.md) — replan saved
+5. [Reusable planning and budget sweeps](reusable-planning.md) — replan saved
    profiles and produce simulated reports without a GPU.
-5. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
+6. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
    boundaries through a small policy.
-6. [Commented GLM LoRA script](../../examples/glm53_flash_lora.py)
+7. [GLM LoRA recipe script](../../examples/glm53_flash_lora.py)
    — real checkpoint/data, chunk and retention search, pinned-host budgets,
    evaluation and checkpointing through the normal saved phases.
 
@@ -25,7 +28,7 @@ The [Python recipes](../../packages/workloads/src/shadowspill_workloads/recipes/
 and supported checkpoint LoRA. The [model catalog](../../packages/workloads/src/shadowspill_workloads/MODELS.md)
 lists model dimensions, precisions and available implementations.
 
-## Process and storage requirements
+## Direct phase process and storage requirements
 
 - Install ShadowSpill with `./scripts/setup.sh`.
 - The current GPU builder and measurement phase need a supported representative
@@ -35,6 +38,9 @@ lists model dimensions, precisions and available implementations.
 - Runtime inputs are rank-local. Examples use CPU tensors and bounded loaders.
 - Save phase archives wherever convenient. Inductor/Triton caches remain separate
   from those archives and use their normal temporary/cache locations.
+
+These requirements apply to direct phase callers. The public client submits
+global `Datum` batches; the service owns worker launch and rank input delivery.
 
 ## Diagnostics
 

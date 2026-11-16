@@ -4,18 +4,21 @@ Start with [installation](development/repository.md#setup), then choose a path.
 
 | I want to… | Start here |
 | --- | --- |
-| Train a supported model end to end | [Python training](../packages/workloads/src/shadowspill_workloads/recipes/README.md): model, data, budgets, search and resume |
+| Train through the public service | [Complete client example](examples/client-training.md), [client API](python/client.md): settings, global batches, evaluation and resume |
+| Run a supplied text application | [Llama](../examples/training/llama3/README.md), [Qwen3](../examples/training/qwen3.md), [Qwen3.5 LoRA](../examples/training/qwen35_lora.md) |
 | Use a custom model or call phases directly | [Custom models](python/custom-models.md), [phase guide](python/phases.md), [complete example](examples/generic-training.md) |
 | Tune, diagnose or extend the system | [Advanced guides](python/advanced/README.md): chunking, retention, artifacts, traces and operators |
 
-The supported `train` runner handles the whole workflow. The phase APIs expose
-build, profile, plan and execute separately; `Trainer` runs an already selected
-Plan. Both paths use the same compiler, planner and runtime.
+`ServiceClient` creates or reconnects to a run. `TrainingClient` submits runtime
+operations to ready workers. The service uses the existing build/profile/plan/
+execute engine, and the ordinary client requires no model or GPU framework.
+[Definition hooks](python/definitions.md) support installed custom models and
+objectives through the same interface as supplied models.
 
-The new training service is under construction. Its
-[portable client records](../packages/client/README.md) and
-[model/objective definition hooks](python/definitions.md) are available for CPU
-inspection and capture; the existing training interfaces above remain active.
+Migration and qualification are unfinished; see [current coverage](python/client.md#current-coverage).
+The [recipe runner](../packages/workloads/src/shadowspill_workloads/recipes/README.md)
+and saved-Plan `Trainer` still serve unmigrated callers. Their guides remain
+available until those callers move to the public service.
 
 ## References and development
 

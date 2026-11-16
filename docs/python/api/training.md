@@ -1,9 +1,11 @@
-# Trainer
+# Saved-Plan Trainer (migration in progress)
 
-For end-to-end training of supported models, start with the
-[Python `train(model, config)` runner](../../../packages/workloads/src/shadowspill_workloads/recipes/README.md).
-It handles preparation, search and execution. This reference covers the lower
-level used to run an already selected Plan or write a custom training loop.
+For the current service interface, start with the
+[complete client example](../../examples/client-training.md) and
+[TrainingClient reference](../client.md#runtime-operations).
+This page documents the old `Trainer`, retained while the remaining
+[recipe callers](../../../packages/workloads/src/shadowspill_workloads/recipes/README.md)
+migrate. Its methods and checkpoint interface differ from `TrainingClient`.
 
 `Trainer` runs a saved training `Plan`, manages update counts, and provides an
 optional loop, logging and checkpoints. Build, profile and plan first; Trainer
