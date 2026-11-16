@@ -191,6 +191,57 @@ def test_cross_layout_conversion_then_fresh_initialization_preserves_master_prec
     assert target.controls.host["optimizer.linear.weight.step"].item() == 0
 
 
+@pytest.mark.parametrize("provided", [False, True])
+def test_nonpersistent_model_buffers_need_bounded_initialization_before_mutation(
+    tmp_path, provided
+):
+    original = family(1, 0, frozen=True)[0]
+    program = original.plan.program
+    program = replace(
+        program,
+        bindings={
+            **program.bindings,
+            "registrations": [
+                {**row, "parameter": False, "persistent": False}
+                if row["name"].startswith("base.")
+                else row
+                for row in program.bindings["registrations"]
+            ],
+        },
+    )
+    state = PlanState(plan(program), {}, logical_rank=0)
+    path = saved(tmp_path, [state])[0][1]
+    target = HostExecutor(state)
+    before = {name: value.clone() for name, value in target.values.items()}
+    calls = []
+
+    def generated(request, destination):
+        assert request.name == "base.weight" and destination.nbytes <= 17
+        calls.append(request.offset)
+        destination.copy_(
+            torch.arange(request.offset, request.offset + destination.numel()).sin()
+        )
+
+    if not provided:
+        with pytest.raises(ValueError, match=r"temporary.*initializer"):
+            load_weights(target, path, chunk_bytes=17)
+        assert not target._initialized
+        for name, value in target.values.items():
+            torch.testing.assert_close(
+                value, before[name], rtol=0, atol=0, equal_nan=True
+            )
+    else:
+        load_weights(target, path, chunk_bytes=17, fill_tensor=generated)
+        assert calls and target._initialized
+        torch.testing.assert_close(
+            target.values["base"], torch.arange(48).float().sin(), rtol=0, atol=0
+        )
+        torch.testing.assert_close(
+            target.snapshot()["master.linear.weight"], WEIGHT.flatten(), rtol=0, atol=0
+        )
+        assert target.controls.host["optimizer.linear.weight.step"].item() == 0
+
+
 @pytest.mark.parametrize("fault", ["corrupt", "missing_base", "wrong_base"])
 def test_preflight_failure_never_mutates_existing_state(tmp_path, fault):
     state = family(1, 0, frozen=True)[0]

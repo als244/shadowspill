@@ -252,7 +252,7 @@ def _initialize(
     reader: _Reader,
     manifest: Mapping[str, Any],
     chunks: dict[str, TensorChunk],
-    omitted: set[str],
+    external: set[str],
     *,
     chunk_bytes: int,
     fill_tensor: Callable[[TensorChunk, torch.Tensor], None] | None,
@@ -263,7 +263,7 @@ def _initialize(
     gathered = manifest["gathered_tensors"]
 
     def fill(chunk: TensorChunk, tensor: torch.Tensor) -> None:
-        if chunk.name in omitted:
+        if chunk.name in external:
             assert fill_tensor is not None
             fill_tensor(chunk, tensor)
         elif chunk.name in derived:

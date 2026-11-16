@@ -12,6 +12,7 @@ from shadowspill.execution.distributed.checks import coordinated
 from .load import _initialize
 from .reading import RankReader
 from .state import PlanState
+from .tensors import region_bytes
 from .weights_reading import read_weights
 
 if TYPE_CHECKING:
@@ -67,16 +68,27 @@ def load_weights(
                 raise ValueError(
                     "partial weights require a loader for the exact frozen base"
                 )
-            return source, names, omitted
+            temporary = {
+                chunk.name
+                for chunk, initial in state.temporary_initializers()
+                if region_bytes(chunk)
+                and (initial is None or initial.get("kind") == "external")
+            }
+            if temporary and fill_tensor is None:
+                raise ValueError(
+                    "weights require a temporary-state initializer: "
+                    + ", ".join(sorted(temporary))
+                )
+            return source, names, omitted | temporary
 
-        source, names, omitted = coordinated(executor._distributed, prepare)
+        source, names, external = coordinated(executor._distributed, prepare)
         try:
             _initialize(
                 executor,
                 source._reader,
                 source.manifest,
                 {chunk.name: chunk for chunk in executor.tensor_chunks()},
-                omitted,
+                external,
                 chunk_bytes=chunk_bytes,
                 fill_tensor=fill_tensor,
                 restore=names,
