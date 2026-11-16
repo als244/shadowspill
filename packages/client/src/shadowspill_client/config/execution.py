@@ -13,11 +13,14 @@ class Execution(Record):
     max_pending_requests: int = 2
     idle_timeout_seconds: float | None = None
     nsys: Mapping[str, Value] | None = None
+    reject_overbudget: bool = False
 
     def __post_init__(self) -> None:
         integer(self.seed, "seed")
         integer(self.max_staging_bytes, "max_staging_bytes", minimum=1)
         integer(self.max_pending_requests, "max_pending_requests", minimum=1)
+        if type(self.reject_overbudget) is not bool:
+            raise TypeError("reject_overbudget must be a bool")
         if (
             self.idle_timeout_seconds is not None
             and number(self.idle_timeout_seconds, "idle_timeout_seconds") <= 0

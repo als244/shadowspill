@@ -226,7 +226,10 @@ class PreparedWorker:
             plans = dict(self.bindings.prepared.plans[self.startup.scope.rank])
             primary = plans.pop(self.bindings.primary)
             with Executor(
-                primary, plans=plans, rank_map=rank_map, reject_overbudget=True
+                primary,
+                plans=plans,
+                rank_map=rank_map,
+                reject_overbudget=self.bindings.setup.config.execution.reject_overbudget,
             ) as executor:
                 budget = BufferBudget(self.startup.staging_bytes)
                 diagnostics = BufferBudget(self.startup.diagnostics_bytes)

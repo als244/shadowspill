@@ -66,6 +66,7 @@ def test_resolved_weight_metadata_is_owned_and_roundtrips_with_the_model():
         BatchConfig(limits={"max_examples": 64}, typical={"height": 224}),
         Memory(device_gib=1, spill_gib=0),
         Execution(),
+        Execution(reject_overbudget=True),
         Operation("logprobs", mode="training"),
         Weights.artifact("checkpoint_123"),
     ],
@@ -104,6 +105,8 @@ def test_nonportable_configuration_is_refused(value):
         lambda: Memory(10**1000, 1),
         lambda: Execution(max_pending_requests=0),
         lambda: Execution(idle_timeout_seconds=0),
+        lambda: Execution(reject_overbudget=1),
+        lambda: Execution(reject_overbudget="false"),
         lambda: Operation("logprobs", mode="other"),
     ],
 )
@@ -115,6 +118,11 @@ def test_invalid_settings_fail_before_preparation(factory):
 def test_unknown_record_fields_are_not_silently_ignored():
     with pytest.raises(ValueError, match=r"unknown fields.*definiton"):
         Model.from_dict({"definition": "external/model@1", "definiton": "typo"})
+
+
+def test_omitted_budget_enforcement_matches_the_executor_reporting_default():
+    assert Execution().reject_overbudget is False
+    assert Execution.from_dict({"seed": 7}).reject_overbudget is False
 
 
 def test_capacity_names_are_not_reserved_for_text():

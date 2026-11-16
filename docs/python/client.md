@@ -98,6 +98,11 @@ Expiry records `idle_timeout` on the stopped run and preserves saved results and
 artifacts. It does not save a checkpoint or apply pending gradients; resume from
 a saved checkpoint in a new run.
 
+`Execution(reject_overbudget=False)` is the default: external or whole-process
+GPU memory overruns are reported. Set it to `True` to reject those overruns.
+Pool bounds, preparation memory admission and the scheduled token cap remain
+enforced in either mode.
+
 Creation accepts raw setup keywords directly, or `config=preview.config`.
 `plans=training.plans` with the same computation settings skips preparation.
 The explicit initializer may select different random weights or another compatible

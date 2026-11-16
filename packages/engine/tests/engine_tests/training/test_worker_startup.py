@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from engine_tests.training.test_preparation_templates import inventory
 from engine_tests.training.test_prepared_requests import family
 from engine_tests.training.test_worker_group import commands
 from engine_tests.training.test_worker_loop import SCOPE, call
@@ -27,6 +28,7 @@ from shadowspill.training.worker.startup import (
     report_ready,
     start_workers,
 )
+from shadowspill_client import Execution
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.codec import ProtocolError, decode
 from shadowspill_client.protocol.requests import ArtifactRef
@@ -311,9 +313,10 @@ def test_cpu_worker_description_reuses_spill_margin_and_rejects_ordinal_changes(
         PreparedWorker.resolve(prepared.bindings.prepared, SCOPE, bundle=BUNDLE)
 
 
+@pytest.mark.parametrize("execution", [Execution(), Execution(reject_overbudget=True)])
 @pytest.mark.parametrize("failure", [None, "open", "initialize", "spill", "outputs"])
 def test_runtime_owns_one_executor_and_releases_it_after_failure(
-    tmp_path, monkeypatch, failure
+    tmp_path, monkeypatch, failure, execution
 ):
     import torch
 
@@ -330,7 +333,7 @@ def test_runtime_owns_one_executor_and_releases_it_after_failure(
 
         def __init__(self, primary, **options):
             events.append("open")
-            assert options["reject_overbudget"] is True
+            assert options["reject_overbudget"] is execution.reject_overbudget
             assert options["rank_map"] == {0: 0}
             if failure == "open":
                 raise OSError("open failed")
@@ -350,7 +353,7 @@ def test_runtime_owns_one_executor_and_releases_it_after_failure(
     monkeypatch.setattr(execution_module, "Executor", Executor)
     monkeypatch.setenv("WORLD_SIZE", "1")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
-    prepared = prepared_worker()
+    prepared = prepared_worker(inventory(execution=execution))
     runtime = InitializationRuntime(tmp_path, lambda _: pytest.fail("artifact opened"))
     outputs = FileOutputs(prepared.outputs, root=tmp_path)
     if failure == "outputs":
