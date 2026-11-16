@@ -86,6 +86,9 @@ def is_barrier(target):
         # arrays. Keep their construction outside token-local execution loops.
         "aten.cumsum.default",
         "aten.searchsorted.Tensor",
+        # Router histograms combine assignments from the complete microbatch.
+        # Their shared destination must not be repeated inside token chunks.
+        "aten.scatter_add.default",
         # Frozen compressed dense weights are shared by all token slices.
         # Decode once outside their loops, not once per chunk.
         "mlops_seqmoe.decode_weight.default",

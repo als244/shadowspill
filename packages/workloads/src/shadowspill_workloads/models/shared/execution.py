@@ -170,10 +170,11 @@ class TextExecutionChunks:
                 in (
                     TaskInputRole.PARAMETER,
                     TaskInputRole.BUFFER,
-                    # Parameter gradients may have a feature extent equal to
-                    # the sequence length. Only inherited forward coordinates
-                    # prove that a gradient destination contains token slices.
+                    # Parameter gradients and shared-statistic tangents may
+                    # have a feature extent equal to the sequence length.
+                    # Only inherited forward coordinates prove token slices.
                     TaskInputRole.GRADIENT,
+                    TaskInputRole.TANGENT,
                 )
             ):
                 continue
