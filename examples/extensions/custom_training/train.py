@@ -46,6 +46,7 @@ def main():
             optimizer=Optimizer("sgd"),
             batch=BatchConfig(limits={"max_examples": 4}),
             memory=Memory(device_gib=3, spill_gib=1),
+            operations={"step": ["metrics"], "forward_backward": ["metrics"]},
         ).result()
         try:
             result = training.step(data, optim={"lr": 0.05}).result()

@@ -208,8 +208,12 @@ training = service.create_training_client(
     optimizer=Optimizer("sgd"),
     batch=BatchConfig(limits={"max_examples": 4}),
     memory=Memory(device_gib=3, spill_gib=1),
+    operations={"step": ["metrics"], "forward_backward": ["metrics"]},
 ).result()
 ```
+
+Prepare both operations because this example uses whole and split updates.
+Preparing `forward_backward` also prepares `optim_step` to finish accumulation.
 
 The complete [`train.py`](../../../examples/extensions/custom_training/train.py)
 provides imports, four Datums, a whole update, a split update and checkpoint
