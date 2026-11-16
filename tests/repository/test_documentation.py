@@ -329,11 +329,10 @@ def test_documentation_index_exposes_reading_paths() -> None:
     for target in (
         "architecture/README.md",
         "python/README.md",
-        "python/custom-models.md",
-        "python/phases.md",
+        "python/client.md",
         "python/advanced/README.md",
         "examples/README.md",
-        "examples/generic-training.md",
+        "examples/client-training.md",
         "c/README.md",
         "development/README.md",
         "integrations/README.md",
@@ -345,11 +344,10 @@ def test_root_readme_remains_a_minimal_entrypoint() -> None:
     readme = (ROOT / "README.md").read_text()
     assert len(readme.splitlines()) <= 60
     assert "](docs/README.md)" in readme
-    assert "](docs/examples/generic-training.md)" in readme
-    assert "](packages/workloads/src/shadowspill_workloads/recipes/README.md)" in readme
-    assert "](docs/python/custom-models.md)" in readme
+    assert "](docs/examples/client-training.md)" in readme
+    assert "](docs/python/client.md)" in readme
     assert "](docs/python/advanced/README.md)" in readme
-    assert "```python" in readme
+    assert "](docs/development/repository.md#setup)" in readme
 
 
 def test_architecture_overview_describes_public_phase_boundaries() -> None:

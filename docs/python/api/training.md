@@ -1,11 +1,7 @@
-# Saved-Plan Trainer (migration in progress)
+# Saved-Plan Trainer
 
-For the current service interface, start with the
-[complete client example](../../examples/client-training.md) and
-[TrainingClient reference](../client.md#runtime-operations).
-This page documents the old `Trainer`, retained while the remaining
-[recipe callers](../../../packages/workloads/src/shadowspill_workloads/recipes/README.md)
-migrate. Its methods and checkpoint interface differ from `TrainingClient`.
+For service-based training, use the [training client](../client.md).
+This reference covers direct execution of saved phase artifacts.
 
 `Trainer` runs a saved training `Plan`, manages update counts, and provides an
 optional loop, logging and checkpoints. Build, profile and plan first; Trainer

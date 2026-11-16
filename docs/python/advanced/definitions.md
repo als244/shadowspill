@@ -1,11 +1,11 @@
 # Installed model and objective definitions
 
-The trainer refactor adds public definition hooks under
-`shadowspill.training.definitions` and portable schema records under
-`shadowspill_client.protocol`. Install the engine's `training` extra to use these
-hooks. They support CPU inspection, preparation and public service execution
-through the existing capture/build path. Caller migration and distributed release
-qualification remain in progress.
+Register a custom model or objective through `shadowspill.training.definitions`.
+Install the engine's `training` extra on the server to use these hooks. Portable
+input and control schemas come from `shadowspill_client.protocol`. Start with
+[basic training](../../examples/client-training.md) if you are using a supplied model.
+
+## Model and objective hooks
 
 A model definition describes an ordinary factory, validated configuration and
 input schema. An optional `capture_context(config)` context manager scopes
@@ -48,21 +48,16 @@ server configuration; model and compute requests continue to use definition IDs.
 The supplied workloads wheel publishes the same entry-point group. This is the
 common loader for controller and fresh-phase startup.
 
-The small [external classifier fixture](../../packages/engine/tests/engine_tests/fixtures/external_definition.py)
-shows the full interface. The supplied
-[regression definition](../../packages/workloads/src/shadowspill_workloads/definitions/regression.py)
-uses the same registry and its existing model. Importing either description
-requires no Torch import; model construction is explicit. Text and media catalog
-definitions migrate as their preparation paths become available.
+## Supplied definitions
 
-`shadowspill/llama3@1` now has an installed packed preparation definition. Its
-CPU setup and capture checks cover sequence isolation, empty sequences, masked
-targets, full and LoRA gradients and the scheduled token cap. Full and LoRA GPU
-training pass independent update oracles through the public API from a NumPy-only
-remote client, including split accumulation, evaluation isolation and checkpoint
-continuation. The supplied Llama application uses this setup/runtime interface.
-The initial installed path uses MLOps with BF16 compute and FP32 gradients by
-default. `Model.precision` accepts `compute_dtype`, `grad_dtype` and `lora_dtype`
+The small [external classifier fixture](../../../packages/engine/tests/engine_tests/fixtures/external_definition.py)
+shows the full interface. The supplied
+[regression definition](../../../packages/workloads/src/shadowspill_workloads/definitions/regression.py)
+uses the same registry and its existing model. Importing either description
+requires no Torch import; model construction is explicit.
+
+`shadowspill/llama3@1` supplies packed preparation, with BF16 compute and FP32
+gradients by default. `Model.precision` accepts `compute_dtype`, `grad_dtype` and `lora_dtype`
 (FP32 or BF16); optimizer masters are a separate optimizer setting. `config`
 selects a named `preset` (default `tiny`) and optional `architecture` overrides.
 LoRA uses the family's existing targets unless supplied explicitly; its current
@@ -83,16 +78,7 @@ caller explicitly chooses token-only training or a composed balancing objective.
 Settings select `preset`, architecture overrides, precision and optional LoRA;
 Qwen3.5 recurrent decay parameters retain FP32 storage with BF16 projections.
 Initialization accepts random, pinned pretrained or exported weights, and exact
-training checkpoint resume. Both families
-pass public full-training and LoRA checks from a NumPy-only remote client: whole
-and split calls match separate independent CPU trajectories, evaluation preserves
-pending gradients, masked updates skip, and checkpoint continuation is bitwise
-identical. The strict FP32 oracle test uses IEEE Triton products; production
-provider defaults are unchanged. Qwen3 BF16 full/LoRA public training also passes
-independent CPU update checks and bitwise checkpoint continuation on Chicago's
-fallback provider and H100 Sonic kernels. Its numerical checks compare each
-parameter's update norm, including signed token contributions, with FP32 master
-weights and AdamW moments.
+training checkpoint resume.
 
 BF16 MoE definitions request the existing provider preparation lifecycle and pin
 Quack, SonicMoE and Cutlass sources. The provider selects supported kernels during
@@ -101,36 +87,27 @@ ordinary unquantized BF16 Sonic calls and their prepared activation wrapper.
 BF16 LoRA definitions also supply the provider's existing gradient-destination
 rules and allocation contracts. The compiler fuses eligible complete, contiguous
 gradients; unsupported crops or dtype transformations retain ordinary accumulation.
-The H100 checks confirm actual Sonic calls and saved preparation manifests in
-both full and LoRA Plans, with BF16 compute and either BF16 or FP32 gradients.
-Aligned-rank LoRA checks also exercise both Sonic destination accumulation
-operators. These small-model cases compare independent updates and exact
-checkpoint continuation. Cold-cache execution without compilation, production
-shapes, FP8 and expert parallelism require separate qualification.
+
 
 `shadowspill/olmoe@1` uses that same packed preparation, precision/LoRA settings
 and bounded random initializer. Its model exposes the same router-statistics
 capability; no OLMoE-specific loss is required. To retain OLMoE's layer aggregation,
 configure the shared balancing term with `layer_reduction="sum"` and
-`normalize_top_k=True`. Padding is still excluded by default. CPU setup, packed
-objectives, all gradients and initialization checks pass. Public full-training and
-LoRA calls also pass independent whole/split update oracles and exact checkpoint
-continuation from a NumPy-only remote client.
+`normalize_top_k=True`. Padding is excluded by default.
 
 The three MoE definitions also describe `implementation="mlops_ep"` for the
 existing Quack expert provider. Setup uses generic parameter/input placement,
 BF16 compute and bounded random initialization. Each prepared physical token
 size has a distinct communication resource; operations at the same size share
-it, and parameter state remains common across sizes. Setup and bounded
-initialization are CPU-qualified, and training/evaluation accelerator captures
-pass. Exact BF16 allocation contracts cover the fixed MoonEP buffers and Quack
-operators; native profiling, joint admission and public distributed training
-still require H100 qualification. EP LoRA and pretrained loading are not
-advertised by these definitions.
+it, and parameter state remains common across sizes. These definitions support
+BF16 full training with random initialization or checkpoint resume; EP LoRA and
+pretrained initialization are unsupported.
 
 Definition provenance hashes provider Python and installed extension binaries
 without importing their implementations in the controller. Each controller or
 worker treats that installed provider snapshot as immutable for its lifetime.
+
+## Text objectives
 
 The workloads entry point also installs `shadowspill/cross_entropy@1` and
 `shadowspill/clipped_policy@1`. A compatible model declares the `target_logprobs`
@@ -157,8 +134,7 @@ outputs at masked positions. `forward(..., outputs="logprobs")` needs only model
 inputs and aligned targets; it returns every target logprob without requiring
 rollout fields or loss controls. Forward requests for `metrics` evaluate the
 declared loss and therefore require its fields. Omitted controls always revert
-to setup defaults. Formula, packed-input and CPU capture checks cover these
-definitions; supplied text-model service qualification is still in progress.
+to setup defaults.
 
 `resolve_model` and `resolve_objective` validate configuration and return immutable
 portable settings, input schemas and provenance. Configuration factories return
@@ -437,13 +413,12 @@ A compatible model declares `router_statistics` and implements
 `router_counts` and differentiable full-softmax `router_probability_sum` tensors
 of shape `[layers, experts]`, scalar `router_rows` (selected positions per layer),
 integer `router_top_k`, and aligned `logprobs` when targets are supplied. A null
-router mask explicitly means all physical rows. Qwen and OLMoE supply this hook;
-their `loss` methods continue to count all physical rows during caller migration.
+router mask explicitly means all physical rows. Qwen and OLMoE supply this hook.
 Compatible primary and secondary terms share one transformer evaluation. The
 current fused provider lacks masked statistics, so exclusion adds a bounded router
 projection/selection per layer; its work and storage must be captured and admitted.
 
-The developing input pipeline validates owned binary snapshots with these same
+The input pipeline validates owned binary snapshots with these same
 schemas before packing. It checks every supplied field, shared dimension, numeric
 range and global capacity, including later records in the call. Required paths
 come from the selected computation/output closure; known unused fields may be
@@ -470,10 +445,7 @@ finite scalar controls and resolves setup defaults plus call-local overrides
 without retaining overrides. Output sets declare needed fields/controls, tensor
 ordering and scalar reductions; unknown fields and capabilities are errors.
 
-The extension tests capture and execute a real CPU classifier, compare masked,
-signed-weight gradients with an independent formula, change a runtime coefficient
-without recapture, and check the external path with catalog imports blocked.
-These are capture/interface checks, not qualification of the future service.
+## Preparation and capture
 
 The internal operation binder selects only the requested input/control closure,
 checks returned tensor shapes/dtypes and scalar metrics, and applies declared
@@ -481,10 +453,7 @@ logical loss ownership without averaging. It saves definition and layout identit
 with each Program. Capture admission verifies actual coefficient reads and rejects
 input mutations, undeclared model-buffer mutations and any model-state mutation
 in evaluation. The existing builders produce optimizer, backward and output-only
-paths; optimizer builds enable the captured final gradient scale. Cold-worker
-integration checks cover weighted updates, selective forward outputs, accumulation
-with interposed evaluation, and all-masked outputs preserving gradients. Multi-node
-execution and durable output publication require separate service qualification.
+paths; optimizer builds enable the captured final gradient scale.
 
 Installed `PreparationDefinition` functions provide CPU defaults and physical
 buffer geometry for each logical input partition. Register them with the same
@@ -512,8 +481,7 @@ input adapter and output geometry, then checks the complete host-staging bound.
 Known staging-limit failures retain candidate reasons; unexpected definition
 errors propagate. Every requested operation and batch option must retain a
 constructive coverage witness. Identical adapter layouts share their resolved
-metadata across counts. Model construction, native device/spill admission,
-collective qualification and service readiness remain separate steps.
+metadata across counts.
 
 The internal `training.preparation.bundle.TrainingBundle` saves a complete admitted
 operation family through the existing phase-archive codec. It retains the resolved
@@ -530,10 +498,7 @@ allocation coverage binds the complete capture and every compiled form, includin
 additive gradients, to static compiler geometry and exact opaque-call contracts.
 Measured traces still supply byte sizes and physical placement. Missing masked/optimizer or
 accumulation paths are errors. Loading does not capture, profile, search, select
-replacement candidates or initialize training state. The current qualification
-covers the external classifier fixture, including a provider buffer shared across
-all admitted Plans; service startup, distributed providers and value-dependent
-maximum workspace remain separate work.
+replacement candidates or initialize training state.
 
 `training.preparation.job.prepare_job(directory, packages=..., config=...)` runs
 resolved preparation through the existing fresh-process build, profile,
@@ -542,8 +507,7 @@ and an owned job directory. The job saves its exact configuration, rejects
 concurrent callers, reuses compatible completed captures/profiles, and retains
 recoverable candidate failures only while all requested capabilities remain covered.
 A completed job reloads and strictly checks its bundle without starting phases.
-It never initializes weights or starts a training loop. Service allocation,
-artifact-reference resolution and readiness remain separate integration work.
+It never initializes weights or starts a training loop.
 
 Phase policies use `PolicyDefinition(id, kind, config, create)`. The CPU resolver
 validates and fills `Policy` configuration through the registered factory's
@@ -586,6 +550,8 @@ not logical update boundaries, objective normalization or the scheduled token ca
 Factories remain in build workers; setup inspection loads only descriptions and
 source identities. Saved Plans restore the selected execution without recreating
 these policies on each training call.
+
+## Optimizer definitions
 
 `OptimizerDefinition` registers a factory for an ordinary capturable optimizer.
 The factory receives `(model, config, controls)`, where the build worker provides

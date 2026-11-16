@@ -5,8 +5,7 @@ The Llama, regression, Qwen3 full-training and Qwen3.5 LoRA applications use the
 from their runtime loops. The service prepares saved Plans and runs them through
 the existing Executor. Build accepts ordinary PyTorch models and objectives;
 profiling and planning remain separate. The generic library does not import a
-model catalog or application data code. Other saved-phase recipes below remain
-in migration.
+model catalog or application data code.
 
 Their [shared application code](application/README.md) handles public whole/split
 updates and checkpoint-reference publication without importing a model. The Qwen
@@ -33,11 +32,11 @@ This directory holds example configs and launchers for the optional
 `shadowspill_workloads.recipes.text` recipe. Text packing and its token-normalized objective
 are recipe behavior, and can be replaced without changing the trainer.
 
-## Recipe quickstart (migration in progress)
+## Recipe quickstart
 
-The configuration-driven runner below still uses the old `Trainer`. For the
-public service, start with the [complete client example](../../docs/examples/client-training.md)
-or the migrated Llama/Qwen applications above.
+The configuration-driven runner below uses saved phase artifacts. For service-based
+training, start with the [client example](../../docs/examples/client-training.md)
+or the Llama/Qwen applications above.
 
 A fine-tune of a local Hugging Face checkpoint is a config of six keys:
 

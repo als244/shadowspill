@@ -7,20 +7,22 @@ profiling, planning and execution APIs from `shadowspill`. See the
 
 ## Start here
 
-1. [Client training and resume](client-training.md) — complete settings and inputs,
-   separate setup/runtime, whole and split updates, evaluation and checkpoints.
-2. [Qwen3 application](../../examples/qwen3.py), [Llama application](../../examples/training/llama3/README.md)
+1. [Text training](client-training.md) — read a tokenized corpus, prepare a run,
+   submit updates and save a checkpoint.
+2. [Split updates and resume](../python/advanced/training-workflow.md) — accumulation,
+   evaluation and checkpoint continuation.
+3. [Qwen3 application](../../examples/qwen3.py), [Llama application](../../examples/training/llama3/README.md)
    and [Qwen3.5 LoRA](../../examples/training/qwen35_lora.md) — real token corpora
    through the same public client.
-3. [Direct phases and saved-Plan Trainer](generic-training.md) — build/profile, CPU
+4. [Direct phases and saved-Plan Trainer](generic-training.md) — build/profile, CPU
    planning, bounded initialization and a saved-Plan loop in a fresh worker.
-4. [Forward-only execution](forward-only.md) — save and execute a prediction Plan,
+5. [Forward-only execution](forward-only.md) — save and execute a prediction Plan,
    or share model tensors with training for evaluation.
-5. [Reusable planning and budget sweeps](reusable-planning.md) — replan saved
+6. [Reusable planning and budget sweeps](reusable-planning.md) — replan saved
    profiles and produce simulated reports without a GPU.
-6. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
+7. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
    boundaries through a small policy.
-7. [GLM LoRA recipe script](../../examples/glm53_flash_lora.py)
+8. [GLM LoRA recipe script](../../examples/glm53_flash_lora.py)
    — real checkpoint/data, chunk and retention search, pinned-host budgets,
    evaluation and checkpointing through the normal saved phases.
 

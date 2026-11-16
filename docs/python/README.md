@@ -4,16 +4,14 @@
 | --- | --- |
 | Train through the public service | [Complete client example](../examples/client-training.md), [client API](client.md) |
 | Run a supplied text application | [Llama](../../examples/training/llama3/README.md), [Qwen3](../../examples/training/qwen3.md), [Qwen3.5 LoRA](../../examples/training/qwen35_lora.md) |
-| Maintain an unmigrated recipe | [`train` runner](../../packages/workloads/src/shadowspill_workloads/recipes/README.md) |
 | Bring a custom model or control each phase | [Custom models](custom-models.md), [phase guide](phases.md), [complete example](../examples/generic-training.md) |
 | Tune, inspect or extend the system | [Advanced guides](advanced/README.md) |
-| Register a custom service model or objective | [Definition hooks](definitions.md) |
+| Register a custom service model or objective | [Definition hooks](advanced/definitions.md) |
 
 Setup and runtime are separate: `ServiceClient` describes and creates a run;
 `TrainingClient` submits batches to ready workers. The service owns preparation,
 initialization and execution. Direct phase entry points remain available from
-`shadowspill`, with PyTorch policies in `shadowspill.pytorch`. The recipe `train`
-runner and saved-Plan `Trainer` remain while their callers migrate.
+`shadowspill`, with PyTorch policies in `shadowspill.pytorch`.
 
 ## API reference
 
@@ -29,7 +27,7 @@ order of calls and a complete example.
 | Budgets, traversal, save/recompute search and candidate sweeps | [Planning](api/planning.md) |
 | Saved Programs, profiles and Plans | [Artifacts](api/artifacts.md) |
 | Global batches, complete/split updates, evaluation and checkpoints | [Training client](client.md#runtime-operations) |
-| Saved-Plan loops still in migration | [Trainer](api/training.md) |
+| Saved-Plan training loops | [Trainer](api/training.md) |
 | Asynchronous calls and shared state across Plans | [Executor](api/executor.md) |
 | Logical ownership, calibration and multi-worker execution | [Distributed training](api/distributed.md) |
 | Pool capacities, calibration and external storage | [Pool memory](api/pool-memory.md), [SSD](api/ssd.md) |

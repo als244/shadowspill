@@ -17,6 +17,13 @@ execution worker**. All phases use the public ShadowSpill APIs. Gates run one at
 a time so their GPU measurements do not interfere. Each gate streams to the
 terminal and its own log.
 
+These numerical and performance gates exercise the public **phase APIs**, including
+`Executor`. They retain the pre-refactor measurement protocol and independent
+compiled-PyTorch numerical authority. They do not submit `TrainingClient.step()`
+or `forward_backward()` requests. Public-client integration tests live with the client, engine and workloads
+packages, and are discovered by the suite gate. Tests marked `slow` need explicit
+selection as described below.
+
 ## Selecting and configuring gates
 
 ```bash
@@ -72,7 +79,7 @@ Fresh-process tests deselected by the shared pytest process are run by CTest;
 capability skips are reported separately.
 
 Tests marked `slow` are end-to-end recipe and quickstart runs of minutes each;
-the default suite deselects them. `python -m pytest tests -m slow` runs the tier
+the default suite deselects them. `python -m pytest -m slow` runs the tier
 alone, and a gate config with `"suite": ["-m", "not fresh_process"]` includes it
 in the suite gate.
 
@@ -86,6 +93,21 @@ from before this selection contract require regeneration. Use
 `--regenerate-reference` only for an intentional baseline replacement, then remove
 that option from subsequent runs. A new reference checks planned/reference
 agreement but cannot establish agreement with the previous baseline.
+
+For a comparison across the trainer refactor, point `--reference-dir` at the
+retained pre-refactor reference set, verify all three files exist for every
+selected cell, and omit `--regenerate-reference`. Request identities, exact inputs,
+kernel choices and target compatibility must still match. Keep the old result
+directory and write the new run separately; source moves do not require replacing
+the numerical authority.
+
+The performance gate retains its recorded RTX 5090 floors and 5% allowance.
+It applies them only to matching hardware, geometry, precision and memory/spill
+settings. Archived run JSON also retains per-cycle samples and phase timings for
+matched before/after comparisons. Those timings cover saved-Plan execution;
+client upload, packing and response publication need separate service measurements.
+An unrelated configuration is reported as not applicable, not as a throughput
+regression pass.
 
 ## Hardware and optional checks
 

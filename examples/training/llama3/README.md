@@ -2,7 +2,7 @@
 
 The application reads a local token corpus and submits global Datum batches to an
 existing service. It needs only `shadowspill-client` and NumPy. The server needs
-the engine, workloads package and qualified MLOps installation.
+the engine, workloads package and MLOps provider.
 
 Start the server inside its assigned allocation, with `SHADOWSPILL_TOKEN` set:
 
@@ -64,9 +64,3 @@ service storage and authenticated owner; use the public checkpoint/Plan
 [download and upload APIs](../../../docs/python/client.md) to transfer state to
 another service. This application never retries an uncertain update. `run.json`
 retains the session/run IDs for explicit inspection after an interrupted client.
-
-This replaces the former standalone Llama recipe and its `--phase`/`--no-plots`
-options. Advanced independent phase control remains in the generic engine APIs.
-Other catalog applications are being migrated separately. The small dense and
-LoRA public API cases are qualified on Chicago; larger model/context and hardware
-acceptance remains part of the refactor's qualification work.

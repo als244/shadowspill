@@ -43,8 +43,7 @@ differ. Each path must match its own reference.
 DP shards weights, gradients and optimizer state. `--parallelism ep` selects the
 existing generic expert ownership: local expert shards, replicated dense weights
 and gradients, and sharded dense optimizer state. EP requires at least two
-workers, BF16 full training and unchunked execution. Its actual distributed
-service qualification is tracked separately from the application CPU checks.
+workers, BF16 full training and unchunked execution.
 
 Memory limits are per worker. The application retains the 768 MiB profiling
 reserve (`--external-headroom-mib`, including explicit zero); ordinary engine
@@ -78,9 +77,3 @@ corpus window and schedule. Resuming performs no build/profile/search.
 Training/evaluation JSONL, resolved setup, Plan/checkpoint references and the
 HTML report are written under the client run directory; artifacts stay on the
 server. `--wandb-project` enables optional caller-side logging.
-
-The [application test](../../packages/workloads/tests/workload_tests/test_qwen_client_service.py)
-checks small FP32 whole/split trajectories against independent losses, weight
-updates and exact resume. Production BF16 models, eight-worker budgets and long
-contexts require their separate release campaigns. Earlier performance evidence
-is retained in the [historical recipe report](../../packages/workloads/src/shadowspill_workloads/recipes/text/qwen3/README.md).

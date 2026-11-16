@@ -1,583 +1,122 @@
-# Lightweight service client
+# Training client
 
-`shadowspill-client` requires Python 3.12 or newer and NumPy. Model definitions,
-preparation and GPU execution belong on the server. The client package does not
-require the engine, PyTorch, Triton or the supplied workloads.
+Use `ServiceClient` to connect and prepare a run, then use `TrainingClient` to
+submit batches. Model construction and worker setup happen on the server before
+the training loop starts.
 
-`ServiceClient` supports authenticated connections, CPU setup previews, creation,
-reattachment and explicit artifact downloads. `TrainingClient` submits live
-operations. `shadowspill.server.Server` owns startup and the assigned resources.
-Checkpoint save, ordered restore, new-run resume and explicit directory downloads
-are supported. New-run creation converts compatible checkpoint state when its
-prepared Plans change. Named Plans can be saved and retrieved after worker close
-or service restart. Explicit file and checkpoint downloads can retain verified
-progress for resume; explicit artifact and checkpoint uploads are supported.
-Existing phase and Trainer APIs remain available during migration.
-
-Start with the [complete client example](../examples/client-training.md) for
-settings, inputs, setup, whole/split updates and checkpoint resume. The
-[Llama](../../examples/training/llama3/README.md),
-[Qwen3](../../examples/training/qwen3.md) and
-[Qwen3.5 LoRA](../../examples/training/qwen35_lora.md) applications use this client
-end to end. Their setup code creates a ready client separately from the runtime
-loop. They import no engine or model framework on the client.
-
-## Current coverage
-
-The development branch has actual end-to-end results for the cases below.
-These are small correctness checks at recorded source revisions, not a blanket
-qualification of every model, precision, size or GPU count.
-
-| Path | Evidence scope |
-| --- | --- |
-| NumPy-only Tubingen client → Chicago service | Llama, Qwen3, Qwen3.5 and regression; whole/split calls, evaluation, artifacts and checkpoint continuation across the tested cases |
-| Installed text definitions | Llama, Qwen3, Qwen3.5 and OLMoE full/LoRA cases; independent loss/update references and exact resume in the relevant numerical suites |
-| Two-H100 DP | Regression with distinct input owners, independent updates and checkpoint resume |
-| Two-H100 EP | Small Qwen3 full training, BF16 compute/gradients with FP32 masters/moments; whole/split independent references, empty owners, evaluation and exact resume |
-| Custom definitions | External non-text integration using the same public registration path; the supplied model catalog is optional |
-
-GLM migration and FP8-base LoRA training remain unfinished. The supplied public
-EP definitions currently support full training and random initialization/resume;
-they reject LoRA. Eight-H100 GLM DP results from the recipe runner do not establish
-EP8 or new service coverage. FP32-gradient EP hardware qualification, multi-node
-service bootstrap, actual cross-GPU-count resume, production-size memory/long-context
-campaigns, real media inputs and Apple Silicon installation remain release work.
-Historical recipe/model support does not imply public-service qualification.
+The client needs Python 3.12+ and NumPy. Start with the
+[complete text-training example](../examples/client-training.md), which includes
+server startup, settings, input data and a training loop.
 
 ## Connection and setup
 
-Start the service on Chicago or another machine with an existing GPU allocation:
-
-```python
-from shadowspill.server import Allocation, Server
-
-# SHADOWSPILL_TOKEN supplies the same credential used by the client.
-server = Server(
-    allocation=Allocation.from_environment(),
-    storage_root="/path/to/service-data",
-    workload_packages=["shadowspill", "shadowspill-workloads"],
-)
-server.serve(host="127.0.0.1", port=8000)
-```
-
-List only installed definition packages; add a custom package when using its
-definitions. Construction snapshots deployment
-settings; `serve` discovers assigned resources, recovers stored records and starts
-the listener. The current allocation adapter supports a local machine or an
-assigned single-node Slurm step. Multi-node agent bootstrap remains unfinished
-and is rejected explicitly. The server never requests a scheduler allocation.
-For multiple GPUs on one host, the service supplies the complete worker mapping
-and a separate local rendezvous for each run. Callers do not configure worker
-ranks, ports or rendezvous files.
-
-For embedding, `server.start(...)` returns after opening a background listener;
-`server.address` reports its bound address. `server.close()` stops creation and
-live runs, waits for owned workers and preserves stored records/artifacts. Failed
-cleanup retains its owners for another `close()` attempt. Optional `ServerLimits`
-configures deployment memory, concurrency and storage envelopes. These limits
-belong to the deployment, independently of client training settings.
-Incomplete artifact transfers reserve their declared storage size and expire after
-24 hours without a verified chunk by default (`ServerLimits.upload_ttl_seconds`).
-The service reclaims them on new admissions, upload access or reopening; saved
-artifacts do not expire under this policy.
+Connect through an existing SSH alias:
 
 ```python
 from shadowspill_client import SSH, ServiceClient
 
-# Read the deployment credential from SHADOWSPILL_TOKEN, or pass token explicitly.
-with ServiceClient(ssh=SSH(host="training-host", server_port=8000)) as service:
-    preview = service.describe_training(**setup).result()
-    print(preview.summary())
-    config = preview.config
-
-    training = service.create_training_client(config=config).result()
-    pending = training.step(global_batch, optim={"lr": 0.001})
-    request_id = pending.request_id
-    pending.accepted().result()  # Complete server acceptance, beyond the input copy.
-    result = pending.result()
-    print(result.completed_updates, result.loss)
-    training.close().result()
+service = ServiceClient(ssh=SSH("training-host", 8000))
 ```
 
-`setup` contains `Model`, `Objective`, optional `Optimizer`, `BatchConfig`, `Memory`
-and optional execution/preparation/operation settings. Definitions must already
-be installed on the server. Omitted initialization remains omitted; a preview
-does not choose fresh weights. `config=` rechecks an exact earlier configuration
-and cannot be mixed with setup keywords. The preview reports physical geometry
-cases and eligible/rejected schedules; capture expansion and reuse can change
-the actual build work. It contains no fabricated benchmark or task count.
+Set `SHADOWSPILL_TOKEN` to the same credential on the server and client. For a
+direct connection, use `ServiceClient(base_url="https://service.example")`.
 
-Use `ServiceClient(base_url="https://service.example", ...)` for a direct
-connection. Loopback HTTP supports an existing or SDK-managed SSH forward.
-`session_id` identifies the caller's record session and defaults to a new opaque
-ID. SSH uses ordinary OpenSSH aliases, keys, host verification and jump settings.
-Neither connection path starts a server or requests a GPU allocation.
+## Create a training run
 
-Futures support `.result(timeout=...)`, `.exception(timeout=...)` and `.done()`.
-A wait timeout does not cancel work or retry a mutation. `cancel()` returns false.
-`close()` or leaving the context ends connection work and releases the owned SSH
-forward; it does not stop accepted server work or close a training run.
-
-`Execution(idle_timeout_seconds=...)` optionally releases idle workers. The default
-is `None`, with no idle expiry. The timer runs only while the request queue and
-input staging are empty, after worker initialization and after work finishes.
-Inspection, duplicate queries and writer reattachment do not extend that timer.
-Expiry records `idle_timeout` on the stopped run and preserves saved results and
-artifacts. It does not save a checkpoint or apply pending gradients; resume from
-a saved checkpoint in a new run.
-
-`Execution(reject_overbudget=False)` is the default: external or whole-process
-GPU memory overruns are reported. Set it to `True` to reject those overruns.
-Pool bounds, preparation memory admission and the scheduled token cap remain
-enforced in either mode.
-
-Creation accepts raw setup keywords directly, or `config=preview.config`.
-`plans=training.plans` with the same computation settings skips preparation.
-The explicit initializer may select different random weights or another compatible
-pretrained/artifact source. The server rechecks the captured programs, schedules
-and resource limits, then retains a new immutable bundle recording that source;
-the original Plans remain available. This performs no build, profiling or search.
-To resume, supply
-`service.create_training_client(plans=training.plans, checkpoint=checkpoint)`.
-Full training and LoRA are qualified from a NumPy-only remote client with
-pretrained weights, reuse of the same computation Plans with a new random seed,
-whole/split updates and bitwise checkpoint continuation.
-The client reads the saved configuration as bounded metadata; it does not download
-or decode executable Plans. The server validates every rank before initialization
-and loads the checkpoint directly. A partial checkpoint opens only its recorded
-frozen-base source; a full checkpoint does not need the old fresh-weight source.
-The new run starts at the saved update count with a new history and a durable
-parent-checkpoint reference. Setup defaults remain the saved configuration's
-defaults; per-call overrides in the checkpoint do not replace them.
-The creation future exposes its
-`session_id` and `run_id` before readiness. Reconnect using the same session ID
-and `service.get_training_client(run_id).result()`. Writable reattachment fences
-the earlier writer; `read_only=True` permits inspection without takeover.
-
-For measured inputs without starting a training run, use the same setup with
-`service.prepare_training(**setup).result()`. Initialization can be omitted.
-This runs the existing build, profiling and communication phases, and releases
-their resources before the future completes:
+Pass the training choices as named arguments:
 
 ```python
-pending = service.prepare_training(**setup)
-prepared = pending.result()
-prepared.export().result().download("measured-inputs.zip").result()
+from shadowspill_client import BatchConfig, Memory, Model, Objective, Optimizer, Weights
+
+training = service.create_training_client(
+    model=Model(
+        "shadowspill/llama3@1",
+        config={"preset": "tiny"},
+        initialize=Weights.random(seed=0),
+    ),
+    objective=Objective("shadowspill/cross_entropy@1"),
+    optimizer=Optimizer(
+        "mlops/adamw@1",
+        precision={"gradient_dtype": "float32", "opt_state_dtype": "float32",
+                   "master_dtype": "float32"},
+    ),
+    batch=BatchConfig(limits={
+        "token_capacity": 512,
+        "max_sequence_length": 128,
+        "max_sequences": 4,
+    }),
+    memory=Memory(4, 1),
+).result()
 ```
 
-The standard ZIP contains `manifest.json` plus the original phase archives for
-every requested capture, including recorded rejections. The manifest identifies
-each file, checksum, resolved configuration and required measured case. Programs,
-profiles, target memory calibration and communication measurements retain their
-existing formats for inspection and the CPU planning APIs. It contains no
-initialized training state or selected Plan bundle. The ordinary client needs
-only NumPy to download and inspect the manifest; native planning requires the
-optional engine installation. The export also describes the operation/count
-variants for CPU planning without installing the model package.
+| Argument | What you choose |
+| --- | --- |
+| `model` | The installed model, its configuration and initial weights. Here, a small Llama with random weights. |
+| `objective` | What training minimizes. Here, next-token cross entropy. |
+| `optimizer` | The update rule and its state. Here, AdamW with FP32 gradients, moments and master weights. Supply the learning rate on each update below. |
+| `batch` | Limits for one submitted batch. Here, up to four sequences, each at most 128 tokens, and 512 scheduled tokens in total. |
+| `memory` | GPU and spill budgets in GiB per worker. `Memory(4, 1)` means 4 GiB on the GPU and 1 GiB for spill. |
 
-`Preparation(external_headroom_bytes=768 << 20)` reserves additional GPU memory
-for each worker, using the existing profiler's headroom control. This reserve is
-included in fixed device overhead and the total device budget. Omission inherits
-the installed preset, then the engine default of 512 MiB; explicit zero is kept.
-The resolved setup records the value and its origin.
+The server builds, measures and selects a fitting execution plan, initializes
+weights and starts workers. `.result()` waits until the training client is ready.
+Do this once before the loop; each `step()` then supplies only a batch and any
+per-update settings. The [complete example](../examples/client-training.md) also
+sets the vocabulary size from your corpus and constructs its input batches.
 
-Pass `Preparation(reuse=prepared.reuse, ...)` with the desired preparation settings
-to reuse compatible measured cases in a new preparation or training run. For
-example, change device/spill budgets or schedule counts and initialize training
-from the original captures. Exact capture identities select reusable builds;
-profiling controls and worker headroom must also match to reuse measurements. Communication and
-overlap additionally require the same complete capture inventory and physical
-assignment within the same service allocation. Changed cases are prepared through
-the ordinary phases. The new run records its source and copied file checksums;
-phase workers recheck target/toolchain compatibility before planning. Reuse requires
-a completed preparation owned by the authenticated caller.
-
-With the optional CPU planner installed, load the export and submit selected
-schedules through the ordinary artifact and creation methods:
-
-```python
-from dataclasses import replace
-from shadowspill.training.preparation.local_planning import PlanningInputs
-
-# Keep the measured shapes/counts; choose initialization and budgets in setup.
-setup["prepare"] = replace(setup["prepare"], reuse=prepared.reuse)
-config = service.describe_training(**setup).result().config
-inputs = PlanningInputs.load("measured-inputs.zip")
-proposal = inputs.plan(config=config)
-reference = proposal.write("local-plans.ssp")
-uploaded = service.artifacts.upload("local-plans.ssp", reference=reference).result()
-training = service.create_training_client(config=config, plans=uploaded).result()
-```
-
-`inputs.sources[key].profiles` returns an editable copy. Pass edited copies as
-`profiles={key: costs}` and edited `CommunicationInfo` records as
-`communication={key: costs}` to `inputs.plan`. Changed task timing requires
-`metadata["duration_kind"] = "estimated"`; changed communication timing requires
-`metadata["timing_kind"] = "estimated"`. Resource-phase durations must still sum
-to the task duration. Original files and measured memory facts stay unchanged.
-Use `candidates=[...]` to select exported alternatives explicitly; omitted
-candidates cannot be recovered through hidden preparation or search.
-
-The proposal contains numeric profiles and schedule metadata, with no executable
-binaries. The server obtains code from the authenticated preparation, checks
-Program identity, schedule replay, input coverage and joint memory admission,
-then publishes the ordinary executable Plan bundle in `training.plans`. Timing
-edits and their measured values are retained as preparation evidence. That bundle
-uses the existing saved-Plan/checkpoint resume path. Local proposals currently
-require the same measured capture inventory and physical assignment in the same
-service allocation; new shapes/counts or target calibration need another export.
-
-After disconnecting, reconnect to the same session and call
-`service.get_preparation(pending.run_id).result()`. This only queries the original
-job; it never repeats measurement. A timeout or client disconnect leaves accepted
-server work running. Restarted unfinished jobs are reported as stopped.
+Python's `**settings` notation would expand a dictionary into these same named
+arguments. It is ordinary Python syntax, not an additional setup object or a
+required part of this API.
 
 ## Runtime operations
 
-Each call below returns a future. Setup has already selected the model, objectives,
-supported operations, input limits, precision and memory budgets; the runtime loop
-only supplies inputs, per-call controls and consumes results.
-
-| Method | Effect |
+| Call | What it does |
 | --- | --- |
-| `step(global_batch, optim=None, loss_params=None, grad_scale=1, outputs=None, runtime_trace=False)` | Forward, backward and one optimizer update; requires no open accumulation. |
-| `forward_backward(global_batch, loss_params=None, outputs=None, runtime_trace=False)` | Add this batch's gradients to the current accumulation, without an optimizer update. |
-| `optim_step(optim=None, grad_scale=1, runtime_trace=False)` | Apply the accumulated gradients once, then clear the accumulation. |
-| `forward(global_batch, outputs=None, mode="evaluation", loss_params=None, runtime_trace=False)` | Evaluate/predict without an optimizer update; evaluation mode preserves training state. |
-| `discard_gradients()` | End the current accumulation without applying an update. |
+| `training.step(batch, optim={"lr": 0.0003}).result()` | Forward, backward and one optimizer update. |
+| `training.forward_backward(batch).result()` | Accumulate gradients without updating weights. |
+| `training.optim_step(optim={"lr": 0.0003}).result()` | Apply accumulated gradients once. |
+| `training.forward(batch).result()` | Evaluate without updating training state. |
+| `training.save_checkpoint(name="latest").result()` | Save weights, optimizer state and progress. |
+| `training.close().result()` | Release the run's workers. |
 
-`global_batch` is a sequence of `Datum` records. Per-call controls are keyword-only.
-`optim` and `loss_params` override installed optimizer/objective defaults for this
-call. They do not rewrite the saved configuration. An objective may expose
-multiple named terms through `Objective.sum(...)`; its per-term controls retain
-their names. See [definitions and objective composition](definitions.md).
+A batch is a list of `Datum` records containing model inputs and objective inputs.
+For text, `text_datum(tokens)` creates aligned next-token inputs and targets.
+Tokenization stays in your application.
 
-Normalization is explicit. For an additive objective that sums one loss per
-record, either call `step(batch, grad_scale=1 / len(batch))`, or submit all pieces
-with `forward_backward(piece)` and then call
-`optim_step(grad_scale=1 / len(batch))`. Apply that final scale once for the complete
-update. For token-mean loss, use the total number of valid target tokens instead.
-The engine does not infer either denominator. Objectives with microbatch-dependent
-statistics, such as MoE balancing, can have different whole/split trajectories.
-Artificial padding is excluded from the balancing objective by default, while
-every scheduled padding position still counts toward the hard token cap.
+The setup chooses which compute operations are available. The default prepares
+`step`; see the [split-update example](advanced/training-workflow.md) to prepare
+backward accumulation and evaluation as well.
 
-All-masked work follows the objective's declared participation rules and can be
-skipped; zero-valued gradients from valid data still constitute an update. Finish
-an accumulation with `optim_step` or `discard_gradients` before starting a complete
-`step` or saving a checkpoint. Closing a run does not apply pending gradients.
+The completed result includes `loss`, `metrics` and `completed_updates`. Set the
+learning rate on each `step` or `optim_step` with `optim={"lr": ...}`; this can come
+from your learning-rate schedule. `forward_backward` only accumulates gradients
+and takes no learning rate. Optional `Optimizer(defaults=...)` values are fallbacks
+for omitted controls; a call's settings do not change the next call's defaults.
+Objective sums are
+not automatically averaged: use input weights or an explicit `grad_scale`. The
+text example supplies weights for a mean token loss.
 
-Other runtime methods are `save_checkpoint`, `export_weights`, `load_checkpoint`
-and ordered `close`, all returning futures. Input arrays and controls are copied
-before the submission returns. Bounded staging/pending counts
-apply backpressure, and snapshots that cannot fit fail promptly. Earlier pending
-requests become explicit dependencies, so a rejected backward contribution cannot
-be silently omitted from an already submitted optimizer update. A transport error
-blocks new submissions on that handle: inspect the saved IDs and explicitly
-reattach. `training.requests.status(id).result()` queries lifecycle state;
-`.get(id).result()` retrieves the original outcome without resubmission.
+Batch limits include scheduled padding. For example, a 128K-token cap cannot
+execute three 64K microbatches.
 
-`training.get_config()` returns the cached immutable configuration. Tensor results
-are handles in `result.outputs`; their `.download(path).result()` is explicit.
-The durable outcome remains in `result.record`. A `TrainingRequestError` preserves
-the server's failure record, including known execution effects and accumulation.
+## Save and resume
 
-`training.plans.summary().result()` reads saved metadata, including the selected
-operation/batch candidates and rank Plans, chunk/policy choices, representative
-inputs, coverage, memory and simulated timings. Each page contains at most 32
-rows and fits the same bounded metadata format. Continue explicitly with
-`.summary(page=result.next_page).result()` until `next_page` is `None`. Rows have
-a `kind` and immutable `values`. These reads do not load the full bundle, run the
-planner or issue a training operation; they remain available after worker close
-and server restart. `.plans.download(path).result()` explicitly exports the full
-bundle. Simulated durations are estimates for the recorded representative inputs,
-separate from observed training latency.
-
-`saved = training.plans.save(name="baseline").result()` gives the stored bundle
-a run-local name and returns an immutable Plan handle. It copies no weights or
-bundle data and does not enter the training queue. Plan names are independent
-of checkpoint names. Saving the same name again is idempotent.
-After reconnecting with the same `session_id`, retrieve it with
-`service.get_plans(run_id, name="baseline").result()`. Both operations work after
-worker close and service restart, without acquiring a writer or GPU. Pass the
-handle as `plans=saved` when creating another compatible training run; supply
-explicit initialization or a checkpoint as usual. Downloads remain explicit.
-
-An immutable artifact reference can be attached to the current connection with
-`service.artifact(reference)`. Its `.download(local_path).result()` streams and
-verifies bytes into a new local file. Existing files are preserved; a failed
-transfer removes its partial destination. Tensor data is never implicitly loaded
-by a metadata result.
-
-`training.metrics.query(after=0, limit=100).result()` reads retained scalar outcomes
-without contacting workers. `service.get_metrics(run_id, ...)` provides the same
-inspection after reconnect or service restart, without loading a training client.
-Each record has its request identity, history, completed update count, loss and
-objective metrics. Skipped and failed requests remain visible. If required tensor
-publication fails after scalar collection, the terminal failure and metric history
-retain the verified loss and metrics alongside the confirmed execution effect and
-counters. Unavailable scalars stay absent, including a crash before the terminal
-record commits. Queries preserve the collected values and perform no averaging.
-
-Pages contain `records`, a fixed journal boundary `through`, and an optional
-`next_cursor`. Follow `next_cursor` while keeping the same `through` to finish that
-snapshot. For a later live poll, start after the completed snapshot's `through`.
-Cursors follow durable completion order, so an earlier submitted request that
-finishes later is still returned. Restored update counters may go backward;
-journal positions remain increasing and histories stay distinct. Page limits are
-1–128 records and the existing metadata byte/node bounds can shorten a page.
-Inputs and tensor outputs are not downloaded or logged by this query.
-
-`training.metrics.export_jsonl("metrics.jsonl").result()` streams a fixed snapshot
-to a new local file. The first line is a portable `MetricSnapshot` record naming
-the run and journal range; subsequent lines are `MetricRecord` values. Use
-`shadowspill_client.protocol.codec.decode` to read each line. Optional `after`,
-`through` and `limit` have the same meanings as the query. Export keeps one bounded
-page in memory, preserves existing files and removes its incomplete destination
-on failure. Later results do not change the chosen snapshot; another explicit
-export can start after its `through` boundary.
-
-Record evaluation or reward scalars with
-`training.log_metrics({"eval/reward": reward}, request_id=result.request_id).result()`.
-The request must already have a completed, skipped or failed outcome. The saved
-annotation keeps that request's original history and update count, even if the run
-has since restored an earlier checkpoint. Queries and JSONL include these entries
-with `source="caller"`; automatic measurements use `source="engine"`. Caller
-values cannot replace engine values or supply objective loss.
-
-Annotations have their own journal positions, so late metrics appear in later
-polls without changing earlier snapshots. Identical values for the same request
-have a stable annotation ID; explicitly repeating the call after a lost reply is
-idempotent. An optional `metric_id` names an immutable annotation within that
-request and rejects different values under the same ID. Each call accepts up to
-128 finite numeric scalars with names of at most 256 characters. This metadata
-operation works after worker close or restart, including through a read-only
-training handle, and requires the authenticated run owner. It does not submit a
-training operation, change counters or contact a tracker.
-
-`summary = training.report(format="html").result()` creates a stored summary of
-the retained loss, metrics, request outcomes and history/update identities.
-`summary.download("training.html").result()` explicitly downloads it; `format="json"`
-produces a structured version. Both include the fixed snapshot and saved Plan
-reference and preserve caller annotations separately from engine measurements.
-Report creation works after worker close or service restart and never executes a
-model. Its `after` and `through` arguments use the metric query boundaries.
-
-Reports default to limits of 10,000 records and 64 MiB. The byte ceiling is admitted
-against available artifact storage before rendering. Exceeding either limit fails
-without publishing a partial report; choose an explicit smaller range or increase
-`max_records` (up to 100,000) and `max_bytes` (up to 1 GiB). Repeating identical
-settings for the same fixed snapshot retrieves the same immutable artifact.
-
-For large files, use `artifact.download(local_path, resume=True).result()` from
-the first attempt. An interrupted transfer retains bounded progress metadata and
-partial bytes in `<local_path>.shadowspill-download`. After reconnecting, attach
-the same reference with `service.artifact(reference)` and explicitly repeat the
-download with `resume=True`. The client verifies the retained prefix before
-requesting the remaining bytes and checks the complete file checksum before
-publishing the destination. No exchange retries automatically. Changed references,
-corrupt prefixes and concurrent writers are rejected; existing destination files
-are preserved. The client removes its partial directory after success.
-
-A checkpoint save occupies the same ordered stream as training. Finish an open
-accumulation with `optim_step` or `discard_gradients` first. Later updates wait for
-the complete checkpoint to commit; a completed save does not increment the update
-counter. Reusing `name` updates a run-local alias while preserving older generations.
+Save at a completed update boundary, then reuse the saved Plans and checkpoint:
 
 ```python
-pending = training.save_checkpoint(name="step-50", metadata={"data_cursor": 50})
-checkpoint = pending.result()
-print(checkpoint.id)
-manifest = checkpoint.manifest().result()  # Small verified metadata only.
-restored = training.load_checkpoint(checkpoint.id).result()
-print(restored.metadata["data_cursor"])
-training.close().result()
-checkpoint.download("./step-50").result()  # New local directory, after worker exit.
-```
-
-`training.close().result()` waits for ordered worker shutdown and release of the
-run's owned resources, so a new run can immediately request that capacity. A
-timeout stops only the caller's wait. The accepted close is neither cancelled nor
-resubmitted; its durable request status can report completion while the close
-future is still waiting for resource cleanup.
-
-`weights="master"` is the default; `weights="compute"` selects compute-precision
-values under the existing checkpoint reconstruction rules. Caller metadata is
-frozen before submission and returned in the manifest. The save future preserves
-its request identity and `.accepted()` observation. Request lookup exposes the
-same handle as `training.requests.get(request_id).result().checkpoint`.
-
-`training.export_weights(name="inference").result()` returns a separate
-`WeightsHandle` for inference or adapters. It uses the same ordered completed-update
-boundary, authoritative `weights="master"`/`"compute"` selection, metadata ownership
-and atomic rank publication. It reads only model weights and persistent buffers;
-optimizer, gradient, RNG and execution-temporary payloads are excluded. Verified
-unchanged frozen parameters are represented by the exact base dependency. Modified
-frozen state remains in the export; without known base provenance all model weights
-are retained.
-
-The supported `format="shadowspill"` records logical tensor names, tied views and
-owned shard coordinates. Other formats currently fail before worker execution;
-installed external-format exporters remain under implementation. The result has
-`.manifest()` and explicit `.download(path, resume=True)` methods, and a downloaded
-directory can be copied with `service.artifacts.upload(...)`. It can be inspected
-after workers close. Request lookup exposes `.weights`, while `.checkpoint` is
-absent. An inference export cannot be passed to `load_checkpoint` or used for
-optimizer resume.
-
-Use an owned export as `Model(..., initialize=Weights.artifact(weights.id))` to
-start fresh training from its model values. The server checks its dependencies,
-maps the saved tensors to the new Plans and verifies every worker's archive before
-initialization. Optimizer moments, gradient buffers and controls use fresh defaults;
-RNG streams use the new run's `Execution.seed`, and its update count starts at zero.
-Partial exports retain their exact frozen-base dependency. Complete exports need
-no historical weight source. Derived buffers, such as rotary position tables,
-are recreated from the installed model definition. Custom artifact formats still
-use the installed model's initializer.
-
-For the same computation, reuse the saved Plans and change only initialization:
-
-```python
-from dataclasses import replace
-from shadowspill_client import Weights
-
-weights = training.export_weights().result()
+checkpoint = training.save_checkpoint(name="latest").result()
 plans = training.plans
-config = training.get_config()
-config = replace(config, model=replace(
-    config.model, initialize=Weights.artifact(weights.id)
-))
 training.close().result()
-fresh = service.create_training_client(config=config, plans=plans).result()
+
+training = service.create_training_client(
+    plans=plans, checkpoint=checkpoint,
+).result()
 ```
 
-`load_checkpoint` accepts an immutable ID or run-local name. Ordered acceptance
-pins the name to an immutable checkpoint, exposed by the future's
-`accepted().result().checkpoint`; moving the name later cannot retarget the load.
-The server checks the complete rank set and dependencies, verifies delivered files,
-and validates every worker's native state layout before releasing any restore.
-An open accumulation must be optimized or discarded first. A confirmed load
-restores the saved update count and starts a new history while request sequences
-continue increasing. `result.metadata` contains the saved caller metadata.
-Validation failure preserves state; failure after worker release invalidates it.
-Publication failure reports the confirmed restore count and history without replay.
+Checkpoints stay in service storage. Use `checkpoint.download("./checkpoint").result()`
+for a local copy. Close the training client when finished, then close the service
+connection. Closing a connection alone does not stop a run.
 
-Directory download verifies each immutable rank file, streams serially and writes
-`manifest.json` after the rank files. It does not overwrite existing destinations.
-A failed download leaves the committed server checkpoint available and does not
-repeat training or saving. Plans and frozen-base dependencies are separate
-artifacts; downloading the checkpoint does not implicitly copy them. Saves omit
-frozen parameters only when every prepared Plan proves their storage unchanged.
-The manifest's `info.frozen_base` records the exact resolved initializer, installed
-model source and optional weights artifact. Trainable weights, persistent buffers
-and mutated frozen storage remain in the rank files. Restore checks this identity
-and required artifacts before starting work, then fills only omitted parameters
-through the installed bounded loader. Later saves use the restored base identity;
-loading a full checkpoint clears omission provenance. In-place restore requires compatible native
-state ownership. New-run resume can convert compatible logical state into a new
-Plan family before starting workers; preparation reports a `converting` stage.
-The run keeps the selected source in `parent_checkpoint` and records the actual
-startup artifact in `initial_checkpoint`. Converted manifests record their source
-checkpoint, source Plans, logical state identity and conversion version. Conversion
-preserves optimizer state and weight selection, and rejects incompatible state.
-Worker checkpoints also retain Python, NumPy and Torch default generator state.
-Fresh runs initialize those streams from `Execution.seed`; restores use the saved
-seed and state. Evaluation and fully masked read-only calls advance separate
-evaluation streams, leaving training randomness unchanged. Compatible conversion
-preserves each matching logical stream. New streams use versioned seed derivation
-from the saved seed, restore identity and logical stream, recorded in
-`manifest.info.conversion.randomness`. Physical GPU identity does not affect seeds.
-Custom model-owned generators still require explicit registered state support.
-
-`checkpoint.download(path, resume=True)` retains an incomplete directory with its
-checkpoint identity and completed/partial rank files. Repeat the call explicitly
-after reconnecting. Completed ranks are verified locally and need no second
-download; partial ranks use the same verified suffix transfer. `manifest.json`
-appears only after every rank is complete. A directory with unrelated content or
-a completed manifest is preserved and rejected as a new destination. Default
-`resume=False` keeps the existing behavior of removing this attempt's incomplete
-copy. File locking currently targets the Linux and macOS client platforms; Linux
-qualification is recorded separately from the outstanding macOS release gate.
-
-Upload a local file or downloaded checkpoint directory with
-`service.artifacts.upload(path).result()`. The returned handle refers to a saved
-artifact; uploading does not start workers or restore training state. File paths
-refer to the laptop. Keep the files unchanged until the future finishes.
-
-Uploads send bounded chunks and retain verified progress on the server. After a
-failed connection, call `upload` again explicitly, including from a new client.
-It verifies the retained prefix and continues from the acknowledged offset;
-exchanges are never retried automatically. A checkpoint directory keeps its exact
-rank references and registers its manifest after every rank is committed. Completed
-files are verified locally on retry and need no second upload.
-
-```python
-copied = other_service.artifacts.upload("./step-50").result()
-
-# Copy setup dependencies explicitly, preserving their recorded identities.
-for reference in (manifest.info.configuration, manifest.info.plans):
-    path = f"./dependencies/{reference.id}"  # Existing local parent directory.
-    service.artifact(reference).download(path).result()
-    other_service.artifacts.upload(path, reference=reference).result()
-```
-
-Use `reference=...` when an existing manifest refers to that immutable artifact
-ID, or to preserve the original checkpoint ID. Without it, standalone files use
-a content-derived ID. Copying a checkpoint alone does not copy configuration,
-Plans or a frozen base. Missing setup dependencies are reported before workers
-start. Upload registration verifies file checksums and the complete rank set;
-normal setup/restore still checks executable Plans and tensor compatibility.
-For native resume with the copied Plans, `create_training_client(plans=plans,
-checkpoint=copied)` reads defaults from the checkpoint's recorded configuration;
-generated Plan summary pages do not need to be copied. Selecting different target
-Plans uses their saved configuration, or the explicit `config` supplied by the
-caller.
-
-Pass `runtime_trace=True` to a compute call to record that invocation. Its
-`result.traces` contains downloadable ZIP handles, one per participating worker.
-Each archive contains a request/Plan/rank/update association in `manifest.json`,
-the existing `step.json` diagnostic view, and its `step.events.npz` event columns.
-The artifacts remain downloadable after the training client closes.
-
-Optional trace assembly or publication failures appear in
-`result.artifact_issues`; a confirmed update still succeeds and must not be
-repeated. Required execution or cleanup failures retain their ordinary failure
-semantics. A skipped optimizer with no Plan produces a trace issue explaining
-that no invocation ran. Tracing is opt-in and its overhead belongs to that call.
-
-Configure Nsight at creation with
-`Execution(nsys={"start_step": 2, "steps": 2, "gpu_metrics": False})`.
-The one-based window counts complete optimizer updates. For split training it
-starts at the first contributing `forward_backward` and ends after the selected
-terminal `optim_step`; evaluation between contributions stays inside the window.
-Masked calls do not advance the count. Capture does not restart after a restore
-or interrupted window. Device metrics default to enabled and require support and
-permission on the assigned GPU; `gpu_metrics_frequency` selects their rate.
-Omitting `nsys` launches ordinary workers without a collector.
-
-`capture = training.nsys(rank=0).result()` reads bounded per-rank metadata.
-`capture.record.status` is `pending`, `ready`, `failed` or `missing`; its `window`
-records selected/completed updates, history and first/last request IDs. Native
-reports finalize after worker exit, so a completed selected update can still have
-pending report status. After `training.close().result()`, query until finalization
-finishes. A ready report requires both complete worker evidence and successful
-collector exit. If `capture.report` is present,
-`capture.report.download("rank-0.nsys-rep").result()` explicitly downloads verified
-native bytes. Failed captures may retain a partial report, identified by their
-status and error. Capture publication failure does not repeat completed training.
-
-After reconnecting with the same session, use
-`service.get_nsys(run_id, rank=0).result()`. Final manifests and reports survive
-worker close and service restart. A terminal run with only a pending record is
-reported as missing finalization. These reads need no writer or live worker.
-The deployment installs Nsight and provides collector host, disk and finalization
-allowances through `ServerLimits.creation.nsys`; client settings contain no
-server paths or executable names. Captured timings include profiler overhead.
-
-Service base omission remains under implementation. Qualification evidence and
-remaining hardware coverage are tracked separately from this API contract.
-
-The [regression application](../../examples/training/regression/README.md) supplies
-global NumPy batches to one or more service workers, with whole or split updates
-and explicit checkpoint resume. Its setup module owns the generic DP declaration;
-the training loop needs only a ready client, inputs and results.
+A wait timeout does not cancel or repeat an update. If the connection is lost,
+[reconnect and inspect the original request](advanced/service-client.md#saved-plans-and-reconnect).
+See [advanced usage](advanced/README.md) for full operation options, custom
+objectives, preparation tuning and artifact management.

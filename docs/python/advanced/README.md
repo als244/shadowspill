@@ -1,9 +1,16 @@
 # Advanced guides
 
-Start with [supported training](../../../packages/workloads/src/shadowspill_workloads/recipes/README.md) or the
-[custom-model guide](../custom-models.md). These pages cover optional controls,
-detailed diagnostics and extensions. Exact signatures and defaults live in the
-[Python API reference](../README.md#api-reference).
+Start with the [basic training example](../../examples/client-training.md).
+These guides cover optional controls, custom models and detailed diagnostics.
+
+## Training through the service
+
+| Task | Guide |
+| --- | --- |
+| Accumulate gradients, evaluate and resume | [Complete workflow](training-workflow.md) |
+| Tune preparation, reuse Plans or reconnect | [Service client reference](service-client.md) |
+| Supply a model or objective | [Definition hooks](definitions.md) |
+| Work directly with build/profile/plan/execute | [Phase guide](../phases.md), [custom models](../custom-models.md) |
 
 ## Tune training and search
 

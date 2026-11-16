@@ -1,155 +1,115 @@
-# Public client training and resume
+# Train on a tokenized corpus
 
-This complete example separates setup from training calls. It uses the supplied
-small regression model so the client needs only Python 3.12+ and NumPy, with no
-tokenizer, model weights or training framework installed locally. The same
-`ServiceClient` / `TrainingClient` interface serves installed text and custom
-models. See [current coverage](../python/client.md#current-coverage) for qualification
-limits and the remaining migration work.
+This example trains a small Llama model from scratch. The GPU machine runs the
+service; the client reads token IDs, submits batches and saves a checkpoint.
 
-## Start the server
+## Start the service
 
-Use the configured GPU environment on Chicago or another training host, with the
-engine, workloads and their MLOps provider installed. Set `SHADOWSPILL_TOKEN` to the
-same credential on server and client. Start this once in the assigned allocation:
+Install the engine, workloads and MLOps provider using the
+[server setup instructions](../development/repository.md#setup). Set
+`SHADOWSPILL_TOKEN` to the same credential on server and client, then run this
+on the GPU machine:
 
 ```python
 from shadowspill.server import Allocation, Server
 
-server = Server(
+Server(
     allocation=Allocation.from_environment(),
-    storage_root="/path/to/service-data",
+    storage_root="runs/service",
     workload_packages=["shadowspill", "shadowspill-workloads"],
-)
-server.serve(host="127.0.0.1", port=8000)
+).serve(host="127.0.0.1", port=8000)
 ```
 
-The server uses the existing build/profile/plan/execute engine. It discovers the
-assigned local devices and owns worker launch, initialization and cleanup. It
-does not request a scheduler allocation. This example uses the default local worker.
-The [connection reference](../python/client.md#connection-and-setup) describes
-deployment limits and the current single-node restriction.
+Use an existing GPU allocation. The service manages its workers.
 
-## Define client settings and inputs
+## Prepare the data
 
-Install the client from `packages/client` or its built wheel on the client host.
-The commands use an existing OpenSSH alias `chicago`; a local client can instead
-use `ServiceClient(base_url="http://127.0.0.1:8000")`.
+On the client, install `./packages/client`. Put your tokenized corpus in
+`data/train.bin` as a flat array of uint32 token IDs, with vocabulary size in
+`data/meta.json`, for example `{"vocab_size": 32000}`. Use the same tokenizer
+throughout the corpus. This example needs at least 2,580 tokens.
 
-Put the following two client blocks in one Python script. Setup owns model,
-objective, optimizer, batch and memory choices. `prepare_run` returns a ready
-client; the runtime section below has no build or worker initialization code.
+Save the following two blocks together as `train.py`. Replace `training-host`
+with your SSH alias for the GPU machine.
 
 ```python
+import json
+from pathlib import Path
+
 import numpy as np
 
 from shadowspill_client import (
-    SSH, BatchConfig, BuildCandidates, Datum, Memory, Model, Objective,
-    Optimizer, PlanningOptions, Preparation, ServiceClient, Weights,
+    SSH, BatchConfig, Memory, Model, Objective, Optimizer, ServiceClient, Weights,
 )
+from shadowspill_client.text import text_datum
 
-setup = dict(
-    model=Model("shadowspill/regression@1", initialize=Weights.random(seed=0)),
-    objective=Objective("shadowspill/weighted_squared_error@1"),
-    optimizer=Optimizer(
-        "mlops/adamw@1",
-        defaults={"lr": 0.001},
-        precision={"gradient_dtype": "float32", "opt_state_dtype": "float32"},
-    ),
-    batch=BatchConfig(limits={"max_examples": 8}),
-    memory=Memory(4, 1),  # Device and spill budgets in GiB per worker.
-    operations={
-        "step": ["metrics"],
-        "forward_backward": ["metrics"],
-        "forward": ["predictions"],
-    },
-    prepare=Preparation(
-        candidates=BuildCandidates(microbatch_sizes=[4, 8]),
-        planning=PlanningOptions(microbatch_counts=[1, 2]),
-    ),
-)
+vocab_size = json.loads(Path("data/meta.json").read_text())["vocab_size"]
+tokens = np.memmap("data/train.bin", dtype=np.uint32, mode="r")
+sequence_length, sequences_per_step, steps = 128, 4, 5
+window = (sequence_length + 1) * sequences_per_step
+if len(tokens) < steps * window:
+    raise ValueError(f"The corpus needs at least {steps * window} tokens.")
 
 
-def prepare_run(service):
-    preview = service.describe_training(**setup).result()
-    print(preview.summary())
-    return service.create_training_client(config=preview.config).result()
+def prepare_training(service):
+    return service.create_training_client(
+        model=Model(
+            "shadowspill/llama3@1",
+            config={"preset": "tiny", "architecture": {
+                "vocab_size": vocab_size, "max_seq_len": sequence_length,
+            }},
+            initialize=Weights.random(seed=0),
+        ),
+        objective=Objective("shadowspill/cross_entropy@1"),
+        optimizer=Optimizer(
+            "mlops/adamw@1",
+            precision={"gradient_dtype": "float32", "opt_state_dtype": "float32",
+                       "master_dtype": "float32"},
+        ),
+        batch=BatchConfig(limits={
+            "token_capacity": sequence_length * sequences_per_step,
+            "max_sequence_length": sequence_length,
+            "max_sequences": sequences_per_step,
+        }),
+        memory=Memory(4, 1),  # GPU and spill budgets in GiB per worker.
+    ).result()
 
 
-def make_batch(seed):
-    values = np.random.default_rng(seed).normal(size=(8, 16)).astype(np.float32)
+def make_batch(step):
+    start = step * window
+    weight = 1 / (sequence_length * sequences_per_step)
     return [
-        Datum(inputs={"value": row}, loss_inputs={"targets": row[:8] * 0.5})
-        for row in values
+        text_datum(tokens[offset:offset + sequence_length + 1], weights=weight)
+        for offset in range(start, start + window, sequence_length + 1)
     ]
 ```
 
-The model schema requires 16 input features and 8 targets per record. The objective
-sums squared error over the 8 targets and then over records. Scaling by `1 / 8`
-below therefore gives the mean of the per-record squared-error sums. No batch or
-token normalization happens implicitly.
+Setup selects the model, objective and memory limits. The input weights make each
+update's loss the mean over its 512 target tokens. Preparation and worker setup
+finish before the loop below starts.
 
-The batch limit includes scheduled padding. A candidate scheduling two physical
-microbatches of 8 exceeds `max_examples=8` and is excluded; specifying counts does
-not relax the cap. Preparation measures supported candidates and selects fitting
-Plans. Omit `prepare` to use installed defaults instead.
-
-## Submit updates and resume
+## Train and save
 
 ```python
-with ServiceClient(ssh=SSH("chicago", 8000)) as service:
-    training = prepare_run(service)
+with ServiceClient(ssh=SSH("training-host", 8000)) as service:
+    training = prepare_training(service)
     try:
-        # First update: one complete call with a global batch.
-        first_batch = make_batch(0)
-        result = training.step(first_batch, grad_scale=1 / 8).result()
-        print(result.completed_updates, result.loss)
-
-        # Second update: unequal backward contributions, then one optimizer call.
-        second_batch = make_batch(1)
-        training.forward_backward(second_batch[:3]).result()
-        training.forward_backward(second_batch[3:]).result()
-        result = training.optim_step(grad_scale=1 / 8).result()
-        print(result.completed_updates, result.loss)
-
-        evaluation = training.forward(
-            [Datum(inputs=row.inputs) for row in second_batch],
-            outputs="predictions",
-        ).result()
-        print(evaluation.outputs["prediction"].reference)
-        # Tensor downloads are explicit; metadata inspection does not fetch them.
-
+        for step in range(steps):
+            result = training.step(make_batch(step), optim={"lr": 0.0003}).result()
+            print(f"Update {result.completed_updates}: loss={result.loss:.4f}")
         checkpoint = training.save_checkpoint(
-            name="after-two", metadata={"next_data_seed": 2},
+            name="latest", metadata={"next_data_step": steps},
         ).result()
-        plans = training.plans
+        print("Checkpoint:", checkpoint.id)
     finally:
         training.close().result()
-
-    # Reuse saved Plans and restore weights, optimizer state and update count.
-    resumed = service.create_training_client(
-        plans=plans, checkpoint=checkpoint,
-    ).result()
-    try:
-        result = resumed.step(make_batch(2), grad_scale=1 / 8).result()
-        print(result.completed_updates)  # 3
-    finally:
-        resumed.close().result()
 ```
 
-Input values can change within the admitted schema and limits. Every submission
-returns a future; `.result()` waits for completion. A wait timeout does not cancel
-or repeat a training operation. Save the creation/request IDs for reconnect and
-query the original outcome after an uncertain connection failure. See the
-[client reference](../python/client.md) for recovery, downloads and saved Plans.
+Run `python train.py`. The first setup builds and measures the model; subsequent
+calls submit inputs to ready workers. The checkpoint stays in service storage.
 
-`training.close().result()` releases that run's workers. Closing `ServiceClient`
-only closes the connection; it does not stop an accepted training run.
-
-For text training, use the [Llama application](../../examples/training/llama3/README.md),
-[Qwen3 application](../../examples/training/qwen3.md) or
-[Qwen3.5 LoRA application](../../examples/training/qwen35_lora.md). Their shared
-setup/runtime helpers and corpus code sit outside the model implementations.
-For a new architecture, implement the public
-[model and objective definitions](../python/definitions.md); the engine does not
-require the supplied catalog.
+Next, [resume from a checkpoint](../python/client.md#save-and-resume), use the
+[Llama corpus application](../../examples/training/llama3/README.md) for longer runs,
+or follow the [advanced example](../python/advanced/training-workflow.md) for split
+updates and evaluation. [Custom definitions](../python/advanced/definitions.md) use the
+same client interface.
