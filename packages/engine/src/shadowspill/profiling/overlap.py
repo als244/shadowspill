@@ -13,6 +13,7 @@ from shadowspill.artifacts._values import digest, plain
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.artifacts.profiles import Profiles, TaskProfile
+from shadowspill.artifacts.program import Program
 from shadowspill.artifacts.tasks import stage_jobs
 from shadowspill.communication.binding.backend import shared_backend_setup
 from shadowspill.communication.binding.groups import GroupBindings
@@ -38,6 +39,35 @@ from .overlap_probe import (
 from .session import MeasurementSession
 
 
+def _probe_identity(
+    program: Program,
+    routes: Sequence[OverlapRoute],
+    jobs: Sequence[Mapping[str, Any]],
+    *,
+    stages: Sequence[int] | None,
+    trials: int | None,
+) -> str:
+    # Structural form keys precede rank-local kernel finalization. Workers
+    # probe the same task/transfer sequence, but may select different binaries
+    # for a form. Exact local binaries remain part of task_identities and the
+    # returned TaskProfile, so measurements never qualify another implementation.
+    return digest(
+        {
+            "forms": [
+                definition.profile_key for definition in program.task_definitions
+            ],
+            "jobs": plain(jobs),
+            "setup": plain(program.setup),
+            "routes": [
+                (route.timing_class, route.bytes, [r.to_dict() for r in route.requests])
+                for route in routes
+            ],
+            "stages": None if stages is None else list(stages),
+            "trials": trials,
+        }
+    )
+
+
 def measure_overlap(
     profiled_program: ProfiledProgram,
     communication_info: CommunicationInfo,
@@ -52,8 +82,10 @@ def measure_overlap(
     """Return a Profiles overlay; original timing/memory evidence stays intact.
 
     Call on every participant after communication calibration. Saved task forms
-    must agree across workers. Merge with ``profiled_program.profiles``, then
-    ``apply_profiles`` before planning. No build, runtime pool or training-step
+    and their probe order must agree across workers; finalized binaries and
+    measurement/cache identities remain local. Merge with
+    ``profiled_program.profiles``, then ``apply_profiles`` before planning.
+    No build, runtime pool or training-step
     timing is used. Small/middle/large actual transfer sizes bound each probe.
 
     Communicating model tasks, insufficient free device memory and statistically
@@ -79,7 +111,8 @@ def measure_overlap(
         }
         return result
     requests = collective_requests(program, None)
-    target, failure = None, None
+    target, failure, identity = None, None, ""
+    jobs: list[dict[str, Any]] = []
     try:
         if trials is not None and (type(trials) is not int or trials < 1):
             raise ValueError("overlap trials must be a positive integer or None")
@@ -97,23 +130,14 @@ def measure_overlap(
             raise ValueError(
                 "overlap measurement needs rendezvous at the Program world size"
             )
+        jobs = list(stage_jobs(program, stages))
+        identity = _probe_identity(program, routes, jobs, stages=stages, trials=trials)
     except Exception as error:
         if not dist.is_initialized():
             raise
         failure = str(error)
     groups = GroupBindings(
-        identity=digest(
-            {
-                "forms": [
-                    (d.profile_key, d.compatibility_digest)
-                    for d in program.task_definitions
-                ],
-                "setup": plain(program.setup),
-                "routes": [(r.timing_class, r.bytes) for r in routes],
-                "stages": None if stages is None else list(stages),
-                "trials": trials,
-            }
-        ),
+        identity=identity,
         groups=[r.ranks for r in requests],
         rank_map=rank_map,
         topology=communication_info.topology,
@@ -156,7 +180,6 @@ def measure_overlap(
                 cache=cache,
                 communication_reserve_bytes=communication_info.fixed_device_bytes or 0,
             )
-            jobs = list(stage_jobs(program, stages))
             session.reuse_overlaps(jobs, backend)
             if session.cache_misses or cache is None or not session.overlap_cache:
                 preparations.add(program, tuple(program.executables))
