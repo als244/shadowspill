@@ -1,12 +1,17 @@
 """Private CPU preparation records; never accepted by the public HTTP API."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Literal
 
+from shadowspill.artifacts._values import digest
 from shadowspill_client._records import Record, integer, record, text
-from shadowspill_client.protocol.checkpoints import CheckpointManifest, SaveInfo
+from shadowspill_client.protocol.checkpoints import (
+    CheckpointManifest,
+    SaveInfo,
+    WeightsManifest,
+)
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .checkpoint_records import RankSave, RankSaved
@@ -14,8 +19,8 @@ from .checkpoint_records import RankSave, RankSaved
 
 @dataclass(frozen=True)
 class ConversionRequest(Record):
-    checkpoint: ArtifactRef
-    source: CheckpointManifest
+    artifact: ArtifactRef
+    source: CheckpointManifest | WeightsManifest
     plans: ArtifactRef
     configuration: ArtifactRef
     files: Mapping[str, str]
@@ -24,12 +29,26 @@ class ConversionRequest(Record):
 
     def __post_init__(self) -> None:
         for name, kind in (
-            ("checkpoint", ArtifactRef),
-            ("source", CheckpointManifest),
+            ("artifact", ArtifactRef),
             ("plans", ArtifactRef),
             ("configuration", ArtifactRef),
         ):
             object.__setattr__(self, name, record(kind, getattr(self, name), name))
+        source = self.source
+        weights = isinstance(source, WeightsManifest) or (
+            isinstance(source, Mapping)
+            and isinstance(source.get("info"), Mapping)
+            and source["info"].get("kind") == "weights"
+        )
+        object.__setattr__(
+            self,
+            "source",
+            record(WeightsManifest, source, "source")
+            if weights
+            else record(CheckpointManifest, source, "source"),
+        )
+        if self.artifact.media_type != self.source.info.media_type:
+            raise ValueError("conversion source kind differs from its artifact")
         expected = {
             self.source.info.plans.id,
             self.plans.id,
@@ -56,11 +75,11 @@ class ConversionPrepared(Record):
     files: int
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "info", record(SaveInfo, self.info, "checkpoint")
-        )
+        object.__setattr__(self, "info", record(SaveInfo, self.info, "checkpoint"))
         ranks = tuple(record(RankSave, row, "rank") for row in self.ranks)
-        if tuple(row.rank for row in ranks) != tuple(range(self.info.world_size)):
+        if tuple(row.rank for row in ranks) != tuple(
+            range(self.info.world_size)
+        ) or any(row.kind != self.info.kind for row in ranks):
             raise ValueError("conversion requires every target rank in order")
         object.__setattr__(self, "ranks", ranks)
         integer(self.temporary_bytes, "conversion disk bytes")
@@ -95,3 +114,27 @@ class ConversionFailed(Record):
     def __post_init__(self) -> None:
         if len(text(self.message, "conversion failure")) > 2048:
             raise ValueError("conversion failure exceeds its bound")
+
+
+def weights_conversion_info(request: ConversionRequest, world_size: int) -> SaveInfo:
+    """Immutable initialization provenance, without checkpoint resume metadata.
+
+    The source update count remains export provenance. Creating workers from this
+    generation starts a fresh run; no optimizer or RNG state is synthesized here.
+    """
+    if not isinstance(request.source, WeightsManifest):
+        raise ValueError("weights initialization requires a weights generation")
+    identity = digest(
+        {
+            "source": request.artifact.to_dict(),
+            "plans": request.plans.to_dict(),
+            "configuration": request.configuration.to_dict(),
+        }
+    )
+    return replace(
+        request.source.info,
+        request_id="initialization-" + identity,
+        world_size=world_size,
+        configuration=request.configuration,
+        plans=request.plans,
+    )

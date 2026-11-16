@@ -24,6 +24,7 @@ from shadowspill.training.worker.conversion_records import (
     ConversionPrepared,
     ConversionRequest,
     ConversionWritten,
+    weights_conversion_info,
 )
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.checkpoints import CheckpointConversion
@@ -33,52 +34,63 @@ from shadowspill_client.protocol.training import ResolvedTraining
 from .artifacts import ArtifactStore
 from .checkpoint_restore import CheckpointResolver
 from .checkpoints import publish_checkpoint
+from .weights_initialization import ResolvedWeights, resolve_weights
 
 
 def _description(
     request: ConversionRequest, value: object, world_size: int
 ) -> ConversionPrepared:
     if isinstance(value, ConversionFailed):
-        raise ValueError("checkpoint conversion failed: " + value.message)
+        raise ValueError(
+            request.source.info.kind + " conversion failed: " + value.message
+        )
     if not isinstance(value, ConversionPrepared):
         raise RuntimeError("checkpoint preparation ended without a description")
-    conversion = value.info.conversion
-    if conversion is None:
-        raise ValueError("checkpoint conversion has no immutable provenance")
-    expected = CheckpointConversion(
-        request.checkpoint, request.source.info.plans, conversion.logical_state_sha256
-    )
-    identity = digest(
-        {
-            "conversion": expected.to_dict(),
-            "plans": request.plans.to_dict(),
-            "configuration": request.configuration.to_dict(),
-        }
-    )
-    if conversion.randomness is not None:
-        if (
-            conversion.randomness.get("version") != 1
-            or conversion.randomness.get("restore_id") != identity
-            or any(
-                rank.randomness is None
-                or rank.randomness.get("root_seed")
-                != conversion.randomness.get("root_seed")
-                for rank in value.ranks
-            )
+    if request.source.info.kind == "weights":
+        if value.info != weights_conversion_info(request, world_size):
+            raise ValueError("weights conversion changed its source or target")
+    else:
+        conversion = value.info.conversion
+        if conversion is None:
+            raise ValueError("checkpoint conversion has no immutable provenance")
+        expected = CheckpointConversion(
+            request.artifact, request.source.info.plans, conversion.logical_state_sha256
+        )
+        identity = digest(
+            {
+                "conversion": expected.to_dict(),
+                "plans": request.plans.to_dict(),
+                "configuration": request.configuration.to_dict(),
+            }
+        )
+        if conversion.randomness is not None:
+            if (
+                conversion.randomness.get("version") != 1
+                or conversion.randomness.get("restore_id") != identity
+                or any(
+                    rank.randomness is None
+                    or rank.randomness.get("root_seed")
+                    != conversion.randomness.get("root_seed")
+                    for rank in value.ranks
+                )
+            ):
+                raise ValueError(
+                    "RNG conversion differs from its stable restore identity"
+                )
+            expected = replace(expected, randomness=conversion.randomness)
+        elif any(rank.randomness is not None for rank in value.ranks):
+            raise ValueError("converted random streams require mapping provenance")
+        if value.info != replace(
+            request.source.info,
+            request_id="conversion-" + identity,
+            world_size=world_size,
+            configuration=request.configuration,
+            plans=request.plans,
+            conversion=expected,
         ):
-            raise ValueError("RNG conversion differs from its stable restore identity")
-        expected = replace(expected, randomness=conversion.randomness)
-    elif any(rank.randomness is not None for rank in value.ranks):
-        raise ValueError("converted random streams require mapping provenance")
-    if value.info != replace(
-        request.source.info,
-        request_id="conversion-" + identity,
-        world_size=world_size,
-        configuration=request.configuration,
-        plans=request.plans,
-        conversion=expected,
-    ):
-        raise ValueError("checkpoint conversion changed its source boundary or target")
+            raise ValueError(
+                "checkpoint conversion changed its source boundary or target"
+            )
     if value.temporary_bytes < sum(
         rank.size_bytes for rank in value.ranks
     ) or value.files < len(value.ranks):
@@ -86,9 +98,9 @@ def _description(
     return value
 
 
-def prepare_checkpoint(
+def prepare_state[Saved: (ResolvedCheckpoint, ResolvedWeights)](
     artifacts: ArtifactStore,
-    source: ResolvedCheckpoint,
+    source: Saved,
     child: ConnectedProcess,
     *,
     plans: ArtifactRef,
@@ -101,7 +113,7 @@ def prepare_checkpoint(
     disk: BufferBudget,
     max_disk_bytes: int,
     max_files: int,
-) -> ResolvedCheckpoint:
+) -> Saved:
     """Admit temporary and final bytes before asking the isolated child to write.
 
     LocalCreation owns the host-only process lease and capped logs. Artifact files
@@ -137,15 +149,20 @@ def prepare_checkpoint(
         write_message(child.stream, request)
         description = _description(request, read_message(child.stream), world_size)
         child.ready()
-        resolver = CheckpointResolver(
-            artifacts,
-            session_id=description.info.session_id,
-            world_size=world_size,
-            configuration=config,
-        )
+
+        def resolve(reference: ArtifactRef) -> Saved:
+            if isinstance(source, ResolvedWeights):
+                return resolve_weights(artifacts, reference, config)
+            return CheckpointResolver(
+                artifacts,
+                session_id=description.info.session_id,
+                world_size=world_size,
+                configuration=config,
+            ).resolve(reference)
+
         existing = artifacts.get(checkpoint_id(description.info))
         if existing is not None:
-            result = resolver.resolve(existing)
+            result = resolve(existing)
             if result.manifest.info != description.info:
                 raise ValueError("converted checkpoint has conflicting provenance")
             write_message(child.stream, ConversionCommand("close"))
@@ -194,4 +211,4 @@ def prepare_checkpoint(
             reference = publish_checkpoint(
                 artifacts, description.info, description.ranks, write
             )
-        return resolver.resolve(reference)
+        return resolve(reference)

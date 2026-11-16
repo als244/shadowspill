@@ -22,7 +22,10 @@ from shadowspill.training.worker.conversion_records import (
     ConversionWritten,
 )
 from shadowspill_client._records import mapping
-from shadowspill_client.protocol.checkpoints import CheckpointConversion
+from shadowspill_client.protocol.checkpoints import (
+    CheckpointConversion,
+    CheckpointManifest,
+)
 
 from .compatibility import describe_family, require_compatible
 from .conversion import conversion_tensors, convert_state
@@ -68,6 +71,8 @@ class PreparedConversion:
 def prepare(request: ConversionRequest) -> PreparedConversion:
     from .preparation_files import verified_file
 
+    if not isinstance(request.source, CheckpointManifest):
+        raise ValueError("checkpoint conversion requires a checkpoint generation")
     host_bytes = request.host_bytes
     scratch_bytes = min(64 << 20, host_bytes // 16)
     if scratch_bytes < 64 << 10:
@@ -91,7 +96,7 @@ def prepare(request: ConversionRequest) -> PreparedConversion:
     old, new = describe_family(sources), describe_family(targets)
     require_compatible(old, new)
     defaults = TemporaryDefaults(targets)
-    provenance = CheckpointConversion(request.checkpoint, saved.plans, new.identity)
+    provenance = CheckpointConversion(request.artifact, saved.plans, new.identity)
     identity = digest(
         {
             "conversion": provenance.to_dict(),
@@ -113,7 +118,7 @@ def prepare(request: ConversionRequest) -> PreparedConversion:
                 max_manifest_bytes=host_bytes // (256 * len(sources)),
             )
         randomness = rank_randomness(
-            manifest["metadata"], RankRestore(request.checkpoint, saved, rank)
+            manifest["metadata"], RankRestore(request.artifact, saved, rank)
         )
         metadata.append(manifest["metadata"])
         if randomness is not None:

@@ -56,14 +56,16 @@ def write_ranks(
     from shadowspill.training.worker.checkpoint_records import RankSaved
     from shadowspill.training.worker.conversion_records import ConversionWritten
 
+    from .exports import write_weights
     from .save import write_checkpoint
 
     info = description.info
+    write = write_checkpoint if info.kind == "checkpoint" else write_weights
     completed = []
     for rank in description.ranks:
         path = directory / f"rank-{rank.rank}.ssp"
         with path.open("xb") as stream:
-            manifest = write_checkpoint(
+            manifest = write(
                 converted.ranks[rank.rank],
                 stream,
                 metadata=rank.metadata(info),

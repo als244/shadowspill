@@ -61,7 +61,7 @@ from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.protocol.training import ResolvedTraining
 
 from .artifacts import ArtifactStore
-from .checkpoint_conversion import prepare_checkpoint
+from .checkpoint_conversion import prepare_state
 from .checkpoint_restore import CheckpointResolver
 from .creation_records import load_creation
 from .live import LiveRun
@@ -619,7 +619,7 @@ class LocalCreation:
                 cwd=root,
                 log_limit_bytes=limits.log_bytes,
             )
-            return prepare_checkpoint(
+            return prepare_state(
                 self._artifacts,
                 checkpoint,
                 child,

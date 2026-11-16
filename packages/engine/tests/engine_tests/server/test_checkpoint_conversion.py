@@ -260,7 +260,7 @@ def execute(artifacts, source, kwargs, *, cancel=False):
             assert not node.used.devices
             if cancel:
                 child.close()
-            return module.prepare_checkpoint(artifacts, source, child, **kwargs)
+            return module.prepare_state(artifacts, source, child, **kwargs)
         finally:
             lease.close()
             logs.close()
