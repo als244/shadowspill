@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from shadowspill.artifacts._values import digest
+from shadowspill.artifacts.program import TaskDefinition
 from shadowspill.build import finalize
 from shadowspill.profiling import session
 
@@ -22,7 +24,10 @@ def test_forward_only_roots_are_dead_when_backward_preparation_starts(
             default_factory=lambda: {"forward": b"f", "backward": b"b"}
         )
         bindings: dict = field(default_factory=lambda: {"operator_dependencies": {}})
-        task_definitions: tuple = ()
+        task_definitions: tuple = (
+            TaskDefinition("forward", "f" * 64),
+            TaskDefinition("backward", "b" * 64),
+        )
         operator_binaries: dict = field(default_factory=dict)
 
     references = {}
@@ -78,8 +83,10 @@ def test_forward_only_roots_are_dead_when_backward_preparation_starts(
         lambda *args: ({"forward": forward, "backward": backward},),
     )
     monkeypatch.setattr(finalize, "ControlInputs", Controls)
+
     def prepare(*args, slots, values, **kwargs):
         return tuple(values[s["object_id"]] for s in slots)
+
     monkeypatch.setattr(finalize, "prepare_inputs", prepare)
     monkeypatch.setattr(
         finalize,
@@ -99,7 +106,15 @@ def test_forward_only_roots_are_dead_when_backward_preparation_starts(
     )
     monkeypatch.setattr(torch.random, "fork_rng", lambda **kwargs: nullcontext())
     if phase == "finalize":
-        finalize._finalize_tasks(Program(), torch.device("cpu"))
+        built = finalize._finalize_tasks(Program(), torch.device("cpu"))
+        for definition in built.task_definitions:
+            identity = built.bindings["finalized_tasks"][definition.profile_key]
+            assert digest(identity) == definition.compatibility_digest
+            assert identity["task"] == definition.profile_key[0] * 64
+            assert identity["inductor_kernels"] == {}
+            assert identity["output_devices"] == (
+                ("cpu", "cpu") if definition.profile_key == "forward" else ("cpu",)
+            )
     else:
         monkeypatch.setattr(session, "prepare_inputs", prepare)
         monkeypatch.setattr(torch.cuda, "stream", lambda *args: nullcontext())

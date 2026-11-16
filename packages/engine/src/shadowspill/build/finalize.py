@@ -157,29 +157,32 @@ def _finalize_tasks(
         else preparations.metadata()
     )
     binaries = program.operator_binaries if preparations is None else preparations.blobs
+    identities = {
+        item.profile_key: {
+            "task": item.compatibility_digest,
+            "triton_choices": choices[item.profile_key],
+            "inductor_kernels": kernels[item.profile_key],
+            "output_devices": output_devices[item.profile_key],
+            **(
+                {
+                    "operator_preparation": {
+                        "providers": prepared["providers"],
+                        "task": prepared["tasks"][item.profile_key],
+                    }
+                }
+                if prepared
+                else {}
+            ),
+        }
+        for item in program.task_definitions
+        if item.profile_key in choices
+    }
     return replace(
         program,
         task_definitions=tuple(
             replace(
                 item,
-                compatibility_digest=digest(
-                    {
-                        "task": item.compatibility_digest,
-                        "triton_choices": choices[item.profile_key],
-                        "inductor_kernels": kernels[item.profile_key],
-                        "output_devices": output_devices[item.profile_key],
-                        **(
-                            {
-                                "operator_preparation": {
-                                    "providers": prepared["providers"],
-                                    "task": prepared["tasks"][item.profile_key],
-                                }
-                            }
-                            if prepared
-                            else {}
-                        ),
-                    }
-                ),
+                compatibility_digest=digest(identities[item.profile_key]),
             )
             if item.profile_key in choices
             else item
@@ -190,6 +193,7 @@ def _finalize_tasks(
             **program.bindings,
             "triton_choices": choices,
             "inductor_kernels": kernels,
+            "finalized_tasks": identities,
             **({"operator_preparation": prepared} if prepared else {}),
         },
         operator_binaries=binaries,

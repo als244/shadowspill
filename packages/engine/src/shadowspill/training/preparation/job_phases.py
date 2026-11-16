@@ -1,14 +1,18 @@
 """Resolved definition jobs use the ordinary build/profile/calibrate/plan APIs."""
 
 import json
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 
 from shadowspill.artifacts.profiled_program import ProfiledProgram
+from shadowspill.artifacts.program import Program
 from shadowspill.communication.info import CommunicationInfo
 from shadowspill.orchestration.launch.workers import workers
 
+from .allocation_coverage import allocation_coverage
 from .bundle import TrainingBundle
+from .compiled_reuse import reuse_compiled_tasks
 from .groups import capture_groups
 from .job import BUNDLE_NAME, load_job
 from .job_artifacts import (
@@ -31,14 +35,29 @@ def build(directory: str | Path) -> None:
             key = peers[group.logical_rank]
             path = root / "programs" / f"{key}.ssp"
 
-            def capture(*, key: str = key, path: Path = path) -> None:
-                if (
-                    reused(path, group, partial(program_at, root, inventory, key))
-                    is None
-                ):
-                    build_template(
+            def capture(
+                *, key: str = key, path: Path = path, canonical_key: str = peers[0]
+            ) -> None:
+                program = reused(path, group, partial(program_at, root, inventory, key))
+                if program is None:
+                    program = build_template(
                         registry, inventory, key, rank_map=group.rank_map
-                    ).save(path)
+                    )
+                    program.save(path)
+                if group.count > 1:
+                    group.gather(None)  # All rank artifacts must exist before reuse.
+                    canonical = Program.load(root / "programs" / f"{canonical_key}.ssp")
+                    shared = reuse_compiled_tasks(program, canonical)
+                    if shared is not program:
+                        replace(
+                            shared,
+                            bindings={
+                                **shared.bindings,
+                                "allocation_coverage": allocation_coverage(
+                                    inventory.templates[key], shared
+                                ),
+                            },
+                        ).save(path)
 
             attempt(root, key, "build", capture, group)
     admitted_inventory(root, inventory)
