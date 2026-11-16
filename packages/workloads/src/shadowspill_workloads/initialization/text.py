@@ -42,13 +42,14 @@ class Initialize:
     so one seed reproduces a model whatever the loader's chunks or the ranks'
     shards. Derived RoPE tables and constant gates retain their model
     definitions; masters, moments and counters use the Program's own
-    initializers.
+    initializers. An explicit ``lora_seed`` overrides only fresh adapter factors.
     """
 
     block_elements = 256 << 10
 
-    def __init__(self, family, config, *, seed=0):
+    def __init__(self, family, config, *, seed=0, lora_seed=None):
         self.family, self.config, self.seed = family, config, seed
+        self.lora_seed = seed if lora_seed is None else lora_seed
         if self.family not in FAMILIES:
             raise ValueError(
                 f"{self.family} needs its own checkpoint/initialization recipe"
@@ -59,7 +60,9 @@ class Initialize:
             request,
             destination,
             sample=self.values,
-            seed=self.seed,
+            seed=self.lora_seed
+            if request.name.rsplit(".", 1)[-1] in LORA_LEAVES
+            else self.seed,
             block_elements=self.block_elements,
             constant=self.constant(request.name),
         )
@@ -129,11 +132,11 @@ class FromCheckpoint(Initialize):
     the catalog generates them. A context manager: closing it releases the
     checkpoint's files."""
 
-    def __init__(self, family, directory, *, seed=0, **configuration):
+    def __init__(self, family, directory, *, seed=0, lora_seed=None, **configuration):
         from shadowspill_workloads.models.catalog import reader
 
         self.checkpoint = reader(family)(directory, **configuration)
-        super().__init__(family, self.checkpoint.config, seed=seed)
+        super().__init__(family, self.checkpoint.config, seed=seed, lora_seed=lora_seed)
 
     def __call__(self, request, destination):
         name = request.name

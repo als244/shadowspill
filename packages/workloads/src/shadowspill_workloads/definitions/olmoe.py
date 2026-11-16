@@ -12,7 +12,7 @@ from shadowspill.training.definitions import (
     PreparationDefinition,
 )
 from shadowspill_client import LoRA
-from shadowspill_client._records import plain
+from shadowspill_client._records import integer, plain
 from shadowspill_workloads.initialization.pretrained import describe
 from shadowspill_workloads.inputs.text import preparation as inputs
 from shadowspill_workloads.models.olmoe.config import PRESETS, Config
@@ -32,6 +32,7 @@ class Settings:
     grad_dtype: str = "float32"
     lora_dtype: str = "bfloat16"
     lora: dict | None = None
+    lora_seed: int | None = None
 
     def __post_init__(self):
         if self.preset not in PRESETS:
@@ -68,6 +69,10 @@ class Settings:
             if lora.dropout:
                 raise ValueError("the installed OLMoE LoRA provider requires dropout=0")
             object.__setattr__(self, "lora", lora.to_dict())
+        if self.lora_seed is not None:
+            integer(self.lora_seed, "lora_seed")
+            if self.lora is None:
+                raise ValueError("lora_seed requires LoRA")
         object.__setattr__(self, "architecture", asdict(config))
 
 

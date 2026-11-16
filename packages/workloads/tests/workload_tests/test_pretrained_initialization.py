@@ -106,15 +106,16 @@ def checkpoint(directory, family, model):
 
 
 @pytest.mark.parametrize("family", FAMILIES)
-@pytest.mark.parametrize("lora", [False, True])
+@pytest.mark.parametrize("lora_seed", [None, 0, 45])
 @pytest.mark.parametrize("dtype", ["float32", "bfloat16"])
 @pytest.mark.parametrize("source_kind", ["hub", "local"])
 def test_pretrained_chunks_reproduce_weights_rotary_and_fresh_lora(
-    tmp_path, monkeypatch, family, lora, dtype, source_kind
+    tmp_path, monkeypatch, family, lora_seed, dtype, source_kind
 ):
     import huggingface_hub as provider
 
     registry = load_registry(["shadowspill-workloads"])
+    lora = lora_seed is not None
     desired = (
         llama_settings(capacity=8, lora=LoRA(2) if lora else None)
         if family == "llama3"
@@ -138,7 +139,10 @@ def test_pretrained_chunks_reproduce_weights_rotary_and_fresh_lora(
     requested = Model.from_pretrained(
         f"fixture/{family}" if source_kind == "hub" else str(source),
         lora=desired.lora,
-        config={"architecture": {"max_seq_len": 8}},
+        config={
+            "architecture": {"max_seq_len": 8},
+            **({"lora_seed": lora_seed} if lora_seed else {}),
+        },
         precision={"compute_dtype": dtype, "lora_dtype": "float32"},
     )
     pinned, _, _ = registry.resolve_model_reference(requested)
@@ -157,7 +161,7 @@ def test_pretrained_chunks_reproduce_weights_rotary_and_fresh_lora(
     assert initial.peak_bytes <= 256 << 20
     actual = resolved.create()
     expected = dict((*base.named_parameters(), *base.named_buffers()))
-    generated = Initialize(family, actual.config, seed=0)
+    generated = Initialize(family, actual.config, seed=lora_seed or 0)
     with initial.open(runtime) as loader:
         for name, tensor in (*actual.named_parameters(), *actual.named_buffers()):
             reference = expected.get(name)

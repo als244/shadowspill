@@ -11,6 +11,7 @@ from .hub import immutable_revision
 
 def describe(family, config, context):
     weights = context.weights
+    lora_seed = context.model.config.get("lora_seed")
     width = getattr(config, "rotary_width", config.head_dim)
     if context.temporary is not None:
         if not set(context.temporary).issubset({"rotary.cosine", "rotary.sine"}):
@@ -26,7 +27,7 @@ def describe(family, config, context):
         def open_random(runtime):
             from .text import Initialize
 
-            yield Initialize(family, config, seed=seed)
+            yield Initialize(family, config, seed=seed, lora_seed=lora_seed)
 
         return ModelInitialization(
             peak_bytes=(32 << 20) + 32 * width,
@@ -46,7 +47,9 @@ def describe(family, config, context):
 
             with (
                 local_files.snapshot(weights.reference, manifest, runtime) as directory,
-                FromCheckpoint(family, directory, **asdict(config)) as loader,
+                FromCheckpoint(
+                    family, directory, lora_seed=lora_seed, **asdict(config)
+                ) as loader,
             ):
                 yield loader
 
@@ -71,7 +74,9 @@ def describe(family, config, context):
             weights.reference, weights.revision, manifest, runtime
         ) as directory:
             validate(directory, manifest)
-            with FromCheckpoint(family, directory, **asdict(config)) as loader:
+            with FromCheckpoint(
+                family, directory, lora_seed=lora_seed, **asdict(config)
+            ) as loader:
                 yield loader
 
     # Metadata limits: 1 MiB config, 4 MiB index, 4 MiB aggregate headers,

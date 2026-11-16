@@ -274,9 +274,13 @@ fetch the same pinned source again. Config/index/aggregate-header bounds are
 1/4/4 MiB, with at most 512 shards and 65,536 tensor declarations. The declared host
 allowance covers metadata decoding, retained reader state, conversion and generated
 buffers; full model tensors are never assembled by the loader. Derived rotary
-buffers and fresh LoRA factors use the existing deterministic initializer (seed zero
-for referenced weights). Native resumable checkpoints preserve trained adapters
-and optimizer state through the engine's checkpoint path.
+buffers and fresh LoRA factors use the existing deterministic initializer. Fresh
+adapters default to seed zero for referenced weights, or the base seed for random
+weights. Set `Model(..., config={"lora_seed": 45}, lora=LoRA(...))` (also accepted
+by `Model.from_pretrained`) to choose their seed independently. This setting
+changes only newly generated adapter factors; base weights and rotary buffers
+are unchanged. Native resumable checkpoints preserve trained adapters and
+optimizer state through the engine's checkpoint path.
 
 Fresh worker initialization uses an optional
 `initialization(config, InitializationContext)` hook. It describes the pinned
