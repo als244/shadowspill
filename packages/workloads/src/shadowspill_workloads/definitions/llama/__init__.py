@@ -23,6 +23,7 @@ def register(registry):
     paths = [
         root / "recipes/text/initialization.py",
         root / "inputs/text/preparation.py",
+        root / "definitions/text_allocations.py",
     ]
     for name in ("definitions/llama", "models/llama3", "models/shared", "lora"):
         paths.extend(sorted((root / name).rglob("*.py")))

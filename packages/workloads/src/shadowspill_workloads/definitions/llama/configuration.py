@@ -10,7 +10,7 @@ from shadowspill_client import LoRA
 from shadowspill_client._records import plain
 from shadowspill_workloads.models.llama3.config import PRESETS, Config
 
-from .allocations import CONTRACTS
+from ..text_allocations import CONTRACTS
 
 
 @dataclass(frozen=True)
