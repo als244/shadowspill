@@ -10,8 +10,8 @@ import pytest
 import torch
 
 from shadowspill.artifacts.tensors import TensorChunk
-from shadowspill_workloads.recipes.regression.initialize import fill_tensor
-from shadowspill_workloads.recipes.regression.model import Regression
+from shadowspill_workloads.models.regression.initialization import fill_tensor
+from shadowspill_workloads.models.regression.model import Regression
 from workload_tests._regression_service_client import (
     DEFAULTS,
     INPUTS,

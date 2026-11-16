@@ -27,7 +27,7 @@ class RegressionConfig:
 
 
 def create(config):
-    from shadowspill_workloads.recipes.regression.model import Regression
+    from shadowspill_workloads.models.regression.model import Regression
 
     return Regression()
 
@@ -38,7 +38,7 @@ def initialization(config, context):
 
     @contextmanager
     def open_loader(runtime):
-        from shadowspill_workloads.recipes.regression.initialize import fill_tensor
+        from shadowspill_workloads.models.regression.initialization import fill_tensor
 
         yield partial(fill_tensor, seed=context.weights.seed)
 
@@ -76,8 +76,8 @@ def register(registry):
     # Explicit source closure, including the existing model, pins editable installs.
     for relative in (
         "definitions/regression.py",
-        "recipes/regression/model.py",
-        "recipes/regression/initialize.py",
+        "models/regression/model.py",
+        "models/regression/initialization.py",
     ):
         digest.update(relative.encode())
         digest.update((root / relative).read_bytes())

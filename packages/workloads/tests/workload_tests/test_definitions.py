@@ -66,8 +66,8 @@ initialization = model.describe_initialization(InitializationContext(
     model.settings, model.settings.initialize, Parallelism(), 0))
 assert initialization.peak_bytes == 64 << 10
 assert initialization.chunk_bytes == 4096
-assert 'shadowspill_workloads.recipes.regression.model' not in sys.modules
-assert 'shadowspill_workloads.recipes.regression.initialize' not in sys.modules
+assert 'shadowspill_workloads.models.regression.model' not in sys.modules
+assert 'shadowspill_workloads.models.regression.initialization' not in sys.modules
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30

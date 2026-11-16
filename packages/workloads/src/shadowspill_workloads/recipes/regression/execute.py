@@ -9,9 +9,9 @@ from shadowspill import Plan, Trainer
 from shadowspill.training.logging import DistributedLogger
 from shadowspill.training.preparation.phases import settings
 from shadowspill_client.schedules import Constant
+from shadowspill_workloads.models.regression.initialization import fill_tensor
 
 from .data import Inputs
-from .initialize import fill_tensor
 
 
 def run(directory):

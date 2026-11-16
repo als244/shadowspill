@@ -8,9 +8,9 @@ from mlops.optim import AdamW
 
 from shadowspill import Parallelism, build_step
 from shadowspill.training.preparation.phases import settings
+from shadowspill_workloads.models.regression.model import Regression, objective
 
 from .data import Inputs
-from .model import Regression, objective
 
 
 def run(directory):

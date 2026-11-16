@@ -11,8 +11,8 @@ import pytest
 import torch
 
 from shadowspill.execution.tensors import TensorChunk
+from shadowspill_workloads.models.regression.initialization import fill_tensor
 from shadowspill_workloads.recipes.regression.data import Inputs
-from shadowspill_workloads.recipes.regression.initialize import fill_tensor
 
 
 def test_regression_input_cursor_preserves_rank_local_examples():
