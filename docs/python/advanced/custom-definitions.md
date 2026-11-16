@@ -207,7 +207,7 @@ training = service.create_training_client(
     objective=Objective("weighted_mse"),
     optimizer=Optimizer("sgd"),
     batch=BatchConfig(limits={"max_examples": 4}),
-    memory=Memory(device_gib=1, spill_gib=1),
+    memory=Memory(device_gib=3, spill_gib=1),
 ).result()
 ```
 
