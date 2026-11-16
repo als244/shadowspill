@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 
-from examples.training.application.parallelism import data_parallel
 from shadowspill_client import (
     BatchConfig,
     BuildCandidates,
@@ -15,6 +14,7 @@ from shadowspill_client import (
     ProfilingOptions,
     Weights,
 )
+from shadowspill_client.parallelism import data_parallel
 
 APPLICATION = "shadowspill.example.regression@1"
 

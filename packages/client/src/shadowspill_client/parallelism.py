@@ -1,7 +1,15 @@
 """Portable declarations for the existing generic DP/EP ownership contracts."""
 
+from collections.abc import Mapping, Sequence
+from typing import Any
 
-def data_parallel(ranks, *, fields, outputs=None):
+
+def data_parallel(
+    ranks: int,
+    *,
+    fields: Sequence[Sequence[str]],
+    outputs: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "ranks_per_replica": ranks,
         "num_replicas": 1,
@@ -29,7 +37,13 @@ def data_parallel(ranks, *, fields, outputs=None):
     }
 
 
-def expert_parallel(ranks, *, fields, experts, outputs=None):
+def expert_parallel(
+    ranks: int,
+    *,
+    fields: Sequence[Sequence[str]],
+    experts: Sequence[str],
+    outputs: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Shard the caller-declared expert axis; keep independent input owners."""
     result = data_parallel(ranks, fields=fields, outputs=outputs)
     result["groups"]["local"] = [[r] for r in range(ranks)]

@@ -3,9 +3,9 @@
 from dataclasses import dataclass
 from math import isfinite
 
-from examples.training.application.parallelism import data_parallel, expert_parallel
 from examples.training.text.settings import TextSettings
 from shadowspill_client import LoRA, Model, Objective, Weights
+from shadowspill_client.parallelism import data_parallel, expert_parallel
 
 
 def objective(weight):
