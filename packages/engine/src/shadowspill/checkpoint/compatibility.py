@@ -70,13 +70,19 @@ def describe_family(
         for item in state.logical_tensors(roles=roles):
             _nonoverlapping(item)
             key = item.tensor.identity
-            signature = (
+            signature: tuple[Any, ...] = (
                 item.view.shape,
                 item.tensor.geometry["dtype"],
                 item.tensor.parameter_name,
                 item.tensor.optimizer_type,
                 item.tensor.ownership.get("trainable"),
             )
+            if component := item.tensor.ownership.get("component_layout"):
+                signature = (
+                    *signature,
+                    component["encoding"],
+                    tuple(component["axes"]),
+                )
             if identities.setdefault(key, signature) != signature:
                 raise ValueError(f"checkpoint ranks disagree on logical state: {key}")
             tensors[key].append(RankedTensor(state.logical_rank, item))

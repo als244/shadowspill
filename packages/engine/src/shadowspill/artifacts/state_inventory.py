@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from .component_layouts import saved_layouts
 from .program import Program
 from .state import StateBinding, StateId, StateInventory, StateTensor
 from .tensors import tensor_geometry
@@ -25,11 +26,14 @@ def program_state(program: Program, logical_rank: int = 0) -> StateInventory:
     objects = {obj.object_id: obj for obj in program.objects}
     aliases = {alias.alias_group_id: alias for alias in program.alias_groups}
     geometry = tensor_geometry(program)
+    component_layouts = saved_layouts(program)
     owners = {
         name: item
         for item in saved.get("parameter_ownership", ())
         for name in item["names"]
     }
+    if any("component_layout" in owner for owner in owners.values()):
+        raise ValueError("parameter ownership cannot declare component coordinates")
     tensors: list[StateTensor] = []
     bindings: list[StateBinding] = []
 
@@ -49,12 +53,26 @@ def program_state(program: Program, logical_rank: int = 0) -> StateInventory:
         # layout defines state compatibility across operation forms.
         view = {key: source[key] for key in ("dtype", "shape", "stride")}
         view["storage_offset"] = source.get("storage_offset", 0)
+        owner = owners.get(parameter_name or "", {})
+        component = (
+            component_layouts.get((identity.name, identity.component_path))
+            if identity.role == "parameter"
+            else None
+        )
+        if component is not None:
+            owner = {
+                **owner,
+                "component_layout": {
+                    "axes": component.axes,
+                    "encoding": component.encoding,
+                },
+            }
         tensors.append(
             StateTensor(
                 identity,
                 view,
                 parameter_name,
-                owners.get(parameter_name or "", {}),
+                owner,
                 checkpoint,
                 saved.get("optimizer_type")
                 if identity.role in ("master", "optimizer")

@@ -205,6 +205,23 @@ def test_saved_template_identity_is_checked_before_cpu_derivation(tmp_path):
         (replace(use.main, template="wrong"), program),
         (replace(use.main, count=0), program),
         (replace(use.main, count=True), program),
+        (
+            use.main,
+            replace(
+                program,
+                bindings={
+                    **program.bindings,
+                    "component_layouts": [
+                        {
+                            "parameter": "weight",
+                            "component_path": ["payload"],
+                            "axes": [0, 1],
+                            "encoding": "changed@1",
+                        }
+                    ],
+                },
+            ),
+        ),
     ):
         with pytest.raises(ValueError, match="differs"):
             instantiate_template(template, bad_use, bad_program)

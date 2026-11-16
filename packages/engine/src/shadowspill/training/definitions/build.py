@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from shadowspill.artifacts.component_layouts import ComponentLayout, declared_layouts
 from shadowspill.parallelism import Parallelism
 from shadowspill.preparation import OperatorPreparation
 from shadowspill.resources import Resource
@@ -62,8 +63,12 @@ class ModelBuild:
     operator_preparation: Sequence[OperatorPreparation] = ()
     allocation_invariants: Mapping[str, str] = field(default_factory=dict)
     grad_dtype: str | None = None
+    component_layouts: Sequence[ComponentLayout] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "component_layouts", declared_layouts(self.component_layouts)
+        )
         if self.grad_dtype not in (None, "float16", "bfloat16", "float32", "float64"):
             raise ValueError("model build grad_dtype must name a floating dtype")
         resources = dict(self.resources)
@@ -95,4 +100,5 @@ class ModelBuild:
             ],
             "allocation_invariants": dict(self.allocation_invariants),
             "grad_dtype": self.grad_dtype,
+            "component_layouts": [value.to_dict() for value in self.component_layouts],
         }

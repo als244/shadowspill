@@ -11,7 +11,7 @@ from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.parallelism import GroupRef
 from shadowspill.preparation import OperatorPreparation
 from shadowspill.resources import Resource
-from shadowspill.training.definitions import ModelBuild
+from shadowspill.training.definitions import ComponentLayout, ModelBuild
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import capture_inventory
@@ -117,6 +117,22 @@ def test_changed_provider_descriptions_change_capture_identity():
 
     _, second = prepare(replace(model, build=different))
     assert first.templates.keys().isdisjoint(second.templates)
+
+
+def test_component_coordinates_are_source_bound_before_any_model_construction():
+    model = replace(definitions()[0].definition, config=Config, build=describe)
+    _, first = prepare(model)
+    layout = ComponentLayout("weight", ("payload",), (0, 1), "external/encoded@1")
+
+    def different(config, context):
+        return replace(describe(config, context), component_layouts=(layout,))
+
+    _, second = prepare(replace(model, build=different))
+    assert first.templates.keys().isdisjoint(second.templates)
+    for template in second.templates.values():
+        assert template.signature()["model_build"]["component_layouts"] == [
+            layout.to_dict()
+        ]
 
 
 def test_provider_descriptions_and_inventory_need_no_framework_or_provider_import():

@@ -1,5 +1,6 @@
 """Public extension hooks shared by external models and supplied workloads."""
 
+from shadowspill.artifacts.component_layouts import ComponentLayout
 from shadowspill.training.inputs.adapters import InputAdapter, InputLayout, InputView
 
 from .build import ModelBuild, ModelBuildContext
@@ -24,6 +25,7 @@ from .registry import Registry, ResolvedModel, ResolvedObjective, ResolvedOptimi
 from .samples import RepresentativePattern, RepresentativeSample
 
 __all__ = [
+    "ComponentLayout",
     "InitializationContext",
     "InitializationRuntime",
     "InputAdapter",

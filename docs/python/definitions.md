@@ -346,6 +346,21 @@ only omitted parameters; trainable state, mutations and buffers come from the
 checkpoint. The worker admits the retained loader peak together with restore
 scratch before opening it. Full checkpoints require no base loader.
 
+Tensor wrappers may describe stored component coordinates through
+`ModelBuild(component_layouts=[ComponentLayout(...)])`, importing `ComponentLayout`
+from `shadowspill.training.definitions`. A declaration identifies the exact
+parameter, its structural `component_path`, the parameter axes used by that
+component, and a versioned `encoding` identity. For example,
+`ComponentLayout("layer.weight", ("payload",), (0, 1), "custom/bf16@1")` declares
+that the component uses the same two coordinate axes as its logical parameter.
+Capture checks its shape against the registered component; saved Plans retain and
+recheck the declaration. Existing bounded checkpoint and weights readers then
+redistribute the physical payload alongside ordinary masters and optimizer state.
+The encoding and axis interpretation must agree across source and target layouts.
+No values are decoded or requantized by this declaration. Packed dimensions with
+different extents require a separate conversion; matching shapes alone never
+authorize a component mapping. Ordinary tensors need no declaration.
+
 Opaque kernels used by prepared operations need an all-value allocation contract.
 `ModelBuild`, `ObjectiveDefinition` and `OptimizerDefinition` accept
 `allocation_invariants`, mapping exact compiled call names to versioned contract

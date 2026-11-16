@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 
+from shadowspill.artifacts.component_layouts import attach_component_layouts
 from shadowspill.artifacts.program import Program
 from shadowspill.training.definitions.registry import Registry
 
@@ -67,6 +68,7 @@ def build_template(
                 "target": target,
             },
         )
+    program = attach_component_layouts(program, template.model_build.component_layouts)
     program = replace(
         program,
         bindings={

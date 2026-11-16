@@ -323,6 +323,8 @@ def validate_template(template: CaptureTemplate, program: Program) -> None:
         or plain(program.bindings.get("profiling_scenario"))
         != template.signature()["scenario"]
         or program.resources != template.model_build.resources
+        or plain(program.bindings.get("component_layouts", ()))
+        != [value.to_dict() for value in template.model_build.component_layouts]
         or [
             {name: plain(value[name]) for name in ("factory", "options")}
             for value in preparations

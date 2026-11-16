@@ -133,9 +133,8 @@ def _coordinates(
         ):
             raise ValueError("distributed model state has no saved logical ownership")
         return local_shape, tuple(origin)
-    if tensor.identity.component_path:
-        # Component geometry describes an encoding, not the parameter's logical
-        # coordinates. A conversion declaration must describe that relationship.
+    component = owner.get("component_layout")
+    if tensor.identity.component_path and component is None:
         raise ValueError("encoded checkpoint state requires an explicit logical map")
     parameter_shape = tuple(owner["local_shape"])
     global_shape = tuple(owner["global_shape"])
@@ -146,8 +145,13 @@ def _coordinates(
         if local_shape and global_shape != parameter_shape:
             raise ValueError("optimizer state requires its own logical placement map")
         return local_shape, tuple(origin)
-    if local_shape != parameter_shape:
+    if component is None and local_shape != parameter_shape:
         raise ValueError("state view differs from its declared local parameter shape")
+    if component is not None:
+        axes = tuple(component["axes"])
+        if local_shape != tuple(parameter_shape[axis] for axis in axes):
+            raise ValueError("component view differs from its declared parameter axes")
+        origin = [0] * len(parameter_shape)
     if spec is not None:
         placement = select(
             owner["names"],
@@ -160,11 +164,15 @@ def _coordinates(
                 raise ValueError("saved logical placement exceeds the tensor rank")
             group = spec.group(placement.group)
             expected[placement.dim] *= group.size
-            origin[placement.dim] = local_shape[placement.dim] * group.index(
+            origin[placement.dim] = parameter_shape[placement.dim] * group.index(
                 logical_rank
             )
         if tuple(expected) != global_shape:
             raise ValueError("saved logical placement disagrees with global ownership")
     elif global_shape != parameter_shape:
         raise ValueError("sharded logical state has no saved Parallelism declaration")
+    if component is not None:
+        return tuple(global_shape[axis] for axis in axes), tuple(
+            origin[axis] for axis in axes
+        )
     return global_shape, tuple(origin)

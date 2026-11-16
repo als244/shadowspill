@@ -33,12 +33,16 @@ def _require_model(source: LogicalFamily, target: LogicalFamily) -> None:
         # Training selection and optimizer descriptions do not define a model
         # weight. Ordinary floating parameters may change precision explicitly;
         # buffers and encoded components retain their exact interpretation.
-        if left[0] != right[0] or (
-            left[1] != right[1]
-            and not (
-                key.role == "parameter"
-                and not key.component_path
-                and {left[1], right[1]} <= _FLOATS
+        if (
+            left[0] != right[0]
+            or left[5:] != right[5:]
+            or (
+                left[1] != right[1]
+                and not (
+                    key.role == "parameter"
+                    and not key.component_path
+                    and {left[1], right[1]} <= _FLOATS
+                )
             )
         ):
             raise ValueError(f"weights model interpretation differs: {key}")
