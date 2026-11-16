@@ -13,6 +13,7 @@ from engine_tests.training.test_preparation_templates import inventory
 from engine_tests.training.test_setup_resolution import installed
 from shadowspill import MemoryBudgets, plan_program
 from shadowspill.artifacts._values import plain
+from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
 from shadowspill.planning.shared import SharedMemory
 from shadowspill.step.ordering import StepDataOrdering
 from shadowspill.training.definitions import ModelReferenceDefinition
@@ -22,12 +23,11 @@ from shadowspill.training.preparation.bundle import TrainingBundle
 from shadowspill.training.preparation.bundle_manifest import manifest
 from shadowspill.training.preparation.family_identity import (
     candidate_identity,
-    plan_identity,
+    execution_names,
 )
 from shadowspill.training.preparation.family_records import (
     PlannedCandidate,
     PreparedPlans,
-    WorkerPlans,
 )
 from shadowspill.training.preparation.family_selection import certificate, joint_memory
 from shadowspill_client import (
@@ -87,7 +87,11 @@ def make_bundle(monkeypatch, **settings):
         pytest.fail("saved bundle invoked planning search")
 
     monkeypatch.setattr(family, "plan_program", no_search)
-    rows, proofs, plans = {}, {}, {0: {}}
+    rows, proofs = {}, {}
+    plans = {
+        rank: {}
+        for rank in range(prepared.layouts.setup.context.parallelism.world_size)
+    }
     for key, candidates in prepared.families.items():
         for source in candidates:
             if (key, source.layout.candidate.batch) in proofs:
@@ -97,25 +101,21 @@ def make_bundle(monkeypatch, **settings):
                 if key.operation == "forward"
                 else StepDataOrdering.depth_first(source.workers[0].main.count)
             )
-            use = source.workers[0]
-            worker = WorkerPlans(
-                plan_identity(use.main, ordering),
-                None if use.masked is None else plan_identity(use.masked, None),
-                None if use.optimizer is None else plan_identity(use.optimizer, None),
-            )
+            worker = execution_names(source, ordering)
             candidate = PlannedCandidate(
                 candidate_identity(source, ordering),
                 source,
                 ordering,
-                {0: worker},
+                dict.fromkeys(source.workers, worker),
                 native.timeline.makespan_ns / 1e9,
             )
             try:
                 proof = certificate(prepared, candidate)
             except CoverageError:
                 continue
-            for name in worker.members():
-                plans[0][name] = native
+            for rank in source.workers:
+                for name in worker.members():
+                    plans[rank][name] = native
             rows[key] = (*rows.get(key, ()), candidate)
             proofs[key, candidate.batch] = proof
     selected, memory = joint_memory([c for rows in rows.values() for c in rows], plans)
@@ -123,6 +123,31 @@ def make_bundle(monkeypatch, **settings):
     bundle = TrainingBundle.from_prepared(result, sources)
     checked.clear()
     return bundle, checked
+
+
+def test_bundle_reconstructs_shared_names_and_rejects_rank_local_renaming(monkeypatch):
+    fields = inventory().layouts.setup.context.schema.fields
+    bundle, checked = make_bundle(
+        monkeypatch,
+        parallelism=Parallelism.dp(
+            num_replicas=2,
+            inputs=InputPlacement.independent(
+                2, fields=[InputFieldPlacement(tuple(f.path)) for f in fields]
+            ),
+        ),
+    )
+    restored = bundle.recheck(installed())
+    assert restored.plans[0].keys() == restored.plans[1].keys()
+    assert len(checked) == sum(map(len, bundle.plans.values()))
+    metadata = plain(bundle.metadata)
+    metadata["candidates"][0]["workers"][1]["main"] = "renamed-local-plan"
+    with pytest.raises(ValueError, match="Plan identities"):
+        replace(bundle, metadata=metadata).recheck(installed())
+    first = next(iter(bundle.plans[1]))
+    renamed = dict(bundle.plans[1])
+    renamed["d" * 64] = renamed.pop(first)
+    with pytest.raises(ValueError, match="required worker Plan"):
+        replace(bundle, plans={0: bundle.plans[0], 1: renamed}).recheck(installed())
 
 
 def test_bundle_keeps_every_explicit_batch_option(monkeypatch):

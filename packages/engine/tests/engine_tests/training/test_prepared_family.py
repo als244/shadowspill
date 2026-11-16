@@ -8,10 +8,15 @@ import pytest
 
 from engine_tests.training.test_preparation_templates import inventory
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
+from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
 from shadowspill.planning.shared import SharedMemory
 from shadowspill.training.preparation import family_selection
 from shadowspill.training.preparation.family import plan_family
 from shadowspill.training.preparation.family_checks import _collectives
+from shadowspill.training.preparation.family_identity import (
+    execution_names,
+    plan_identity,
+)
 from shadowspill.training.preparation.family_records import (
     PlannedCandidate,
     PlanRejection,
@@ -19,6 +24,60 @@ from shadowspill.training.preparation.family_records import (
 )
 from shadowspill.training.preparation.family_selection import select_family
 from shadowspill_client.protocol.operations import OperationKey
+
+
+def test_prepared_workers_share_execution_names_without_merging_local_plans(
+    monkeypatch,
+):
+    fields = inventory().layouts.setup.context.schema.fields
+    prepared = inventory(
+        parallelism=Parallelism.dp(
+            num_replicas=2,
+            inputs=InputPlacement.independent(
+                2, fields=[InputFieldPlacement(tuple(f.path)) for f in fields]
+            ),
+        )
+    )
+    rows, plans = [], {rank: {} for rank in (0, 1)}
+    for candidates in prepared.families.values():
+        for source in candidates:
+            workers = {}
+            for rank, worker in source.workers.items():
+                names = []
+                for use in (worker.main, worker.masked, worker.optimizer):
+                    name = None if use is None else plan_identity(use, None)
+                    names.append(name)
+                    if name is not None:
+                        plans[rank].setdefault(
+                            name, SimpleNamespace(rank=rank, use=use)
+                        )
+                workers[rank] = WorkerPlans(*names)
+            rows.append(PlannedCandidate(str(len(rows)), source, None, workers, 1.0))
+    assert not plans[0].keys() & plans[1].keys()
+    monkeypatch.setattr(
+        family_selection,
+        "shared_memory",
+        lambda *args: SharedMemory({}, {}, 0, 0, 0),
+    )
+    actual = select_family(prepared, rows, plans, (), max_family_attempts=10)
+    assert actual.plans[0].keys() == actual.plans[1].keys()
+    assert min(actual.plans[0]) == min(actual.plans[1])
+    for candidates in actual.families.values():
+        for row in candidates:
+            assert row.workers[0] == row.workers[1]
+            for rank, worker in row.workers.items():
+                source = row.source.workers[rank]
+                for name, use in zip(
+                    (worker.main, worker.masked, worker.optimizer),
+                    (source.main, source.masked, source.optimizer),
+                    strict=True,
+                ):
+                    if name is not None:
+                        assert (
+                            actual.plans[rank][name]
+                            is plans[rank][plan_identity(use, None)]
+                        )
+                        assert actual.plans[rank][name].rank == rank
 
 
 def choices():
@@ -67,7 +126,12 @@ def test_joint_selection_keeps_every_capability_and_rejects_only_optional_altern
         "small",
         "eval",
     }
-    assert actual.plans[0].keys() == {"small", "small.mask", "eval"}
+    expected = {
+        name
+        for row in rows[1:]
+        for name in execution_names(row.source, row.ordering).members()
+    }
+    assert actual.plans[0].keys() == expected
     assert actual.memory[0].spill_bytes == 6
     assert len(actual.coverage) == 2
     for key, proof in actual.coverage.items():

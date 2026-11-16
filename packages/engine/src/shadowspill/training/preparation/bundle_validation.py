@@ -15,8 +15,8 @@ from shadowspill_client.protocol.operations import OperationKey
 from .bundle_manifest import candidate_value, manifest
 from .bundle_plans import validate_plan
 from .family_checks import _collectives, _orderings
-from .family_identity import candidate_identity, plan_identity, validate_profile
-from .family_records import PlannedCandidate, PlanRejection, PreparedPlans, WorkerPlans
+from .family_identity import candidate_identity, execution_names, validate_profile
+from .family_records import PlannedCandidate, PlanRejection, PreparedPlans
 from .family_selection import certificate, joint_memory
 from .templates import TemplateCandidate, TemplateInventory
 
@@ -43,14 +43,7 @@ def _candidate(
     )
     if ordering not in _orderings(source):
         raise ValueError("saved candidate traversal was not prepared")
-    workers = {
-        rank: WorkerPlans(
-            plan_identity(worker.main, ordering),
-            None if worker.masked is None else plan_identity(worker.masked, None),
-            None if worker.optimizer is None else plan_identity(worker.optimizer, None),
-        )
-        for rank, worker in source.workers.items()
-    }
+    workers = dict.fromkeys(source.workers, execution_names(source, ordering))
     if any(
         name not in bundle.plans.get(rank, {})
         for rank, worker in workers.items()
@@ -129,10 +122,11 @@ def recheck_bundle(
     checked = set()
     for row in rows:
         for rank, worker in row.source.workers.items():
-            for use in (worker.main, worker.masked, worker.optimizer):
+            for role in ("main", "masked", "optimizer"):
+                use = getattr(worker, role)
                 if use is None:
                     continue
-                name = plan_identity(use, row.ordering)
+                name = getattr(row.workers[rank], role)
                 needed_plans.setdefault(rank, set()).add(name)
                 if (rank, name) not in checked:
                     validate_plan(

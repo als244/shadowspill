@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from itertools import product
 from types import MappingProxyType
 from typing import Literal, cast
@@ -14,6 +15,7 @@ from shadowspill.training.inputs.coverage import CoverageCertificate, certify_co
 from shadowspill.training.inputs.coverage_bounds import CoverageError
 from shadowspill_client.protocol.operations import OperationKey
 
+from .family_identity import execution_names
 from .family_records import PlannedCandidate, PlanRejection, PreparedPlans
 from .templates import TemplateInventory
 
@@ -74,6 +76,27 @@ def rejection(
     )
 
 
+def _execution_family(
+    candidates: Sequence[PlannedCandidate], plans: Mapping[int, Mapping[str, Plan]]
+) -> tuple[list[PlannedCandidate], dict[int, dict[str, Plan]]]:
+    """Assign shared invocation names before choosing primary/alias ownership."""
+    renamed = []
+    named: dict[int, dict[str, Plan]] = {}
+    for row in candidates:
+        names = execution_names(row.source, row.ordering)
+        for rank, worker in row.workers.items():
+            target = named.setdefault(rank, {})
+            for previous, name in zip(worker.members(), names.members(), strict=True):
+                plan = plans[rank][previous]
+                if name in target and target[name] is not plan:
+                    raise ValueError("one prepared Plan use has different schedules")
+                target[name] = plan
+        renamed.append(
+            replace(row, workers=MappingProxyType(dict.fromkeys(row.workers, names)))
+        )
+    return renamed, named
+
+
 def select_family(
     inventory: TemplateInventory,
     candidates: Sequence[PlannedCandidate],
@@ -88,6 +111,7 @@ def select_family(
     A bounded stop remains search exhaustion, never a proof of infeasibility.
     Unexpected shared-state/schema failures propagate rather than pruning work.
     """
+    candidates, plans = _execution_family(candidates, plans)
     setup = inventory.layouts.setup
     ordered = sorted(candidates, key=lambda c: (c.duration_seconds, c.id))
     requirements = [

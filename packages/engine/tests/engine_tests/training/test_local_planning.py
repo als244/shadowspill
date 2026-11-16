@@ -16,6 +16,7 @@ from engine_tests.training.test_preparation_templates import inventory
 from engine_tests.training.test_setup_resolution import installed
 from shadowspill import Profiles, TaskProfile, apply_profiles
 from shadowspill.artifacts._values import plain
+from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
 from shadowspill.task.allocations.contract import TaskAllocationContract
 from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
@@ -43,6 +44,7 @@ from shadowspill.training.preparation.measurement_export import export_measureme
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client import (
+    BatchConfig,
     BuildCandidates,
     Memory,
     PlanningOptions,
@@ -52,8 +54,17 @@ from shadowspill_client import (
 
 
 @pytest.fixture
-def measured(tmp_path, monkeypatch):
+def measured(tmp_path, monkeypatch, request):
+    ranks = getattr(request, "param", 1)
+    fields = inventory().layouts.setup.context.schema.fields
     inv = inventory(
+        batch=BatchConfig(limits={"max_examples": 4 * ranks}),
+        parallelism=Parallelism(
+            ranks_per_replica=ranks,
+            inputs=InputPlacement.independent(
+                ranks, fields=[InputFieldPlacement(tuple(f.path)) for f in fields]
+            ),
+        ),
         operations={"forward": ["predictions"]},
         prepare=Preparation(
             candidates=BuildCandidates(microbatch_sizes=[4]),
@@ -96,6 +107,8 @@ def measured(tmp_path, monkeypatch):
     for key, template in inv.templates.items():
         original = captured_forward()
         bindings = plain(original.bindings)
+        # This CPU fixture uses fully replicated model storage on each worker.
+        bindings["weight_shards"] = {}
         bindings.pop("transient_outputs")
         bindings["entrypoints"][0]["storage_handoffs"] = []
         bindings.update(
@@ -214,6 +227,7 @@ def test_local_planning_can_select_pretrained_weights_without_new_measurements(
     )
 
 
+@pytest.mark.parametrize("measured", [1, 2], indirect=True)
 def test_local_cpu_plans_roundtrip_and_reconcile_original_memory_without_binaries(
     measured, tmp_path
 ):
@@ -239,7 +253,14 @@ def test_local_cpu_plans_roundtrip_and_reconcile_original_memory_without_binarie
     assert edits and all(
         row["tasks"] and row["communication"] for row in edits.values()
     )
-    assert bundle.recheck(installed()).coverage
+    prepared = bundle.recheck(installed())
+    assert prepared.coverage
+    for rank, plans in bundle.plans.items():
+        assert plans.keys() == bundle.plans[0].keys()
+        for candidates in prepared.families.values():
+            for row in candidates:
+                assert row.workers[rank] == row.workers[0]
+    assert not set(proposal.plans) & bundle.plans[0].keys()
     for key, source in bundle.sources.items():
         assert source.program.digest == inputs.sources[key].program.digest
         assert source.fixed_device_bytes == inputs.sources[key].fixed_device_bytes

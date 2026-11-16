@@ -5,6 +5,7 @@ from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.step.ordering import StepDataOrdering
 
 from .allocation_coverage import validate_allocation_coverage
+from .family_records import WorkerPlans
 from .templates import (
     TemplateCandidate,
     TemplateInventory,
@@ -34,6 +35,7 @@ def validate_profile(
 
 
 def plan_identity(use: TemplateUse, ordering: StepDataOrdering | None) -> str:
+    """A rank-local planning request, reusable across operation families."""
     return digest(
         {
             "template": use.template,
@@ -44,6 +46,34 @@ def plan_identity(use: TemplateUse, ordering: StepDataOrdering | None) -> str:
             else ordering.label,
         }
     )
+
+
+def execution_names(
+    candidate: TemplateCandidate, ordering: StepDataOrdering | None
+) -> WorkerPlans:
+    """One invocation name for the complete set of rank-local Plan uses.
+
+    Capture identities include logical rank and must remain distinct. Execution
+    names instead identify the coordinated operation: peers must choose the same
+    primary and compare the same named collective paths. Reuse is safe only when
+    every rank's use matches, including count, traversal and capture identity.
+    """
+
+    def name(role: str) -> str | None:
+        members = {
+            str(rank): None if use is None else plan_identity(use, ordering)
+            for rank, worker in sorted(candidate.workers.items())
+            for use in (getattr(worker, role),)
+        }
+        if all(value is None for value in members.values()):
+            return None
+        if any(value is None for value in members.values()):
+            raise ValueError("prepared workers disagree on operation dependencies")
+        return digest(members)
+
+    main = name("main")
+    assert main is not None
+    return WorkerPlans(main, name("masked"), name("optimizer"))
 
 
 def candidate_identity(
