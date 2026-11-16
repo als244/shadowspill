@@ -4,7 +4,7 @@ import argparse
 from dataclasses import fields, replace
 from pathlib import Path
 
-from examples.training.qwen.loop import train
+from examples.training.application.loop import train
 from examples.training.qwen.settings import Settings, qwen3_settings
 from examples.training.qwen.setup import read_resume, record, start
 from examples.training.text_data import TokenBatches

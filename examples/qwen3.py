@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from examples.training.qwen.loop import train
+from examples.training.application.loop import train
 from examples.training.qwen.settings import qwen3_settings
 from examples.training.qwen.setup import start
 from examples.training.text_data import TokenBatches

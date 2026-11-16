@@ -48,7 +48,7 @@ own microbatch statistic.
 
 [Settings](qwen/settings.py) contain portable training choices.
 [Setup](qwen/setup.py) resolves model metadata and search controls and returns
-a ready client. The [runtime loop](qwen/loop.py) accepts that client and owns
+a ready client. The [runtime loop](application/loop.py) accepts that client and owns
 only batches, schedules, evaluation and checkpoint cadence. Setup can run in a
 separate component without changing the runtime loop. The installed engine's
 build/profile/plan/execute phases and generic parallelism remain the same.

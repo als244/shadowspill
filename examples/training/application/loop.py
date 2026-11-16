@@ -5,7 +5,7 @@ from time import monotonic
 
 from shadowspill_client.schedules import WarmupCosine
 
-from .setup import data_identity, record
+from .records import data_identity, record
 
 
 def update(training, batch, *, pieces, lr, positions):

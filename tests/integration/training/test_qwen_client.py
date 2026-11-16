@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from examples.train_qwen35_lora import arguments, main
-from examples.training.qwen.loop import update
+from examples.training.application.loop import update
 from examples.training.qwen.settings import Settings, qwen3_settings
 from examples.training.qwen.setup import (
     data_identity,

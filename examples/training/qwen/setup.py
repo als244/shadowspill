@@ -1,16 +1,13 @@
 """Resolve model/search settings and acquire workers before the training loop."""
 
 import json
-from dataclasses import asdict, replace
+from dataclasses import replace
 from pathlib import Path
 
+from examples.training.application.records import data_identity, record
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .settings import Settings, objective
-
-
-def record(settings):
-    return json.loads(json.dumps(asdict(settings)))
 
 
 def read_resume(path):
@@ -55,13 +52,6 @@ def resolve(service, settings):
         request["model"] = preview.config.model
         preview = service.describe_training(**request).result()
     return preview
-
-
-def data_identity(source, validation):
-    return {
-        "train": source.identity,
-        "validation": None if validation is None else validation.identity,
-    }
 
 
 def start(service, settings, source, validation, directory, *, resume=None):

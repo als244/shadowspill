@@ -53,7 +53,7 @@ are reported by default. `--reject-overbudget` opts into strict rejection.
 Pool bounds and planned memory admission always apply.
 
 [Settings](qwen/settings.py), [setup](qwen/setup.py) and the
-[runtime loop](qwen/loop.py) are shared with the Qwen3.5 LoRA application.
+[runtime loop](application/loop.py) are shared with the Qwen3.5 LoRA application.
 Setup resolves model metadata, explicit chunk/retention/search choices and
 workers; the loop only handles data, schedules, training calls and results.
 Advanced measurement reuse and CPU planning use the service APIs described in
