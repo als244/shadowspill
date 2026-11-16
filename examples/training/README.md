@@ -1,12 +1,17 @@
 # Training recipes
 
-The Llama, regression and Qwen3.5 LoRA applications use the
+The Llama, regression, Qwen3 full-training and Qwen3.5 LoRA applications use the
 [lightweight training client](../../docs/python/client.md), with setup separate
 from their runtime loops. The service prepares saved Plans and runs them through
 the existing Executor. Build accepts ordinary PyTorch models and objectives;
 profiling and planning remain separate. The generic library does not import a
 model catalog or application data code. Other saved-phase recipes below remain
 in migration.
+
+Their [shared application code](application/README.md) handles public whole/split
+updates and checkpoint-reference publication without importing a model. The Qwen
+applications also share the model-independent schedule/evaluation loop. Model
+settings and initialization stay in setup, separate from calls on a ready client.
 
 - [Example model catalog](../../packages/workloads/src/shadowspill_workloads/MODELS.md): architectures, dimensions,
   precision, trainable parameters, and expert parallelism.
@@ -21,6 +26,8 @@ in migration.
   Qwen3 MoE. Includes short scripts and DP/EP preparation requirements.
 - [Qwen3.5 MoE LoRA](qwen35_lora.md): remote client, bounded checkpoint loading,
   chunk/ordering selection, composed objectives, evaluation and frozen-base resume.
+- [Qwen3 MoE full training](qwen3.md): random/pretrained sources, global batches,
+  generic DP/EP ownership and shared client setup/runtime code.
 
 This directory holds example configs and launchers for the optional
 `shadowspill_workloads.recipes.text` recipe. Text packing and its token-normalized objective

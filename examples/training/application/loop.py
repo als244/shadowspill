@@ -5,21 +5,25 @@ from time import monotonic
 
 from shadowspill_client.schedules import WarmupCosine
 
-from .records import data_identity, record
+from .records import data_identity, save_checkpoint
 
 
-def update(training, batch, *, pieces, lr, positions):
-    # Scale the complete objective once, including secondary balancing. Scaling
-    # only the primary token weights would leave the auxiliary term unnormalized.
-    scale = 1 / positions
+def update(training, batch, *, pieces, optim=None, grad_scale=None):
+    """One public update, with optional caller controls and final normalization."""
+    controls = {}
+    if optim is not None:
+        controls["optim"] = optim
+    if grad_scale is not None:
+        controls["grad_scale"] = grad_scale
+    scale = 1 if grad_scale is None else grad_scale
     if pieces == 1:
-        result = training.step(batch, optim={"lr": lr}, grad_scale=scale).result()
+        result = training.step(batch, **controls).result()
         return result, result.loss * scale
     total = 0.0
     for part in range(pieces):
         start, stop = part * len(batch) // pieces, (part + 1) * len(batch) // pieces
         total += training.forward_backward(batch[start:stop]).result().loss
-    result = training.optim_step(optim={"lr": lr}, grad_scale=scale).result()
+    result = training.optim_step(**controls).result()
     return result, total * scale
 
 
@@ -39,8 +43,8 @@ def train(training, settings, source, validation, directory, *, cursor=0, logger
                 training,
                 source[index],
                 pieces=settings.backward_pieces,
-                lr=schedule(index),
-                positions=source.positions,
+                optim={"lr": schedule(index)},
+                grad_scale=1 / source.positions,
             )
             if result.outcome != "completed" or result.completed_updates != index + 1:
                 raise RuntimeError("training did not complete the expected update")
@@ -73,25 +77,12 @@ def train(training, settings, source, validation, directory, *, cursor=0, logger
             if settings.checkpoint_every and (
                 step % settings.checkpoint_every == 0 or step == settings.steps
             ):
-                saved = training.save_checkpoint(
-                    name=f"step-{step:08d}",
-                    metadata={
-                        "application": settings.application,
-                        "settings": record(settings),
-                        "data": data_identity(source, validation),
-                        "next_update": step,
-                    },
-                ).result()
-                (checkpoint_dir / f"step-{step:08d}.json").write_text(
-                    json.dumps(
-                        {
-                            "application": settings.application,
-                            "settings": record(settings),
-                            "checkpoint": saved.reference.to_dict(),
-                            "plans": training.plans.reference.to_dict(),
-                        },
-                        indent=2,
-                    )
-                    + "\n"
+                save_checkpoint(
+                    training,
+                    checkpoint_dir,
+                    step=step,
+                    application=settings.application,
+                    settings=settings,
+                    data=data_identity(source, validation),
                 )
     training.report().result().download(directory / "training.html").result()

@@ -229,7 +229,9 @@ def test_complete_composed_objective_is_normalized_once(tmp_path, pieces):
     training = SimpleNamespace(
         step=step, forward_backward=backward, optim_step=optimize
     )
-    result, loss = update(training, source[0], pieces=pieces, lr=0.25, positions=12)
+    result, loss = update(
+        training, source[0], pieces=pieces, optim={"lr": 0.25}, grad_scale=1 / 12
+    )
     assert loss == 5 and result.delta == -1.25
     assert scales == [1 / 12]
 

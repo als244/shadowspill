@@ -1,23 +1,12 @@
 """Only inputs, training settings and results; the client is already ready."""
 
 import json
-from dataclasses import asdict
 
+from examples.training.application.loop import update
+from examples.training.application.records import save_checkpoint
 from shadowspill_client.schedules import WarmupCosine
 
 from .setup import APPLICATION
-
-
-def update(training, batch, *, pieces, lr):
-    if pieces == 1:
-        result = training.step(batch, optim={"lr": lr}).result()
-        return result, result.loss
-    loss = 0.0
-    for part in range(pieces):
-        start, end = part * len(batch) // pieces, (part + 1) * len(batch) // pieces
-        result = training.forward_backward(batch[start:end]).result()
-        loss += result.loss
-    return training.optim_step(optim={"lr": lr}).result(), loss
 
 
 def train(training, settings, source, validation, directory, *, cursor=0):
@@ -47,7 +36,7 @@ def train(training, settings, source, validation, directory, *, cursor=0):
                 training,
                 source[index],
                 pieces=settings.backward_pieces,
-                lr=schedule(index),
+                optim={"lr": schedule(index)},
             )
             if result.outcome != "completed" or result.completed_updates != index + 1:
                 raise RuntimeError("training did not complete the expected update")
@@ -68,22 +57,12 @@ def train(training, settings, source, validation, directory, *, cursor=0):
                 result.completed_updates % settings.checkpoint_every == 0
                 or result.completed_updates == settings.steps
             ):
-                saved = training.save_checkpoint(
-                    name=f"step-{result.completed_updates:08d}",
-                    metadata={
-                        "application": APPLICATION,
-                        "settings": asdict(settings),
-                        "data": source.identity,
-                        "next_update": result.completed_updates,
-                    },
-                ).result()
-                record = {
-                    "application": APPLICATION,
-                    "settings": asdict(settings),
-                    "checkpoint": saved.reference.to_dict(),
-                    "plans": training.plans.reference.to_dict(),
-                }
-                (
-                    checkpoint_dir / f"step-{result.completed_updates:08d}.json"
-                ).write_text(json.dumps(record, indent=2) + "\n")
+                save_checkpoint(
+                    training,
+                    checkpoint_dir,
+                    step=result.completed_updates,
+                    application=APPLICATION,
+                    settings=settings,
+                    data=source.identity,
+                )
     training.report().result().download(directory / "training.html").result()
