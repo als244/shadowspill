@@ -64,7 +64,7 @@ with Executor(plans.pop("count"), plans=plans) as executor:
                 destination["counter"] = chunk.clone()
 
         executor.export_tensors(export, chunk_bytes=32)
-        assert count["counter"].item() == (3, 4, 6)[index]
+        assert count["counter"].item() == oracle["counters"][index]
         outputs = result if isinstance(result, tuple) else (result,)
         assert len(
             {item["input"].untyped_storage().data_ptr() for item in outputs}

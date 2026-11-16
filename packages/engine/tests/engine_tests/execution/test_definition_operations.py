@@ -519,4 +519,14 @@ def test_evaluation_and_undeclared_buffer_mutations_fail_admission():
             model, binding, adapted, options={"partition": "whole"}
         )
         assert any(task.mutations for task in program.tasks)
+    with example(declared, objective, "step") as (binding, adapted):
+        program = build_operation(
+            model,
+            binding,
+            adapted,
+            output_only=True,
+            options={"partition": "whole"},
+        )
+        assert not any(task.mutations for task in program.tasks)
+        assert program.bindings["training_operation"]["output_only"]
     assert not model.training

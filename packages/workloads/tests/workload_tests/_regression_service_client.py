@@ -289,6 +289,7 @@ def qualify(client, initial, dtype, memory, master_dtype=None):
     checkpoint_oracle = copy.deepcopy(oracle)
     result = training.step(records(masked=True)).result(120)
     assert result.outcome == "skipped" and result.completed_updates == 1
+    check(training, oracle, memory, counter=2)
     observations.append(result.record.to_dict())
     for optim in ({"lr": 0.0}, None):
         result = training.step(records(), optim=optim).result(120)

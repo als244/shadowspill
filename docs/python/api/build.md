@@ -115,6 +115,17 @@ including a validation loss, while preserving registered tensor names. The
 callback is needed only at build time. See the
 [forward-only example](../../examples/forward-only.md).
 
+`preserve_buffers=()` optionally names registered buffers whose functional updates
+contribute to outputs without being committed to model state. Each captured call
+starts from the current buffer values, including when that form is repeated by
+`instantiate_examples`. Temporary values and returned views use the usual
+profiled, planned storage. Buffer aliases are preserved together; parameter-backed
+buffers are rejected. Prepared skipped training calls select this behavior
+automatically for declared mutable buffers.
+
+Distributed forward can update each worker's own replicated buffers. Parameter
+and submitted-input mutations remain unsupported on that path.
+
 ## Saved implementations and compatibility
 
 Finalization runs complete tasks with valid producer outputs for control inputs.

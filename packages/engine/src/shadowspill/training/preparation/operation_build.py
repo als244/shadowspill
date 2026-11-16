@@ -42,6 +42,7 @@ def build_operation(
         "example_calls",
         "num_examples",
         "runtime_gradient_scale",
+        "preserve_buffers",
     }
     if settings.keys() & reserved:
         raise ValueError("operation build options override a prepared binding")
@@ -65,7 +66,13 @@ def build_operation(
             ):
                 settings.pop(name, None)
             program = build_forward(
-                model, forward_fn=binding.forward, example_args=arguments, **settings
+                model,
+                forward_fn=binding.forward,
+                example_args=arguments,
+                preserve_buffers=binding.model.definition.mutable_buffers
+                if output_only
+                else (),
+                **settings,
             )
         elif kind == "step":
             assert optimizer is not None

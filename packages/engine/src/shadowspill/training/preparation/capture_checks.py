@@ -124,11 +124,15 @@ def validate_operation_program(
                 raise ValueError(
                     f"objective control is not consumed by captured tasks: {control}"
                 )
-    _validate_mutations(program, binding, input_aliases)
+    _validate_mutations(program, binding, input_aliases, output_only=output_only)
 
 
 def _validate_mutations(
-    program: Program, binding: OperationBinding, input_aliases: set[str]
+    program: Program,
+    binding: OperationBinding,
+    input_aliases: set[str],
+    *,
+    output_only: bool,
 ) -> None:
     aliases = {obj.object_id: obj.alias_group_id for obj in program.objects}
     registrations: dict[str, list[Any]] = {}
@@ -151,9 +155,10 @@ def _validate_mutations(
             if task.phase != "forward" or alias not in registrations:
                 continue
             entries = registrations[alias]
-            if binding.contract.key.mode == "evaluation":
+            if output_only or binding.contract.key.mode == "evaluation":
                 raise ValueError(
-                    "evaluation must preserve model buffers and parameters"
+                    "output-only and evaluation must preserve model buffers "
+                    "and parameters"
                 )
             if any(item["parameter"] for item in entries) or not any(
                 item["name"] in declared for item in entries

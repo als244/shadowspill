@@ -42,7 +42,8 @@ class CountedOutputs(nn.Module):
 
 
 @pytest.mark.cuda
-def test_saved_forward_counts_in_cold_worker(tmp_path):
+@pytest.mark.parametrize("preserve", [False, True])
+def test_saved_forward_counts_in_cold_worker(tmp_path, preserve):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     calls = [
@@ -58,7 +59,14 @@ def test_saved_forward_counts_in_cold_worker(tmp_path):
     ]
     with torch.device("meta"):
         template = CountedOutputs()
-    source = build_forward(template, example_args=calls[0][0], partition="whole")
+    source = build_forward(
+        template,
+        example_args=calls[0][0],
+        partition="whole",
+        preserve_buffers=("counter",) if preserve else (),
+    )
+    if preserve:
+        assert not any(task.mutations for task in source.tasks)
     source = replace(source, bindings={**source.bindings, "operation_mode": "training"})
     profile = measure_program(source, warmup_seconds=0.001, measure_seconds=0.002)
     count = instantiate_examples(source, [0, 0, 0])
@@ -78,18 +86,28 @@ def test_saved_forward_counts_in_cold_worker(tmp_path):
         model.weight.copy_(torch.arange(16).reshape(4, 4) / 32)
     initial = {name: value.clone() for name, value in model.state_dict().items()}
     expected = []
-    for index, examples in enumerate(calls):
-        outputs = tuple(
-            tree_map(
-                lambda value: (
-                    value.detach().clone() if isinstance(value, torch.Tensor) else value
-                ),
-                model(*args),
-            )
-            for args in examples
+
+    def evaluate(args):
+        result = tree_map(
+            lambda value: (
+                value.detach().clone() if isinstance(value, torch.Tensor) else value
+            ),
+            model(*args),
         )
+        if preserve:
+            model.counter.zero_()
+        return result
+
+    for index, examples in enumerate(calls):
+        outputs = tuple(evaluate(args) for args in examples)
         expected.append(outputs[0] if index == 1 else outputs)
     torch.save(
-        dict(initial=initial, calls=calls, expected=expected), tmp_path / "oracle.pt"
+        dict(
+            initial=initial,
+            calls=calls,
+            expected=expected,
+            counters=(0, 0, 0) if preserve else (3, 4, 6),
+        ),
+        tmp_path / "oracle.pt",
     )
     run_worker(tmp_path, "_forward_instances.py")

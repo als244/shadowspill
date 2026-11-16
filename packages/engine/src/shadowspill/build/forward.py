@@ -34,6 +34,7 @@ def build_forward(
     example_args: Sequence[Any] = (),
     example_kwargs: Mapping[str, Any] | None = None,
     forward_fn: Callable[..., Any] | None = None,
+    preserve_buffers: Sequence[str] = (),
     partition: PartitionSpec = "auto",
     chunking: ChunkPolicy | ChunkRegions | None = None,
     parallelism: Parallelism | None = None,
@@ -50,6 +51,9 @@ def build_forward(
     receives ``(model, *args, **kwargs)``, preserving registered parameter names.
     ``operator_preparation`` supplies explicit provider factories that capture
     selected binaries and restore them before measurement/runtime admission.
+    ``preserve_buffers`` names buffers whose functional updates may contribute
+    to outputs but must not be written back. Each invocation starts from the
+    current registered values; temporary values use ordinary planned storage.
     """
     spec, parameters = model_parallelism(model, parallelism)
     validate_resources(resources or {}, spec)
@@ -63,6 +67,7 @@ def build_forward(
             forward_fn=forward_fn,
             partition=partition,
             device_index=device.index,
+            preserve_buffers=preserve_buffers,
         )
         if chunking is not None:
             from .chunking import chunk_forward
@@ -78,11 +83,30 @@ def build_forward(
             program,
             bindings={**program.bindings, "compiled_device_index": device.index},
         )
-        if spec.world_size > 1 and any(task.mutations for task in program.tasks):
-            raise NotImplementedError("distributed forward requires a read-only model")
+        if spec.world_size > 1:
+            _validate_distributed_mutations(program)
         program = attach_resources(
             attach_parallelism(program, spec, parameters), resources or {}
         )
         return finalize_tasks(
             program, device, rank_map=rank_map, preparations=preparations
+        )
+
+
+def _validate_distributed_mutations(program: Program) -> None:
+    # Generic storage keeps buffers whole on each worker. Their mutations are
+    # local, unlike parameter writes that would need an explicit synchronization
+    # and ownership contract. Check aliases, including parameter/buffer ties.
+    aliases = {obj.object_id: obj.alias_group_id for obj in program.objects}
+    registrations = program.bindings["registrations"]
+    buffers = {
+        aliases[item["object_id"]] for item in registrations if not item["parameter"]
+    } - {aliases[item["object_id"]] for item in registrations if item["parameter"]}
+    if any(
+        aliases[mutation.object_id] not in buffers
+        for task in program.tasks
+        for mutation in task.mutations
+    ):
+        raise NotImplementedError(
+            "distributed forward may mutate only rank-local model buffers"
         )

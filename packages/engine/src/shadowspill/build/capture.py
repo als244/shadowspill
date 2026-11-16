@@ -51,7 +51,12 @@ def capture_forward_model(
     forward_fn: Callable[..., Any] | None,
     partition: PartitionSpec,
     device_index: int,
+    preserve_buffers: Sequence[str] = (),
 ) -> ForwardCapture:
+    if preserve_buffers:
+        from shadowspill.pytorch.capture.buffers import preserved_buffer_names
+
+        preserve_buffers = preserved_buffer_names(model, preserve_buffers)
     signature = capture_input_signature((tuple(args), dict(kwargs)))
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     replica = fake_device_model(model, mode, device_index=device_index)
@@ -71,6 +76,10 @@ def capture_forward_model(
             restore_module_paths(exported, replica, view)
         constants = literal_values(exported)
         own_public_outputs(exported)
+        if preserve_buffers:
+            from shadowspill.pytorch.capture.buffers import preserve_buffers as preserve
+
+            exported = preserve(exported, preserve_buffers)
         roots = tuple(
             flat_runtime_arguments(
                 exported, model, args, kwargs=kwargs, constant_values=constants
