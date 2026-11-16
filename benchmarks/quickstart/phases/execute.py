@@ -1,11 +1,15 @@
 """One budget in a fresh worker; never builds, measures, or replans."""
 
 import statistics
+import time
 from contextlib import nullcontext
+from itertools import repeat
 
+from benchmarks.plan_runner.updates import updates
 from benchmarks.spill import resolve as spill_pool
-from shadowspill import Plan, Trainer
+from shadowspill import Executor, Plan
 from shadowspill.orchestration.launch.workers import workers
+from shadowspill.training._logs import emit
 
 from .candidates import example_inputs
 from .common import experiment, paths, plan_identity, read, write
@@ -34,35 +38,40 @@ def _execute(request, selection, root, index, group):
     )
     records = []
 
-    def record(owner, result):
-        records.append(
-            {
-                "step": result.step,
-                "seconds": result.seconds,
-                "loss": float(result.summary.scalars.get("loss", result.loss)),
-                "objective_loss": result.loss,
-            }
-        )
-
     # Install Executor before the user factory can create live CUDA resources.
     device = int(request["device"].split(":")[-1])
-    with Trainer(
+    with Executor(
         plan, device=device, rank_map=group.rank_map, spill=spill_pool(request)
-    ) as trainer:
+    ) as executor:
+        started = time.perf_counter()
         setup = experiment(
             request, logical_rank=None if group.count == 1 else group.logical_rank
         )
-        trainer.metric_reducer = setup.get("metric_reducer")
         with setup.get("context", nullcontext)():
-            trainer.initialize(setup["fill_tensor"])
+            executor.initialize(setup["fill_tensor"])
         inputs = example_inputs(setup["candidates"][winner["candidate"]])
         inputs["hyperparams"] = setup.get("hyperparams", {})
-        trainer.fit(
-            (inputs for _ in range(request["steps"])),
-            steps=request["steps"],
-            run_dir=run_dir,
-            callbacks=[record],
-        )
+        run_dir.mkdir(exist_ok=True)
+        with (run_dir / "metrics.jsonl").open("x", buffering=1) as stream:
+            for result in updates(
+                executor,
+                repeat(inputs, request["steps"]),
+                steps=request["steps"],
+                schedules=None,
+                metric_reducer=setup.get("metric_reducer"),
+                parameter_norms_every=0,
+                nsys=None,
+                rank=group.rank,
+            ):
+                emit(result, time.perf_counter() - started, stream, None)
+                records.append(
+                    {
+                        "step": result.step,
+                        "seconds": result.seconds,
+                        "loss": float(result.summary.scalars.get("loss", result.loss)),
+                        "objective_loss": result.loss,
+                    }
+                )
     per_rank = group.gather({"logical_rank": group.logical_rank, "steps": records})
     if group.rank != 0:
         return
