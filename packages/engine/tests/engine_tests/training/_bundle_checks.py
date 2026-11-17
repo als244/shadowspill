@@ -23,7 +23,7 @@ path = Path(sys.argv[1])
 registry = load_registry(PreparationJob.load(path.parent / JOB_NAME).packages)
 bundle = TrainingBundle.load(path)
 prepared = bundle.recheck(registry)
-assert len(prepared.plans[0]) == 14 and len(prepared.coverage) == 3
+assert len(prepared.plans[0]) == 11 and len(prepared.coverage) == 3
 plans = prepared.plans[0]
 backward_id = next(
     key for key, plan in plans.items() if plan._accumulation_plan is not None

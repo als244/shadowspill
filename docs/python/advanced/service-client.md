@@ -158,8 +158,11 @@ the existing worker logs as preparation runs. The same option on
 Each worker records UTC timestamps, rank/process identity, nested operation starts,
 completions, failures and elapsed host durations. Build output identifies candidate
 shapes and policies, CPU/compiler thread settings, graph capture, stage construction,
-task compilation and kernel finalization. These durations are host wall times;
-they are separate from the GPU timings used for planning. No periodic messages
+task compilation and kernel finalization. Profiling shows task names, cache reuse,
+measured GPU durations and workspace. Planning shows each layout and ordering,
+estimated execution time, retained variants and shared memory requirements,
+followed by validation and archive-writing phases. Operation durations are host
+wall times, separate from the GPU timings used for planning. No periodic messages
 or estimated completion percentages are emitted.
 
 Display is optional and defaults to silent. Logs remain in the service after a
