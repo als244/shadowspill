@@ -17,7 +17,7 @@ def register(registry, settings):
     preset = f"shadowspill/{family}_packed@1"
     source = definition_source(
         (
-            "definitions/qwen",
+            "definitions/decoder",
             "models/families.py",
             "models/registration.py",
             "definitions/training_options.py",
