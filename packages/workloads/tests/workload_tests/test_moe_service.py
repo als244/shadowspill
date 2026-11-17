@@ -133,6 +133,7 @@ def options(family="qwen3moe", *, lora=False):
         ).to_dict(),
         "optim": optim,
         "controls": {"balance.weight": coefficient},
+        "loss_terms": ["tokens", "balance"],
         "records": records,
         "mask": "loss_mask",
         "trainable": [

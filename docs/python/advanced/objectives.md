@@ -210,3 +210,39 @@ policy objective, configure balancing with `participation_field="response_mask"`
 so both terms share the same update-participation contract. Router masks separately
 control balancing tokens; padding is excluded by default. Each term retains its
 own reduction, so select its coefficient explicitly.
+
+## Inspect each objective's loss
+
+Name the terms when configuring the run:
+
+```python
+objective = Objective.sum(
+    {
+        "tokens": Objective("cross_entropy"),
+        "balance": Objective("moe_balance"),
+    },
+    weights={"balance": 0.001},
+)
+```
+
+After preparing with this objective, each call returns the separate losses:
+
+```python
+result = training.step(batch, optim={"lr": 0.0003}).result()
+print("Cross entropy:", result.metrics["tokens.loss_sum"])
+print("MoE balancing:", result.metrics["balance.loss_sum"])
+print("Weighted total:", result.loss)
+```
+
+Each term's `loss_sum` includes its own masks, token weights and reduction,
+before the composition coefficient. The weighted total is the sum of these
+values multiplied by `result.loss_params["tokens.weight"]` and
+`result.loss_params["balance.weight"]`. The corresponding
+`tokens.valid_tokens` and `balance.valid_tokens` metrics expose the supervised
+counts; there is no extra implicit averaging. `grad_scale` scales gradients,
+not these reported values.
+
+`forward_backward()` returns the same metrics for that call's submitted batch,
+aggregated across its microbatches and logical input partitions. Sum the results
+of separate backward calls to inspect an accumulated update. `optim_step()`
+applies the accumulated gradients without evaluating the objectives again.

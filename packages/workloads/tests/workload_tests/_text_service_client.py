@@ -255,6 +255,23 @@ def training_settings(options):
     )
 
 
+def check_loss_terms(result, options):
+    """Public term metrics survive transport and retain their own reductions."""
+    names = options.get("loss_terms", ())
+    if not names:
+        return
+    total = 0.0
+    for name in names:
+        loss = result.metrics[f"{name}.loss_sum"]
+        count = result.metrics[f"{name}.valid_tokens"]
+        assert np.isfinite(loss) and count > 0
+        total += result.loss_params[f"{name}.weight"] * loss
+    np.testing.assert_allclose(result.loss, total, rtol=2e-6, atol=2e-6)
+    np.testing.assert_allclose(
+        result.metrics["loss_sum"], total, rtol=2e-6, atol=2e-6
+    )
+
+
 def qualify(client, options, budget):
     settings = training_settings(options)
     preview = client.describe_training(**settings).result(30)
@@ -281,6 +298,7 @@ def qualify(client, options, budget):
                 result = training.forward_backward(
                     subset, loss_params=options["controls"]
                 ).result(120)
+                check_loss_terms(result, options)
                 np.testing.assert_allclose(
                     result.loss,
                     options["loss_parts"][part],
@@ -296,6 +314,7 @@ def qualify(client, options, budget):
             result = training.step(
                 records, loss_params=options["controls"], grad_scale=0.25
             ).result(120)
+            check_loss_terms(result, options)
             np.testing.assert_allclose(
                 result.loss,
                 options.get("whole_loss", sum(options["loss_parts"])),

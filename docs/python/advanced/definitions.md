@@ -234,8 +234,10 @@ the union of the terms' additional output sets. Training selects that set where
 available and the default for other terms, so requesting tensors retains every
 loss term. An output-only `forward` selects only terms declaring that output;
 it needs their declared forward fields/controls and returns their prefixed
-outputs. Forward returns per-term metrics without a total training loss or
-requiring composition coefficients.
+outputs without requiring composition coefficients. In contrast,
+`forward(..., outputs="metrics")` returns the weighted total as `result.loss`
+when every selected child supplies a scalar loss, together with each child's
+prefixed metrics. It uses the same composition coefficients as training.
 
 ### Geometry-aware model builds
 
