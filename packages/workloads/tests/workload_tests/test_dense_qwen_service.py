@@ -14,10 +14,16 @@ from workload_tests._dense_qwen_oracle import options
 @pytest.mark.cuda
 @pytest.mark.slow
 @pytest.mark.parametrize(
-    "family,lora", [("qwen3", False), ("qwen3", True), ("qwen35", True)]
+    "family,lora,override_decay",
+    [
+        ("qwen3", False, False),
+        ("qwen3", True, False),
+        ("qwen35", True, False),
+        pytest.param("qwen35", True, True, id="qwen35-lora-dtype-override"),
+    ],
 )
 def test_pretrained_dense_step_split_and_resume_matches_compiled_reference(
-    tmp_path, monkeypatch, family, lora
+    tmp_path, monkeypatch, family, lora, override_decay
 ):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -28,7 +34,7 @@ def test_pretrained_dense_step_split_and_resume_matches_compiled_reference(
     # has several packed/evaluation layouts; do not count earlier models' graphs
     # against this model's Dynamo specialization limit.
     torch.compiler.reset()
-    value = options(tmp_path, family, lora=lora)
+    value = options(tmp_path, family, lora=lora, override_decay=override_decay)
     torch.cuda.empty_cache()
     (tmp_path / "setup.json").write_text(json.dumps(value))
     source = tmp_path / "pretrained"
@@ -52,4 +58,5 @@ def test_pretrained_dense_step_split_and_resume_matches_compiled_reference(
     )
     assert receipt["whole_split_equivalence"] and receipt["evaluation_isolation"]
     assert receipt["adamw_resume"] and receipt["exact_resume"]
+    assert receipt["parameter_storage_dtypes"] == value["parameter_storage_dtypes"]
     assert {path.name: path.read_bytes() for path in source.iterdir()} == original

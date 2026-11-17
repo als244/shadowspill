@@ -12,7 +12,7 @@ from workload_tests.test_dense_qwen_definitions import settings
 from workload_tests.test_pretrained_initialization import checkpoint
 
 
-def options(directory, family, *, lora):
+def options(directory, family, *, lora, override_decay=False):
     requested = settings(family, lora=lora)
     architecture = dict(requested.config["architecture"])
     architecture.update(d_model=64, d_ff=96, head_dim=16)
@@ -35,11 +35,28 @@ def options(directory, family, *, lora):
                 TensorChunk(name, tuple(tensor.shape), tensor.dtype, 0, tensor.numel()),
                 tensor.reshape(-1),
             )
+        if override_decay:
+            assert family == "qwen35" and lora
+            decay = reference.blocks[0].mixer.A_log
+            decay.copy_(torch.linspace(-0.123456, 0.654321, decay.numel()))
     source = directory / "pretrained"
     source.mkdir()
     checkpoint(source, family, reference)
+    precision = dict(requested.precision)
+    if override_decay:
+        assert family == "qwen35" and lora
+        # The source checkpoint keeps the original FP32 values. Independently
+        # cast the reference's frozen decay after saving, so initialization must
+        # honor the override while dt_bias keeps the family's FP32 default.
+        precision["parameter_dtypes"] = {"*.A_log": "bfloat16"}
+        decay = reference.blocks[0].mixer.A_log
+        rounded = decay.detach().to(torch.bfloat16)
+        assert not torch.equal(decay, rounded.float())
+        with torch.no_grad():
+            decay.data = rounded
+        assert reference.blocks[0].mixer.dt_bias.dtype == torch.float32
     requested = Model.from_pretrained(
-        str(source), lora=requested.lora, precision=requested.precision
+        str(source), lora=requested.lora, precision=precision
     )
     if lora:
         reference = configure_lora(reference, rank=2, alpha=2, factor_dtype="float32")
@@ -184,10 +201,15 @@ def options(directory, family, *, lora):
         "loss_rtol": 1e-5,
         "loss_atol": 2e-5,
         "separate_fp32_masters": False,
+        "parameter_storage_dtypes": {
+            name: str(tensor.dtype).removeprefix("torch.")
+            for name, tensor in reference.named_parameters()
+        },
         "exact_resume": True,
         "client_script": "_text_service_client.py",
         "model_description": f"pretrained dense {family}, FP32 "
-        + ("LoRA" if lora else "full training"),
+        + ("LoRA" if lora else "full training")
+        + (", frozen A_log storage overridden to BF16" if override_decay else ""),
         "oracle_description": (
             "torch.compile(fullgraph=True) independent PyTorch decoder, "
             "full vocabulary projection and FP32 AdamW"

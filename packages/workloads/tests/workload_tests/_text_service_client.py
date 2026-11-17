@@ -34,14 +34,24 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.payload_io import read_payload
 
 
-def exported(training, trained, initial, *, separate_masters=True):
+def exported(
+    training, trained, initial, *, separate_masters=True, parameter_dtypes=None
+):
     handle = training.export_weights().result(120)
     with TemporaryDirectory(prefix="shadowspill-llama-weights-") as directory:
         root = handle.download(Path(directory) / "weights").result(60)
-        return read_weights(root, trained, initial, separate_masters=separate_masters)
+        return read_weights(
+            root,
+            trained,
+            initial,
+            separate_masters=separate_masters,
+            parameter_dtypes=parameter_dtypes,
+        )
 
 
-def read_weights(root, trained, initial, *, separate_masters=True):
+def read_weights(
+    root, trained, initial, *, separate_masters=True, parameter_dtypes=None
+):
     """Independent NumPy reconstruction of small qualification exports.
 
     Saved logical coordinates describe expert/model shards; storage regions
@@ -67,6 +77,22 @@ def read_weights(root, trained, initial, *, separate_masters=True):
                 arrays[row["name"]] = value
             manifests.append((manifest, arrays))
     assert manifests, "weights export contains no ranks"
+    if parameter_dtypes is not None:
+        seen = {}
+        for manifest, _ in manifests:
+            payloads = {row["name"]: row["dtype"] for row in manifest["tensors"]}
+            for row in manifest["model_tensors"]:
+                tensor = row["tensor"]
+                identity = tensor["identity"]
+                name = identity["name"]
+                if identity["role"] != "parameter" or name not in parameter_dtypes:
+                    continue
+                dtype = tensor["geometry"]["dtype"].removeprefix("torch.")
+                assert dtype == parameter_dtypes[name], (name, dtype)
+                if row["archive"] in payloads:
+                    assert payloads[row["archive"]].removeprefix("torch.") == dtype
+                seen[name] = dtype
+        assert seen == parameter_dtypes
     masters = {
         row["tensor"]["identity"]["name"]
         for manifest, _ in manifests
@@ -152,6 +178,7 @@ def check(training, options, index, budget, *, expected_initial=None):
         options["trainable"],
         initial,
         separate_masters=options.get("separate_fp32_masters", True),
+        parameter_dtypes=options.get("parameter_storage_dtypes"),
     )
     for name, value in expected["weights"].items():
         value = np.asarray(value, dtype=np.float32)
@@ -459,6 +486,7 @@ def qualify(client, options, budget):
         "separate_fp32_masters": options.get("separate_fp32_masters", True),
         "same_dtype_master_reuse": not options.get("separate_fp32_masters", True),
         "exact_resume": options.get("exact_resume", False),
+        "parameter_storage_dtypes": options.get("parameter_storage_dtypes"),
         "fresh_saved_plans": fresh_options is not None,
         "weights_initialization": weights_artifact is not None,
     }
