@@ -52,6 +52,18 @@ class ArtifactRef(Record):
         integer(self.size_bytes, "artifact size")
         text(self.media_type, "media type")
 
+    def same_content(self, other: ArtifactRef) -> bool:
+        """Compare immutable content, without granting access to either artifact.
+
+        Uploads may name identical bytes differently. Storage authorization still
+        requires the complete reference, including its owner-scoped ID.
+        """
+        return (self.sha256, self.size_bytes, self.media_type) == (
+            other.sha256,
+            other.size_bytes,
+            other.media_type,
+        )
+
 
 @dataclass(frozen=True)
 class RequestIdentity(Record):

@@ -34,6 +34,17 @@ IDENTITY = RequestIdentity("request_2", "run_1", 2, "writer_1", 1, "server_1")
 PAYLOAD = ArtifactRef("payload_1", "a" * 64, 64)
 
 
+def test_artifact_content_identity_does_not_replace_authorization_identity():
+    copied = replace(PAYLOAD, id="uploaded")
+    assert copied != PAYLOAD and copied.same_content(PAYLOAD)
+    for changed in (
+        replace(copied, sha256="b" * 64),
+        replace(copied, size_bytes=65),
+        replace(copied, media_type="application/json"),
+    ):
+        assert not changed.same_content(PAYLOAD)
+
+
 def result():
     return OperationResult(
         IDENTITY,

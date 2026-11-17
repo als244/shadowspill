@@ -58,9 +58,14 @@ def checkpoint(ctx):
         )
 
 
+@pytest.mark.parametrize("reupload", [False, True])
 def test_native_resume_reads_checkpoint_defaults_without_a_generated_plan_summary(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, reupload
 ):
+    def no_conversion(*args, **kwargs):
+        pytest.fail("identical saved Plans must not convert checkpoint tensors")
+
+    monkeypatch.setattr(local_creation.LocalCreation, "_convert_state", no_conversion)
     with configured(tmp_path, monkeypatch, saved=True) as ctx:
         source = checkpoint(ctx)
         with ctx.service.artifacts("owner") as artifacts:
@@ -69,10 +74,19 @@ def test_native_resume_reads_checkpoint_defaults_without_a_generated_plan_summar
             endpoint(ctx) as (transport, _),
             ServiceClient(address(transport), token=TOKEN) as service,
         ):
+            plans = service.artifact(ctx.saved)
+            if reupload:
+                path = plans.download(tmp_path / "saved-plan.ssp").result(5)
+                plans = service.artifacts.upload(path).result(5)
+                assert plans.reference.id != ctx.saved.id
+                with ctx.service.artifacts("owner") as artifacts:
+                    assert artifacts.get(summary_id(plans.reference, 0)) is None
             training = service.create_training_client(
-                plans=service.artifact(ctx.saved), checkpoint=service.artifact(source)
+                plans=plans, checkpoint=service.artifact(source)
             ).result(10)
             assert training.get_config() == ctx.config
+            assert training.plans.reference == plans.reference
+            assert ctx.owners[-1]._node.prepared[0].restore.checkpoint == source
             assert ctx.owners[-1].run.controller.boundary.completed_updates == 7
             assert not ctx.phases
             training.close().result(5)

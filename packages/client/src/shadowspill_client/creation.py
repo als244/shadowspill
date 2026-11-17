@@ -130,7 +130,7 @@ def _resume_config(
     service: ServiceClient, plans: ArtifactRef, checkpoint: ArtifactRef
 ) -> ResolvedTraining:
     manifest = CheckpointHandle(checkpoint, service)._manifest()[0]
-    if manifest.info.plans == plans:
+    if manifest.info.plans.same_content(plans):
         # A copied native checkpoint already pins its exact resolved settings.
         # It need not carry a generated summary/cache page from the old server.
         reference = manifest.info.configuration

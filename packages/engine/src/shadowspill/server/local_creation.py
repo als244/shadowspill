@@ -499,7 +499,10 @@ class LocalCreation:
                 bundle.save(path, max_bytes=limits.preparation_disk_bytes - 8192)
                 plans = self._publish_file(path, "bundle")
             publish_summary(self._artifacts, plans, family)
-            if checkpoint is not None and checkpoint.manifest.info.plans != plans:
+            if (
+                checkpoint is not None
+                and not checkpoint.manifest.info.plans.same_content(plans)
+            ):
                 checkpoint = self._convert_state(
                     checkpoint,
                     plans,
