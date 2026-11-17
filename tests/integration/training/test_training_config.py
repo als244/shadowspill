@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.training import config
+from reference.training import config
 
 
 def _write(tmp_path: Path, value: object) -> Path:

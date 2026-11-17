@@ -5,13 +5,13 @@ import json
 import pytest
 import torch
 
-from shadowspill.pytorch.guards import capture_input_signature
-from shadowspill.training import config
-from shadowspill_workloads.recipes.text.experiment.inputs import (
+from reference.training import config
+from reference.training.text.inputs import (
     call_inputs,
     candidates,
     source,
 )
+from shadowspill.pytorch.guards import capture_input_signature
 from tests.integration.training._text_recipe import _config
 
 

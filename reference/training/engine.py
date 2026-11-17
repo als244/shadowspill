@@ -6,19 +6,19 @@ import time
 import torch
 from torch.utils._pytree import tree_map
 
+from reference.training import config
 from reference.training.hyperparameters import set_hyperparams
 from reference.training.inputs import on_device
+from reference.training.text.hyperparameters import (
+    scheduled_arguments,
+)
 from reference.training.weights import Weights
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.initialization import initialize_model, model_mode
 from shadowspill.pytorch.objectives import ScaledObjective
-from shadowspill.training import config
 from shadowspill.training.observations import StepObservations, parameter_norms
 from shadowspill.training.results import StepResult
 from shadowspill_workloads.policies.optimizer import build_optimizer
-from shadowspill_workloads.recipes.text.experiment.hyperparameters import (
-    scheduled_arguments,
-)
 
 
 class EagerStep:

@@ -9,13 +9,13 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
+from reference.training import config
 from reference.training.configuration import (
     expand_checkpoint,
     load_config,
 )
 from reference.training.run import run_config
-from shadowspill.training import config
-from shadowspill_workloads.recipes.text.experiment.hyperparameters import (
+from reference.training.text.hyperparameters import (
     scheduled_arguments,
 )
 from workload_tests.test_checkpoints import huggingface_state, materialized, metadata

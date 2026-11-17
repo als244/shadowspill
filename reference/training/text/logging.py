@@ -2,7 +2,7 @@
 
 import json
 
-from shadowspill.training import config
+from reference.training import config
 from shadowspill.training.logging import Wandb
 from shadowspill.training.observations import MetricSummary, parameter_scalars
 

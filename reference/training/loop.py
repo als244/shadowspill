@@ -3,9 +3,9 @@
 import time
 from pathlib import Path
 
+from reference.training.text import inputs, logging
 from shadowspill.training import _logs
 from shadowspill.training.results import StepResult
-from shadowspill_workloads.recipes.text.experiment import inputs, logging
 
 from . import checkpoint
 

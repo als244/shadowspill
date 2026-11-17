@@ -6,8 +6,8 @@ from pathlib import Path
 
 import torch
 
-from shadowspill.training import config
-from shadowspill_workloads.recipes.text.experiment import inputs, logging
+from reference.training import config
+from reference.training.text import inputs, logging
 
 from .configuration import load_config
 from .engine import EagerStep

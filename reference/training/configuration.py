@@ -4,7 +4,7 @@ import copy
 import difflib
 from collections.abc import Mapping
 
-from shadowspill.training import config
+from reference.training import config
 
 #: Every key a config may hold; a key outside it is refused by name.
 KNOWN_KEYS = frozenset(
