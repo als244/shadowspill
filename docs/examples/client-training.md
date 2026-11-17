@@ -5,6 +5,9 @@ tokenizer, and the public client/server API. Prepare data once, then keep the
 resulting token files on the client. Training itself needs only NumPy and
 `shadowspill-client` on that machine.
 
+The [demo collection](../../examples/demos/README.md) contains complete scripts
+for fine-tuning, distributed pretraining, long-context training and saved Plans.
+
 ## Prepare UltraChat
 
 Both fine-tuning examples use the same UltraChat conversations and assistant-token
