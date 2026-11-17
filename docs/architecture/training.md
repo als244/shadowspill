@@ -1,152 +1,114 @@
 # Training composition
 
-Preparation produces saved phase artifacts; training consumes a Plan. Model and
-objective semantics and qualification thresholds stay with their definitions and
-applications. Generic input validation/packing lives in the installed engine.
-See the [phase API](../python/phases.md) for the full artifact contracts.
+The client connects to one service endpoint, prepares a model and submits global
+batches. Preparation and worker startup are separate from the live training
+commands. Both use the existing build/profile/plan/Executor engine.
 
 ```mermaid
 flowchart LR
-    M[Model and example calls] --> B[build_step]
-    B --> P[Program]
-    P --> V[measure_program / apply_profiles]
-    V --> PP[ProfiledProgram]
-    PP --> S[plan_program]
-    C[CommunicationInfo and MemoryBudgets] --> S
-    S --> EP[Plan]
-    EP --> T[Trainer]
-    T --> E[Executor in a fresh worker]
-    D[Rank-local input calls] --> T
-    E --> O[Completed observations]
-    O --> T
+    C[ServiceClient] --> S[Server]
+    S --> P[Build / profile / plan]
+    P --> F[Saved Plan family]
+    F --> W[Worker Executors]
+    T[TrainingClient] --> Q[Ordered run controller]
+    S --> Q
+    Q --> W
+    W --> R[Results and artifacts]
+    R --> T
 ```
 
 ## Responsibilities
 
 | Component | Owns |
 | --- | --- |
-| Model and objective | Forward math, differentiable loss, optional tensor outputs |
-| Builders | Capture, operator recomputation, stage partitioning, finalized task implementations and static storage |
-| Profiling | Task durations and missing memory evidence, using the ordinary allocator |
-| Planning | Example/optimizer ordering, save/recompute selection, transfers and physical admission |
-| Executor | Allocator/pools, groups, saved task execution and bounded tensor access |
-| Trainer | Update count, schedules, host observations, optional fit loop and checkpoint progress |
-| Caller data source | Per-example args/kwargs and optional progress serialization |
-| Logger/callbacks | CPU metrics, evaluation cadence and application-specific actions |
-| Workload recipes | Model configuration, initialization/checkpoint mapping, tokenizer and data semantics |
+| Client application | Data, per-call learning rates, evaluation cadence and result display |
+| `ServiceClient` | Connection, preparation requests, saved Plans and run attachment |
+| `TrainingClient` | Owned input snapshots, local batch validation and asynchronous commands |
+| Installed definitions | Model math, objective semantics, initialization and input adapters |
+| Preparation | Resolve definitions, build candidates, profile and plan, admit the saved family |
+| Run controller | Request ordering, accumulation state, completed updates and worker coordination |
+| Worker Executor | Saved task execution, shared model state, memory pools and bounded tensor access |
+| Service storage | Durable request outcomes, checkpoint generations, logs and reports |
 
-`Trainer(plan, ...)` performs no build, profiling or planning. Direct callers can
-use Executor without a Trainer, or supply an existing Executor to Trainer.
-Quickstart and recipes compose the same phases in separate workers. An ordinary
-PyTorch reference loop remains an independent workload implementation.
+The optional workloads package supplies built-in definitions. External packages
+use the same registration API. Neither the engine nor the controller imports a
+particular model family. Independent PyTorch references remain outside the
+production execution path.
 
-## State and lifetime
+## Preparation and startup
 
-Executor installs its allocator before device initialization, binds the saved
-logical groups and admits the selected memory layout. `initialize(fill_tensor)`
-asks the caller to fill bounded buffers for declared tensor shards. A saved Plan
-contains computation and initialization contracts, not checkpoint weights.
+Preparation captures candidate computations, measures their costs and constructs
+compatible Plans within the requested memory budgets. Homogeneous workers share
+one complete Plan for each selected variant, with rank-specific tensor shards,
+inputs and communicator bindings supplied during startup.
 
-A separately built forward Plan can be passed as `evaluation_plan`. Its model
-tensors share training storage; both plans are admitted against one budget before
-execution. They run sequentially. Evaluation uses current compute weights and
-does not update gradients, optimizer state, schedules or training progress.
+`prepare_training()` publishes saved Plans and predicted HTML reports before any
+training starts. Creating a training client from those Plans skips build,
+profiling and planning. Workers validate the saved computation and installed
+sources, bind their logical ranks and initialize model state through bounded
+loaders. Plans contain computation contracts, not checkpoint weights.
 
-Trainer owns an Executor it creates; an externally supplied Executor remains
-caller-owned. Returned step observations contain CPU values. Direct Executor
-calls return a pending handle; `.result()` waits for caller-owned outputs.
+A separately requested `forward()` operation shares model storage with training.
+Preparation admits their combined storage before execution. Training does not
+implicitly build a forward-only path for batches with no supervised contribution.
 
-The internal `training.session.state.OperationState` records ordered operation
-boundaries for the developing client/service path. It chooses fresh versus
-additive backward execution from completed participation, tracks accumulation
-generations separately from optimizer updates, and rejects save/restore/close
-while a valid accumulation is open. Batches without loss participation are
-rejected before execution and leave the generation unchanged. The first valid
-contribution uses first-write destinations; later contributions accumulate.
-Explicit discard closes a generation without advancing updates.
+## Inputs and operations
 
-The worker/coordinator confirms this state only after device work and terminal
-transfers complete. Rejection before execution preserves completed gradients;
-unknown execution effects invalidate live state. Output publication occurs after
-the known execution boundary, so its failure cannot undo or replay an update.
-This component does not implement request queues, durability or a second public
-Trainer. Those service responsibilities are still under development.
+The client submits one global batch. `validate_batch()` checks its schema,
+packing and compatibility with the prepared layouts locally; the server repeats
+authoritative validation before accepting execution. Packing uses declared input
+partitions, preserves indivisible groups and restores outputs to caller order.
+It cannot add a new microbatch shape or Plan during training.
 
-Participation comes from declared boolean validity on original logical inputs,
-before routing or padding. Numeric loss, weights, advantages and final gradient
-scale do not determine participation. Output-only work uses an explicitly
-prepared `forward()` operation. Training preparation does not add a hidden
-forward path. Individual masked records or empty worker partitions remain valid
-when the global batch has a supervised contribution.
+The token cap counts scheduled padding once per logical input partition. Three
+64K buffers exceed a 128K step cap even when their real inputs total less than
+128K. Copies sent to cooperating workers do not multiply that logical capacity.
+Input placement describes replication or slicing; model operators must implement
+the corresponding distributed computation.
 
-## Data and observations
+| Command | Effect |
+| --- | --- |
+| `step()` | Compute one batch and apply an optimizer update |
+| `forward_backward()` | Add a batch's gradients to the open accumulation |
+| `optim_step()` | Apply the accumulated gradients and close that accumulation |
+| `forward()` | Evaluate current model weights without changing training gradients or progress |
+| `discard_gradients()` | Close an accumulation without an optimizer update |
 
-Each `fit` source item is a mapping of arguments for `Trainer.step`, normally
-`{"args": [...], "kwargs": [...]}`. Each sequence entry describes one example
-in the saved Program. The plan chooses execution order. Nested model inputs and
-static metadata use the builder's ordinary PyTorch argument structure.
+The first backward contribution writes fresh gradients; subsequent contributions
+accumulate. Participation comes from explicit validity on the original inputs,
+before routing and padding. Numeric loss, token weights and final gradient scale
+do not determine participation. A globally unsupervised training batch is
+rejected; individual masked records and empty worker partitions remain valid
+when another part of the batch contributes.
 
-The developing global-input path under `training.inputs` validates owned Datum
-snapshots and packs them into a finite set of declared physical schedules.
-Packing uses deterministic best fit with bounded repair, preserves indivisible
-groups and retains caller-order field regions. Scheduled capacity includes every
-padded model buffer, once per logical input partition. It never creates another
-buffer to work around fragmentation. Preparation must still certify advertised
-coverage, collective compatibility and memory before admitting those schedules.
+The objective defines its reduction. The engine sums gradient contributions
+without an implicit replica or token denominator. Text batch helpers can provide
+weights normalized over all supervised tokens in the update. Per-call optimizer
+controls, including learning rate, are explicit and do not become sticky defaults.
+See [objectives](../python/advanced/objectives.md) for complete examples.
 
-Materialization fills bounded CPU buffers with declared padding/defaults and
-checked casts. Logical worker routing selects explicitly declared slices or
-replicated views. Model adapters use the retained group/field regions to construct
-their own sequence/media metadata and honor loss ownership. The packer does not
-infer attention boundaries or implement distributed model operators. A cold
-worker test now passes owned, reordered variable-length records through a saved
-complete-step Plan and restores prediction order while matching optimizer state.
-The public global-batch service is still under development.
+## Completion and persistence
 
-The objective supplies its normalization. Contributions accumulate; the trainer
-does not infer token counts or replica denominators. Rank-local loss and other
-observations remain separate until the caller's CPU metric reducer combines them.
+The controller confirms state only after every worker and required terminal
+transfer completes. Rejection before execution preserves earlier gradients;
+unknown execution effects invalidate live state. A durable execution receipt
+precedes output publication, so a failed download or report cannot cause an
+optimizer update to run again.
 
-Optional weight/gradient norms are eager observations before optimizer updates,
-with bounded, budgeted scratch. They are disabled by default. They do not become
-compiled tasks, and their runtime is absent from simulated timelines. Enabled
-observations contribute to measured step time. Ordinary callbacks run after the
-completed step, outside compiled work.
+Checkpoint saves, restores and orderly close require a closed accumulation.
+Checkpoints contain optimizer progress, registered state, default RNG streams and
+caller metadata. Frozen weights may be omitted only with a verified immutable
+base dependency. New-run resume can convert compatible logical state for another
+Plan layout before workers start; changing optimizer semantics is rejected.
+Client data cursors and schedules remain application-owned metadata.
 
-## Checkpoint and resume
+Results contain declared metrics, named objective losses and server execution
+time. Predicted reports are available from the prepared Plans. An invocation with
+`runtime_trace=True` additionally produces measured HTML timelines, associated
+with the exact Plan and worker used. Upload, queueing and client-side data work
+are separate from server execution time.
 
-Trainer checkpoint helpers stream Executor tensors and save loop, source,
-schedule and RNG progress. Partial LoRA checkpoints require an immutable frozen
-base identity and a bounded loader for omitted weights. They retain optimizer
-state and masters so training can resume faithfully.
-
-`steps` is the total completed-update target. Schedules are evaluated at the
-zero-based update count and name the saved Plan's runtime hyperparameters, such
-as `optimizer_group.0.lr`. Data sources can implement `state_dict` and
-`load_state_dict` for exact continuation. A checkpoint binds to the training
-state, not the Programs: Plans rebuilt with other kernels, microbatch geometry,
-budgets or planning order resume it when they hold the same persistent tensors
-and the Trainer names the same schedules.
-
-## Distributed execution and reporting
-
-The central `Parallelism` description fixes logical ranks, placements and storage
-sharding during build. Ordinary DP compute tasks build and profile without live
-process groups. `measure_communication` separately calibrates the declared
-collectives. Planning consumes those saved costs and memory evidence.
-
-Fresh workers share a complete worker-to-logical-rank mapping and Plans that
-agree on what the ranks exchange and in what order, usually one saved Plan.
-Compute and optimizer communication retain their ordered execution contract.
-Parameter fetch/all-gather and gradient eviction/reduce-scatter use the tracked
-transfer paths. Backend work must finish under its task's completion event;
-private streams remain the backend's responsibility.
-
-`DistributedLogger` can aggregate completed CPU records asynchronously, retaining
-per-rank logs and optional W&B runs. It does not add runtime task barriers.
-Workloads may explicitly reduce globally normalized losses after step completion.
-
-See the [training example](../examples/generic-training.md),
-[checkpoint lifecycle](../python/api/training.md#checkpoints),
-[quickstart](../../benchmarks/quickstart.md), and
-[text recipes](../../packages/workloads/src/shadowspill_workloads/README.md).
+See [basic training](../examples/client-training.md),
+[saved Plans](../python/advanced/saved-plans.md),
+[service records](service-records.md) and the
+[phase API](../python/phases.md).

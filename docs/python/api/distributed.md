@@ -1,15 +1,15 @@
 # Distributed planning and training
 
-Declare logical ownership when building a Program. Measure DP compute on one
-representative GPU, calibrate communication separately, and plan on CPU. Every
-execution worker then loads the saved Plan, one per kind of GPU when ranks
-differ in hardware, and binds its logical rank.
-Only execution opens ShadowSpill's runtime pools. The CUDA training path supports
-symmetric DP with weights, gradients and optimizer data sharded over the same
-groups. Model-owned expert parallelism also runs through compatible providers;
-the Qwen3 recipe has completed an eight-H100 DP/EP budget sweep. Broader
-declarations and ranks that differ in hardware are described below with their
-implementation and [qualification limits](#qualification-scope).
+For ordinary distributed training, pass `parallelism` during public-client setup
+and submit global batches to one service endpoint. See the
+[eight-GPU example](../../../README.md#pretrain-qwen3-30b-a3b-on-eight-gpus).
+
+This reference explains the underlying phase APIs. Declare logical ownership
+when building a Program, measure DP compute on a representative GPU, calibrate
+communication separately and plan on CPU. Homogeneous workers load the same
+complete Plan and bind their logical ranks. Different hardware requires
+compatible worker-specific Plans, as described below. Only execution opens
+ShadowSpill's runtime pools.
 
 ## Simple DP
 
@@ -49,8 +49,8 @@ hyperparameters are not parameter-sized shards.
 that eight-rank layout. It uses 16 ranks without increasing the storage-sharding
 factor. Corresponding copies still require gradient reduction. Global sharding
 across all 16 ranks instead uses `ranks_per_replica=16, num_replicas=1`.
-Repeated replicas have ownership/reduction tests; their complete training path
-is outside the [qualification scope](#qualification-scope).
+The declared replica relationship also determines corresponding-copy reductions;
+it does not duplicate data or launch workers by itself.
 
 ## Ownership and setup
 
@@ -120,9 +120,8 @@ exchange = parallelism.group("partition")
 This describes ownership, not an executable EP recipe. The model supplies each
 local expert slice and the distributed operation. Builders lower local
 parameter shards and replicated optimizer updates alongside sharded DP. The
-16-rank, two-group example above is illustrative; its complete multi-GPU
-execution is outside the [qualification scope](#qualification-scope). The tested
-eight-rank Qwen EP recipe uses a different layout. Model-owned communication binds
+16-rank, two-group example above is an ownership declaration; it still needs a
+model and compatible execution Plans. Model-owned communication binds
 through [provider resources](../../architecture/resources.md), whose group
 references execution resolves to the process groups it creates.
 Weights and gradients may be replicated while optimizer data is sharded; when
@@ -131,16 +130,16 @@ optimizer group. Other layouts need explicit redistribution.
 Equal contiguous model slices are represented; noncontiguous parameter maps
 are not, and ranks' Programs differ only as
 [Ranks on different hardware](#ranks-on-different-hardware) describes. The
-declaration API must not be mistaken for qualification of every layout it can
-describe.
+declaration API cannot establish that arbitrary model operators implement the
+layout it describes.
 
 ## Data loading and objective normalization
 
-Inputs are rank-local. Trainer/Executor do not distribute a global iterable.
-Select data using the application's data-replica relationship, which can differ
-from parameter-storage or model-communication groups. Model-parallel operations
-also need explicit input-layout semantics; parameter placement alone cannot
-infer them.
+The public service packs and routes global batches using the prepared input
+placement. Direct Executor callers supply rank-local tensors themselves, using
+the application's data-replica relationship. This can differ from parameter
+storage or model-communication groups. Parameter placement alone cannot infer
+input-layout semantics.
 
 `Parallelism.inputs` can declare that relationship explicitly. It defaults to
 `None`, preserving existing rank-local callers and saved declarations. These
@@ -185,12 +184,11 @@ ordering; declaring sliced inputs does not implement a distributed model.
 partition. Three 64K buffers exceed a 128K step cap even if only 120K positions
 are valid. Replicated copies on cooperating workers count once; masked model
 buffers still count in full. This arithmetic does not by itself admit a schedule
-or enforce an application's cap. Global packing, collective-safe routing and
-output reordering are separate from these declarations. The internal
-`training.inputs` pipeline now materializes owned fixed buffers and routes their
-declared views, with CPU checks for cooperating/replicated and sliced inputs.
-Service transport and real distributed routing remain under development; these
-checks do not expand the multi-GPU qualification scope below.
+or enforce an application's cap. The service's `training.inputs` pipeline packs
+the global batch into prepared buffers, routes declared views and restores output
+order. `TrainingClient.validate_batch()` checks whether a batch fits locally
+before submission. Sliced delivery still requires model operators that implement
+the corresponding distributed computation.
 
 Gradient contributions are **summed**, without implicit world-size division.
 For an additive objective, every rank/example can contribute
@@ -242,8 +240,8 @@ worker receives the same combined result. It runs no compiled compute tasks.
 The subsequent `measure_overlap` call runs saved task/collective pairs on those
 workers and adds supported interference measurements to the compute profiles.
 This preserves single-GPU build/ordinary profiling and CPU-only planning.
-The shared recipe and quickstart reuse compatible paired evidence across search
-candidates through `OverlapProfileCache`. Standalone callers can pass the same
+The service preparation path and quickstart reuse compatible paired evidence
+across search candidates through `OverlapProfileCache`. Standalone callers can pass the same
 cache instance to each `measure_overlap` call. By default, cheap probes take three
 trials and expensive probes take one; pass `trials=N` to override. Allocator
 cleanup precedes warmup, so timed trials reuse the conditioned workspace.
@@ -341,15 +339,15 @@ finally:
     dist.destroy_process_group()
 ```
 
-`Trainer(plan, device=0, rank_map=...)` provides the loop and schedules over this
-same Executor. A prebuilt evaluation Plan can share its current model tensors.
+The public service coordinates these Executors behind `TrainingClient` commands.
+A prebuilt evaluation Plan can share current model tensors.
 Every invocation of a Plan that issues collectives first checks that all workers
 selected the same Plan and options. A Plan that issues none, such as an
 evaluation Plan over replicated weights, runs on each worker by itself, so
 workers may invoke it different numbers of times. A Plan whose model's provider
 resources hold communicator groups issues collectives inside its own tasks, so
 it always meets the other workers.
-Neither API builds, profiles or replans during execution.
+Runtime commands and Executor do not build, profile or replan during execution.
 
 ## Transfer lifetimes and optimizer ordering
 
@@ -371,7 +369,6 @@ The reduction logic counts ranks holding the same logical parameter, including
 copies of model shards across repeated groups. When a reduced gradient is fetched
 for further accumulation, the previous contribution is injected once before the
 next reduction; it must not be multiplied by the number of participants.
-Complete repeated-replica training is outside the qualification scope.
 
 A provider's private streams remain its responsibility. Its work must join the
 task's current stream before that task's completion event. Tensor/mutation and
@@ -401,38 +398,9 @@ does not allocate a full weight tensor on the GPU or run an optimizer step.
 from their rounded values. Parameters without masters retain their normal
 owned storage. Encoded or incompatible physical layouts still keep their
 required physical copies and record the reason.
-See [Trainer checkpoints](training.md) for loop/source state and frozen-base
-partial checkpoints.
+The public service publishes rank archives as one checkpoint generation and
+supports frozen-base omission and compatible state conversion. See
+[client checkpoints](../advanced/service-client.md#checkpoints).
 
-## Qualification scope
-
-Saved-plan two-H100 checks cover common sharded DP, reversed logical-rank maps,
-forward/backward/AdamW execution, save/recompute choices, bounded initialization,
-checkpoint restoration and shared evaluation. Tiny catalog full-training and
-LoRA also have separate distributed checks. These do not qualify every model,
-provider, repeated-replica layout or arbitrary model-owned communication path.
-The baseline controller has also passed full-training and LoRA checks
-on two H100s.
-
-The [Qwen3 recipe](../../../examples/training/qwen3.md)
-has completed seven full-model updates on eight H100s at each of 20, 40 and
-77 GiB per GPU, with both sharded DP and EP8. Those throughput runs use real
-tokenized text, random host initialization and a 96 GiB spill limit per rank;
-their recorded revisions and search candidates are listed in the recipe guide.
-They do not include checkpoint/evaluation I/O or a full tensor-reference check.
-EP task profiles include provider-owned collectives; additional EP contention
-calibration is not implemented. The current Qwen EP provider has no declared
-axis-chunk contract, so the recipe refuses execution chunking for those tasks.
-
-Separate two-H100 checks of the current checkpoint format cover both DP and EP
-restoration in fresh processes followed by two exact continuation updates,
-including uneven shards, reversed logical rank order and optimizer state.
-Both master-selected and compute-selected checkpoints are covered. The EP case
-reconstructs replicated compute weights from master shards; no-master BF16
-checks cover both sharded and replicated compute weights. Compute-selected
-continuation uses masters reconstructed from the saved rounded values as its
-baseline. These checks use unchanged rank ownership and world size; checkpoint
-resharding is not covered.
-
-The [phase guide](../phases.md) describes the
-implementation boundary; [phase artifacts](artifacts.md) describes persistence.
+The [phase guide](../phases.md) describes phase composition;
+[phase artifacts](artifacts.md) describes persistence.
