@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from shadowspill.pytorch.capture.objective import capture_training_objective
-from shadowspill_workloads.objectives.token import clipped_policy, cross_entropy
+from shadowspill_workloads.objectives.head.token import clipped_policy, cross_entropy
 
 
 def oracle(current, valid, weights, old, advantages, clip, reference=None, beta=0.0):

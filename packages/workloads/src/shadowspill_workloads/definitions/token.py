@@ -184,7 +184,10 @@ def compute(
     import torch
 
     from shadowspill.pytorch.contracts import ObjectiveResult
-    from shadowspill_workloads.objectives.token import clipped_policy, cross_entropy
+    from shadowspill_workloads.objectives.head.token import (
+        clipped_policy,
+        cross_entropy,
+    )
 
     valid = loss_inputs["response_mask" if policy else "loss_mask"]
     current = evaluated["logprobs"].float()
@@ -226,7 +229,7 @@ def register(registry):
     for relative in (
         "definitions/token.py",
         "definitions/token_evaluation.py",
-        "objectives/token.py",
+        "objectives/head/token.py",
     ):
         digest.update(relative.encode())
         digest.update((root / relative).read_bytes())
