@@ -1,10 +1,10 @@
 # Example model catalog
 
 Start here to choose a supplied architecture, change its dimensions, and select
-training precision. These are ordinary PyTorch modules passed into the generic
-[Trainer](../../../../docs/python/api/training.md), `build_forward`, or planning APIs.
-Model construction, trainable parameters, and data semantics belong to the
-caller.
+training precision. These are ordinary PyTorch modules used by the
+[phase APIs](../../../../docs/python/phases.md). For training through a service,
+start with the [built-in definitions](../../../../docs/python/catalog.md) and
+[client guide](../../../../docs/python/client.md).
 
 ## Contents
 
@@ -201,7 +201,7 @@ from shadowspill_workloads.models.llama3.implementations.mlops import Model
 model = Model(PRESETS["numerical"])
 configure_lora(model, rank=32, alpha=32, head="frozen")
 print(parameter_report(model))
-# Pass model to the same generic Trainer or planning API used for full training.
+# Pass the adapted model to the same build APIs used for full training.
 ```
 
 | Option | Default and behavior |
@@ -416,12 +416,15 @@ workers recreate the explicitly described resources.
 
 | Path | Responsibility |
 |---|---|
-| [models/](models) | One package per family: `config.py`, its `checkpoint.py` reading a local Hugging Face checkpoint, a README and `implementations/` with one module per implementation |
+| [models/](models) | One package per family: architecture/configuration, checkpoint mappings, LoRA targets, registration and implementation |
 | [models/shared/](models/shared) | Code families share: reference decoder math, rotary tables, packing metadata and loss helpers, the mlops norm containers, the Gated DeltaNet mixer, EP construction, the Qwen mixture blocks and the GLM building blocks |
 | [models/shared/qwen_moe/](models/shared/qwen_moe) | Initialization, mixers, experts and the decoder shared by the two Qwen MoE families |
 | [models/shared/expert_parallel](models/shared/expert_parallel) | Shared EP construction and routing helpers for the MLOps OLMoE and Qwen MoE models |
 | [lora/](lora) | Model-family LoRA targeting over the reusable projections in MLOps |
-| [recipes/](recipes) | Caller-side model construction, objectives and data composition |
+| [definitions/](definitions) | Shared model registration, preparation and objective hooks; decoder setup is reused across families |
+| [inputs/](inputs) | Input schemas, processors and packing adapters |
+| [initialization/](initialization) | Bounded weight loading and parameter generation |
+| [policies/](policies) | Chunking, retention and optional partition policies |
 | [precision.py](precision.py) | Supplied workload precision configuration |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
 | [examples/training/configs/](../../../../examples/training/configs) | Concrete example training requests |
@@ -430,9 +433,10 @@ The shared Qwen package factors code two architectures use, including
 DeltaNet and full attention. Family packages remain small; adding EP does
 not require copying the decoder or changing the trainer/planner.
 
-Reusable LoRA modules belong in MLOps. Model-family target selection belongs
-with the examples. The generic trainer and planner operate on the resulting
-PyTorch model and never import this catalog or the workload packages.
+Reusable LoRA modules belong in MLOps. Model-family targets live beside each
+architecture. Generic preparation and execution use registered hooks without
+importing this catalog. The [contributor guide](../../../../docs/development/workloads.md)
+describes the folder pattern and the steps for adding a family.
 
 
 ## Family LoRA targets

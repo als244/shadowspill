@@ -23,12 +23,12 @@ shadowspill_workloads/
     shared/                  # Reusable layers, model math and weight mappings
     catalog/                 # Lookups derived from family declarations
   definitions/               # Shared registration, objective and setup helpers
+    decoder/                 # Reused by Llama, OLMoE and Qwen family hooks
   inputs/                    # Schemas, processors and input adapters
   objectives/                # Reusable objective computations
   initialization/            # Bounded weight loading and parameter generation
   lora/                      # Shared adapter application and targeting
   policies/                  # Chunking, retention and execution choices
-  recipes/                   # Application composition and experiment defaults
 ```
 
 Large modules can use a package instead of a single file. Keep model-specific
@@ -36,12 +36,18 @@ computation and checkpoint mappings beside the model. Shared setup and execution
 policies belong outside `models/shared/`; generic planning and execution belong
 in the engine.
 
+Put application loops in `examples/training/` and benchmark drivers in
+`benchmarks/`. A model family supplies declarations and computation, not a
+training loop or its own service startup path.
+
 ## Add a built-in family
 
 1. Create `models/<family>/config.py` and `implementations/`. A config describes
    architecture dimensions; `PRESETS` gives named starting shapes. Each
    implementation exports `Model`. Reuse existing layers where their mathematics
-   match, and keep an independent small reference for numerical checks.
+   match, and keep an independent small reference for numerical checks. Configs
+   must round-trip through JSON without importing Torch or model implementations;
+   store dtype names such as `"bfloat16"` and resolve them in model construction.
 2. Add `checkpoint.py` for pretrained weight mappings and bounded copying.
    Add `lora.py` if adapter targeting depends on the architecture. Keep parameter
    storage precision explicit. Declare selective defaults in
@@ -52,7 +58,13 @@ in the engine.
    correctly. A family-specific `training.py` supplies settings and hooks; it
    does not implement another training loop. The
    [Qwen3 settings](../../packages/workloads/src/shadowspill_workloads/models/qwen3/training.py)
-   show a family reusing shared training integration.
+   and [OLMoE settings](../../packages/workloads/src/shadowspill_workloads/models/olmoe/training.py)
+   reuse [shared decoder hooks](../../packages/workloads/src/shadowspill_workloads/definitions/decoder).
+   They supply the family, catalog and architecture-specific checks. A different
+   constructor can be supplied directly, as in
+   [Llama](../../packages/workloads/src/shadowspill_workloads/models/llama3/training.py).
+   Use the public definition hooks for architectures with different input or
+   initialization requirements; do not force them into decoder-specific settings.
 4. Declare `FAMILY` in `registration.py`. The
    [Qwen3 declaration](../../packages/workloads/src/shadowspill_workloads/models/qwen3/registration.py)
    shows preset descriptions, checkpoint reader, pretrained identifiers,
