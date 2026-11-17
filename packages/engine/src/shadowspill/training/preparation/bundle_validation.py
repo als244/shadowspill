@@ -19,7 +19,7 @@ from .family_checks import _collectives, _orderings
 from .family_identity import candidate_identity, execution_names, validate_profile
 from .family_records import PlannedCandidate, PlanRejection, PreparedPlans
 from .family_selection import certificate, joint_memory
-from .shared_planning import representative_sources, representative_use
+from .shared_planning import plan_sources, representative_sources, representative_use
 from .templates import TemplateCandidate, TemplateInventory
 
 if TYPE_CHECKING:
@@ -91,6 +91,17 @@ def recheck_bundle(
         for use in (getattr(worker, role),)
         if use is not None
     }
+    communication.update(
+        {
+            key: plan.communication_info
+            for plans in bundle.plans.values()
+            for plan in plans.values()
+            for key in (
+                plan.program.bindings.get("preparation_template", {}).get("id"),
+            )
+            if key is not None
+        }
+    )
     representatives = representative_sources(bundle.sources, pools, communication)
     distinct = {}
     for rows in result.families.values():
@@ -168,7 +179,7 @@ def bind_bundle(bundle: TrainingBundle, inventory: TemplateInventory) -> Prepare
         for worker in row.source.workers.values()
         for use in (worker.main, worker.optimizer)
         if use is not None
-    }
+    } | plan_sources(bundle.plans)
     if bundle.sources.keys() != needed_sources:
         raise ValueError("bundle must contain exactly the referenced source profiles")
     needed_plans: dict[int, set[str]] = {}

@@ -5,12 +5,24 @@ from dataclasses import replace
 from typing import Any
 
 from shadowspill.artifacts._values import digest, plain
+from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.pool_memory import PoolMemoryProfile
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.artifacts.program import Program
 from shadowspill.communication.info import CommunicationInfo
 
 from .templates import TemplateUse
+
+
+def plan_sources(plans: Mapping[int, Mapping[str, Plan]]) -> set[str]:
+    """Retain a representative even when its original candidate was not selected."""
+    return {
+        key
+        for worker in plans.values()
+        for plan in worker.values()
+        for key in (plan.program.bindings.get("preparation_template", {}).get("id"),)
+        if key is not None
+    }
 
 
 def _ownership(value: Mapping[str, Any]) -> dict[str, Any]:

@@ -22,6 +22,7 @@ from .family_records import PreparedPlans
 from .identity import without_initialization
 from .layouts import prepare_layouts
 from .setup import resolve_training
+from .shared_planning import plan_sources
 from .templates import capture_inventory
 
 
@@ -87,7 +88,7 @@ class TrainingBundle(Artifact):
             for worker in candidate.source.workers.values()
             for use in (worker.main, worker.optimizer)
             if use is not None
-        }
+        } | plan_sources(prepared.plans)
         return cls(
             prepared.inventory.layouts.setup.config,
             {key: sources[key] for key in sorted(needed)},

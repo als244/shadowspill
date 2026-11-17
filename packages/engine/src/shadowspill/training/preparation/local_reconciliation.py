@@ -18,6 +18,7 @@ from .family_records import PlannedCandidate, WorkerPlans
 from .family_selection import select_family
 from .local_plans import LocalPlans
 from .planning_requests import PlanningRequest, planning_requests
+from .shared_planning import plan_sources
 from .templates import TemplateInventory
 
 
@@ -48,11 +49,11 @@ def reconcile_local_plans(
         key: PlanningRequest.from_dict(exported["requests"][key]) for key in needed
     }
     templates = {request.use.template for request in requests.values()}
-    if submitted.profiles.keys() != templates:
-        raise ValueError("local Plans must contain exactly their source profiles")
+    if not templates <= submitted.profiles.keys() <= inventory.templates.keys():
+        raise ValueError("local Plans must contain their exported source profiles")
     sources, communication, edits = {}, {}, {}
     payloads: dict[str, bytes] = {}
-    for key in templates:
+    for key in submitted.profiles:
         original = ProfiledProgram.load(root / "calibrated" / f"{key}.ssp")
         validate_profile(inventory, key, original)
         edits[key] = {
@@ -81,6 +82,8 @@ def reconcile_local_plans(
             communication[key], plan.communication_info
         )
         plans.setdefault(request.rank, {})[name] = plan
+    if submitted.profiles.keys() != templates | plan_sources(plans):
+        raise ValueError("local Plans must contain exactly their source profiles")
     rows = []
     for family in inventory.families.values():
         for candidate in family:
@@ -120,7 +123,7 @@ def reconcile_local_plans(
         for worker in row.source.workers.values()
         for use in (worker.main, worker.optimizer)
         if use is not None
-    }
+    } | plan_sources(prepared.plans)
     from .bundle_manifest import manifest
 
     bundle = TrainingBundle(

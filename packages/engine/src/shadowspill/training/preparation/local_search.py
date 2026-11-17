@@ -19,7 +19,7 @@ from shadowspill_client.protocol.training import ResolvedTraining
 from .cost_evidence import communication_edits, profile_edits
 from .identity import without_initialization
 from .local_plans import LocalPlans
-from .shared_planning import representative_sources, representative_use
+from .shared_planning import plan_sources, representative_sources, representative_use
 from .templates import instantiate_program
 
 if TYPE_CHECKING:
@@ -91,13 +91,16 @@ def search(
         key: apply_profiles(source.program, costs[key])
         for key, source in inputs.sources.items()
     }
-    representatives = representative_sources(sources, communication=communication)
     selected = tuple(inputs.candidates if candidates is None else candidates)
     if not set(selected) <= inputs.candidates.keys() or len(set(selected)) != len(
         selected
     ):
         raise ValueError("local planning requires distinct exported candidates")
     required = {key for candidate in selected for key in inputs.candidates[candidate]}
+    selected_templates = {inputs.requests[key].use.template for key in required}
+    representatives = representative_sources(
+        {key: sources[key] for key in selected_templates}, communication=communication
+    )
     settings = config.preparation.planning
     assert settings.search is not None and settings.workers is not None
     search = replace(
@@ -142,11 +145,14 @@ def search(
         key for key in selected if set(inputs.candidates[key]) <= plans.keys()
     )
     needed = {key for candidate in selected for key in inputs.candidates[candidate]}
-    templates = {inputs.requests[key].use.template for key in needed}
+    retained = {key: plans[key] for key in needed}
+    templates = {inputs.requests[key].use.template for key in needed} | plan_sources(
+        {0: retained}
+    )
     return LocalSearch(
         config,
         {key: costs[key] for key in templates},
-        {key: plans[key] for key in needed},
+        retained,
         selected,
         rejected,
     )

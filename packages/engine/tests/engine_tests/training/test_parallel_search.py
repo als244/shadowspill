@@ -91,6 +91,46 @@ def test_shared_plans_decode_and_validate_once_without_skipping_changed_rank(
         damaged.recheck(installed())
 
 
+def test_shared_plan_retains_source_from_an_unselected_capture(measured):  # noqa: F811
+    from engine_tests.training.test_allocation_coverage import certify
+    from shadowspill.artifacts._values import plain
+
+    _, _, inputs, inventory = measured
+    original = next(iter(inventory.templates.values()))
+    # An equivalent capture can be the canonical source without its own layout
+    # being selected. Keep both the selected worker's proof and that source.
+    canonical = replace(original, id="0" * 64)
+    inventory = replace(
+        inventory, templates={**inventory.templates, canonical.id: canonical}
+    )
+    source = inputs.sources[original.id]
+    bindings = plain(source.program.bindings)
+    bindings["preparation_template"] = canonical.signature()
+    program = certify(canonical, replace(source.program, bindings=bindings))
+    sources = {
+        **inputs.sources,
+        canonical.id: replace(
+            source,
+            program=program,
+            metadata={**source.metadata, "preparation_template": canonical.id},
+        ),
+    }
+    communication = {
+        **inputs.communication,
+        canonical.id: inputs.communication[original.id],
+    }
+    prepared = plan_family(inventory, sources, communication)
+    bundle = TrainingBundle.from_prepared(prepared, sources)
+    assert bundle.sources.keys() == sources.keys()
+    assert all(
+        plan.program.bindings["preparation_template"]["id"] == canonical.id
+        for plans in bundle.plans.values()
+        for plan in plans.values()
+    )
+    checked = bundle_validation.recheck_bundle(bundle, inventory)
+    assert checked.coverage == prepared.coverage
+
+
 @pytest.mark.parametrize("measured", [2], indirect=True)
 @pytest.mark.parametrize("change", ["hardware", "loss", "computation", "geometry"])
 def test_distinct_worker_requirements_are_not_shared(measured, change):  # noqa: F811
