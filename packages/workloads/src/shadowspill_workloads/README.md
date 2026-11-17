@@ -15,7 +15,7 @@ the detailed [architecture catalog](MODELS.md).
 | [models/](models) | One package per family: architecture, configuration, checkpoint mapping, LoRA targets and registration |
 | [models/shared/](models/shared) | Reusable model layers, math and checkpoint mapping components |
 | [definitions/](definitions) | Shared public registration, preparation and objective hooks |
-| [inputs/](inputs) | Input schemas, processors, packing adapters and corpus readers |
+| [inputs/](inputs) | Input schemas, processors and packing adapters |
 | [objectives/](objectives) | Reusable losses and metrics |
 | [initialization/](initialization) | Bounded checkpoint loading and parameter initialization |
 | [lora/](lora) | Shared adapter selection and application |

@@ -20,13 +20,13 @@ class ParameterInitialization:
 class Family:
     """One family's catalog, checkpoint and public training integration.
 
-    ``presets`` contains (size, microbatch tokens, description) rows. Shapes
+    ``presets`` contains (size, description) rows. Shapes
     themselves live in the family's config module. ``training`` names an
     installed registration hook, imported only when loading definitions.
     """
 
     name: str
-    presets: tuple[tuple[str, int, str], ...] = ()
+    presets: tuple[tuple[str, str], ...] = ()
     implementations: tuple[ModelImplementation, ...] = ("pytorch", "mlops")
     mixture: bool = False
     expert_parallel: bool = False

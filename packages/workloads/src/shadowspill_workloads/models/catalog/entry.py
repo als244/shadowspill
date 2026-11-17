@@ -1,4 +1,4 @@
-"""Catalog entries and their default text geometry."""
+"""Supplied model architectures and implementations."""
 
 from __future__ import annotations
 
@@ -12,30 +12,6 @@ IMPLEMENTATIONS: tuple[ModelImplementation, ...] = ("pytorch", "mlops")
 
 
 @dataclass(frozen=True, slots=True)
-class Geometry:
-    """Where a benchmark of a model starts: the sequence length, the tokens
-    one microbatch holds and the tokens one optimizer step consumes."""
-
-    sequence_length: int
-    tokens_per_microbatch: int
-    tokens_per_step: int
-
-    def __post_init__(self) -> None:
-        if self.tokens_per_microbatch % self.sequence_length:
-            raise ValueError("the sequence length must divide the microbatch")
-        if self.tokens_per_step % self.tokens_per_microbatch:
-            raise ValueError("the microbatch must divide the step")
-
-    @property
-    def sequences_per_microbatch(self) -> int:
-        return self.tokens_per_microbatch // self.sequence_length
-
-    @property
-    def accumulation_count(self) -> int:
-        return self.tokens_per_step // self.tokens_per_microbatch
-
-
-@dataclass(frozen=True, slots=True)
 class Entry:
     """One catalog model."""
 
@@ -43,7 +19,6 @@ class Entry:
     family: str
     size: str
     implementations: tuple[ModelImplementation, ...]
-    geometry: Geometry
     mixture: bool = False
     expert_parallel: bool = False
     description: str = ""

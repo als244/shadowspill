@@ -7,7 +7,7 @@ from shadowspill_workloads.models.registration import Family, ParameterInitializ
 
 FAMILY = Family(
     name="qwen3moe",
-    presets=(("tiny", 4096, "a smoke-test shape"), ("30b-a3b", 8192, "Qwen3-30B-A3B")),
+    presets=(("tiny", "a smoke-test shape"), ("30b-a3b", "Qwen3-30B-A3B")),
     implementations=("mlops",),
     mixture=True,
     expert_parallel=True,

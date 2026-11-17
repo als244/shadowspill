@@ -8,9 +8,9 @@ from shadowspill_workloads.models.registration import Family, ParameterInitializ
 FAMILY = Family(
     name="olmoe",
     presets=(
-        ("numerical", 32768, "the exact-scale shape the numerical gate runs"),
-        ("tiny", 4096, "a smoke-test shape"),
-        ("7b-a1b", 32768, "OLMoE-1B-7B"),
+        ("numerical", "the exact-scale shape the numerical gate runs"),
+        ("tiny", "a smoke-test shape"),
+        ("7b-a1b", "OLMoE-1B-7B"),
     ),
     mixture=True,
     expert_parallel=True,

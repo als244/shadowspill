@@ -10,10 +10,9 @@ FAMILY = Family(
     presets=(
         (
             "published",
-            8192,
             "GLM-5.3, native checkpoint storage and LoRA",
         ),
-        ("tiny", 4096, "GLM-5.3's small random fixture"),
+        ("tiny", "GLM-5.3's small random fixture"),
     ),
     implementations=("mlops",),
     mixture=True,

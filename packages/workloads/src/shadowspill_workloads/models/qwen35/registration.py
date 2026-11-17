@@ -8,13 +8,12 @@ from shadowspill_workloads.models.registration import Family, ParameterInitializ
 FAMILY = Family(
     name="qwen35",
     presets=(
-        ("numerical", 16384, "the exact-scale shape the numerical gate runs"),
-        ("tiny", 4096, "a smoke-test shape"),
-        ("2b", 16384, "Qwen3.5-2B's text decoder, with tied embeddings"),
-        ("9b", 16384, "Qwen3.5-9B's text decoder"),
+        ("numerical", "the exact-scale shape the numerical gate runs"),
+        ("tiny", "a smoke-test shape"),
+        ("2b", "Qwen3.5-2B's text decoder, with tied embeddings"),
+        ("9b", "Qwen3.5-9B's text decoder"),
         (
             "27b",
-            8192,
             "Qwen3.5-27B's text decoder, without its multi-token prediction layer",
         ),
     ),

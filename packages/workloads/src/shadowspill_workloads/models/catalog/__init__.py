@@ -10,9 +10,8 @@ holds one module per implementation, each exposing ``Model``, and
 ``checkpoint`` holds the reader of a local Hugging Face checkpoint of the
 family, declared in ``registration.py``.
 
-An entry also records which implementations build it, the geometry a
-benchmark of it starts from, whether its objective carries a router
-balancing term, whether the mlops implementation supports direct
+An entry also records which implementations build it, whether it has a router
+balancing term and whether the mlops implementation supports direct
 expert-parallel construction. Adding a model is one family package and one entry
 in ``models/families.py``."""
 
@@ -23,7 +22,7 @@ from shadowspill_workloads.models.families import families as registered_familie
 from shadowspill_workloads.models.families import family as registered_family
 from shadowspill_workloads.providers import ModelImplementation
 
-from .entry import IMPLEMENTATIONS, Entry, Geometry
+from .entry import IMPLEMENTATIONS, Entry
 from .presets import ENTRIES
 
 _BY_NAME: Mapping[str, Entry] = {item.name: item for item in ENTRIES}
@@ -145,7 +144,6 @@ __all__ = [
     "ENTRIES",
     "IMPLEMENTATIONS",
     "Entry",
-    "Geometry",
     "build_on_meta",
     "entries",
     "entry",

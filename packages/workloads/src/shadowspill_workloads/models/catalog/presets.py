@@ -2,7 +2,7 @@
 
 from shadowspill_workloads.models.families import families
 
-from .entry import Entry, Geometry
+from .entry import Entry
 
 
 def _entries(family):
@@ -13,12 +13,11 @@ def _entries(family):
             family=family.name,
             size=size,
             implementations=family.implementations,
-            geometry=Geometry(1024, tokens, 65536),
             mixture=family.mixture,
             expert_parallel=family.expert_parallel,
             description=description,
         )
-        for size, tokens, description in family.presets
+        for size, description in family.presets
     )
 
 

@@ -8,8 +8,8 @@ from shadowspill_workloads.models.registration import Family, ParameterInitializ
 FAMILY = Family(
     name="qwen35moe",
     presets=(
-        ("tiny", 4096, "a smoke-test shape"),
-        ("35b-a3b", 8192, "Qwen3.5-35B-A3B's text decoder"),
+        ("tiny", "a smoke-test shape"),
+        ("35b-a3b", "Qwen3.5-35B-A3B's text decoder"),
     ),
     implementations=("mlops",),
     mixture=True,

@@ -6,10 +6,10 @@ from shadowspill_workloads.models.registration import Family, ParameterInitializ
 FAMILY = Family(
     name="qwen3",
     presets=(
-        ("tiny", 4096, "a smoke-test shape"),
-        ("1.7b", 8192, "Qwen3-1.7B, with tied embeddings"),
-        ("8b", 8192, "Qwen3-8B"),
-        ("32b", 8192, "Qwen3-32B"),
+        ("tiny", "a smoke-test shape"),
+        ("1.7b", "Qwen3-1.7B, with tied embeddings"),
+        ("8b", "Qwen3-8B"),
+        ("32b", "Qwen3-32B"),
     ),
     checkpoint_reader="Qwen3Checkpoint",
     checkpoint_types=("qwen3",),

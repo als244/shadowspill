@@ -1,1 +1,1 @@
-"""Reference model families used by ShadowSpill tests and benchmarks."""
+"""Supplied model definitions and shared training integrations."""

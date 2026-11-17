@@ -25,6 +25,34 @@ LEARNING_RATE = 3.0e-4
 
 _RETAINED_HEAD_SCRATCH_BYTES = 512 << 20
 
+# Retained performance cases; training clients choose their own batch limits.
+_RETAINED_MICROBATCH_TOKENS = {
+    "llama3-numerical": 8192,
+    "llama3-tiny": 4096,
+    "llama3-1b": 8192,
+    "llama3-8b": 8192,
+    "qwen3-tiny": 4096,
+    "qwen3-1.7b": 8192,
+    "qwen3-8b": 8192,
+    "qwen3-32b": 8192,
+    "qwen35-numerical": 16384,
+    "qwen35-tiny": 4096,
+    "qwen35-2b": 16384,
+    "qwen35-9b": 16384,
+    "qwen35-27b": 8192,
+    "olmoe-numerical": 32768,
+    "olmoe-tiny": 4096,
+    "olmoe-7b-a1b": 32768,
+    "qwen3moe-tiny": 4096,
+    "qwen3moe-30b-a3b": 8192,
+    "qwen35moe-tiny": 4096,
+    "qwen35moe-35b-a3b": 8192,
+    "glm53": 8192,
+    "glm53-tiny": 4096,
+    "glm53-flash": 8192,
+    "glm53-flash-tiny": 4096,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class FullModelSpec:
@@ -92,13 +120,16 @@ def spec(
             f"{model} has no {implementation!r} implementation; "
             f"it has {', '.join(item.implementations)}"
         )
-    geometry = item.geometry
+    try:
+        tokens = _RETAINED_MICROBATCH_TOKENS[model]
+    except KeyError as error:
+        raise ValueError(f"{model!r} has no retained performance geometry") from error
     return FullModelSpec(
         model=model,
         implementation=implementation,
-        sequence_length=geometry.sequence_length,
-        sequences_per_microbatch=geometry.sequences_per_microbatch,
-        accumulation_count=geometry.accumulation_count,
+        sequence_length=1024,
+        sequences_per_microbatch=tokens // 1024,
+        accumulation_count=65536 // tokens,
         model_config=item.config(**changes),
     )
 
