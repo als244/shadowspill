@@ -27,7 +27,7 @@ def prepared(monkeypatch):
     return bundle, checked, launches
 
 
-def test_job_roundtrip_runs_only_preparation_and_rechecks_completed_bundle(
+def test_job_roundtrip_defers_full_recheck_to_execution_admission(
     prepared, tmp_path
 ):
     bundle, checked, launches = prepared
@@ -52,10 +52,11 @@ def test_job_roundtrip_runs_only_preparation_and_rechecks_completed_bundle(
             },
         )
     ]
-    assert len(checked) == len(bundle.plans[0])
-    checked.clear()
+    assert checked == []
     assert job.prepare_job(root, **args).to_dict() == first.to_dict()
     assert len(launches) == 1
+    assert checked == []
+    first.recheck(installed())
     assert len(checked) == len(bundle.plans[0])
 
 

@@ -290,7 +290,7 @@ def test_local_cpu_plans_roundtrip_and_reconcile_original_memory_without_binarie
         "missing",
     ],
 )
-def test_server_rejects_tampered_local_proposals_before_bundle_publication(
+def test_server_rejects_tampered_local_proposals_before_worker_admission(
     measured, damage
 ):
     root, _, inputs, target = measured
@@ -320,7 +320,8 @@ def test_server_rejects_tampered_local_proposals_before_bundle_publication(
     elif damage == "missing":
         value["plans"].pop(next(iter(value["plans"])))
     with pytest.raises((ValueError, KeyError)):
-        reconcile_local_plans(LocalPlans.from_dict(value), root, target)
+        bundle, _ = reconcile_local_plans(LocalPlans.from_dict(value), root, target)
+        bundle.recheck(installed())
 
 
 def test_cpu_planning_needs_no_framework_catalog_or_definition_factory(

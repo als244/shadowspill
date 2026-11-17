@@ -190,7 +190,7 @@ def communicate(directory: str | Path) -> None:
 def plan(directory: str | Path) -> None:
     from .family import plan_family
 
-    root, registry, original = load_job(directory)
+    root, _, original = load_job(directory)
     inventory, rejected = admitted_inventory(root, original)
     with phase("Load measured programs and communication"):
         measured = {
@@ -207,8 +207,6 @@ def plan(directory: str | Path) -> None:
         )
     with phase("Assemble prepared Plan family"):
         bundle = TrainingBundle.from_prepared(family, measured)
-    with phase("Validate saved Plans and installed sources"):
-        bundle.recheck(registry)
     with phase("Save prepared Plans"):
         bundle.save(root / BUNDLE_NAME)
         event(

@@ -11,7 +11,6 @@ from shadowspill.communication.info import CommunicationInfo
 from shadowspill.profiling.apply import apply_profiles
 
 from .bundle import TrainingBundle
-from .bundle_plans import validate_plan
 from .cost_evidence import communication_edits, profile_edits
 from .family_checks import _collectives, _orderings
 from .family_identity import candidate_identity, plan_identity, validate_profile
@@ -30,7 +29,8 @@ def reconcile_local_plans(
     """The caller authenticates/stages a completed preparation before this call.
 
     No client executable bytes are loaded. Original captures supply all executable
-    payloads; CPU re-derivation verifies every proposed Program and schedule.
+    payloads. The returned bundle still requires service admission, including CPU
+    re-derivation of every distinct proposed Program and schedule, before use.
     This never invokes build/profile, per-Plan search, or a workload factory.
     """
     if submitted.config != inventory.layouts.setup.config:
@@ -80,7 +80,6 @@ def reconcile_local_plans(
         edits[key]["communication"] = communication_edits(
             communication[key], plan.communication_info
         )
-        validate_plan(inventory, request.use, request.ordering, sources[key], plan)
         plans.setdefault(request.rank, {})[name] = plan
     rows = []
     for family in inventory.families.values():
@@ -123,7 +122,6 @@ def reconcile_local_plans(
         if use is not None
     }
     from .bundle_manifest import manifest
-    from .bundle_validation import recheck_bundle
 
     bundle = TrainingBundle(
         submitted.config,
@@ -131,5 +129,4 @@ def reconcile_local_plans(
         prepared.plans,
         manifest(prepared),
     )
-    recheck_bundle(bundle, inventory)
     return bundle, {key: value for key, value in edits.items() if any(value.values())}

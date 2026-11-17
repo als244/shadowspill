@@ -113,7 +113,13 @@ def configured(
     reference = ArtifactRef(
         "saved-plans", hashlib.sha256(payload).hexdigest(), len(payload)
     )
-    bundle = SimpleNamespace(config=config, recheck=lambda _: family)
+    admissions = []
+
+    def recheck(registry):
+        admissions.append(registry)
+        return family
+
+    bundle = SimpleNamespace(config=config, recheck=recheck)
     monkeypatch.setattr(module.TrainingBundle, "load", lambda _: bundle)
     # These are CPU sentinel worker Plans, without real simulation/layout evidence.
     # Report attribution is tested separately against actual saved Plan artifacts.
@@ -221,6 +227,7 @@ def configured(
             config=config,
             saved=reference if saved else None,
             bundle=bundle,
+            admissions=admissions,
             job_memory=job_arena.budget,
         )
         if saved:
@@ -262,6 +269,7 @@ def test_factory_owns_preparation_and_persistent_child_without_a_recipe_loop(
         until(lambda: ctx.service.catalog.get(IDENTITY).state != "preparing")
         assert ctx.service.catalog.get(IDENTITY).state == "ready", ctx.jobs.failures()
         until(lambda: next(iter(ctx.jobs._jobs.values())).live)
+        assert len(ctx.admissions) == 1
         owner = ctx.owners[0]
         assert all(
             worker.startup.logical_by_worker == tuple(range(ranks))

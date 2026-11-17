@@ -91,10 +91,12 @@ def prepare_job(
     environment: Mapping[str, str] | None = None,
     launch: Callable[[PhaseInvocation], PhaseResult] | None = None,
 ) -> TrainingBundle:
-    """Prepare on assigned workers, or strictly reuse this job's completed bundle.
+    """Prepare on assigned workers, or load this job's completed bundle.
 
     The caller owns allocation admission, launch environment and the directory.
     This launches no training loop or persistent Executor and initializes no weights.
+    Loading verifies archive integrity and the exact job configuration. The service
+    calls ``bundle.recheck`` once at execution admission, for fresh and saved Plans.
     """
     with _run_job(
         directory,
@@ -103,11 +105,10 @@ def prepare_job(
         environment=environment,
         launch=launch,
         phases=("build", "profile", "communicate", "plan"),
-    ) as (root, registry):
+    ) as (root, _):
         bundle = TrainingBundle.load(root / BUNDLE_NAME)
         if bundle.config != config:
             raise ValueError("completed bundle differs from the saved preparation job")
-        bundle.recheck(registry)
         return bundle
 
 

@@ -74,8 +74,6 @@ class TrainingBundle(Artifact):
         cls, prepared: PreparedPlans, sources: Mapping[str, ProfiledProgram]
     ) -> TrainingBundle:
         """Retain only the captures needed by the admitted capability family."""
-        from .bundle_validation import recheck_bundle
-
         if sources.keys() != prepared.inventory.templates.keys():
             raise ValueError(
                 "provide source profiles for exactly the capture inventory"
@@ -88,14 +86,12 @@ class TrainingBundle(Artifact):
             for use in (worker.main, worker.optimizer)
             if use is not None
         }
-        bundle = cls(
+        return cls(
             prepared.inventory.layouts.setup.config,
             {key: sources[key] for key in sorted(needed)},
             prepared.plans,
             manifest(prepared),
         )
-        recheck_bundle(bundle, prepared.inventory)
-        return bundle
 
     def with_initialization(self, config: ResolvedTraining) -> TrainingBundle:
         """Retain executable Plans while selecting fresh weights or a checkpoint.
