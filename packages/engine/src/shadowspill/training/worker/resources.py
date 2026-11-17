@@ -10,6 +10,12 @@ from shadowspill_client.protocol.codec import MAX_METADATA_BYTES
 from .protocol import WorkerStartup
 
 
+def startup_metadata_bytes(workers: int) -> int:
+    """Retained launch descriptors, in addition to streaming transfer scratch."""
+    integer(workers, "startup workers", minimum=1)
+    return 4096 + 8 * MAX_METADATA_BYTES * workers
+
+
 @dataclass(frozen=True)
 class WorkerHost:
     """Deployment allowances in addition to exact admitted pools and staging.

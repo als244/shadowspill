@@ -52,7 +52,7 @@ from shadowspill.training.worker.initialization import (
 )
 from shadowspill.training.worker.node import WorkerNode
 from shadowspill.training.worker.protocol import WorkerScope
-from shadowspill.training.worker.resources import WorkerHost
+from shadowspill.training.worker.resources import WorkerHost, startup_metadata_bytes
 from shadowspill.training.worker.runtime import PreparedWorker
 from shadowspill_client._records import integer, names
 from shadowspill_client.buffers import BufferBudget, BufferLease
@@ -613,8 +613,11 @@ class LocalCreation:
         execution = creation.config.execution
         ranks = len(devices)
         command_bytes = 16 * (1 << 20) * ranks
+        # Launch descriptors remain owned until worker exit. Keep their bound
+        # separate from the configured streaming scratch, especially at DP8+.
+        transfer_bytes = limits.transfer_bytes + startup_metadata_bytes(ranks)
         arena_bytes = (
-            limits.transfer_bytes
+            transfer_bytes
             + limits.publication_bytes
             + command_bytes
             + execution.max_staging_bytes
@@ -658,7 +661,7 @@ class LocalCreation:
         self._admit_host(
             arena_bytes + worker_bytes, 5, wait=creation.wait_for_resources
         )
-        transfers = self._partition(limits.transfer_bytes, 16 * ranks + 32).budget
+        transfers = self._partition(transfer_bytes, 16 * ranks + 32).budget
         publication = self._partition(limits.publication_bytes, 3).budget
         metadata = self._partition(command_bytes, 2).budget
         uploads = self._partition(

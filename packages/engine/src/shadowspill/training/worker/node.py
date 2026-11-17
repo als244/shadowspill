@@ -27,13 +27,12 @@ from shadowspill.orchestration.launch.publication import OutputFiles
 from shadowspill.orchestration.launch.staging import FileDelivery
 from shadowspill_client._records import integer
 from shadowspill_client.buffers import BufferBudget, BufferLease
-from shadowspill_client.protocol.codec import MAX_METADATA_BYTES
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .launch import WorkerProcess, launch_worker
 from .protocol import CODEC, WorkerLaunch
 from .requests import NodeFiles
-from .resources import WorkerHost, worker_request
+from .resources import WorkerHost, startup_metadata_bytes, worker_request
 from .runtime import PreparedWorker
 
 
@@ -216,7 +215,7 @@ class WorkerNode:
                 prefix="initialization-", dir=self._cache
             )
             self._metadata = self._memory.reserve(
-                4096 + 8 * MAX_METADATA_BYTES * len(self._launches), timeout=0
+                startup_metadata_bytes(len(self._launches)), timeout=0
             )
             self._directory = TemporaryDirectory(prefix="workers-", dir=self._parent)
             root = Path(self._directory.name)

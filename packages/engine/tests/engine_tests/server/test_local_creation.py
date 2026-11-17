@@ -36,7 +36,7 @@ from shadowspill.server.storage import ServiceStorage
 from shadowspill.training.preparation.job import BUNDLE_NAME, JOB_NAME, PreparationJob
 from shadowspill.training.worker import launch as launch_module
 from shadowspill.training.worker.resources import WorkerHost
-from shadowspill_client import Weights
+from shadowspill_client import BatchConfig, Weights
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.requests import (
@@ -65,6 +65,7 @@ def configured(
             for field in inv.layouts.setup.config.inputs.fields
         ]
         inv = inventory(
+            batch=BatchConfig(limits={"max_examples": max(4, ranks)}),
             parallelism=Parallelism.dp(
                 ranks_per_replica=ranks,
                 num_replicas=1,
@@ -260,7 +261,7 @@ def submit(ctx, **options):
 
 
 @pytest.mark.parametrize("saved", [False, True])
-@pytest.mark.parametrize("ranks", [1, 2])
+@pytest.mark.parametrize("ranks", [1, 2, 8])
 def test_factory_owns_preparation_and_persistent_child_without_a_recipe_loop(
     tmp_path, monkeypatch, saved, ranks
 ):
