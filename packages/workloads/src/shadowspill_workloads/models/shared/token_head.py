@@ -1,8 +1,8 @@
-"""Target logprobs through row-bounded ordinary projection modules.
+"""Decoder head features and differentiable target-logprob reference helpers.
 
-This path accepts arbitrary per-token cotangents, including policy objectives.
-It does not use scalar-loss VJP seeds, which cannot represent those gradients.
-The engine still plans retained activations and backward workspace normally.
+Shared scalar objectives consume the exposed head through its bounded objective
+operation. Direct per-token callers and ordinary reference models use the
+projection helper, whose retained training memory is not bounded by its chunks.
 """
 
 from __future__ import annotations
