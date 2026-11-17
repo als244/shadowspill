@@ -6,6 +6,7 @@ from typing import Any
 
 import torch
 
+from shadowspill.diagnostics.progress import event, phase
 from shadowspill.profiling.timing import collect_timing_samples, condition_task
 from shadowspill.task.profiling import ProfilingOptions
 
@@ -27,7 +28,7 @@ def measure_collectives(
     """Groups are probed separately; disjoint-group contention is not inferred."""
     rows = []
     topology = {"node0": (0,)} if bindings is None else bindings.topology
-    for request in requests:
+    for index, request in enumerate(requests, 1):
         if len(request.ranks) == 1:
             observation: dict[str, Any] = dict(
                 duration_seconds=0.0,
@@ -39,7 +40,15 @@ def measure_collectives(
                 raise ValueError(
                     "collective measurement needs bound distributed workers"
                 )
-            observation = _measure(request, device, options, bindings)
+            with phase(
+                f"Collective {index}/{len(requests)} · {request.operation} · "
+                f"{request.tensor_bytes / (1 << 20):,.2f} MiB · "
+                f"{len(request.ranks)} ranks"
+            ):
+                observation = _measure(request, device, options, bindings)
+                event(
+                    f"Measured duration: {observation['duration_seconds'] * 1e3:,.3f} ms"
+                )
         rows.append(
             {
                 **request.to_dict(),

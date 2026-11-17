@@ -137,6 +137,7 @@ def communicate(directory: str | Path) -> None:
             "calibration_reused", False
         )
         if all(group.gather(reusable)):
+            event(f"Reuse communication calibration for {len(groups)} candidates")
             for peers in groups:
                 key = peers[group.logical_rank]
                 if (
@@ -149,28 +150,40 @@ def communicate(directory: str | Path) -> None:
                 ):
                     raise ValueError("staged calibration is missing a required case")
             return
-        program, collectives = communication_probes(
-            program_at(root, inventory, key) for key in keys
-        )
-        communication = measure_communication(
-            program=program,
-            collectives=collectives,
-            rank_map=group.rank_map,
-            options=ProfilingOptions.from_dict(
-                inventory.layouts.setup.config.preparation.profiling.to_dict()
-            ),
-        )
+        with phase("Load programs and collect communication requests"):
+            program, collectives = communication_probes(
+                program_at(root, inventory, key) for key in keys
+            )
+            event(
+                f"Workers: {group.count}; candidates: {len(groups)}; "
+                f"distinct collective configurations: {len(collectives)}"
+            )
+        with phase("Measure host transfers and collectives"):
+            communication = measure_communication(
+                program=program,
+                collectives=collectives,
+                rank_map=group.rank_map,
+                options=ProfilingOptions.from_dict(
+                    inventory.layouts.setup.config.preparation.profiling.to_dict()
+                ),
+            )
         cache = OverlapProfileCache(root / "cache")
-        for peers in groups:
+        for index, peers in enumerate(groups, 1):
             key = peers[group.logical_rank]
-            profiled = profile_at(root, inventory, key)
-            overlap = measure_overlap(
-                profiled, communication, rank_map=group.rank_map, cache=cache
-            )
-            apply_profiles(profiled.program, profiled.profiles.merge(overlap)).save(
-                root / "calibrated" / f"{key}.ssp"
-            )
-            communication.save(root / "communication" / f"{key}.ssp")
+            template = inventory.templates[key]
+            with phase(candidate_title(template, index, len(groups))):
+                describe_candidate(inventory, template)
+                with phase("Load task measurements"):
+                    profiled = profile_at(root, inventory, key)
+                with phase("Measure compute and collective overlap"):
+                    overlap = measure_overlap(
+                        profiled, communication, rank_map=group.rank_map, cache=cache
+                    )
+                with phase("Save calibrated measurements"):
+                    apply_profiles(
+                        profiled.program, profiled.profiles.merge(overlap)
+                    ).save(root / "calibrated" / f"{key}.ssp")
+                    communication.save(root / "communication" / f"{key}.ssp")
 
 
 @logged_phase("Plan")

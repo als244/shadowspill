@@ -9,6 +9,7 @@ import torch.distributed as dist
 
 from shadowspill.artifacts._values import digest, plain
 from shadowspill.artifacts.program import Program
+from shadowspill.diagnostics.progress import phase
 from shadowspill.memory import PinnedHostPool, SpillPool
 from shadowspill.parallelism.agreement import agreement_digest
 from shadowspill.pytorch.accelerator import resolve_device
@@ -124,23 +125,24 @@ def measure_communication(
         with torch.cuda.device(target), torch.no_grad():
             host, failure = None, None
             try:
-                if spill is None or type(spill) is PinnedHostPool:
-                    host = measure_host_copies(
-                        device=target,
-                        sizes=sizes,
-                        options=options,
-                        bindings=bindings,
-                    )
-                else:
-                    from .spill import measure_spill
+                with phase("GPU and host transfer measurements"):
+                    if spill is None or type(spill) is PinnedHostPool:
+                        host = measure_host_copies(
+                            device=target,
+                            sizes=sizes,
+                            options=options,
+                            bindings=bindings,
+                        )
+                    else:
+                        from .spill import measure_spill
 
-                    host = measure_spill(
-                        spill,
-                        device=target,
-                        sizes=sizes,
-                        options=options,
-                        bindings=bindings,
-                    )
+                        host = measure_spill(
+                            spill,
+                            device=target,
+                            sizes=sizes,
+                            options=options,
+                            bindings=bindings,
+                        )
             except Exception as error:
                 if bindings is None:
                     raise
@@ -149,19 +151,21 @@ def measure_communication(
                 bindings.check(failure)
             assert host is not None
             result = combine_host(host, bindings)
-            measurements = measure_collectives(
-                requests,
-                device=target,
-                setup=setup,
-                options=options,
-                bindings=bindings,
-                backend_setup=backend,
-            )
-            fixed, memory_metadata = (
-                memory.finish(bindings, requests, setup, backend_setup=backend)
-                if memory is not None
-                else (0, {"memory_kind": "static"})
-            )
+            with phase(f"Collective measurements · {len(requests)} configurations"):
+                measurements = measure_collectives(
+                    requests,
+                    device=target,
+                    setup=setup,
+                    options=options,
+                    bindings=bindings,
+                    backend_setup=backend,
+                )
+            with phase("Measure retained communication memory"):
+                fixed, memory_metadata = (
+                    memory.finish(bindings, requests, setup, backend_setup=backend)
+                    if memory is not None
+                    else (0, {"memory_kind": "static"})
+                )
         return replace(
             result,
             measurements=measurements,
