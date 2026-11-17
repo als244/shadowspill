@@ -1,6 +1,8 @@
 """Local worker files borrow committed storage instead of duplicating its bytes."""
 
+import errno
 import io
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -119,6 +121,57 @@ def test_local_worker_startup_fits_without_artifact_copy_and_pins_until_close(
             assert all(process.child.closed for process in processes.values())
             with pytest.raises(RuntimeError, match="readers"):
                 artifacts.close()
+            node.close()
+            assert disk.used == arena.budget.used == (0, 0)
+            assert not list(root.iterdir())
+    finally:
+        node.close()
+        arena.close()
+    assert admission.used.claims == 0
+
+
+@pytest.mark.parametrize("copy_admitted", [False, True])
+def test_separate_filesystem_startup_uses_only_quota_admitted_verified_copies(
+    tmp_path, monkeypatch, copy_admitted
+):
+    cpu_workers(monkeypatch)
+    root = tmp_path / "workers"
+    root.mkdir()
+    log_bytes = 2 * (2048 + 12288)
+    node, admission, arena, disk = configured(
+        root, disk_bytes=log_bytes + (len(PAYLOAD) if copy_admitted else 0)
+    )
+    original_link = os.link
+    copied = []
+    try:
+        with store(tmp_path) as artifacts:
+            artifacts.put(REFERENCE, lambda _: io.BytesIO(PAYLOAD))
+
+            def cross_device(source, destination, **kwargs):
+                if Path(source) == artifacts._path(REFERENCE):
+                    raise OSError(errno.EXDEV, "different filesystems")
+                return original_link(source, destination, **kwargs)
+
+            def source(reference):
+                copied.append(reference)
+                return artifacts.open(reference)
+
+            monkeypatch.setattr(os, "link", cross_device)
+            if not copy_admitted:
+                with pytest.raises(TimeoutError, match="staging capacity"):
+                    node.start(source, local_source=artifacts.local_path)
+                assert not copied and not node.launched
+            else:
+                processes = node.start(
+                    source, local_source=artifacts.local_path, startup_timeout=5
+                )
+                assert copied == [REFERENCE] and node._delivery is not None
+                with start_processes(processes, stop=node.stop) as group:
+                    assert group.valid
+                    path = verify_file(node.files.grants.root, REFERENCE)
+                    assert path.read_bytes() == PAYLOAD
+                    assert not path.samefile(artifacts._path(REFERENCE))
+                    assert disk.used[0] >= len(PAYLOAD)
             node.close()
             assert disk.used == arena.budget.used == (0, 0)
             assert not list(root.iterdir())

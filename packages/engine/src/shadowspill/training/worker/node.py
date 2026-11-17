@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
@@ -187,7 +188,7 @@ class WorkerNode:
         """Launch once; a failure leaves reachable owners for explicit cleanup.
 
         A local source pins authenticated artifacts through worker exit. Without
-        one, startup admits and verifies copies from the supplied transport.
+        one, or across filesystems, startup admits and verifies transport copies.
         """
         if not self._busy.acquire(blocking=False):
             raise RuntimeError("node worker creation is already in progress")
@@ -264,13 +265,21 @@ class WorkerNode:
                         device_id=device,
                     )
             self._active()
-            if local_source is None:
-                assert self._delivery is not None
+            if local_source is not None:
+                try:
+                    self._grant = self._grants.lend(local_source, references)
+                except OSError as error:
+                    if error.errno != errno.EXDEV or self._grants.in_use:
+                        raise
+                    # The failed link was completely rolled back. Preserve the
+                    # ordinary admitted-copy path for a separate cache filesystem.
+                    self._delivery = FileDelivery(
+                        references, root=root, disk=self._disk, memory=self._memory
+                    )
+            if self._delivery is not None:
                 self._delivery.receive(open_source)
                 self._active()
                 self._grant = self._grants.lend(self._delivery, references)
-            else:
-                self._grant = self._grants.lend(local_source, references)
             for rank, launch in self._launches.items():
                 self._active()
                 self._processes[rank] = launch_worker(

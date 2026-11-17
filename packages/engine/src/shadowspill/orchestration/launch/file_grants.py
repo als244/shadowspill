@@ -102,6 +102,12 @@ class FileGrants:
         self._abandoned: set[FileGrant] = set()
         self.closed = False
 
+    @property
+    def in_use(self) -> bool:
+        """Include failed-cleanup owners that still pin their original storage."""
+        with self._lock:
+            return bool(self._owners)
+
     def lend(
         self, source: FileDelivery | LocalSource, references: Sequence[ArtifactRef]
     ) -> FileGrant:
