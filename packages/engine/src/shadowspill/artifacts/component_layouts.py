@@ -18,14 +18,16 @@ class ComponentLayout:
 
     The author declares the interpretation; equal sizes alone do not establish
     it. ``encoding`` versions that interpretation across checkpoint layouts.
-    Block-scaled or packed dimensions which change an axis extent need a more
-    general conversion and cannot use this coordinate-only contract.
+    ``blocks`` gives the number of parameter elements covered by one stored
+    component value on each selected axis. Ownership boundaries must align to
+    those blocks; this maps scale coordinates without converting their values.
     """
 
     parameter: str
     component_path: tuple[str, ...]
     axes: tuple[int, ...]
     encoding: str
+    blocks: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         identity = StateId("parameter", self.parameter, self.component_path)
@@ -45,6 +47,14 @@ class ComponentLayout:
             raise ValueError("component layout requires an encoding identity")
         object.__setattr__(self, "component_path", identity.component_path)
         object.__setattr__(self, "axes", tuple(self.axes))
+        blocks = tuple(self.blocks) or (1,) * len(self.axes)
+        if len(blocks) != len(self.axes) or any(
+            type(size) is not int or size < 1 for size in blocks
+        ):
+            raise ValueError(
+                "component blocks must be positive integers for every axis"
+            )
+        object.__setattr__(self, "blocks", blocks)
 
     def to_dict(self) -> dict[str, Any]:
         return dict(
@@ -52,6 +62,11 @@ class ComponentLayout:
             component_path=list(self.component_path),
             axes=list(self.axes),
             encoding=self.encoding,
+            **(
+                {"blocks": list(self.blocks)}
+                if any(size != 1 for size in self.blocks)
+                else {}
+            ),
         )
 
 
@@ -102,7 +117,8 @@ def saved_layouts(
             raise ValueError("component axis exceeds the parameter rank")
         actual = geometry.get(row["object_id"])
         if actual is None or tuple(actual["shape"]) != tuple(
-            shape[axis] for axis in value.axes
+            (shape[axis] + block - 1) // block
+            for axis, block in zip(value.axes, value.blocks, strict=True)
         ):
             raise ValueError("component layout differs from captured physical shape")
         result[key] = value

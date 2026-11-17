@@ -285,3 +285,100 @@ def test_changed_saved_layout_is_revalidated_on_cpu(change, error):
         ModelBuild({}, component_layouts=[layout, layout])
     description = ModelBuild({}, component_layouts=[layout])
     assert description.to_dict()["component_layouts"] == [layout.to_dict()]
+
+
+def scale_states(count, dim, blocks=(1, 128), *, unaligned=False):
+    result = []
+    for state in states(count, dim, mapped=False):
+        source = state.plan.program
+        owners = []
+        for owner in source.bindings["parameter_ownership"]:
+            local = [a * b for a, b in zip(owner["local_shape"], blocks, strict=True)]
+            global_shape = [
+                a * b for a, b in zip(owner["global_shape"], blocks, strict=True)
+            ]
+            if unaligned:
+                local[dim] -= 1
+                global_shape[dim] = local[dim] * count
+            owners.append(
+                {
+                    **owner,
+                    "local_shape": local,
+                    "global_shape": global_shape,
+                    "trainable": False,
+                }
+            )
+        source = replace(
+            source,
+            bindings={
+                **source.bindings,
+                "parameter_ownership": owners,
+                "optimizer_bindings": [
+                    item
+                    for item in source.bindings["optimizer_bindings"]
+                    if item["name"] == "optimizer_group.0.lr"
+                ],
+                "persistent_gradients": [],
+            },
+        )
+        source = attach_component_layouts(
+            source,
+            [
+                ComponentLayout(
+                    name, ("payload",), (0, 1), "example/block-scales@1", blocks
+                )
+                for name in ("linear.weight", "head.weight")
+            ],
+        )
+        result.append(PlanState(plan(source), {}, logical_rank=state.logical_rank))
+    return result
+
+
+@pytest.mark.parametrize("source_count,target_count", [(1, 4), (4, 1), (2, 4), (4, 2)])
+def test_block_scale_resharding_copies_encoded_values_without_conversion(
+    tmp_path, source_count, target_count
+):
+    sources = []
+    for rank, state in enumerate(scale_states(source_count, 0)):
+        worker = HostRank(state, initialize=True)
+        stream = io.BytesIO()
+        write_weights(worker, stream, chunk_bytes=16)
+        path = tmp_path / f"block-scales-{rank}.ssp"
+        path.write_bytes(stream.getvalue())
+        sources.append((state, path))
+    targets = scale_states(target_count, 1)
+    with convert_weights(
+        sources, targets, tmp_path, scratch_bytes=128, max_disk_bytes=4096
+    ) as converted:
+        for rank, state in enumerate(targets):
+            expected = HostRank(state, initialize=True)
+            actual = HostRank(state)
+
+            def receive(chunk, value, actual=actual):
+                start = chunk.offset - chunk.region_offset
+                actual.values[chunk.name][start : start + value.numel()].copy_(value)
+
+            converted.ranks[rank].export_tensors(receive, chunk_bytes=16)
+            torch.testing.assert_close(
+                actual.values["linear.weight.payload"],
+                expected.values["linear.weight.payload"],
+                rtol=0,
+                atol=0,
+            )
+            restored = Program.from_dict(state.plan.program.to_dict())
+            assert tuple(
+                PlanState(plan(restored), {}, logical_rank=rank).logical_tensors()
+            ) == tuple(state.logical_tensors())
+
+
+def test_component_blocks_reject_partial_ownership_and_changed_encodings():
+    with pytest.raises(ValueError, match="align to its blocks"):
+        tuple(scale_states(2, 1, unaligned=True)[0].logical_tensors())
+    with pytest.raises(ValueError, match="interpretation differs"):
+        require_compatible(
+            describe_family(scale_states(2, 0)),
+            describe_family(scale_states(2, 0, blocks=(1, 64))),
+        )
+    for blocks in ((0, 128), (True, 128), (128,), (1, 1, 1)):
+        with pytest.raises(ValueError, match="component blocks"):
+            ComponentLayout("w", ("scale",), (0, 1), "example/block@1", blocks)

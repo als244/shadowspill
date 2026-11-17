@@ -385,10 +385,17 @@ that the component uses the same two coordinate axes as its logical parameter.
 Capture checks its shape against the registered component; saved Plans retain and
 recheck the declaration. Existing bounded checkpoint and weights readers then
 redistribute the physical payload alongside ordinary masters and optimizer state.
-The encoding and axis interpretation must agree across source and target layouts.
-No values are decoded or requantized by this declaration. Packed dimensions with
-different extents require a separate conversion; matching shapes alone never
-authorize a component mapping. Ordinary tensors need no declaration.
+Block scales can use `blocks` to declare how many parameter elements each scale
+covers. For a weight shaped `[experts, output, input]`,
+`ComponentLayout("layer.weight", ("scales",), (0, 1, 2), "custom/block-fp8@1",
+blocks=(1, 128, 128))` describes scales shaped
+`[experts, ceil(output / 128), ceil(input / 128)]`. Sharded ownership boundaries
+must align with these blocks.
+
+The encoding, axes and blocks must agree across source and target layouts. No
+values are decoded or requantized by this declaration. Other packed dimensions
+require a separate conversion; matching shapes alone never authorize a component
+mapping. Ordinary tensors need no declaration.
 
 Opaque kernels used by prepared operations need an all-value allocation contract.
 `ModelBuild`, `ObjectiveDefinition` and `OptimizerDefinition` accept

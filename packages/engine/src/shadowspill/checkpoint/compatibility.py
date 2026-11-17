@@ -82,6 +82,7 @@ def describe_family(
                     *signature,
                     component["encoding"],
                     tuple(component["axes"]),
+                    tuple(component.get("blocks", (1,) * len(component["axes"]))),
                 )
             if identities.setdefault(key, signature) != signature:
                 raise ValueError(f"checkpoint ranks disagree on logical state: {key}")

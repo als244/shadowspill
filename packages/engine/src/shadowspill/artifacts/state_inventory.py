@@ -65,6 +65,11 @@ def program_state(program: Program, logical_rank: int = 0) -> StateInventory:
                 "component_layout": {
                     "axes": component.axes,
                     "encoding": component.encoding,
+                    **(
+                        {"blocks": component.blocks}
+                        if any(size != 1 for size in component.blocks)
+                        else {}
+                    ),
                 },
             }
         tensors.append(

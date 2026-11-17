@@ -149,7 +149,15 @@ def _coordinates(
         raise ValueError("state view differs from its declared local parameter shape")
     if component is not None:
         axes = tuple(component["axes"])
-        if local_shape != tuple(parameter_shape[axis] for axis in axes):
+        blocks = tuple(component.get("blocks", (1,) * len(axes)))
+        if len(blocks) != len(axes) or any(
+            type(size) is not int or size < 1 for size in blocks
+        ):
+            raise ValueError("invalid component block coordinates")
+        if local_shape != tuple(
+            (parameter_shape[axis] + block - 1) // block
+            for axis, block in zip(axes, blocks, strict=True)
+        ):
             raise ValueError("component view differs from its declared parameter axes")
         origin = [0] * len(parameter_shape)
     if spec is not None:
@@ -172,7 +180,16 @@ def _coordinates(
     elif global_shape != parameter_shape:
         raise ValueError("sharded logical state has no saved Parallelism declaration")
     if component is not None:
-        return tuple(global_shape[axis] for axis in axes), tuple(
-            origin[axis] for axis in axes
+        for axis, block in zip(axes, blocks, strict=True):
+            if origin[axis] % block or (
+                global_shape[axis] != parameter_shape[axis]
+                and parameter_shape[axis] % block
+            ):
+                raise ValueError("sharded component ownership must align to its blocks")
+        return tuple(
+            (global_shape[axis] + block - 1) // block
+            for axis, block in zip(axes, blocks, strict=True)
+        ), tuple(
+            origin[axis] // block for axis, block in zip(axes, blocks, strict=True)
         )
     return global_shape, tuple(origin)
