@@ -187,10 +187,10 @@ query the original outcome after an uncertain connection failure. See the
 `training.close().result()` releases that run's workers. Closing `ServiceClient`
 only closes the connection; it does not stop an accepted training run.
 
-For text training, use the [Llama application](../../../examples/training/llama3/README.md),
-[Qwen3 application](../../../examples/training/qwen3.md) or
-[Qwen3.5 LoRA application](../../../examples/training/qwen35_lora.md). Their shared
-setup/runtime helpers and corpus code sit outside the model implementations.
+For editable text-training examples, use the [standalone demos](../../../examples/demos/README.md).
+The [CLI applications](../../../examples/training/README.md) add schedules,
+evaluation and checkpoint continuation. Their setup/runtime helpers and corpus
+code sit outside the model implementations.
 For a new architecture, implement the public
 [model and objective definitions](definitions.md); the engine does not
 require the supplied catalog.

@@ -11,7 +11,7 @@ from tests.integration.reference._text_config import _config, _records
 
 
 @pytest.mark.parametrize("masters", [False, True])
-def test_recipe_preserves_data_schedules_and_weights_on_explicit_resume(
+def test_reference_preserves_data_schedules_and_weights_on_explicit_resume(
     tmp_path, masters
 ):
     path = _config(tmp_path)
@@ -61,7 +61,7 @@ def test_recipe_preserves_data_schedules_and_weights_on_explicit_resume(
             assert value.dtype == torch.float32
 
 
-def test_recipe_logs_tensor_observations_with_real_parameter_names(tmp_path):
+def test_reference_logs_tensor_observations_with_real_parameter_names(tmp_path):
     path = _config(tmp_path)
     root = tmp_path / "observed"
     run_config(
@@ -87,7 +87,7 @@ def test_recipe_logs_tensor_observations_with_real_parameter_names(tmp_path):
     assert rows[2]["train/elapsed_seconds"] > rows[1]["train/elapsed_seconds"]
 
 
-def test_recipe_rejects_invalid_text_geometry(tmp_path):
+def test_reference_rejects_invalid_text_geometry(tmp_path):
     path = _config(tmp_path)
     with pytest.raises(ValueError, match="whole fixed-length"):
         run_config(path, ["max_tokens_per_step=1000"])

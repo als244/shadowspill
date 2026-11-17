@@ -1,4 +1,4 @@
-"""Independent phase entry points, not the legacy runtime-first orchestrator."""
+"""Independent phase entry points for benchmark preparation."""
 
 import json
 import os

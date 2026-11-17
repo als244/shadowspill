@@ -83,7 +83,7 @@ def note(text: str) -> None:
 
 
 def fill_tiny_tensor(request, destination):
-    """Chunk-independent values for the saved-Plan text recipe fixture."""
+    """Chunk-independent parameter values for the text reference fixture."""
     indices = torch.arange(request.offset, request.offset + destination.numel())
     salt = sum(request.name.encode())
     destination.copy_((indices.float() + salt).sin() * 0.1)

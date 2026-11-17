@@ -28,6 +28,8 @@ The files each own one part of the reference:
 | `weights.py` | Compute weights, optimizer masters and accumulated gradients. |
 | `hyperparameters.py` | Apply scheduled optimizer values and model-buffer controls. |
 | `inputs.py` | Move reference inputs to the selected device. |
+| `transformers.py` | Compare a recorded batch's loss with a Hugging Face checkpoint. |
+| `compare.py` | Compare loss curves after verifying the runs used the same documents. |
 
 The reference uses ordinary allocations. It does not depend on the preparation phases or a ShadowSpill Plan. Its weight helper retains compute
 weights, optional masters and separately accumulated gradients. Model materialization

@@ -3,6 +3,8 @@
 This tree contains non-installed Python implementations used for explanation
 and differential testing. Production imports never select these modules.
 
+- [training/](training/README.md) runs independent PyTorch training, checkpoint
+  continuation and Transformers loss comparisons on recorded batches.
 - `python/simulator/` is the readable event-scheduling oracle for the compiled
   simulator.
 - `python/pressurefit/` contains the readable residency, action-emission, and

@@ -1,4 +1,4 @@
-"""Packed text keeps exact resume and observations across saved phase workers."""
+"""Reference input geometry matches capture examples and runtime normalization."""
 
 import json
 

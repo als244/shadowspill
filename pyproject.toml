@@ -7,7 +7,7 @@ markers = [
   "network: requires a reachable memory daemon named by SHADOWSPILL_NETWORK_PEER",
   "qualification: long-running numerical or performance gate",
   "fresh_process: runs once, under CTest, in a process of its own; the shared pytest process deselects it",
-  "slow: an end-to-end recipe or quickstart run of minutes; deselected by default, selected with -m slow",
+  "slow: an end-to-end service or quickstart run of minutes; deselected by default, selected with -m slow",
 ]
 
 [tool.ruff]

@@ -15,6 +15,9 @@ shadowspill/
 │   └── pyproject.toml    engine metadata and dependencies
 ├── packages/workloads/    optional models, objectives and registered setup hooks
 ├── examples/              public-client demos and training applications
+│   ├── demos/             short runnable clients with explicit training settings
+│   ├── extensions/        standalone custom-definition package
+│   └── training/          shared corpus readers and CLI application loops
 ├── benchmarks/            measurements, saved-Plan runners and external baselines
 ├── tools/                 trace analysis, source checks and corpus applications
 ├── tests/                 repository and cross-package checks

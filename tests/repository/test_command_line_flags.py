@@ -100,7 +100,7 @@ def _readers(path: Path) -> list[Path]:
     a flag nothing reads, which is what this checks.
     """
 
-    recipe_packages = {
+    application_packages = {
         ROOT / "examples/demos/_options.py": (ROOT / "examples/demos",),
         ROOT / "examples/train_llama3.py": (ROOT / "examples/training/llama3",),
         ROOT / "examples/training/qwen/cli.py": (ROOT / "examples/training/qwen",),
@@ -108,16 +108,16 @@ def _readers(path: Path) -> list[Path]:
             ROOT / "examples/training/regression",
         ),
     }
-    if path in recipe_packages:
+    if path in application_packages:
         readers = [
             path,
             *(
                 reader
-                for package in recipe_packages[path]
+                for package in application_packages[path]
                 for reader in sorted((path.parent / package).glob("*.py"))
             ),
         ]
-        # Follow shared readers only when a recipe actually imports them.
+        # Follow shared readers only when an application actually imports them.
         imported = {
             module
             for reader in readers

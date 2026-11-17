@@ -1,4 +1,4 @@
-"""Shared packed-text configuration and log reader for both execution paths."""
+"""Packed-text configuration and log reader for the PyTorch reference."""
 
 import json
 

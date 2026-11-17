@@ -713,7 +713,7 @@ The deployment installs Nsight and provides collector host, disk and finalizatio
 allowances through `ServerLimits.creation.nsys`; client settings contain no
 server paths or executable names. Captured timings include profiler overhead.
 
-The [regression application](../../../examples/training/regression/README.md) supplies
+The [regression application](../../../examples/training/README.md) supplies
 global NumPy batches to one or more service workers, with whole or split updates
 and explicit checkpoint resume. Its setup module owns the generic DP declaration;
 the training loop needs only a ready client, inputs and results.

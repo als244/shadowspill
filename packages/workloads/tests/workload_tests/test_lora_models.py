@@ -210,7 +210,7 @@ def test_shared_expert_lora_is_explicit():
 
 
 @pytest.mark.parametrize("implementation,family", MODELS)
-def test_text_recipe_materializes_mixed_precision_factors(implementation, family):
+def test_model_materializes_mixed_precision_factors(implementation, family):
     from shadowspill.pytorch.initialization import initialize_model
     from shadowspill_workloads.models.construction import build_on_meta, initialize
 

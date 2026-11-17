@@ -1,51 +1,35 @@
 # Examples
 
-Start with the lightweight client for global-batch training. The service owns
-preparation and workers. Direct phase examples also compose the existing build,
-profiling, planning and execution APIs from `shadowspill`. See the
-[Python reference](../python/README.md) for both interfaces.
+Start with the [README training examples](../../README.md) or the
+[standalone client demos](../../examples/demos/README.md). Each demo keeps its
+model, batch limits and memory budget visible and saves predicted and measured
+HTML reports.
 
-## Start here
+## Training through the service
 
-1. [Text training](client-training.md) — read a tokenized corpus, prepare a run,
-   submit updates and save a checkpoint.
-2. [Split updates and resume](../python/advanced/training-workflow.md) — accumulation,
-   evaluation and checkpoint continuation.
-3. [Qwen3 application](../../examples/qwen3.py), [Llama application](../../examples/training/llama3/README.md)
-   and [Qwen3.5 LoRA](../../examples/training/qwen35_lora.md) — real token corpora
-   through the same public client.
-4. [Direct phases and saved-Plan execution](generic-training.md) — build/profile, CPU
-   planning, bounded initialization and a saved-Plan loop in a fresh worker.
-5. [Forward-only execution](forward-only.md) — save and execute a prediction Plan,
-   or share model tensors with training for evaluation.
-6. [Reusable planning and budget sweeps](reusable-planning.md) — replan saved
-   profiles and produce simulated reports without a GPU.
-7. [Custom stage partitioning](custom-partitioning.md) — control build-time FX
-   boundaries through a small policy.
-8. [Standalone demos](../../examples/demos/README.md) — full-parameter fine-tuning,
-   LoRA, distributed pretraining, long contexts and offline sweeps.
+| Task | Example |
+| --- | --- |
+| Prepare data and fine-tune | [Text training](client-training.md) |
+| Run full-parameter tuning, LoRA or distributed pretraining | [Standalone demos](../../examples/demos/README.md) |
+| Use schedules, evaluation and checkpoint continuation from a CLI | [Training applications](../../examples/training/README.md) |
+| Accumulate gradients, evaluate and resume | [Complete workflow](../python/advanced/training-workflow.md) |
+| Train long contexts with computation chunks | [Long-context LoRA](../python/advanced/long-context.md) |
+| Compare hypothetical budgets or transfer speeds locally | [Offline sweeps](../python/advanced/offline-sweeps.md) |
+| Supply a model, objective or optimizer | [Custom definitions](../python/advanced/custom-definitions.md) |
 
-The [model catalog](../python/catalog.md) lists built-in architectures,
-optimizers and objectives.
+The [catalog](../python/catalog.md) lists built-in models, optimizers and objectives.
 
-## Direct phase process and storage requirements
+## Direct engine examples
 
-- Install ShadowSpill with `./scripts/setup.sh`.
-- The current GPU builder and measurement phase need a supported representative
-  GPU. Artifact loading, profile application, planning and reporting work on CPU.
-- Create Executor in a fresh worker before other device allocations. It owns
-  the runtime pools; earlier phases do not require them.
-- Runtime inputs are rank-local. Examples use CPU tensors and bounded loaders.
-- Save phase archives wherever convenient. Inductor/Triton caches remain separate
-  from those archives and use their normal temporary/cache locations.
+These examples use the preserved build/profile/plan/execute APIs:
 
-These requirements apply to direct phase callers. The public client submits
-global `Datum` batches; the service owns worker launch and rank input delivery.
+- [Generic training](generic-training.md): save phases and execute a Plan in a fresh worker.
+- [Forward-only execution](forward-only.md): prediction and evaluation Plans.
+- [Reusable planning](reusable-planning.md): plan saved profiles without a GPU.
+- [Custom partitioning](custom-partitioning.md): control capture boundaries.
+- [Diagnostics](diagnostics.md): compare simulated and measured timelines.
 
-## Diagnostics
-
-[Plan and execution diagnostics](diagnostics.md) compares simulated timelines
-with a saved Executor's runtime trace. The
-[saved-Plan capture tool](../../benchmarks/quickstart.md#nsight-captures-of-saved-winners)
-collects Nsight reports. One Executor runs its admitted Plans sequentially.
-See [failures and cleanup](../python/advanced/failures.md) for error handling.
+Build and profiling need a representative GPU. Artifact inspection, planning and
+reports work on CPU. Direct execution uses rank-local inputs and creates Executor
+in a fresh worker before device allocations. The service manages those workers
+and input delivery for public-client applications.

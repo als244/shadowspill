@@ -3,6 +3,9 @@
 The test tree mirrors the code boundary being exercised:
 
 ```text
+packages/client/tests/client_tests/
+└── ...             portable configuration, packing, transport and client behavior
+
 packages/engine/tests/engine_tests/
 ├── build/          capture/compiler checks (other subpackages mirror the engine)
 ├── native/         C and device-backend canaries
@@ -44,7 +47,7 @@ exercise this boundary and keep process setup out of individual cases.
 The default options deselect two markers. `fresh_process` tests assert what
 their own process's allocator looks like, so CTest runs each in a process of
 its own, as listed in `packages/engine/tests/engine_tests/integration/CMakeLists.txt`. `slow` tests are end-to-end
-recipe and quickstart runs of minutes each; `pytest -m slow` runs them.
+service and quickstart runs of minutes each; `pytest -m slow` runs them.
 
 Long-running numerical and throughput acceptance belongs in `qualification/`,
 not in the ordinary unit suite.
