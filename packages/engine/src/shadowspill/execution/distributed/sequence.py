@@ -1,10 +1,10 @@
 """The collectives a Plan's invocation issues, in the order it issues them.
 
 Ranks pair their collectives by issue order, so ranks running different Plans
-must issue the same collectives in the same order. A Plan issues them on two
-paths: the compound transfers that fetch sharded weights and evict sharded
-gradients, in its schedule's order, and the gradient-communication and
-weight-communication tasks, in its task order. Entries name tensors, not the
+must issue the same collectives in the same order. The comparison interleaves
+compound weight/gradient transfers with explicit communication tasks at their
+actual task boundaries, including write-back-before-fetch ordering. Entries
+name tensors, not the
 identities a build assigns, so Plans built separately compare. Collectives a
 model issues inside its own tasks, through communicator groups its provider
 resources hold, are not listed; a Plan with such groups is never independent.

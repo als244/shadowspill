@@ -33,9 +33,18 @@ def plan(fetch_order, *, communication=("embed", "head")):
         "a_head": SimpleNamespace(fetch=[phase(32)], evict=[phase(0)]),
         "a_optimizer": SimpleNamespace(fetch=[phase(0)], evict=[phase(0)]),
     }
-    tasks = [SimpleNamespace(phase="forward", inputs=("o_embed",), outputs=())]
+    tasks = [
+        SimpleNamespace(
+            task_id="forward", phase="forward", inputs=("o_embed",), outputs=()
+        )
+    ]
     tasks += [
-        SimpleNamespace(phase="gradient_communication", inputs=(f"o_{n}",), outputs=())
+        SimpleNamespace(
+            task_id=f"reduce_{n}",
+            phase="gradient_communication",
+            inputs=(f"o_{n}",),
+            outputs=(),
+        )
         for n in communication
     ]
     actions = [
@@ -43,6 +52,8 @@ def plan(fetch_order, *, communication=("embed", "head")):
     ]
     actions.append(SimpleNamespace(alias_group_id="a_embed", kind=EVICT))
     actions.append(SimpleNamespace(alias_group_id="a_optimizer", kind=FETCH))
+    for action in actions:
+        action.trigger_task_id = "forward"
     return SimpleNamespace(
         program=SimpleNamespace(
             resources={},
@@ -121,6 +132,45 @@ def test_workers_whose_plans_order_collectives_differently_are_refused():
             Groups(same, {"default": ours, "evaluation": ours}),
             {"default": plan(["embed", "head"])},
         )
+
+
+def test_fetch_moved_across_optimizer_collective_is_rejected():
+    first = plan(["embed", "head"])
+    second = plan(["embed", "head"])
+    # Transfer FIFO and task FIFO are individually identical. Only interleaving
+    # differs, reproducing the full-node router-gradient/weight-fetch deadlock.
+    second.schedule.actions[1].trigger_task_id = "reduce_embed"
+    left, right = collective_sequence(first), collective_sequence(second)
+    assert left != right
+    assert first_difference("training", [left, right]) == (
+        "collective 2 of the training Plan is a fetch of head on worker 0 "
+        "but a gradient communication task of embed on worker 1"
+    )
+    with pytest.raises(ValueError, match="collective 2"):
+        check_collective_order(
+            Groups({"default": left}, {"default": right}), {"default": first}
+        )
+
+
+@pytest.mark.parametrize("kind", [EVICT, MemoryActionKind.WRITE_BACK])
+def test_gradient_spill_precedes_weight_fetch_at_the_same_boundary(kind):
+    value = plan(["head"], communication=())
+    value.program.bindings["gradient_shards"] = {"a_embed_grad": {}}
+    value._costed_program.alias_groups.append(
+        SimpleNamespace(
+            alias_group_id="a_embed_grad",
+            transfer=SimpleNamespace(fetch=[phase(0)], evict=[phase(64)]),
+        )
+    )
+    value.schedule.actions.append(
+        SimpleNamespace(
+            alias_group_id="a_embed_grad", trigger_task_id="forward", kind=kind
+        )
+    )
+    assert collective_sequence(value) == (
+        ("transfer", kind.value, "embed.grad"),
+        ("transfer", "fetch", "head"),
+    )
 
 
 def test_plans_that_issue_no_collectives_run_on_each_worker_by_itself():

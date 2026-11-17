@@ -6,6 +6,7 @@ collectives are not listed; their resource groups still prevent independent runs
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from shadowspill.artifacts.tensors import registration_name
@@ -18,7 +19,13 @@ COMMUNICATION_PHASES = ("gradient_communication", "weight_communication")
 
 
 def collective_sequence(plan: Plan) -> tuple[tuple[str, str, str], ...]:
-    """``(path, operation, tensors)`` for every collective, in issue order."""
+    """Collective-bearing calls in the native runtime's host submission order.
+
+    A task issues its explicit collectives before its boundary actions. Within
+    that boundary, collective write-backs precede collective fetches, retaining
+    each direction's FIFO (runtime/tasks/task_boundaries.c). Comparing transfers
+    and tasks independently misses fetches moved across optimizer collectives.
+    """
 
     program = plan.program
     bindings = program.bindings
@@ -40,23 +47,23 @@ def collective_sequence(plan: Plan) -> tuple[tuple[str, str, str], ...]:
     costed = plan._costed_program
     transfers = {item.alias_group_id: item.transfer for item in costed.alias_groups}
     rows: list[tuple[str, str, str]] = []
+    actions = defaultdict(list)
     for action in plan.schedule.actions:
         if action.alias_group_id not in sharded or action.kind not in (
             MemoryActionKind.FETCH,
             MemoryActionKind.EVICT,
+            MemoryActionKind.WRITE_BACK,
         ):
             continue
         transfer = transfers.get(action.alias_group_id)
         if transfer is None:
             continue
-        moved = sum(
-            phase.bytes
-            for phase in getattr(transfer, action.kind.value)
-            if phase.kind == "timed"
-        )
-        if moved:
-            name = ",".join(sorted(by_alias.get(action.alias_group_id, ())))
-            rows.append(("transfer", action.kind.value, name))
+        direction = "fetch" if action.kind == MemoryActionKind.FETCH else "evict"
+        if any(
+            phase.kind == "timed" and phase.bytes
+            for phase in getattr(transfer, direction)
+        ):
+            actions[action.trigger_task_id].append(action)
     for task in costed.selected_tasks(plan.selections):
         if task.phase in COMMUNICATION_PHASES:
             touched = sorted(
@@ -65,6 +72,12 @@ def collective_sequence(plan: Plan) -> tuple[tuple[str, str, str], ...]:
                 for name in by_object.get(getattr(ref, "object_id", ref), ())
             )
             rows.append(("task", str(task.phase), ",".join(touched)))
+        boundary = actions.get(task.task_id, ())
+        for fetch in (False, True):
+            for action in boundary:
+                if (action.kind == MemoryActionKind.FETCH) == fetch:
+                    name = ",".join(sorted(by_alias.get(action.alias_group_id, ())))
+                    rows.append(("transfer", action.kind.value, name))
     return tuple(rows)
 
 
@@ -91,9 +104,11 @@ def first_difference(
             if entry is None:
                 return "no collective"
             _, operation, tensors = entry
-            what = {"fetch": "a fetch", "evict": "an eviction"}.get(
-                operation, "a " + operation.replace("_", " ") + " task"
-            )
+            what = {
+                "fetch": "a fetch",
+                "evict": "an eviction",
+                "write_back": "a write-back",
+            }.get(operation, "a " + operation.replace("_", " ") + " task")
             return f"{what} of {tensors}" if tensors else what
 
         mine = reference[index] if index < len(reference) else None
