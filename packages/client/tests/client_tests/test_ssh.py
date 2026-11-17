@@ -5,6 +5,7 @@ import io
 import os
 import pwd
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -353,6 +354,54 @@ def test_command_timeout_does_not_reap_before_owned_group_cleanup():
     assert command.process.returncode is not None and command.closed
 
 
+@pytest.mark.parametrize("signaled", [False, True])
+def test_observation_preserves_exit_status_and_leader_until_cleanup(signaled):
+    code = (
+        "import os,signal; os.kill(os.getpid(),signal.SIGTERM)"
+        if signaled
+        else "raise SystemExit(7)"
+    )
+    command = SSHCommand([sys.executable, "-c", code])
+    command.start()
+    try:
+        expected = -signal.SIGTERM if signaled else 7
+        assert command.wait(5) == expected
+        assert command.process.returncode is None  # Popen has not reaped it.
+        os.kill(command.process.pid, 0)  # Its PID remains reserved by our child.
+    finally:
+        command.close()
+        command.clear()
+    assert command.process.returncode == expected
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin waitid observation")
+def test_darwin_observer_can_register_after_the_child_exited(monkeypatch):
+    monkeypatch.delattr(os, "waitid", raising=False)
+    original = SSHCommand._observe
+    allow_observation = Event()
+
+    def delayed(command):
+        assert allow_observation.wait(5)
+        original(command)
+
+    monkeypatch.setattr(SSHCommand, "_observe", delayed)
+    command = SSHCommand([sys.executable, "-c", "raise SystemExit(9)"])
+    command.start()
+    try:
+        # Both pipes reach EOF only after this child exits, without reaping it.
+        command.output.thread.join(5)
+        command.error.thread.join(5)
+        assert not command.output.thread.is_alive()
+        assert not command.error.thread.is_alive()
+        allow_observation.set()
+        assert command.wait(5) == 9
+        assert command.process.returncode is None
+    finally:
+        allow_observation.set()
+        command.close()
+        command.clear()
+
+
 def test_failed_local_directory_cleanup_retains_the_connection_budget_for_retry(
     ssh_server, monkeypatch
 ):
@@ -470,8 +519,6 @@ def test_borrowed_forward_cleanup_failure_retains_only_its_owner_for_retry(
 
 
 def test_exited_launcher_cannot_leave_a_proxy_child_holding_diagnostic_pipes(tmp_path):
-    if not Path("/proc/self/stat").exists():
-        pytest.skip("Linux process-state inspection for orphan proxy qualification")
     marker = tmp_path / "proxy-pid"
     child_code = (
         "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
@@ -494,6 +541,18 @@ def test_exited_launcher_cannot_leave_a_proxy_child_holding_diagnostic_pipes(tmp
     path = Path(f"/proc/{pid}/stat")
     deadline = monotonic() + 5
     while True:
+        if sys.platform == "darwin":
+            state = subprocess.run(
+                ["/bin/ps", "-p", str(pid), "-o", "stat="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip()
+            if not state or state.startswith("Z"):
+                break
+            assert monotonic() < deadline
+            Event().wait(0.01)
+            continue
         try:
             state = path.read_text().split(")", 1)[1].split()[0]
         except (FileNotFoundError, ProcessLookupError):

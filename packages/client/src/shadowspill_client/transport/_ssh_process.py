@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 from collections.abc import Sequence
-from contextlib import suppress
 from threading import Event, Lock, RLock, Thread
 from typing import IO
 
@@ -62,7 +62,10 @@ class SSHCommand:
     def start(self) -> None:
         if self.process is not None or self.closed:
             raise RuntimeError("SSH command can only start once")
-        if os.name != "posix" or not hasattr(os, "WNOWAIT"):
+        if os.name != "posix" or not (
+            (callable(getattr(os, "waitid", None)) and hasattr(os, "WNOWAIT"))
+            or sys.platform == "darwin"
+        ):
             raise RuntimeError("owned OpenSSH requires POSIX non-reaping observation")
         self.process = subprocess.Popen(
             self.command,
@@ -92,13 +95,18 @@ class SSHCommand:
     def _observe(self) -> None:
         assert self.process is not None
         try:
-            result = os.waitid(os.P_PID, self.process.pid, os.WEXITED | os.WNOWAIT)
-            assert result is not None
-            self.returncode = (
-                result.si_status
-                if result.si_code == os.CLD_EXITED
-                else -result.si_status
-            )
+            if callable(getattr(os, "waitid", None)):
+                result = os.waitid(os.P_PID, self.process.pid, os.WEXITED | os.WNOWAIT)
+                assert result is not None
+                self.returncode = (
+                    result.si_status
+                    if result.si_code == os.CLD_EXITED
+                    else -result.si_status
+                )
+            else:
+                from ._process_darwin import wait_for_exit
+
+                self.returncode = wait_for_exit(self.process.pid)
         except Exception:
             self._lost = True
         finally:
@@ -114,8 +122,21 @@ class SSHCommand:
 
     def _signal(self, value: signal.Signals) -> None:
         if self.process is not None and not self._reaped and not self._lost:
-            with suppress(ProcessLookupError):
+            try:
                 os.killpg(self.process.pid, value)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                # Darwin killpg excludes zombies and reports EPERM if none of
+                # the remaining members can be signaled. Do not hide a real
+                # permission failure: verify that every member already exited
+                # while our unreaped leader still reserves the group identity.
+                if sys.platform != "darwin":
+                    raise
+                from ._process_darwin import group_exited
+
+                if not group_exited(self.process.pid):
+                    raise
 
     def close(self) -> None:
         with self._lock:

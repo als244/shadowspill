@@ -200,7 +200,7 @@ def test_dtype_overflow_is_rejected_before_packed_conversion(dtype, value):
 
 
 def test_bfloat16_rounding_matches_torch_and_preserves_existing_bfloat16_bits():
-    import torch
+    torch = pytest.importorskip("torch")
 
     values = np.array(
         [0.0, -0.0, 1.0, 1.00390625, 1.01171875, -2.5, 1e-38], dtype=np.float32
