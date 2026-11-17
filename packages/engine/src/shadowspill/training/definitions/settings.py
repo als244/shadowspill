@@ -4,9 +4,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any
 
-from shadowspill.pytorch.precision import parameter_dtypes
 from shadowspill_client import Model, Optimizer
 from shadowspill_client._records import Value, mapping
+from shadowspill_client.config.precision import parameter_dtypes
 
 
 def constructor_config(

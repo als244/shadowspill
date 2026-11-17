@@ -8,9 +8,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
-from shadowspill.pytorch.precision import parameter_dtypes
 from shadowspill_client import Model
 from shadowspill_client._records import Value, mapping
+from shadowspill_client.config.precision import parameter_dtypes
 from shadowspill_client.protocol.controls import ControlSchema
 from shadowspill_client.protocol.definitions import OutputSet, Participation
 from shadowspill_client.protocol.inputs import InputSchema

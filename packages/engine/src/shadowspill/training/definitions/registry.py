@@ -154,10 +154,8 @@ class ResolvedModel:
             else self.settings.precision.get("parameter_dtypes", {})
         )
         if self.definition.parameter_dtypes or overrides:
-            from shadowspill.pytorch.precision import (
-                apply_parameter_dtypes,
-                parameter_dtypes,
-            )
+            from shadowspill.pytorch.precision import apply_parameter_dtypes
+            from shadowspill_client.config.precision import parameter_dtypes
 
             apply_parameter_dtypes(
                 model,

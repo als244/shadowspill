@@ -4,7 +4,8 @@ import pytest
 import torch
 from torch import nn
 
-from shadowspill.pytorch.precision import apply_parameter_dtypes, parameter_dtypes
+from shadowspill.pytorch.precision import apply_parameter_dtypes
+from shadowspill_client.config.precision import parameter_dtypes
 
 
 def module():

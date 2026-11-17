@@ -39,7 +39,7 @@ class Family:
     parameter_dtypes: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
-        from shadowspill.pytorch.precision import parameter_dtypes
+        from shadowspill_client.config.precision import parameter_dtypes
 
         object.__setattr__(
             self, "parameter_dtypes", parameter_dtypes(self.parameter_dtypes)
