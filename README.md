@@ -81,7 +81,7 @@ training = service.create_training_client(
     objective=Objective("cross_entropy"),
     optimizer=optimizer,
     batch=BatchConfig(limits={
-        "token_capacity": 65536, "max_sequence_length": 8192, "max_sequences": 1024,
+        "token_capacity": 65536, "max_sequence_length": 8192, "max_sequences": 64,
     }),
     memory=Memory(device_gib=24, spill_gib=128),
 ).result()
@@ -176,7 +176,7 @@ training = service.create_training_client(
     optimizer=optimizer,
     parallelism=parallelism,
     batch=BatchConfig(limits={
-        "token_capacity": 2097152, "max_sequence_length": 4096, "max_sequences": 8192,
+        "token_capacity": 2097152, "max_sequence_length": 4096, "max_sequences": 4096,
     }),
     memory=Memory(device_gib=20, spill_gib=96),
     prepare=Preparation(candidates=build_candidates(

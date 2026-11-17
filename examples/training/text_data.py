@@ -112,6 +112,8 @@ class ConversationBatches(_TokenCorpus):
     inside a rendered conversation. Overlong and unsupervised conversations are
     skipped; no conversation is truncated or joined to another. This helper
     chooses logical batches, not physical packing or worker placement.
+    The default sequence-count limit gives eightfold headroom relative to
+    maximum-length conversations, matching the supplied text preparation preset.
     """
 
     SCAN_TOKENS = 64 << 10
@@ -122,14 +124,20 @@ class ConversationBatches(_TokenCorpus):
         *,
         max_sequence_length,
         tokens_per_step,
-        max_sequences=1024,
+        max_sequences=None,
         split="train",
     ):
-        for value in (max_sequence_length, tokens_per_step, max_sequences):
+        for value in (max_sequence_length, tokens_per_step):
             if type(value) is not int or value < 1:
                 raise ValueError(
                     "conversation and batch limits must be positive integers"
                 )
+        if max_sequences is None:
+            max_sequences = 8 * (
+                (tokens_per_step + max_sequence_length - 1) // max_sequence_length
+            )
+        if type(max_sequences) is not int or max_sequences < 1:
+            raise ValueError("conversation and batch limits must be positive integers")
         if max_sequence_length > tokens_per_step:
             raise ValueError(
                 "maximum conversation length exceeds the step token budget"

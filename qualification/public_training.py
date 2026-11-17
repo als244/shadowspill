@@ -64,7 +64,7 @@ def settings(kind="qwen", parallelism="dp", checkpoint=None):
             limits={
                 "token_capacity": 2097152,
                 "max_sequence_length": 4096,
-                "max_sequences": 8192,
+                "max_sequences": 4096,
             }
         ),
         "memory": Memory(device_gib=20, spill_gib=96),
@@ -114,7 +114,7 @@ def settings(kind="qwen", parallelism="dp", checkpoint=None):
                 limits={
                     "token_capacity": 262144,
                     "max_sequence_length": 32768,
-                    "max_sequences": 128,
+                    "max_sequences": 64,
                 }
             ),
             prepare=Preparation(candidates=build_candidates(microbatch_tokens=[32768])),

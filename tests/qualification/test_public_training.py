@@ -21,6 +21,7 @@ def test_qwen_public_campaign_preserves_readme_batch_and_build_choices(paralleli
     )
     assert setup.context.parallelism.world_size == 8
     assert setup.config.batches[0].limits["token_capacity"] == 2097152
+    assert setup.config.batches[0].limits["max_sequences"] == 4096
     assert len(setup.config.preparation.cases) == 1
     inventory = capture_inventory(prepare_layouts(setup))
     assert setup.optimizer.gradient_dtype == "float32"

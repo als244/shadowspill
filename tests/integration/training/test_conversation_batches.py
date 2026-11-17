@@ -33,6 +33,16 @@ def read(path, **kwargs):
     return ConversationBatches(path, max_sequence_length=8, tokens_per_step=8, **kwargs)
 
 
+def test_default_sequence_allowance_matches_eightfold_packing_headroom(tmp_path):
+    source = ConversationBatches(
+        corpus(tmp_path, [([1, 2], [0, 1])] * 20),
+        max_sequence_length=128,
+        tokens_per_step=256,
+    )
+    assert source.max_sequences == 16
+    assert [len(batch) for batch in source] == [16, 4]
+
+
 def test_complete_variable_conversations_pack_by_tokens_and_shift_masks(tmp_path):
     source = read(
         corpus(

@@ -28,7 +28,7 @@ prepared = service.prepare_training(
         "opt_state_rounding": "stochastic",
     }),
     batch=BatchConfig(limits={
-        "token_capacity": 32768, "max_sequence_length": 32768, "max_sequences": 128,
+        "token_capacity": 32768, "max_sequence_length": 32768, "max_sequences": 8,
     }),
     memory=Memory(device_gib=12, spill_gib=128),
     prepare=Preparation(candidates=build_candidates(

@@ -55,7 +55,8 @@ class TrainingPreview(Record):
         rows = [
             f"Model: {self.config.model.definition}",
             f"Objective: {self.config.objective.definition}",
-            f"Batch limits: {[dict(batch.limits) for batch in self.config.batches]}",
+            "Global batch limits: "
+            f"{[dict(batch.limits) for batch in self.config.batches]}",
             "Scheduled padding counts toward input capacities.",
         ]
         rows.extend(
