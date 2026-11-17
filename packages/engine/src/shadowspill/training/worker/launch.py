@@ -37,6 +37,7 @@ def launch_worker(
     logs: LogFiles,
     cwd: Path,
     startup_timeout: float = 120,
+    checksum_cache: Path | None = None,
     capture: CaptureFiles | None = None,
 ) -> WorkerProcess:
     """Launch only inside an existing complete resource claim.
@@ -81,6 +82,9 @@ def launch_worker(
 
     def command(descriptor: int) -> list[str]:
         extra = () if capture is None else ("--nsys-progress", capture.progress_path)
+        checksums = (
+            () if checksum_cache is None else ("--checksum-cache", checksum_cache)
+        )
         worker = worker_command(
             "shadowspill.training.worker.bootstrap",
             (
@@ -92,6 +96,7 @@ def launch_worker(
                 outputs,
                 "--cache",
                 cache,
+                *checksums,
                 *extra,
             ),
         )

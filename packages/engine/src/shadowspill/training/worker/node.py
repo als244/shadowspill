@@ -290,6 +290,7 @@ class WorkerNode:
                     files=self._grants.root,
                     outputs=self._outputs.root,
                     cache=Path(self._initial_cache.name),
+                    checksum_cache=self._cache / "source-digests",
                     logs=self._logs[rank],
                     cwd=root,
                     startup_timeout=startup_timeout,

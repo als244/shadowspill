@@ -2,17 +2,23 @@
 
 First resolution streams checksums without constructing tensors. Resolved setup
 retains that manifest, so rechecks read only bounded metadata. Admitted workers
-verify every payload before opening the existing checkpoint reader.
+reuse verified fingerprints only while the source file identity is unchanged.
+The service owns the optional cache; source checkpoint files remain read-only.
 """
 
 import hashlib
 import json
-import os
 import stat
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
+
+from shadowspill.checkpoint.file_digest import (
+    file_identity,
+    settled_identity,
+    sha256_file,
+)
 
 from . import headers, weight_files
 from .hub import read_config
@@ -31,13 +37,7 @@ def revision(manifest):
 
 
 def _facts(value):
-    return (
-        value.st_dev,
-        value.st_ino,
-        value.st_size,
-        value.st_mtime_ns,
-        value.st_ctime_ns,
-    )
+    return file_identity(value)
 
 
 def _file(directory, name):
@@ -48,26 +48,7 @@ def _file(directory, name):
 
 
 def _checksum(directory, file):
-    path = directory / file.name
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        before = os.fstat(stream.fileno())
-        if not stat.S_ISREG(before.st_mode) or before.st_size != file.size:
-            raise ValueError(f"local checkpoint changed while pinning: {file.name}")
-        remaining = file.size
-        while remaining:
-            data = stream.read(min(weight_files.CHUNK_BYTES, remaining))
-            if not data:
-                raise ValueError(f"truncated local checkpoint: {file.name}")
-            digest.update(data)
-            remaining -= len(data)
-        if stream.read(1) or _facts(os.fstat(stream.fileno())) != _facts(before):
-            raise ValueError(f"local checkpoint changed while pinning: {file.name}")
-        if _facts(path.stat()) != _facts(before):
-            raise ValueError(
-                f"local checkpoint was replaced while pinning: {file.name}"
-            )
-    return replace(file, checksum=digest.hexdigest())
+    return replace(file, checksum=sha256_file(directory / file.name, file.size))
 
 
 def describe(reference, known=None):
@@ -108,7 +89,8 @@ def verify(reference, manifest):
     for file in manifest:
         if not stat.S_ISREG(paths[file.name].stat().st_mode):
             raise ValueError(f"local checkpoint requires a regular file: {file.name}")
-        weight_files.verify(paths[file.name], file)
+        if sha256_file(paths[file.name], file.size) != file.checksum:
+            raise ValueError(f"local checkpoint checksum differs: {file.name}")
     if any(_facts(paths[name].stat()) != facts for name, facts in before.items()):
         raise ValueError("local checkpoint changed during verification")
     return paths, before
@@ -126,6 +108,7 @@ def snapshot(reference, manifest, runtime):
     if runtime.disk_bytes < disk_bytes(manifest):
         raise ValueError("local checkpoint links exceed admitted initialization disk")
     paths, before = verify(reference, manifest)
+    recent = {name for name, facts in before.items() if not settled_identity(facts)}
     with TemporaryDirectory(prefix="local-weights-", dir=runtime.cache_root) as root:
         directory = Path(root)
         for name, path in paths.items():
@@ -137,10 +120,14 @@ def snapshot(reference, manifest, runtime):
         # checkpoints. Source files must stay unchanged while initialization runs.
         yield directory
         try:
-            # Filesystem timestamps can be coarser than two consecutive writes.
-            # Recheck content before publishing initialized state, not just stat.
+            # The source checksum was verified before opening the reader. Detect
+            # writes/replacements using identity, including ctime even when a
+            # writer restores mtime. Do not read every payload a second time.
+            # A just-written file may share one timestamp tick with a later
+            # edit, so retain a content recheck for those files only.
             for file in manifest:
-                weight_files.verify(paths[file.name], file)
+                if file.name in recent:
+                    weight_files.verify(paths[file.name], file)
             if any(
                 _facts(paths[name].stat()) != facts for name, facts in before.items()
             ):

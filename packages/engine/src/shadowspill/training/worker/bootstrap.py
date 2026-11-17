@@ -6,6 +6,7 @@ from functools import partial
 from pathlib import Path
 from typing import BinaryIO, cast
 
+from shadowspill.checkpoint.file_digest import checksum_cache
 from shadowspill.orchestration.capture.progress import write_progress
 from shadowspill.orchestration.launch.file_grants import resolve_file, verify_file
 from shadowspill.training.definitions import InitializationRuntime, load_registry
@@ -109,11 +110,15 @@ def main() -> None:
     parser.add_argument("--files", required=True, type=Path)
     parser.add_argument("--outputs", required=True, type=Path)
     parser.add_argument("--cache", required=True, type=Path)
+    parser.add_argument("--checksum-cache", type=Path)
     parser.add_argument("--nsys-progress", type=Path)
     args = parser.parse_args()
     if args.control_fd < 3:
         raise ValueError("worker control requires an inherited private descriptor")
-    with socket.socket(fileno=args.control_fd) as control:
+    with (
+        checksum_cache(args.checksum_cache),
+        socket.socket(fileno=args.control_fd) as control,
+    ):
         if control.family != socket.AF_UNIX or control.type != socket.SOCK_STREAM:
             raise ValueError("worker requires an inherited private stream socket")
         with control.makefile("rwb", buffering=0) as stream:

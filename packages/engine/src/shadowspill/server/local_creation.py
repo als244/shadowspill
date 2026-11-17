@@ -16,6 +16,7 @@ from types import MappingProxyType
 from typing import cast
 from uuid import uuid4
 
+from shadowspill.checkpoint.file_digest import checksum_cache
 from shadowspill.orchestration.capture.files import CollectorLimits
 from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.admission import (
@@ -151,9 +152,11 @@ class LocalCreationFactory:
 
     def describe(self, settings: TrainingSetup | ResolvedTraining) -> TrainingPreview:
         """Use the same CPU resolver; the caller owns the control-memory envelope."""
-        return resolve_training(
-            load_registry(self.packages), local_model_source(settings, self.model_root)
-        ).preview()
+        with checksum_cache(self.cache / "source-digests"):
+            return resolve_training(
+                load_registry(self.packages),
+                local_model_source(settings, self.model_root),
+            ).preview()
 
 
 class LocalCreation:

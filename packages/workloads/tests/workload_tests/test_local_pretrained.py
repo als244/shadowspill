@@ -127,6 +127,9 @@ def test_first_content_fingerprint_streams_at_most_one_mib(tmp_path, monkeypatch
         def fileno(self):
             return self.stream.fileno()
 
+        def seek(self, offset):
+            return self.stream.seek(offset)
+
         def read(self, size=-1):
             assert 0 <= size <= 1 << 20
             reads.append(size)
