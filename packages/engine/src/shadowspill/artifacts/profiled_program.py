@@ -12,7 +12,7 @@ from shadowspill.communication.memory import collective_memory
 from shadowspill.communication.task_costs import task_collective_cost, task_collectives
 from shadowspill.ir import ShadowSpillProgram, TaskResourcePhase
 from shadowspill.ir import TaskProfile as CostedTaskProfile
-from shadowspill.serialization.sharing import shared_writer
+from shadowspill.serialization.sharing import shared_writer, writing_metadata
 
 from ._values import digest, freeze, nonnegative_int, plain
 from .archive import Artifact
@@ -81,7 +81,8 @@ class ProfiledProgram(Artifact):
 
     @cached_property
     def digest(self) -> str:
-        return digest(self.to_dict())
+        with writing_metadata():
+            return digest(self.to_dict())
 
     @property
     def estimated_memory(self) -> tuple[str, ...]:

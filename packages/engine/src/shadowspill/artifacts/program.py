@@ -26,7 +26,11 @@ from shadowspill.ir.program.checks import (
     require_shapes,
 )
 from shadowspill.parallelism import Parallelism
-from shadowspill.serialization.sharing import read_record, shared_writer
+from shadowspill.serialization.sharing import (
+    read_record,
+    shared_writer,
+    writing_metadata,
+)
 
 from ._values import digest, freeze, nonnegative_int, plain
 from .archive import Artifact
@@ -131,7 +135,8 @@ class Program(Artifact):
     def digest(self) -> str:
         # Programs and their nested metadata are immutable. Runtime setup and
         # repeated checkpoints can share this identity without reserializing IR.
-        return digest(self.to_dict())
+        with writing_metadata():
+            return digest(self.to_dict())
 
     @shared_writer
     def to_dict(self) -> dict[str, Any]:

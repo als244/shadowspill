@@ -5,6 +5,7 @@ import math
 import struct
 from collections import UserDict
 from enum import StrEnum
+from types import MappingProxyType
 
 import numpy as np
 import pytest
@@ -92,6 +93,19 @@ def test_shared_values_decode_once_and_records_do_not_share_mutable_metadata():
     assert frozen["values"] == (1, 2)
     # No identity cache outlives its owned decode, even for the same input object.
     assert read_record(ObjectSpec.from_value, first, "again") is not one
+
+
+def test_deriving_artifacts_reuses_only_owned_immutable_metadata():
+    original = {"nested": {"values": [1, 2]}}
+    frozen = freeze(MappingProxyType(original))
+    original["nested"]["values"].append(3)
+    assert plain(frozen) == {"nested": {"values": [1, 2]}}
+    assert freeze(frozen) is frozen
+    derived = freeze({**frozen, "extra": True})
+    assert derived["nested"] is frozen["nested"]
+    with pytest.raises(TypeError):
+        frozen["nested"]["values"] = ()
+    assert encoded(derived) == encoded({"nested": {"values": [1, 2]}, "extra": True})
 
 
 def test_shared_containers_are_visited_once_and_keep_canonical_bytes():

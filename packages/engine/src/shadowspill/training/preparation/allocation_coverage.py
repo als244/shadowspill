@@ -11,6 +11,7 @@ from typing import Any
 
 from shadowspill.artifacts._values import digest, plain
 from shadowspill.artifacts.program import Program
+from shadowspill.serialization.sharing import writing_metadata
 
 from .templates import CaptureTemplate
 
@@ -120,13 +121,15 @@ def allocation_coverage(template: CaptureTemplate, program: Program) -> dict[str
         if name not in contracts:
             raise ValueError(f"missing bound-task allocation contract: {name}")
         preparations[name] = contracts[name]
-    captured = program.to_dict()
-    captured["bindings"].pop("allocation_coverage", None)
+    with writing_metadata():
+        captured = program.to_dict()
+        captured["bindings"].pop("allocation_coverage", None)
+        captured_digest = digest(captured)
     return {
         "version": 1,
         "scope": _SCOPE,
         "template": template.id,
-        "capture": digest(captured),
+        "capture": captured_digest,
         "tasks": tasks,
         "preparations": preparations,
         # Collective byte/protocol evidence is separately checked by existing
