@@ -31,7 +31,9 @@ class ServerLimits:
     upload_ttl_seconds: float = UPLOAD_TTL_SECONDS
     temporary_disk_bytes: int = 32 << 30
     temporary_files: int = 4096
-    request_timeout: float = 30
+    # Initial metadata resolution can stream a large local checkpoint's hashes.
+    # Match the HTTP service/client default rather than cutting it off at 30s.
+    request_timeout: float = 120
     creation: LocalCreationLimits = field(
         default_factory=lambda: LocalCreationLimits(
             preparation_host_bytes=8 << 30,
