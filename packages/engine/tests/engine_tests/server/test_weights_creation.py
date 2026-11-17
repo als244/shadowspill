@@ -12,6 +12,7 @@ from engine_tests.server.test_local_creation import configured, submit
 from engine_tests.server.test_storage import IDENTITY
 from shadowspill.orchestration.launch.file_grants import verify_file
 from shadowspill.server.startup import creation as module
+from shadowspill.server.startup import initialization
 from shadowspill.server.startup.weights import ResolvedWeights
 from shadowspill_client import Weights
 from shadowspill_client.protocol.checkpoints import (
@@ -86,7 +87,7 @@ def test_owned_export_bypasses_model_importer_and_starts_at_zero_updates(
 
         monkeypatch.setattr(module.LocalCreation, "_convert_state", convert)
         monkeypatch.setattr(
-            module,
+            initialization,
             "prepare_initialization",
             lambda _: pytest.fail("installed importer called for complete export"),
         )

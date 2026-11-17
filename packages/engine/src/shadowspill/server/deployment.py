@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-from shadowspill.server.startup.creation import LocalCreationLimits
+from shadowspill.server.startup.configuration import LocalCreationLimits
 from shadowspill.training.worker.resources import WorkerHost
 from shadowspill_client._records import integer, number
 

@@ -29,8 +29,9 @@ from shadowspill.orchestration.launch.phases import PhaseInvocation
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
 from shadowspill.server import plan_summaries
 from shadowspill.server.jobs import RunJobs
+from shadowspill.server.startup import configuration as configuration_module
 from shadowspill.server.startup import creation as module
-from shadowspill.server.startup.creation import (
+from shadowspill.server.startup.configuration import (
     LocalCreationFactory,
     LocalCreationLimits,
 )
@@ -104,6 +105,7 @@ def configured(
     disk = BufferBudget(128 << 20, 100)
     phases, owners = [], []
     monkeypatch.setattr(module, "load_registry", lambda _: installed())
+    monkeypatch.setattr(configuration_module, "load_registry", lambda _: installed())
     monkeypatch.setattr(
         launch_module,
         "worker_command",

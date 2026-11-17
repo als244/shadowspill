@@ -16,6 +16,7 @@ from engine_tests.server.test_service_client import address
 from shadowspill.server.checkpoints import publish_checkpoint
 from shadowspill.server.records.requests import RunIdentity
 from shadowspill.server.startup import creation as local_creation
+from shadowspill.server.startup import initialization
 from shadowspill.server.startup.checkpoint import (
     CheckpointResolver,
     validate_resume_optimizer,
@@ -145,7 +146,7 @@ def test_resume_skips_fresh_initializer_and_preserves_ready_lineage(
         change=lambda c: replace(c, model=replace(c.model, initialize=initial)),
     ) as ctx:
         source = checkpoint(ctx)
-        monkeypatch.setattr(local_creation, "prepare_initialization", forbidden)
+        monkeypatch.setattr(initialization, "prepare_initialization", forbidden)
         monkeypatch.setattr(runtime, "prepare_initialization", forbidden)
         with (
             endpoint(ctx) as (transport, _),

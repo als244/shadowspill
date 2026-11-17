@@ -18,6 +18,7 @@ from engine_tests.training.test_setup_resolution import installed
 from shadowspill.orchestration.launch.phases import PhaseInvocation
 from shadowspill.server.records.requests import RunIdentity
 from shadowspill.server.startup import creation as module
+from shadowspill.server.startup import initialization
 from shadowspill.training.preparation.phases import job
 from shadowspill_client import ServiceClient
 from shadowspill_client._async import ConnectionClosed
@@ -63,7 +64,8 @@ def measurement_phases(monkeypatch, *, fail=False):
         raise AssertionError("measurement-only job attempted planning/initialization")
 
     monkeypatch.setattr(module, "measure_job", measure)
-    for name in ("prepare_job", "prepare_initialization", "WorkerNode"):
+    monkeypatch.setattr(initialization, "prepare_initialization", forbidden)
+    for name in ("prepare_job", "WorkerNode"):
         monkeypatch.setattr(module, name, forbidden)
     return phases
 

@@ -41,7 +41,7 @@ from shadowspill.server.jobs import RunJobs  # noqa: E402
 from shadowspill.server.live import LiveRun  # noqa: E402
 from shadowspill.server.records.requests import RunIdentity  # noqa: E402
 from shadowspill.server.results import ResultPublisher  # noqa: E402
-from shadowspill.server.startup.creation import LocalCreationLimits  # noqa: E402
+from shadowspill.server.startup.configuration import LocalCreationLimits  # noqa: E402
 from shadowspill.server.storage import ServiceStorage  # noqa: E402
 from shadowspill.training.definitions import load_registry  # noqa: E402
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle  # noqa: E402

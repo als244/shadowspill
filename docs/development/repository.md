@@ -210,6 +210,11 @@ subpackage solves the lower-level schedule and memory residency problem.
 `operator_preparation` saves finalized provider kernels for later execution; it
 is separate from the training preparation workflow.
 
+`server/startup` coordinates creation and resumption. `configuration.py` owns
+deployment settings, `initialization.py` resolves model/checkpoint sources,
+`workers.py` binds ranks, and `publication.py` writes preparation artifacts.
+`creation.py` keeps admission, cancellation and retirement in one resource owner.
+
 High-level modules expose small orchestration functions. Detailed algorithms
 live in domain-named submodules; generic `utils`, `helpers`, and `common`
 modules are avoided.

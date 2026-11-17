@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from shadowspill.orchestration.launch.admission import NodeAdmission
 from shadowspill.orchestration.launch.host_arena import HostArena, HostPartition
-from shadowspill.server.startup.creation import LocalCreationFactory
+from shadowspill.server.startup.configuration import LocalCreationFactory
 from shadowspill.training.definitions import load_registry
 from shadowspill_client._records import names
 from shadowspill_client.buffers import BufferBudget

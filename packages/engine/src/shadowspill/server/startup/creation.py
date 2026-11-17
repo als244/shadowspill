@@ -3,28 +3,21 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
-import os
-from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Lock
-from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 from shadowspill.checkpoint.file_digest import checksum_cache
 from shadowspill.diagnostics.progress import phase
-from shadowspill.orchestration.capture.files import CollectorLimits
 from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.admission import (
-    NodeAdmission,
     NodeLease,
     ResourceRequest,
-    ResourcesUnavailable,
 )
 from shadowspill.orchestration.launch.host_arena import HostArena, HostPartition
 from shadowspill.orchestration.launch.log_files import LogFiles
@@ -34,15 +27,12 @@ from shadowspill.server.artifacts import ArtifactStore
 from shadowspill.server.live import LiveRun
 from shadowspill.server.plan_summaries import publish_summary
 from shadowspill.server.records.requests import RunIdentity
-from shadowspill.server.startup.checkpoint import CheckpointResolver
 from shadowspill.server.startup.conversion import prepare_state
 from shadowspill.server.startup.logs import LogReader, live_chunks
-from shadowspill.server.startup.model_sources import local_model_source
 from shadowspill.server.startup.progress import StartupLog
-from shadowspill.server.startup.records import creation_key, load_creation
+from shadowspill.server.startup.records import load_creation
 from shadowspill.server.startup.reuse import stage_preparation_reuse
-from shadowspill.server.startup.weights import ResolvedWeights, resolve_weights
-from shadowspill.server.storage import ServiceStorage
+from shadowspill.server.startup.weights import ResolvedWeights
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.preparation.artifacts.measurement_export import (
@@ -65,109 +55,22 @@ from shadowspill.training.preparation.phases.job import (
 from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill.training.preparation.setup import ResolvedSetup, resolve_training
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
-from shadowspill.training.worker.checkpoint_records import RankRestore, RankWeights
-from shadowspill.training.worker.initialization import (
-    prepare_frozen_initialization,
-    prepare_initialization,
-    restore_staging,
-)
 from shadowspill.training.worker.node import WorkerNode
-from shadowspill.training.worker.protocol import WorkerScope
-from shadowspill.training.worker.resources import WorkerHost, startup_metadata_bytes
-from shadowspill.training.worker.runtime import PreparedWorker
-from shadowspill_client._records import integer, names
-from shadowspill_client.buffers import BufferBudget, BufferLease
-from shadowspill_client.protocol.checkpoints import WEIGHTS_MEDIA_TYPE
+from shadowspill.training.worker.resources import startup_metadata_bytes
+from shadowspill_client.buffers import BufferLease
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.preparation import PREPARATION_MEDIA_TYPE
-from shadowspill_client.protocol.preview import TrainingPreview
 from shadowspill_client.protocol.progress import LogChunk, ProgressRequest
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.runs import CreationStage, RunInfo
-from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.protocol.training import ResolvedTraining
 
+from .initialization import resolve_initialization
+from .publication import preparation_files, publish_file, publish_metadata
+from .workers import resolve_workers, select_devices
 
-@dataclass(frozen=True)
-class LocalCreationLimits:
-    """Deployment-qualified envelopes; no estimates from tensor pools or idle RSS.
-
-    The registry separately owns decoded-family/creation-thread host capacity.
-    ``preparation_disk_bytes`` includes the owned phase directory and its caches;
-    phase processes must be qualified within that envelope, like their host bound.
-    File-count/size checks reject excess before publication or persistent startup.
-    Shared external compiler caches remain the deployment's separate ownership.
-    """
-
-    preparation_host_bytes: int
-    preparation_disk_bytes: int
-    worker: WorkerHost
-    transfer_bytes: int
-    publication_bytes: int
-    log_bytes: int
-    max_preparation_files: int
-    nsys: CollectorLimits = field(default_factory=CollectorLimits)
-
-    def __post_init__(self) -> None:
-        for name in (
-            "preparation_host_bytes",
-            "preparation_disk_bytes",
-            "transfer_bytes",
-            "publication_bytes",
-            "log_bytes",
-            "max_preparation_files",
-        ):
-            integer(getattr(self, name), name, minimum=1)
-        if not isinstance(self.worker, WorkerHost):
-            raise TypeError("worker host envelope requires WorkerHost")
-        if not isinstance(self.nsys, CollectorLimits):
-            raise TypeError("Nsight deployment envelope requires CollectorLimits")
-
-
-class LocalCreationFactory:
-    """Configuration comes from deployment; per-run choices come from storage.
-
-    This adapter serves one assigned node. It neither discovers remote capacity
-    nor requests a scheduler allocation. Multi-node agents use the same lower
-    level phase/worker interfaces and require their own allocation integration.
-    """
-
-    def __init__(
-        self,
-        storage: ServiceStorage,
-        node: NodeAdmission,
-        *,
-        packages: Sequence[str],
-        root: Path,
-        cache: Path,
-        environment: Mapping[str, str],
-        limits: LocalCreationLimits,
-        disk: BufferBudget,
-        base_host_bytes: int,
-        model_root: Path | None = None,
-    ) -> None:
-        self.storage, self.node = storage, node
-        self.packages = names(packages, "definition packages")
-        self.root, self.cache = root, cache
-        self.model_root = model_root
-        self.environment = MappingProxyType(dict(environment))
-        self.limits, self.disk = limits, disk
-        # Permanent service arenas (including all registry job slots) cannot be
-        # waited out. Include them when rejecting impossible combined demands.
-        self.base_host_bytes = integer(base_host_bytes, "fixed service arena bytes")
-        if base_host_bytes > node.capacity.host_bytes:
-            raise ValueError("fixed service arenas exceed node capacity")
-
-    def __call__(self, info: RunInfo) -> LocalCreation:
-        return LocalCreation(self, info)
-
-    def describe(self, settings: TrainingSetup | ResolvedTraining) -> TrainingPreview:
-        """Use the same CPU resolver; the caller owns the control-memory envelope."""
-        with checksum_cache(self.cache / "source-digests"):
-            return resolve_training(
-                load_registry(self.packages),
-                local_model_source(settings, self.model_root),
-            ).preview()
+if TYPE_CHECKING:
+    from .configuration import LocalCreationFactory
 
 
 class LocalCreation:
@@ -279,11 +182,13 @@ class LocalCreation:
             with phase("Resolve installed training definitions"):
                 registry = load_registry(factory.packages)
                 setup = resolve_training(registry, config=creation.config)
-            checkpoint, weights_source, weights = self._resolve_initialization(
-                creation, setup
+            checkpoint, weights_source, weights = resolve_initialization(
+                self._artifacts, self.identity.session_id, creation, setup
             )
             ranks = setup.context.parallelism.world_size
-            devices = self._select_devices(setup, wait=creation.wait_for_resources)
+            devices = select_devices(
+                factory.node, setup, wait=creation.wait_for_resources
+            )
             self._active()
             self._scratch = factory.disk.reserve(
                 limits.preparation_disk_bytes, timeout=0
@@ -350,79 +255,6 @@ class LocalCreation:
         finally:
             self._startup_log.finish()
             self._starting.release()
-
-    def _resolve_initialization(
-        self, creation: TrainingCreation, setup: ResolvedSetup
-    ) -> tuple[ResolvedCheckpoint | None, ResolvedWeights | None, list[ArtifactRef]]:
-        """Resolve saved values and only the model initializers they still need."""
-        assert self._artifacts is not None
-        execution = creation.config.execution
-        checkpoint = (
-            None
-            if creation.checkpoint is None
-            else CheckpointResolver(
-                self._artifacts,
-                session_id=self.identity.session_id,
-                world_size=None,
-                configuration=setup.config,
-            ).resolve(creation.checkpoint)
-        )
-        weights = []
-        weights_source = None
-        initial = creation.config.model.initialize
-        if (
-            checkpoint is None
-            and creation.kind == "training"
-            and initial is not None
-            and initial.kind == "artifact"
-        ):
-            assert initial.reference is not None
-            ref = self._artifacts.get(initial.reference)
-            if ref is None:
-                raise ValueError(
-                    "initial weights are not in this owner's artifact storage"
-                )
-            if ref.media_type == WEIGHTS_MEDIA_TYPE:
-                weights_source = resolve_weights(self._artifacts, ref, setup.config)
-            else:
-                weights.append(ref)
-        saved = checkpoint if checkpoint is not None else weights_source
-        # Complete saved state supplies all model values. Only declared
-        # frozen omissions need an installed base initializer and its source.
-        if saved is None and creation.kind == "training":
-            prepare_initialization(setup)
-        elif saved is not None:
-            base = saved.manifest.info.frozen_base
-            if base is not None:
-                for rank in range(setup.context.parallelism.world_size):
-                    initial_base = prepare_frozen_initialization(setup, base, rank)
-                    restore_staging(initial_base, execution.max_staging_bytes)
-            if base is not None and base.artifact is not None:
-                weights.append(base.artifact)
-        return checkpoint, weights_source, weights
-
-    def _select_devices(self, setup: ResolvedSetup, *, wait: bool) -> tuple[str, ...]:
-        """Choose compatible assigned devices before acquiring any phase owner."""
-        factory = self._factory
-        ranks = setup.context.parallelism.world_size
-        needed = int(setup.config.memory.device_gib * (1 << 30))
-        if needed < 1:
-            raise ValueError("worker device budget must contain at least one byte")
-        compatible = [
-            device
-            for device in factory.node.capacity.devices
-            if device.capacity_bytes >= needed
-        ]
-        if len(compatible) < ranks:
-            raise ValueError(
-                "requested worker count/budget cannot fit this assigned node"
-            )
-        occupied = factory.node.used.devices
-        compatible.sort(key=lambda device: (device.id in occupied, device.id))
-        devices = tuple(device.id for device in compatible[:ranks])
-        if not wait and occupied.intersection(devices):
-            raise ResourcesUnavailable("compatible assigned workers have live owners")
-        return devices
 
     def _prepare(
         self, creation: TrainingCreation, devices: tuple[str, ...], root: Path
@@ -629,37 +461,17 @@ class LocalCreation:
             + command_bytes
             + execution.max_staging_bytes
         )
-        with phase("Resolve worker initialization and storage"):
-            workers = {
-                rank: PreparedWorker.resolve(
-                    family,
-                    WorkerScope(
-                        self.identity.run_id,
-                        factory.storage.incarnation,
-                        "worker-" + uuid4().hex,
-                        rank,
-                    ),
-                    bundle=plans,
-                    rank_map={worker: worker for worker in range(ranks)},
-                    weights=weights,
-                    restore=None
-                    if checkpoint is None
-                    else RankRestore(
-                        checkpoint.reference,
-                        checkpoint.manifest.info,
-                        checkpoint.manifest.ranks[rank],
-                    ),
-                    initial_weights=None
-                    if initial_weights is None or weights_source is None
-                    else RankWeights(
-                        weights_source.reference,
-                        initial_weights.reference,
-                        initial_weights.manifest.info,
-                        initial_weights.manifest.ranks[rank],
-                    ),
-                )
-                for rank in sorted(family.plans)
-            }
+        workers = resolve_workers(
+            family,
+            plans,
+            self.identity,
+            factory.storage.incarnation,
+            ranks=ranks,
+            weights=weights,
+            checkpoint=checkpoint,
+            weights_source=weights_source,
+            initial_weights=initial_weights,
+        )
         worker_bytes = sum(
             limits.worker.peak_bytes(worker.startup) for worker in workers.values()
         )
@@ -715,9 +527,6 @@ class LocalCreation:
         self._active()
         with phase("Start training workers"):
             self.run.start(wait_for_resources=creation.wait_for_resources)
-
-    def _key(self, name: str) -> str:
-        return creation_key(self.identity, name)
 
     def _convert_state[Saved: (ResolvedCheckpoint, ResolvedWeights)](
         self,
@@ -809,39 +618,18 @@ class LocalCreation:
         self, path: Path, name: str, *, media_type: str = "application/octet-stream"
     ) -> ArtifactRef:
         assert self._artifacts is not None
-        with path.open("rb") as source:
-            digest = hashlib.file_digest(source, "sha256").hexdigest()
-        reference = ArtifactRef(
-            "prepared." + self._key(name), digest, path.stat().st_size, media_type
+        return publish_file(
+            self._artifacts, self.identity, path, name, media_type=media_type
         )
-        self._artifacts.put(reference, lambda _: path.open("rb"))
-        return reference
 
     def _check_files(self) -> tuple[Path, ...]:
-        if self._directory is None:
-            return ()
-        root = Path(self._directory.name) / "preparation"
-        files, total, count = [], 0, 0
-        if not root.exists():
-            return ()
-        for directory, children, filenames in os.walk(root, followlinks=False):
-            for name in (*children, *filenames):
-                path = Path(directory) / name
-                if path.is_symlink():
-                    raise ValueError(
-                        "preparation artifacts cannot contain symbolic links"
-                    )
-                count += 1
-                if count > self._factory.limits.max_preparation_files:
-                    raise ValueError(
-                        "preparation exceeds its configured file-count envelope"
-                    )
-                total += 4096 + (path.stat().st_size if path.is_file() else 0)
-                if total > self._factory.limits.preparation_disk_bytes:
-                    raise ValueError("preparation exceeds its configured disk envelope")
-                if path.is_file() and path.suffix == ".ssp":
-                    files.append(path)
-        return tuple(sorted(files))
+        return preparation_files(
+            None
+            if self._directory is None
+            else Path(self._directory.name) / "preparation",
+            max_files=self._factory.limits.max_preparation_files,
+            max_disk_bytes=self._factory.limits.preparation_disk_bytes,
+        )
 
     def interrupt(self) -> None:
         self._cancelled.set()
@@ -867,18 +655,7 @@ class LocalCreation:
 
     def _publish_metadata(self, name: str, value: dict[str, object]) -> None:
         assert self._artifacts is not None
-        body = json.dumps(value, separators=(",", ":")).encode()
-        if len(body) > 16 << 10:
-            raise ValueError(
-                "preparation manifest exceeds its per-record metadata bound"
-            )
-        reference = ArtifactRef(
-            "preparation." + self._key(name),
-            hashlib.sha256(body).hexdigest(),
-            len(body),
-            "application/json",
-        )
-        self._artifacts.put(reference, lambda _: io.BytesIO(body))
+        publish_metadata(self._artifacts, self.identity, name, value)
 
     def _archive_preparation(self) -> None:
         if self._artifacts is not None:
