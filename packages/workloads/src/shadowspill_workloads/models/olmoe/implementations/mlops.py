@@ -28,6 +28,7 @@ from shadowspill_workloads.models.shared.norms import RMSNorm
 from shadowspill_workloads.models.shared.routed_lora import factors, reset_factors
 from shadowspill_workloads.models.shared.router_statistics import (
     masked_statistics,
+    token_features,
     token_outputs,
 )
 from shadowspill_workloads.models.shared.token_head import target_logprobs
@@ -330,6 +331,7 @@ class Model(nn.Module):
             hidden, self.lm_head, targets, chunk_size=head_chunk_size
         )
 
+    token_features = token_features
     token_outputs = token_outputs
 
     def loss(

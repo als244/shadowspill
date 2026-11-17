@@ -16,6 +16,14 @@ from .decoder import SequenceLengths
 TARGET_LOGIT_BYTES = 64 << 20
 
 
+def decoder_token_features(self, tokens, sequence_lengths=None):
+    """Expose the model-defined head so objectives can reduce inside its chunks."""
+    return {
+        "head_hidden": self.hidden(tokens, sequence_lengths),
+        "head": self.lm_head,
+    }
+
+
 def decoder_target_logprobs(
     self,
     tokens: torch.Tensor,

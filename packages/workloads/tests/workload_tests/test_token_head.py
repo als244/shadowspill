@@ -15,6 +15,84 @@ from shadowspill_workloads.models.llama3.implementations.pytorch import Model as
 from shadowspill_workloads.models.shared import token_head
 
 
+@pytest.mark.parametrize("policy", [False, True])
+@pytest.mark.parametrize("frozen_head", [False, True])
+def test_installed_token_objective_captures_one_fused_head_and_matches_reference(
+    policy, frozen_head
+):
+    from mlops.objectives import clipped_policy, cross_entropy
+
+    from shadowspill_workloads.definitions.token import compute
+    from shadowspill_workloads.definitions.token_evaluation import compute as evaluate
+
+    torch.manual_seed(211)
+    model = MlopsLlama(Config(1, 16, 2, 1, 32, 31, max_seq_len=8))
+    model.lm_head.weight.requires_grad_(not frozen_head)
+    tokens = torch.randint(0, 31, (1, 7))
+    fields = {
+        "target_tokens": torch.randint(0, 31, tokens.shape),
+        "response_mask" if policy else "loss_mask": torch.tensor(
+            [[True, True, False, True, True, True, True]]
+        ),
+        "weights": torch.tensor([[1.0, -0.3, float("nan"), 0.7, -1.0, 0.0, 0.2]]),
+    }
+    controls = {}
+    if policy:
+        fields.update(
+            old_logprobs=torch.full(tokens.shape, -3.2),
+            advantages=torch.tensor([[1.0, -1.0, float("nan"), 0.5, -0.5, 0.0, 0.3]]),
+            reference_logprobs=torch.full(tokens.shape, -3.1),
+        )
+        controls = {
+            "clip_ratio": torch.tensor(0.2),
+            "reference_beta": torch.tensor(0.1),
+        }
+    mask_name = "response_mask" if policy else "loss_mask"
+
+    def objective(model, inputs, fields, controls):
+        features = evaluate(
+            model,
+            inputs,
+            fields,
+            {"logprobs": True, "target_mask." + mask_name: True},
+        )
+        return compute(features, inputs, fields, controls, policy=policy, tensors=True)
+
+    arguments = [{"tokens": tokens}, fields, controls]
+    captured = capture_training_objective(model, objective, arguments)
+    calls = [
+        node
+        for node in captured.exported.exported_program.graph.nodes
+        if node.target == torch.ops.mlops.head_objective_builtin_chunked_fwd.default
+    ]
+    assert len(calls) == 1
+    assert calls[0].args[6] == ("clipped_policy" if policy else "cross_entropy")
+    assert calls[0].args[-1][1] == (not frozen_head)
+    result = captured.exported.exported_program.module()(*arguments)
+    logprobs = model.target_logprobs(tokens, fields["target_tokens"])
+    if policy:
+        expected = clipped_policy(
+            logprobs,
+            fields[mask_name],
+            fields["weights"],
+            fields["old_logprobs"],
+            fields["advantages"],
+            controls["clip_ratio"],
+            reference_logprobs=fields["reference_logprobs"],
+            reference_beta=controls["reference_beta"],
+        )
+    else:
+        expected = cross_entropy(logprobs, fields[mask_name], fields["weights"])
+    torch.testing.assert_close(result[0], expected)
+    parameters = tuple(p for p in model.parameters() if p.requires_grad)
+    for actual, reference in zip(
+        torch.autograd.grad(result[0], parameters),
+        torch.autograd.grad(expected, parameters),
+        strict=True,
+    ):
+        torch.testing.assert_close(actual, reference, atol=3e-6, rtol=3e-5)
+
+
 @pytest.mark.parametrize("chunk", [None, 1, 3, 8, 100])
 def test_head_matches_full_projection_for_values_and_token_weighted_vjps(chunk):
     torch.manual_seed(204)

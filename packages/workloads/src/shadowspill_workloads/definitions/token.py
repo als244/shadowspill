@@ -2,21 +2,18 @@
 
 from dataclasses import dataclass
 from functools import partial
-from hashlib import sha256
-from importlib.metadata import version
-from pathlib import Path
 
 from shadowspill.training.definitions import ObjectiveDefinition
 from shadowspill_client._records import plain
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.definitions import (
-    DefinitionSource,
     OutputSet,
     Participation,
     TensorOutput,
 )
 from shadowspill_client.protocol.inputs import InputSchema, TensorField
 
+from .source import definition_source
 from .token_evaluation import token_evaluation
 
 
@@ -167,7 +164,9 @@ def outputs(config, *, policy):
 
 
 def forward_logprobs(evaluated, inputs, loss_inputs, loss_params, *, packed=False):
-    values = evaluated["logprobs"].float()
+    from shadowspill_workloads.objectives.head.execution import logprobs
+
+    values = logprobs(evaluated)
     return {"logprobs": values.reshape(-1) if packed else values}
 
 
@@ -184,27 +183,10 @@ def compute(
     import torch
 
     from shadowspill.pytorch.contracts import ObjectiveResult
-    from shadowspill_workloads.objectives.head.token import (
-        clipped_policy,
-        cross_entropy,
-    )
+    from shadowspill_workloads.objectives.head import execution
 
     valid = loss_inputs["response_mask" if policy else "loss_mask"]
-    current = evaluated["logprobs"].float()
-    if policy:
-        reference = "reference_logprobs" in loss_inputs
-        loss = clipped_policy(
-            current,
-            valid,
-            loss_inputs["weights"],
-            loss_inputs["old_logprobs"],
-            loss_inputs["advantages"],
-            loss_params["clip_ratio"],
-            reference_logprobs=loss_inputs["reference_logprobs"] if reference else None,
-            reference_beta=loss_params["reference_beta"] if reference else None,
-        )
-    else:
-        loss = cross_entropy(current, valid, loss_inputs["weights"])
+    loss, current = execution.loss(evaluated, loss_inputs, loss_params, policy=policy)
     values = {"loss_sum": loss.detach(), "valid_tokens": valid.sum()}
     if tensors:
         output = torch.where(valid, current, 0.0)
@@ -224,17 +206,9 @@ def bind(config, key, *, policy):
 
 
 def register(registry):
-    root = Path(__file__).resolve().parents[1]
-    digest = sha256()
-    for relative in (
-        "definitions/token.py",
-        "definitions/token_evaluation.py",
-        "objectives/head/token.py",
-    ):
-        digest.update(relative.encode())
-        digest.update((root / relative).read_bytes())
-    source = DefinitionSource(
-        "shadowspill-workloads", version("shadowspill-workloads"), digest.hexdigest()
+    source = definition_source(
+        ("definitions/token.py", "definitions/token_evaluation.py", "objectives/head"),
+        providers=("mlops",),
     )
     for name, policy in (("cross_entropy", False), ("clipped_policy", True)):
         registry.add_objective(

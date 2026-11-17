@@ -19,7 +19,10 @@ from shadowspill_workloads.models.shared.decoder import (
     language_model_loss,
     swiglu,
 )
-from shadowspill_workloads.models.shared.token_head import decoder_target_logprobs
+from shadowspill_workloads.models.shared.token_head import (
+    decoder_target_logprobs,
+    decoder_token_features,
+)
 
 from ..config import Config
 
@@ -135,6 +138,7 @@ class Model(nn.Module):
             self.hidden(tokens, seq_lens), self.lm_head, targets, reduction
         )
 
+    token_features = decoder_token_features
     target_logprobs = decoder_target_logprobs
 
 

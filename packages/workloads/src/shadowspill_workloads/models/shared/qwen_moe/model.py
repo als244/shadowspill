@@ -9,7 +9,10 @@ from shadowspill_workloads.models.shared.decoder import (
     auxiliary_share,
     packed_metadata,
 )
-from shadowspill_workloads.models.shared.router_statistics import token_outputs
+from shadowspill_workloads.models.shared.router_statistics import (
+    token_features,
+    token_outputs,
+)
 from shadowspill_workloads.models.shared.token_head import target_logprobs
 
 from ..expert_parallel import close_experts, expert_construction
@@ -188,6 +191,7 @@ class QwenMoE(nn.Module):
             hidden, self.lm_head, targets, chunk_size=head_chunk_size
         )
 
+    token_features = token_features
     token_outputs = token_outputs
 
     def loss(

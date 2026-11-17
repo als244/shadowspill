@@ -18,7 +18,10 @@ from shadowspill_workloads.models.shared.decoder import (
     packed_metadata,
 )
 from shadowspill_workloads.models.shared.norms import RMSNorm
-from shadowspill_workloads.models.shared.token_head import decoder_target_logprobs
+from shadowspill_workloads.models.shared.token_head import (
+    decoder_target_logprobs,
+    decoder_token_features,
+)
 
 from ..config import Config
 
@@ -154,6 +157,7 @@ class Model(nn.Module):
             reduction=reduction,
         )
 
+    token_features = decoder_token_features
     target_logprobs = decoder_target_logprobs
 
 

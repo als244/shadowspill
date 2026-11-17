@@ -17,7 +17,10 @@ from shadowspill_workloads.models.shared.decoder import (
     language_model_loss,
     swiglu,
 )
-from shadowspill_workloads.models.shared.token_head import decoder_target_logprobs
+from shadowspill_workloads.models.shared.token_head import (
+    decoder_target_logprobs,
+    decoder_token_features,
+)
 
 from ...config import Config
 from .attention import GatedAttention
@@ -71,6 +74,7 @@ class Block(nn.Module):
 
 
 class Model(nn.Module):
+    token_features = decoder_token_features
     target_logprobs = decoder_target_logprobs
 
     SUPPORTS_PACKED = True

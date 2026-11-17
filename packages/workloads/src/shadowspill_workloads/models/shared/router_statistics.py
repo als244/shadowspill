@@ -30,6 +30,37 @@ def masked_summaries(logits, ids, mask):
     return counts, probabilities
 
 
+def token_features(
+    model,
+    tokens,
+    sequence_lengths=None,
+    *,
+    router_mask=None,
+    router_statistics=False,
+):
+    """Model-defined head inputs and optional router statistics in one pass."""
+    if not router_statistics:
+        hidden, _ = model.hidden(tokens, sequence_lengths)
+        return {"head_hidden": hidden, "head": model.lm_head}
+    hidden, _, statistics = model.hidden(
+        tokens,
+        sequence_lengths,
+        return_metrics=True,
+        router_mask=router_mask,
+        detach_metrics=False,
+    )
+    return {
+        "head_hidden": hidden,
+        "head": model.lm_head,
+        "router_counts": statistics["expert_counts"],
+        "router_probability_sum": statistics["probability_sum"],
+        "router_rows": tokens.new_tensor(tokens.numel())
+        if router_mask is None
+        else router_mask.sum(),
+        "router_top_k": model.config.top_k,
+    }
+
+
 def token_outputs(
     model,
     tokens,
@@ -40,23 +71,21 @@ def token_outputs(
     head_chunk_size=None,
 ):
     """Sufficient router statistics plus optional target logprobs in one pass."""
-    hidden, _, statistics = model.hidden(
+    features = token_features(
+        model,
         tokens,
         sequence_lengths,
-        return_metrics=True,
         router_mask=router_mask,
-        detach_metrics=False,
+        router_statistics=True,
     )
     result = {
-        "router_counts": statistics["expert_counts"],
-        "router_probability_sum": statistics["probability_sum"],
-        "router_rows": tokens.new_tensor(tokens.numel())
-        if router_mask is None
-        else router_mask.sum(),
-        "router_top_k": model.config.top_k,
+        name: value for name, value in features.items() if name.startswith("router_")
     }
     if targets is not None:
         result["logprobs"] = target_logprobs(
-            hidden, model.lm_head, targets, chunk_size=head_chunk_size
+            features["head_hidden"],
+            features["head"],
+            targets,
+            chunk_size=head_chunk_size,
         )
     return result

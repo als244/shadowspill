@@ -30,6 +30,12 @@ contracts.
 """
 
 CONTRACTS = {
+    # Every supported token objective uses only geometry-sized rowwise tensors.
+    # Each projection is consumed once, its requested unit VJPs accumulated,
+    # and its logits released before the next chunk. Backward scales saved VJPs.
+    "torch.ops.mlops.head_objective_builtin_chunked_fwd.default": (
+        "shadowspill/token-head-objective-allocation@1"
+    ),
     **{
         f"torch.ops.mlops.{name}_{direction}.default": (
             "shadowspill/llama-fixed-provider-allocation@1"

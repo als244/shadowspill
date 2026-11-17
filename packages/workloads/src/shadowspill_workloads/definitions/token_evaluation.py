@@ -15,6 +15,19 @@ def compute(model, inputs, loss_inputs, requests):
                 if request.startswith("target_mask."):
                     valid = valid | loss_inputs[request.removeprefix("target_mask.")]
             targets = torch.where(valid, targets, 0)
+    if hasattr(model, "token_features"):
+        options = {}
+        if requests.get("router_statistics"):
+            options = {
+                "router_statistics": True,
+                "router_mask": None
+                if requests["include_padding"]
+                else loss_inputs["router_mask"],
+            }
+        return {
+            **model.token_features(**inputs, **options),
+            "head_targets": targets,
+        }
     if requests.get("router_statistics"):
         mask = None if requests["include_padding"] else loss_inputs["router_mask"]
         return model.token_outputs(targets=targets, router_mask=mask, **inputs)

@@ -320,7 +320,7 @@ model = registry.resolve_model('external/token@1')
 for name in ('cross_entropy', 'clipped_policy'):
     objective = registry.resolve_objective('shadowspill/'+name+'@1', model=model)
     assert objective.config['vocab_size'] == 7
-assert 'shadowspill_workloads.objectives.head.token' not in sys.modules
+assert 'mlops.objectives' not in sys.modules
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
