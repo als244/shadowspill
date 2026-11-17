@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import BinaryIO, cast
 
 from shadowspill.checkpoint.file_digest import checksum_cache
+from shadowspill.diagnostics.progress import Progress, phase
 from shadowspill.orchestration.capture.progress import write_progress
 from shadowspill.orchestration.launch.file_grants import resolve_file, verify_file
 from shadowspill.training.definitions import InitializationRuntime, load_registry
@@ -36,23 +37,26 @@ def serve(
     launch = read_message(stream)
     if not isinstance(launch, WorkerLaunch):
         raise ProtocolError("worker requires private launch configuration first")
-    registry = load_registry(launch.packages)
-    bundle = TrainingBundle.load(verify_file(files, launch.startup.bundle))
+    with phase("Load installed worker definitions"):
+        registry = load_registry(launch.packages)
+    with phase("Verify and decode saved Plans"):
+        bundle = TrainingBundle.load(verify_file(files, launch.startup.bundle))
     # Only the owning controller can send WorkerLaunch on this inherited socket.
     # It has already rechecked this exact immutable artifact. Resolve local source
     # identities and bindings, without re-deriving IR or simulating every schedule.
-    inventory = capture_inventory(
-        prepare_layouts(resolve_training(registry, config=bundle.config))
-    )
-    prepared = PreparedWorker.resolve(
-        bind_bundle(bundle, inventory),
-        launch.startup.scope,
-        bundle=launch.startup.bundle,
-        rank_map=dict(enumerate(launch.startup.logical_by_worker)),
-        restore=launch.restore,
-        weights=launch.weights,
-        initial_weights=launch.initial_weights,
-    )
+    with phase("Bind installed sources and worker configuration"):
+        inventory = capture_inventory(
+            prepare_layouts(resolve_training(registry, config=bundle.config))
+        )
+        prepared = PreparedWorker.resolve(
+            bind_bundle(bundle, inventory),
+            launch.startup.scope,
+            bundle=launch.startup.bundle,
+            rank_map=dict(enumerate(launch.startup.logical_by_worker)),
+            restore=launch.restore,
+            weights=launch.weights,
+            initial_weights=launch.initial_weights,
+        )
     if prepared.startup != launch.startup:
         raise ProtocolError("worker preflight differs from the admitted startup")
     weights = {ref.id: verify_file(files, ref) for ref in launch.weights}
@@ -116,6 +120,7 @@ def main() -> None:
     if args.control_fd < 3:
         raise ValueError("worker control requires an inherited private descriptor")
     with (
+        Progress(lambda message: print(message, flush=True)).activate(),
         checksum_cache(args.checksum_cache),
         socket.socket(fileno=args.control_fd) as control,
     ):

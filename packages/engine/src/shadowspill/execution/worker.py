@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.diagnostics.progress import phase
 from shadowspill.memory import SpillPool
 from shadowspill.planning.shared import shared_memory
 from shadowspill.pytorch.numerics import validate_numerical_settings
@@ -107,18 +108,19 @@ def create_paths(
         )
         failure = None
         try:
-            runtime = open_worker(
-                plan,
-                device,
-                headroom,
-                spill,
-                reject_overbudget,
-                external_baseline,
-                logical_rank=0
-                if distributed is None
-                else distributed.groups.logical_rank,
-                required_spill_bytes=None if joint is None else joint.spill_bytes,
-            )
+            with phase("Allocate GPU and spill memory pools"):
+                runtime = open_worker(
+                    plan,
+                    device,
+                    headroom,
+                    spill,
+                    reject_overbudget,
+                    external_baseline,
+                    logical_rank=0
+                    if distributed is None
+                    else distributed.groups.logical_rank,
+                    required_spill_bytes=None if joint is None else joint.spill_bytes,
+                )
         except Exception as error:
             if distributed is None:
                 raise
@@ -131,7 +133,8 @@ def create_paths(
         # cold pool already reserves the profiles' mature external footprint,
         # including modules. Load them now, before fixed-layout Plan admission
         # and the final physical-budget seal, never inside a task.
-        coordinated(distributed, lambda: providers.prepare(candidates))
+        with phase("Load kernel modules"):
+            coordinated(distributed, lambda: providers.prepare(candidates))
         descriptions, sources = coordinated(
             distributed, lambda: resource_inventory(p.program for p in candidates)
         )
@@ -269,7 +272,8 @@ def create_paths(
                 observations = ParameterNorms(paths[0], distributed)
             seal_paths(candidates)
 
-        coordinated(distributed, bind)
+        with phase("Bind saved execution Plans"):
+            coordinated(distributed, bind)
         return (
             runtime,
             tuple(paths),

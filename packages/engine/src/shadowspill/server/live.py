@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
-import json
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -29,6 +27,7 @@ from shadowspill_client.protocol.service import ServiceError
 from .artifacts import ArtifactStore
 from .checkpoint_restore import CheckpointResolver
 from .checkpoints import RunCheckpoints
+from .creation_logs import publish_logs, publish_metadata
 from .nsight import finalize_manifest, publish_manifest, read_manifest
 from .records.requests import RequestRecords, RunIdentity
 from .results import ResultPublisher
@@ -315,39 +314,23 @@ class LiveRun:
     def _publish_logs(self) -> None:
         if self._artifacts is None:
             return
+        phases = []
         for node in self._nodes:
             for rank, logs in node.logs.items():
+                phase = f"worker-{rank}"
+                phases.append(phase)
                 if logs.closed:
-                    continue  # An earlier retirement published then closed this node.
+                    continue  # A previous retirement already published this worker.
                 with self._publication.reserve(64 << 10, timeout=0):
-                    references = {}
-                    # Admission can fail after reserving logs but before launching.
-                    if logs.directory.exists():
-                        for stream, ref in logs.references().items():
-                            self._artifacts.put(ref, logs.open)
-                            references[stream] = ref.to_dict()
-                    body = json.dumps(
-                        {
-                            **self.identity.to_dict(),
-                            "rank": rank,
-                            "streams": references,
-                        },
-                        separators=(",", ":"),
-                    ).encode()
-                    key = "\0".join(
-                        (self.identity.session_id, self.identity.run_id, str(rank))
-                    )
-                    ref = ArtifactRef(
-                        "worker-logs." + hashlib.sha256(key.encode()).hexdigest(),
-                        hashlib.sha256(body).hexdigest(),
-                        len(body),
-                        "application/json",
-                    )
-
-                    def source(_: ArtifactRef, data: bytes = body) -> io.BytesIO:
-                        return io.BytesIO(data)
-
-                    self._artifacts.put(ref, source)
+                    publish_logs(self._artifacts, self.identity, phase, logs)
+        publish_metadata(
+            self._artifacts,
+            self.identity,
+            "worker-logs",
+            {
+                "workers": phases,
+            },
+        )
 
     def _capture_record(self, rank: int) -> NsightManifest:
         assert self._nsys is not None

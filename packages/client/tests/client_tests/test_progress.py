@@ -107,3 +107,20 @@ def test_broken_output_does_not_escape_to_creation():
     )
     display.update(object(), info(), final=True)
     assert not display.enabled
+
+
+def test_worker_progress_has_independent_bounded_cursors():
+    page = ProgressPage(
+        "session",
+        "run",
+        [
+            chunk(b"rank 0 ready\n", stream="worker-0.stdout"),
+            chunk(b"rank 7 loading\n", stream="worker-7.stderr"),
+        ],
+    )
+    assert decode(encode(page)) == page
+    request = ProgressRequest({"startup.stdout": 7, "worker-7.stderr": 4})
+    assert decode(encode(request)) == request
+    for name in ("worker--1.stdout", "worker-01.stdout", "worker-0/file.stdout"):
+        with pytest.raises(ValueError):
+            ProgressRequest({name: 0})

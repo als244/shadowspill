@@ -1,5 +1,6 @@
 """Bounded byte cursors for existing creation logs, independent of text encoding."""
 
+import re
 from base64 import b64decode
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -9,11 +10,20 @@ from .._records import Record, integer, record
 from .requests import identifier
 
 LOG_CHUNK_BYTES = 16 << 10
+MAX_LOG_STREAMS = 2048
 LOG_STREAMS = tuple(
     f"{phase}.{stream}"
-    for phase in ("build", "profile", "communicate", "plan", "converting")
+    for phase in ("startup", "build", "profile", "communicate", "plan", "converting")
     for stream in ("stdout", "stderr")
 )
+
+
+def log_stream(name: str) -> bool:
+    return isinstance(name, str) and (
+        name in LOG_STREAMS
+        or re.fullmatch(r"worker-(0|[1-9][0-9]{0,5})\.(stdout|stderr)", name)
+        is not None
+    )
 
 
 @dataclass(frozen=True)
@@ -21,8 +31,10 @@ class ProgressRequest(Record):
     offsets: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.offsets, Mapping) or self.offsets.keys() - set(
-            LOG_STREAMS
+        if (
+            not isinstance(self.offsets, Mapping)
+            or len(self.offsets) > MAX_LOG_STREAMS
+            or not all(log_stream(name) for name in self.offsets)
         ):
             raise ValueError("unknown creation log stream")
         offsets = {
@@ -40,7 +52,7 @@ class LogChunk(Record):
     capped: bool = False
 
     def __post_init__(self) -> None:
-        if self.stream not in LOG_STREAMS:
+        if not log_stream(self.stream):
             raise ValueError("unknown creation log stream")
         integer(self.offset, "log offset")
         if type(self.complete) is not bool or type(self.capped) is not bool:
@@ -65,8 +77,9 @@ class ProgressPage(Record):
     def __post_init__(self) -> None:
         identifier(self.session_id, "session ID")
         identifier(self.run_id, "run ID")
-        if not isinstance(self.chunks, (list, tuple)) or len(self.chunks) > len(
-            LOG_STREAMS
+        if (
+            not isinstance(self.chunks, (list, tuple))
+            or len(self.chunks) > MAX_LOG_STREAMS
         ):
             raise ValueError("creation progress has too many streams")
         chunks = tuple(record(LogChunk, chunk, "log chunk") for chunk in self.chunks)

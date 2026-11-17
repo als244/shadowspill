@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, BinaryIO
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.communication.binding.ranks import RankAssignment
+from shadowspill.diagnostics.progress import event, phase
 from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.workers import workers
 from shadowspill.planning.spill import spill_configuration
@@ -211,9 +212,10 @@ class PreparedWorker:
         )
         if (capture_settings is None) != (capture_progress is None):
             raise ValueError("Nsight worker requires its admitted progress file")
-        from shadowspill.execution.executor import Executor
+        with phase("Import execution runtime"):
+            from shadowspill.execution.executor import Executor
 
-        from .randomness import WorkerRandomness
+            from .randomness import WorkerRandomness
 
         rank_map = dict(enumerate(self.startup.logical_by_worker))
         with workers(
@@ -225,12 +227,16 @@ class PreparedWorker:
                 raise ValueError("launcher rank differs from the admitted worker")
             plans = dict(self.bindings.prepared.plans[self.startup.scope.rank])
             primary = plans.pop(self.bindings.primary)
-            with Executor(
-                primary,
-                plans=plans,
-                rank_map=rank_map,
-                reject_overbudget=self.bindings.setup.config.execution.reject_overbudget,
-            ) as executor:
+            with ExitStack() as owner:
+                with phase("Allocate and bind execution Plans"):
+                    executor = owner.enter_context(
+                        Executor(
+                            primary,
+                            plans=plans,
+                            rank_map=rank_map,
+                            reject_overbudget=self.bindings.setup.config.execution.reject_overbudget,
+                        )
+                    )
                 budget = BufferBudget(self.startup.staging_bytes)
                 diagnostics = BufferBudget(self.startup.diagnostics_bytes)
                 try:
@@ -248,23 +254,30 @@ class PreparedWorker:
                         runtime=runtime,
                         frozen_base=self.frozen_base,
                     )
-                    if self.initial_weights is not None:
-                        initialize_weights(
-                            executor,
-                            resolve(self.initial_weights.rank.archive),
-                            self.initial_weights,
-                            self.initialization,
-                            runtime,
-                            budget,
-                            chunk_bytes=self.chunk_bytes,
-                        )
-                        randomness.initialize(self.bindings.setup.config.execution.seed)
-                    elif self.restore is None:
-                        assert self.initialization is not None
-                        initialize(executor, self.initialization, runtime, budget)
-                        randomness.initialize(self.bindings.setup.config.execution.seed)
-                    else:
-                        reader.load(self.restore, reader.prepare_source(self.restore))
+                    with phase("Load model values and optimizer state"):
+                        if self.initial_weights is not None:
+                            initialize_weights(
+                                executor,
+                                resolve(self.initial_weights.rank.archive),
+                                self.initial_weights,
+                                self.initialization,
+                                runtime,
+                                budget,
+                                chunk_bytes=self.chunk_bytes,
+                            )
+                            randomness.initialize(
+                                self.bindings.setup.config.execution.seed
+                            )
+                        elif self.restore is None:
+                            assert self.initialization is not None
+                            initialize(executor, self.initialization, runtime, budget)
+                            randomness.initialize(
+                                self.bindings.setup.config.execution.seed
+                            )
+                        else:
+                            reader.load(
+                                self.restore, reader.prepare_source(self.restore)
+                            )
                     if executor.spill_capacity_bytes != self.startup.spill_bytes:
                         raise RuntimeError(
                             "worker spill capacity differs from admission"
@@ -376,7 +389,8 @@ class PreparedWorker:
                         world_size=len(self.startup.logical_by_worker),
                         require_randomness=True,
                     )
-            await_start(self.startup, reader, writer)
+            with phase("Wait for all-worker startup admission"):
+                await_start(self.startup, reader, writer)
             with self.open(
                 runtime,
                 resolve,
@@ -385,6 +399,7 @@ class PreparedWorker:
                 traces=traces,
                 capture_progress=capture_progress,
             ) as running:
+                event("✓ Worker initialized; ready for training")
                 report_ready(self.startup, writer)
                 running.loop.serve(reader, writer)
 

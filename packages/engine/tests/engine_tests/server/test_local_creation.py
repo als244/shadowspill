@@ -289,7 +289,7 @@ def test_factory_owns_preparation_and_persistent_child_without_a_recipe_loop(
                 assert any(name.startswith("prepared.") for name in names)
                 assert (
                     len([name for name in names if name.startswith("preparation.")])
-                    == 6
+                    == 6 + ranks + 2  # Worker logs, worker index and startup log.
                 )
 
 

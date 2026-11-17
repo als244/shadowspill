@@ -1,4 +1,4 @@
-"""Bounded host progress for preparation; no accelerator timing or synchronization."""
+"""Bounded preparation/startup progress, without accelerator synchronization."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from typing import ParamSpec, TypeVar
 
 P = ParamSpec("P")
 T = TypeVar("T")
-_current: ContextVar[Progress | None] = ContextVar("preparation_progress", default=None)
+_current: ContextVar[Progress | None] = ContextVar("host_progress", default=None)
 
 
 @dataclass
@@ -110,7 +110,7 @@ def event(message: str) -> None:
 
 
 def timed(name: str) -> Callable[[Callable[P, T]], Callable[P, T]]:
-    """Observe a preparation operation only when its caller enabled progress."""
+    """Observe a host operation only when its caller enabled progress."""
 
     def decorate(function: Callable[P, T]) -> Callable[P, T]:
         @wraps(function)

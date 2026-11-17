@@ -23,6 +23,7 @@ from shadowspill.orchestration.launch.admission import (
     ResourceRequest,
 )
 from shadowspill.orchestration.launch.host_arena import HostArena
+from shadowspill.server.creation_records import creation_key
 from shadowspill.server.live import LiveRun
 from shadowspill.training.worker import launch as launch_module
 from shadowspill.training.worker.node import WorkerNode
@@ -49,7 +50,8 @@ with socket.socket(fileno=int(sys.argv[1])) as peer:
         report_ready(launch.startup, stream)
         def bind(command):
             return SimpleNamespace(
-                command=command, checkpoint=None, restore=None, verify_inputs=lambda _: None
+                command=command, checkpoint=None, restore=None,
+                verify_inputs=lambda _: None
             )
         loop = WorkerLoop(launch.startup.scope, bind, lambda _: None, BufferBudget(1))
         loop.serve(stream, stream)
@@ -161,12 +163,14 @@ def test_real_startup_ordered_close_and_persistent_rank_logs(tmp_path, monkeypat
         with ctx.storage.requests(IDENTITY) as journal:
             assert journal.get("close")[1].result.operation == "close"
         with ctx.storage.artifacts("owner") as artifacts:
-            manifest = next(
-                ref for ref in artifacts.page() if ref.id.startswith("worker-logs.")
+            manifest = artifacts.get(
+                "preparation." + creation_key(IDENTITY, "phase:worker-0")
             )
             with artifacts.open(manifest) as stream:
                 metadata = json.load(stream)
-            assert metadata["session_id"] == "session" and metadata["rank"] == 0
+            assert (
+                metadata["session_id"] == "session" and metadata["phase"] == "worker-0"
+            )
             ref = ArtifactRef.from_dict(metadata["streams"]["stdout"])
             with artifacts.open(ref) as stream:
                 assert stream.read() == b"service-owned CPU worker exited\n"

@@ -28,6 +28,7 @@ These guides cover optional controls, custom definitions and detailed diagnostic
 
 | Topic | Guide |
 | --- | --- |
+| Pending commands, losses and execution times | [Live command table](command-table.md) |
 | Saved artifacts and cache reuse | [Artifact store](artifact-store.md) |
 | Predicted performance and memory | [Plan reports](plan-report.md), [search-field reference](plan-report-fields.md) |
 | Measured tasks, transfers and stalls | [Execution diagnostics](step-diagnostics.md), [diagnostics example](../../examples/diagnostics.md) |
@@ -46,5 +47,3 @@ These guides cover optional controls, custom definitions and detailed diagnostic
 
 Engine design belongs in [architecture](../../architecture/README.md);
 native backend interfaces belong in the [C reference](../../c/README.md).
-
-- [Live command table](command-table.md): pending and completed rows for training, split updates and evaluation.

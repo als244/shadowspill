@@ -17,6 +17,7 @@ from typing import cast
 from uuid import uuid4
 
 from shadowspill.checkpoint.file_digest import checksum_cache
+from shadowspill.diagnostics.progress import phase
 from shadowspill.orchestration.capture.files import CollectorLimits
 from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.admission import (
@@ -66,13 +67,14 @@ from shadowspill_client.protocol.training import ResolvedTraining
 from .artifacts import ArtifactStore
 from .checkpoint_conversion import prepare_state
 from .checkpoint_restore import CheckpointResolver
-from .creation_logs import live_chunks
+from .creation_logs import LogReader, live_chunks
 from .creation_records import creation_key, load_creation
 from .live import LiveRun
 from .model_sources import local_model_source
 from .plan_summaries import publish_summary
 from .preparation_reuse import stage_preparation_reuse
 from .records.requests import RunIdentity
+from .startup_log import StartupLog
 from .storage import ServiceStorage
 from .weights_initialization import ResolvedWeights, resolve_weights
 
@@ -183,6 +185,7 @@ class LocalCreation:
         self._node: WorkerNode | None = None
         self._conversion_lease: NodeLease | None = None
         self._conversion_logs: LogFiles | None = None
+        self._startup_log = StartupLog()
 
     def _active(self) -> None:
         if self._cancelled.is_set() or self.closed:
@@ -190,7 +193,13 @@ class LocalCreation:
 
     def logs(self, request: ProgressRequest) -> tuple[LogChunk, ...]:
         phases, conversion = self._phases, self._conversion_logs
-        logs = {} if phases is None else dict(phases.logs)
+        logs: dict[str, LogReader] = {"startup": self._startup_log}
+        if phases is not None:
+            logs.update(phases.logs)
+        if self._node is not None:
+            logs.update(
+                {f"worker-{rank}": log for rank, log in self._node.logs.items()}
+            )
         if conversion is not None:
             logs["converting"] = conversion
         return live_chunks(logs, request)
@@ -229,6 +238,13 @@ class LocalCreation:
         self._arena = None
 
     def start(self) -> None:
+        with (
+            self._startup_log.reporter.activate(),
+            checksum_cache(self._factory.cache / "source-digests"),
+        ):
+            self._start()
+
+    def _start(self) -> None:
         if not self._starting.acquire(blocking=False):
             raise RuntimeError("creation is already in progress")
         try:
@@ -251,8 +267,9 @@ class LocalCreation:
                 replace(capture, executable=limits.nsys.executable).command(
                     (), output="unused"
                 )
-            registry = load_registry(factory.packages)
-            setup = resolve_training(registry, config=creation.config)
+            with phase("Resolve installed training definitions"):
+                registry = load_registry(factory.packages)
+                setup = resolve_training(registry, config=creation.config)
             checkpoint = (
                 None
                 if creation.checkpoint is None
@@ -394,9 +411,10 @@ class LocalCreation:
                     environment=factory.environment,
                     launch=self._phases,
                 )
-                self._check_files()
-                plans = self._publish_file(job_root / BUNDLE_NAME, "bundle")
-                self._archive_preparation()
+                with phase("Publish prepared Plans and measurements"):
+                    self._check_files()
+                    plans = self._publish_file(job_root / BUNDLE_NAME, "bundle")
+                    self._archive_preparation()
                 self._phases.close()
                 self._phases = None
                 # Decoded results belong to the registry's host envelope. All
@@ -488,12 +506,14 @@ class LocalCreation:
                     self._archive_preparation()
                     self._release_host()
                 else:
-                    bundle = TrainingBundle.load(path)
+                    with phase("Decode saved Plans"):
+                        bundle = TrainingBundle.load(path)
                 if bundle.config != creation.config:
                     bundle = bundle.with_initialization(creation.config)
                     rebound = True
             self._active()
-            family = bundle.recheck(registry)
+            with phase("Validate Plan sources, layouts and memory"):
+                family = bundle.recheck(registry)
             if rebound:
                 # Replace only this run's downloaded copy. Publish a new immutable
                 # bundle so worker preflight and later resume see the new source.
@@ -501,7 +521,8 @@ class LocalCreation:
                 path.unlink()
                 bundle.save(path, max_bytes=limits.preparation_disk_bytes - 8192)
                 plans = self._publish_file(path, "bundle")
-            publish_summary(self._artifacts, plans, family)
+            with phase("Publish Plan summaries"):
+                publish_summary(self._artifacts, plans, family)
             if (
                 checkpoint is not None
                 and not checkpoint.manifest.info.plans.same_content(plans)
@@ -524,36 +545,37 @@ class LocalCreation:
                     root,
                     wait=creation.wait_for_resources,
                 )
-            workers = {
-                rank: PreparedWorker.resolve(
-                    family,
-                    WorkerScope(
-                        self.identity.run_id,
-                        factory.storage.incarnation,
-                        "worker-" + uuid4().hex,
-                        rank,
-                    ),
-                    bundle=plans,
-                    rank_map={worker: worker for worker in range(ranks)},
-                    weights=weights,
-                    restore=None
-                    if checkpoint is None
-                    else RankRestore(
-                        checkpoint.reference,
-                        checkpoint.manifest.info,
-                        checkpoint.manifest.ranks[rank],
-                    ),
-                    initial_weights=None
-                    if initial_weights is None or weights_source is None
-                    else RankWeights(
-                        weights_source.reference,
-                        initial_weights.reference,
-                        initial_weights.manifest.info,
-                        initial_weights.manifest.ranks[rank],
-                    ),
-                )
-                for rank in sorted(family.plans)
-            }
+            with phase("Resolve worker initialization and storage"):
+                workers = {
+                    rank: PreparedWorker.resolve(
+                        family,
+                        WorkerScope(
+                            self.identity.run_id,
+                            factory.storage.incarnation,
+                            "worker-" + uuid4().hex,
+                            rank,
+                        ),
+                        bundle=plans,
+                        rank_map={worker: worker for worker in range(ranks)},
+                        weights=weights,
+                        restore=None
+                        if checkpoint is None
+                        else RankRestore(
+                            checkpoint.reference,
+                            checkpoint.manifest.info,
+                            checkpoint.manifest.ranks[rank],
+                        ),
+                        initial_weights=None
+                        if initial_weights is None or weights_source is None
+                        else RankWeights(
+                            weights_source.reference,
+                            initial_weights.reference,
+                            initial_weights.manifest.info,
+                            initial_weights.manifest.ranks[rank],
+                        ),
+                    )
+                    for rank in sorted(family.plans)
+                }
             worker_bytes = sum(
                 limits.worker.peak_bytes(worker.startup) for worker in workers.values()
             )
@@ -607,8 +629,10 @@ class LocalCreation:
                 disk=factory.disk,
             )
             self._active()
-            self.run.start(wait_for_resources=creation.wait_for_resources)
+            with phase("Start training workers"):
+                self.run.start(wait_for_resources=creation.wait_for_resources)
         finally:
+            self._startup_log.finish()
             self._starting.release()
 
     def _key(self, name: str) -> str:
@@ -823,6 +847,9 @@ class LocalCreation:
                 self._phases.stop()
             self._retire_conversion()
             self._archive_preparation()
+            if self._artifacts is not None:
+                self._startup_log.finish()
+                self._startup_log.publish(self._artifacts, self.identity)
             if self._phases is not None:
                 self._phases.close()
             if self._directory is not None:

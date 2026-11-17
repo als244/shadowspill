@@ -59,8 +59,9 @@ training = service.create_training_client(
 
 The server builds, measures and selects a fitting execution plan, initializes
 weights and starts workers. `.result()` waits until the training client is ready.
-Add `progress=True` to stream preparation stages and worker logs while waiting.
-Logs show nested operations, timestamps and elapsed durations. Omission is silent.
+Add `progress=True` to stream preparation and initialization while waiting.
+Logs show nested operations, timestamps and durations, including saved-Plan loading,
+memory allocation and checkpoint loading for each worker. Omission is silent.
 Do this once before the loop; each `step()` then supplies only a batch and any
 per-update settings. The [complete example](../examples/client-training.md) also
 sets the vocabulary size from your corpus and constructs its input batches.
