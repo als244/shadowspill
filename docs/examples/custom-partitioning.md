@@ -79,7 +79,7 @@ remain unchanged.
 
 ## A model-scale example
 
-[GLMStages](../../packages/workloads/src/shadowspill_workloads/recipes/text/glm/partition.py) implements this same
+[GLMStages](../../packages/workloads/src/shadowspill_workloads/policies/glm.py) implements this same
 protocol using exported module paths. The GLM [workload factory](../../packages/workloads/src/shadowspill_workloads/recipes/text/glm/quickstart.py)
 passes the policy to `build_step` through its build options when asked
 (`partition="glm_stages"`). Quickstart saves the resulting Program, profiles it

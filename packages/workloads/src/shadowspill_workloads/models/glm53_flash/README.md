@@ -157,7 +157,7 @@ sequence packing. Output-head LoRA is enabled with `lora_head=True`.
 ## Partitioning
 
 By default the builder partitions GLM as it does any model. `GLMStages`
-([partition.py](../../recipes/text/glm/partition.py)) is an optional `PartitionPolicy`, kept apart
+([GLMStages](../../policies/glm.py)) is an optional `PartitionPolicy`, kept apart
 from model mathematics, checkpoint conversion and MLOps kernels; the
 [generic architecture contract](../../../../../../docs/architecture/partitioning.md)
 defines the terminology. It follows exported module scopes and creates these
@@ -179,7 +179,7 @@ Pass the policy to any of the three public builders:
 
 ```python
 from shadowspill import build_forward
-from shadowspill_workloads.recipes.text.glm.partition import GLMStages
+from shadowspill_workloads.policies.glm import GLMStages
 
 program = build_forward(
     model,

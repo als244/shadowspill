@@ -2,7 +2,7 @@
 
 import pytest
 
-from shadowspill_workloads.recipes.text.geometry import search_geometries
+from shadowspill_workloads.inputs.text.geometry import search_geometries
 
 
 def test_geometries_cover_every_divisor_largest_microbatch_first() -> None:

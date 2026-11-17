@@ -5,7 +5,7 @@ import math
 import torch
 from mlops.sequential_moe.precision.linear import FrozenLinear
 
-from .moe import MoE
+from shadowspill_workloads.models.shared.glm.moe import MoE
 
 
 def physical_state_roles(model, tensors):
