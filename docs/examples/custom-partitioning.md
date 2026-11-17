@@ -55,7 +55,7 @@ program = build_step(
 ```
 
 The model, objective and CPU input tensors are defined as in the
-[training example](generic-training.md). Partitioning happens during build;
+[phase guide](../python/phases.md). Partitioning happens during build;
 profiling and planning consume the resulting Program without calling the policy.
 
 The returned mapping must:

@@ -63,7 +63,7 @@ case with diagnostics.
 
 A separate worker loads a selected Plan and supplies its model tensors and
 rank-local inputs. It does not repeat build, measurement, or search. See the
-[complete training example](generic-training.md) for initialization and execution.
+[Executor reference](../python/api/executor.md) for initialization and execution.
 The Plan archive includes selected task code, schedule, memory layout, logical
 groups and input contracts. Weights and compatible provider libraries remain
 external. Compiler caches are optional and are not part of the artifact store.

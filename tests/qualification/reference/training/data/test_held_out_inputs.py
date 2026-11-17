@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 import torch
 
-from shadowspill_workloads.inputs.text.documents import IGNORE
-from shadowspill_workloads.inputs.text.packed import PackedTokens
-from shadowspill_workloads.inputs.text.units import held_out
+from qualification.reference.training.data.documents import IGNORE
+from qualification.reference.training.data.packed import PackedTokens
+from qualification.reference.training.data.units import held_out
 from tests.integration._text import write_dataset
 
 MAX_SEQ_LEN = 512

@@ -140,7 +140,7 @@ def expand_defaults(raw):
     expanded = dict(raw)
     if isinstance(expanded.get("data"), str):
         expanded["data"] = {
-            "@call": "shadowspill_workloads.inputs.text.packed:PackedTokens",
+            "@call": "qualification.reference.training.data.packed:PackedTokens",
             "directory": expanded["data"],
         }
     for key, value in DEFAULTS.items():

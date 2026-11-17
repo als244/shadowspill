@@ -8,7 +8,7 @@ Start with the [training client](client.md) and the
 | Train through the public service | [Complete client example](../examples/client-training.md), [client API](client.md) |
 | Run an editable training example | [Standalone demos](../../examples/demos/README.md) |
 | Use a command-line training loop | [Training applications](../../examples/training/README.md) |
-| Bring a custom model or control each phase | [Custom models](advanced/custom-definitions.md), [phase guide](phases.md), [complete example](../examples/generic-training.md) |
+| Bring a custom model or control each phase | [Custom models](advanced/custom-definitions.md), [phase guide](phases.md) |
 | Tune, inspect or extend the system | [Advanced guides](advanced/README.md) |
 | Register a custom model, objective or optimizer | [Definition hooks](advanced/definitions.md) |
 

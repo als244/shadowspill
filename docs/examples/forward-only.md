@@ -2,7 +2,7 @@
 
 Build and profile a fixed-shape forward computation, save its Plan, then load it
 in a fresh execution worker. No optimizer or training objective is needed. The
-[training example](generic-training.md) shows the same phases for updates.
+[phase guide](../python/phases.md) shows the same phases for updates.
 
 ## Prepare and save
 

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import torch
 
-from shadowspill_workloads.inputs.text.documents import TokenDocuments
-from shadowspill_workloads.inputs.text.packing import (
+from qualification.reference.training.data.documents import TokenDocuments
+from qualification.reference.training.data.packing import (
     Packer,
     seq_slots,
     uniform_microbatch,

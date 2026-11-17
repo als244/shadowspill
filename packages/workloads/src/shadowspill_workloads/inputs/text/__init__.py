@@ -1,1 +1,1 @@
-"""Token corpora, fixed sequences, and whole-document packing."""
+"""Shared schemas and runtime views for the supplied text architectures."""

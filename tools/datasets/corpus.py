@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import pyarrow.parquet as pq
 
-from shadowspill_workloads.inputs.text.tokenizer import tokenizer_identity
+from tools.datasets.tokenizer import tokenizer_identity
 
 
 def tokenize(

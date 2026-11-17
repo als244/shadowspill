@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 import torch
 
+from qualification.reference.training.data.fixed import TokenUpdates
 from qualification.reference.training.engine import EagerStep
 from shadowspill.pytorch.guards import capture_training_signatures
-from shadowspill_workloads.inputs.text.fixed import TokenUpdates
 from shadowspill_workloads.models.llama3.config import Config
 from shadowspill_workloads.models.llama3.implementations.pytorch import Model
 

@@ -26,7 +26,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from shadowspill_workloads.inputs.text.documents import IGNORE, TokenDocuments
+from qualification.reference.training.data.documents import IGNORE, TokenDocuments
 
 
 def load_model(directory: str, device: str, dtype: torch.dtype) -> Any:

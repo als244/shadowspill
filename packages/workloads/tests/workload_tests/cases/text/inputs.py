@@ -2,7 +2,7 @@
 
 import torch
 
-from shadowspill_workloads.inputs.text.geometry import search_geometries
+from qualification.reference.training.data.geometry import search_geometries
 
 
 def candidates(manifest, *, size, minimum, maximum, seed, logical_rank):

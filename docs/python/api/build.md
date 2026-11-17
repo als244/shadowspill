@@ -29,7 +29,7 @@ program.save("program.ssp")
 [`ObjectiveResult`](frontend.md#inputs-objectives-and-partitioning). It owns normalization across
 microbatches and ranks. Model and optimizer values are not changed by build;
 weights and captured optimizer defaults are initialized later in the worker.
-The [complete example](../../examples/generic-training.md) defines these objects.
+The [custom integration guide](../advanced/custom-definitions.md) defines these objects.
 
 ## Training options
 

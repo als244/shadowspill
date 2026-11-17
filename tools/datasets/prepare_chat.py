@@ -30,8 +30,8 @@ import argparse
 import json
 from pathlib import Path
 
-from shadowspill_workloads.inputs.text.chat import tokenize_chat
-from shadowspill_workloads.inputs.text.corpus import write_meta
+from tools.datasets.chat import tokenize_chat
+from tools.datasets.corpus import write_meta
 
 
 def arguments() -> argparse.Namespace:

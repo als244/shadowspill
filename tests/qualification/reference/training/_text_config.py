@@ -22,7 +22,7 @@ def _config(tmp_path):
         "optimizer": "@torch.optim:AdamW",
         "optimizer_args": {"lr": 0.01},
         "data": {
-            "@call": "shadowspill_workloads.inputs.text.packed:PackedTokens",
+            "@call": "qualification.reference.training.data.packed:PackedTokens",
             "directory": str(write_dataset(tmp_path / "tokens")),
         },
         "steps": 6,

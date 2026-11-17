@@ -10,10 +10,10 @@ from engine_tests.execution._cold import forbid_preparation
 
 forbid_preparation()
 
+from qualification.reference.training.data.calls import Inputs  # noqa: E402
 from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
 from shadowspill.checkpoint import metadata_values  # noqa: E402
 from shadowspill_client.schedules import WarmupCosine  # noqa: E402
-from shadowspill_workloads.inputs.text.calls import Inputs  # noqa: E402
 
 root, output = map(Path, sys.argv[1:3])
 options = json.loads((root / "config.json").read_text())

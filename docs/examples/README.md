@@ -23,7 +23,6 @@ The [catalog](../python/catalog.md) lists built-in models, optimizers and object
 
 These examples use the preserved build/profile/plan/execute APIs:
 
-- [Generic training](generic-training.md): save phases and execute a Plan in a fresh worker.
 - [Forward-only execution](forward-only.md): prediction and evaluation Plans.
 - [Reusable planning](reusable-planning.md): plan saved profiles without a GPU.
 - [Custom partitioning](custom-partitioning.md): control capture boundaries.

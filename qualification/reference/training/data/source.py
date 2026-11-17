@@ -6,7 +6,7 @@ from collections import deque
 
 import torch
 
-from shadowspill_workloads.inputs.text.geometry import search_geometries
+from qualification.reference.training.data.geometry import search_geometries
 
 from .packing import seq_slots
 

@@ -22,7 +22,7 @@ import argparse
 import json
 from pathlib import Path
 
-from shadowspill_workloads.inputs.text.corpus import tokenize, write_meta
+from tools.datasets.corpus import tokenize, write_meta
 
 
 def arguments() -> argparse.Namespace:

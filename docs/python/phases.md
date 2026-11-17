@@ -5,9 +5,9 @@ For a supported model's complete training workflow, use the
 for callers who need separate phases or their own model/data integration.
 
 ShadowSpill separates preparing a workload from running it. The phase functions
-are available from `shadowspill`; `Executor` runs the selected Plan. Start with the
-[complete Python example](../examples/generic-training.md), which defines the
-model, objective, initializer and input loop.
+are available from `shadowspill`; `Executor` runs the selected Plan. The
+[custom integration guide](advanced/custom-definitions.md) shows how to define
+models, objectives and optimizers.
 
 | Phase | Public API | Result | Needs GPU? |
 | --- | --- | --- | --- |

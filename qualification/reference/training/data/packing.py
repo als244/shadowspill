@@ -22,7 +22,7 @@ from collections.abc import Iterable
 import numpy as np
 import torch
 
-from shadowspill_workloads.inputs.text.documents import IGNORE, TokenDocuments
+from qualification.reference.training.data.documents import IGNORE, TokenDocuments
 
 
 def seq_slots(tokens: int, min_tokens_per_seq: int) -> int:

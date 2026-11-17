@@ -10,15 +10,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from shadowspill_workloads.inputs.text.chat import (
+from qualification.reference.training.data.documents import IGNORE, TokenDocuments
+from qualification.reference.training.data.packed import PackedTokens
+from tools.datasets.chat import (
     assistant_mask,
     choose_separator,
     render,
     tokenize_chat,
 )
-from shadowspill_workloads.inputs.text.corpus import write_meta
-from shadowspill_workloads.inputs.text.documents import IGNORE, TokenDocuments
-from shadowspill_workloads.inputs.text.packed import PackedTokens
+from tools.datasets.corpus import write_meta
 
 TEMPLATE = (
     "{% for m in messages %}<|{{ m['role'] }}|>{{ m['content'] }}<|end|>"

@@ -6,9 +6,9 @@ import math
 import numpy as np
 import torch
 
+from qualification.reference.training.data.calls import Inputs
 from shadowspill.execution.tensors import TensorChunk
 from shadowspill_workloads.initialization.decoder import Initialize
-from shadowspill_workloads.inputs.text.calls import Inputs
 from shadowspill_workloads.models.qwen3moe.config import PRESETS
 from shadowspill_workloads.models.shared.decoder import RotaryEmbedding
 

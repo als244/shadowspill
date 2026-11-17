@@ -4,8 +4,8 @@ import json
 
 
 def test_prepared_corpus_records_checkpoint_tokenizer_identity(tmp_path):
-    from shadowspill_workloads.inputs.text.corpus import write_meta
-    from shadowspill_workloads.inputs.text.tokenizer import tokenizer_identity
+    from tools.datasets.corpus import write_meta
+    from tools.datasets.tokenizer import tokenizer_identity
 
     class Tokenizer:
         eos_token_id = 3

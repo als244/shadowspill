@@ -10,7 +10,7 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
-from shadowspill_workloads.inputs.text.packed import PackedTokens
+from qualification.reference.training.data.packed import PackedTokens
 from shadowspill_workloads.models import catalog
 from workload_tests.test_checkpoints import huggingface_state, materialized, metadata
 

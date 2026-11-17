@@ -8,7 +8,7 @@ Run these modules from the repository root. They are outside the installed packa
 | Measure an existing executable Plan | [Plan measurement](measure_plan/README.md) |
 | Inspect a compiled stage with Nsight | [Stage traces](stage_traces/README.md) |
 | Analyze planner decisions and render traces | [PressureFit traces](pressurefit_trace/README.md) |
-| Prepare tokenized training data | [Dataset tools](datasets/) |
+| Prepare tokenized training data | [Dataset tools](datasets/README.md) |
 
 `check_naming.py` checks source conventions; `sanitizers/` supports instrumented builds.
 [Qualification](../qualification/README.md) owns correctness and regression gates.

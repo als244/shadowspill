@@ -95,7 +95,7 @@ def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
             "optimizer": "@mlops.optim:AdamW",
             "optimizer_args": {},
             "data": {
-                "@call": "shadowspill_workloads.inputs.text.packed:PackedTokens",
+                "@call": "qualification.reference.training.data.packed:PackedTokens",
                 "directory": str(write_dataset(tmp_path / "tokens")),
             },
         },

@@ -1,6 +1,6 @@
 """Adapt fixed text windows to ordinary per-example calls, with resume position."""
 
-from shadowspill_workloads.inputs.text.fixed import TokenUpdates
+from qualification.reference.training.data.fixed import TokenUpdates
 
 
 class Inputs:
