@@ -80,8 +80,10 @@ The homepage passes this configuration to `create_training_client`:
 | Parallelism | Eight-way data parallelism with sharded parameter storage |
 | Sequence length | 4,096 positions |
 | Global batch | 512 sequences, or 2,097,152 scheduled tokens |
-| Microbatch candidates | 8K, 16K and 32K tokens per rank |
-| Projection chunks | Unchunked or 8K; MoE uses the full microbatch |
+| Microbatch | 64K tokens per rank; four microbatches per full update |
+| Packing allowance | 128 sequences per microbatch by default; 4K maximum length |
+| Computation chunks | Unchunked projections and MoE |
+| Training precision | BF16 parameters; FP32 gradients, masters and Adam state |
 | Execution budget | 20 GiB per worker |
 | Spill budget | 96 GiB per worker, 768 GiB in total |
 

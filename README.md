@@ -151,9 +151,8 @@ checkpoint and cleanup calls apply.
 Start the service once inside an **eight-GPU allocation on one host**. Prepare
 FineWeb-Edu with the Qwen3 tokenizer, as described in the
 [distributed example](docs/examples/client-training.md#eight-gpu-data-parallel-pretraining).
-Reuse the connection, optimizer, report and training loop above, replacing the
-model and training setup with the following. Use `optim={"lr": 0.0003}` for the
-pretraining updates.
+Reuse the connection, reports and loop above with this setup and
+`optim={"lr": 0.0003}` for pretraining updates.
 
 ```python
 from examples.training.text_data import TokenBatches
@@ -164,6 +163,10 @@ from shadowspill_client.text import build_candidates
 data = TokenBatches("data/fineweb-qwen3", sequence_length=4096, sequences_per_step=512)
 model = Model("qwen3moe", config={"preset": "30b-a3b"}, initialize=Weights.random(seed=0))
 parallelism = data_parallel(8)
+optimizer = Optimizer("adamw", precision={
+    "gradient_dtype": "float32", "opt_state_dtype": "float32", "master_dtype": "float32",
+    "parameter_rounding": "stochastic",
+})
 
 training = service.create_training_client(
     model=model,
@@ -177,7 +180,7 @@ training = service.create_training_client(
     }),
     memory=Memory(device_gib=20, spill_gib=96),
     prepare=Preparation(candidates=build_candidates(
-        microbatch_tokens=[8192, 16384, 32768], projection_chunks=[0, 8192],
+        microbatch_tokens=[65536], projection_chunks=[0],
     )),
 ).result()
 ```
@@ -188,8 +191,9 @@ across eight GPUs. Each `step()` submits **one global batch** of 512 × 4,096 =
 2,097,152 tokens (2M); workers accumulate microbatches and apply one update.
 Scheduled padding counts toward that token cap. The execution budget is **20 GiB
 per GPU**; eight 96 GiB spill budgets require 768 GiB of spill capacity in total.
-Preparation compares 8K, 16K and 32K tokens per rank per microbatch, with projections
-unchunked (`0`) or chunked at 8K. MoE computation uses the full microbatch.
+Each rank accumulates four unchunked 64K microbatches, with FP32 gradients,
+master weights and Adam state. The default allows 128 sequences per microbatch
+(8× sixteen 4K sequences); the attention length bound remains 4K.
 
 See the [client guide](docs/python/client.md), [model catalog](docs/python/catalog.md)
 and [documentation index](docs/README.md). [Advanced usage](docs/python/advanced/README.md)

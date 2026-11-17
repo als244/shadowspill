@@ -14,6 +14,7 @@ import secrets
 import socket
 import sys
 import traceback
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
@@ -51,9 +52,9 @@ def settings(kind="qwen", parallelism="dp", checkpoint=None):
         "optimizer": Optimizer(
             "adamw",
             precision={
-                "gradient_dtype": "bfloat16",
-                "opt_state_dtype": "bfloat16",
-                "master_dtype": "bfloat16",
+                "gradient_dtype": "float32",
+                "opt_state_dtype": "float32",
+                "master_dtype": "float32",
                 "parameter_rounding": "stochastic",
                 "opt_state_rounding": "stochastic",
             },
@@ -69,8 +70,8 @@ def settings(kind="qwen", parallelism="dp", checkpoint=None):
         "memory": Memory(device_gib=20, spill_gib=96),
         "prepare": Preparation(
             candidates=build_candidates(
-                microbatch_tokens=[8192, 16384, 32768],
-                projection_chunks=[0, 8192],
+                microbatch_tokens=[65536],
+                projection_chunks=[0],
             )
         ),
     }
@@ -92,6 +93,16 @@ def settings(kind="qwen", parallelism="dp", checkpoint=None):
         if checkpoint is None:
             raise ValueError("GLM qualification requires a real pretrained checkpoint")
         result.update(
+            optimizer=Optimizer(
+                "adamw",
+                precision={
+                    "gradient_dtype": "bfloat16",
+                    "opt_state_dtype": "bfloat16",
+                    "master_dtype": "bfloat16",
+                    "parameter_rounding": "stochastic",
+                    "opt_state_rounding": "stochastic",
+                },
+            ),
             model=Model.from_pretrained(
                 str(checkpoint),
                 lora=LoRA(32, alpha=32),
@@ -184,8 +195,22 @@ def train(service, batch, data, output, steps, requested, lr):
     start = monotonic()
     preview = service.describe_training(**requested).result(300)
     write_json(output / "preview.json", preview.to_dict())
+    measured = service.prepare_training(config=preview.config, progress=True).result(
+        14400
+    )
+    measured.export().result().download(output / "measurements.zip").result(600)
+    write_json(
+        output / "measurement-reuse.json",
+        {
+            "measurements": {
+                "session_id": measured.info.session_id,
+                "run_id": measured.info.run_id,
+            },
+        },
+    )
     training = service.create_training_client(
-        config=preview.config, progress=True
+        **{**requested, "prepare": replace(requested["prepare"], reuse=measured.reuse)},
+        progress=True,
     ).result(14400)
     receipt.update(run_id=training.run_id, preparation_seconds=monotonic() - start)
     write_json(output / "receipt.json", receipt)

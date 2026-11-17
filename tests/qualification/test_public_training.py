@@ -21,18 +21,21 @@ def test_qwen_public_campaign_preserves_readme_batch_and_build_choices(paralleli
     )
     assert setup.context.parallelism.world_size == 8
     assert setup.config.batches[0].limits["token_capacity"] == 2097152
-    assert len(setup.config.preparation.cases) == 6
+    assert len(setup.config.preparation.cases) == 1
     inventory = capture_inventory(prepare_layouts(setup))
+    assert setup.optimizer.gradient_dtype == "float32"
     complete = set()
     for candidates in inventory.families.values():
         for candidate in candidates:
             total = 0
             for use in candidate.workers.values():
                 template = inventory.templates[use.main.template]
+                assert template.binding.inputs.layout.buffer.max_datums == 128
+                assert template.model_build.config["sequence_length_bound"] == 4096
                 size = template.model_build.config.get("expert_options")
                 if parallelism == "ep":
                     assert size["config"]["ep_size"] == 8
-                    assert size["config"]["tokens_per_rank"] in (8192, 16384, 32768)
+                    assert size["config"]["tokens_per_rank"] == 65536
                 else:
                     assert not template.model_build.resources
                 (capacity,) = template.binding.inputs.layout.buffer.fields[
@@ -42,7 +45,7 @@ def test_qwen_public_campaign_preserves_readme_batch_and_build_choices(paralleli
             assert total <= 2097152
             if total == 2097152:
                 complete.add(capacity)
-    assert complete == {8192, 16384, 32768}
+    assert complete == {65536}
 
 
 def test_four_campaign_settings_remain_framework_free_and_glm_uses_real_base():
