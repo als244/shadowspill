@@ -157,7 +157,7 @@ class WorkerOutputFrame:
 def prepare_output_frames(
     prepared: PreparedPlans, rank: int
 ) -> Mapping[tuple[str, str], WorkerOutputFrame]:
-    """Resolve every saved main/masked/optimizer output before starting a worker."""
+    """Resolve every saved compute/optimizer output before starting a worker."""
     result: dict[tuple[str, str], WorkerOutputFrame] = {}
     for rows in prepared.families.values():
         for candidate in rows:

@@ -39,7 +39,7 @@ def summary_rows(prepared: PreparedPlans) -> Iterator[PlanSummaryRow]:
         for candidates in prepared.families.values()
         for candidate in candidates
         for worker in candidate.source.workers.values()
-        for use in (worker.main, worker.masked, worker.optimizer)
+        for use in (worker.main, worker.optimizer)
         if use is not None
     }
     for identity in sorted(used_templates):
@@ -73,7 +73,6 @@ def summary_rows(prepared: PreparedPlans) -> Iterator[PlanSummaryRow]:
                     {
                         "rank": rank,
                         "main": worker.main,
-                        "masked": worker.masked,
                         "optimizer": worker.optimizer,
                     }
                     for rank, worker in sorted(candidate.workers.items())
@@ -82,9 +81,6 @@ def summary_rows(prepared: PreparedPlans) -> Iterator[PlanSummaryRow]:
                     {
                         "rank": rank,
                         "main": worker.main.template,
-                        "masked": None
-                        if worker.masked is None
-                        else worker.masked.template,
                         "optimizer": None
                         if worker.optimizer is None
                         else worker.optimizer.template,

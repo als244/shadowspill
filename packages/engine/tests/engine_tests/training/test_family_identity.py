@@ -27,7 +27,6 @@ def test_execution_names_reuse_only_when_every_worker_uses_the_same_operation():
     names = execution_names(backward, order)
     complete = execution_names(step, order)
     assert names.main != complete.main
-    assert names.masked == complete.masked
     assert names.optimizer is not None and complete.optimizer is None
     assert (
         execution_names(
@@ -38,11 +37,10 @@ def test_execution_names_reuse_only_when_every_worker_uses_the_same_operation():
     )
     other_order = execution_names(backward, StepDataOrdering(1, 2))
     assert other_order.main != names.main
-    assert other_order.masked == names.masked
     assert other_order.optimizer == names.optimizer
     # Rank 0's local Plan remains reusable; the invocation must still differ
     # when rank 1 needs different work. Equal communication digests alone cannot
-    # decide this, since forward, masked and optimizer-only Plans may exchange
+    # decide this, since forward and optimizer-only Plans may exchange
     # the same tensors while computing different results.
     peer = backward.workers[1]
     for main in (
@@ -59,7 +57,7 @@ def test_execution_names_reuse_only_when_every_worker_uses_the_same_operation():
         execution_names(
             replace(
                 backward,
-                workers={0: backward.workers[0], 1: replace(peer, masked=None)},
+                workers={0: backward.workers[0], 1: replace(peer, optimizer=None)},
             ),
             order,
         )

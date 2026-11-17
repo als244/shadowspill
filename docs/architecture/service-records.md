@@ -802,8 +802,7 @@ contains a bounded `randomness` attachment with logical stream identities and th
 saved root seed. The writer captures this at admission and rechecks it before
 streaming. Restore validates every generator in an independent instance before
 changing model state. Production workers require declared RNG state; they never
-silently reseed a checkpoint that lacks it. Evaluation, including the all-masked
-read-only path, advances its own saved streams and restores training streams on
+silently reseed a checkpoint that lacks it. Explicit evaluation advances its own saved streams and restores training streams on
 both normal and exceptional exits. This does not register arbitrary model-owned
 generator objects automatically.
 
@@ -820,7 +819,7 @@ and rejection without state mutation or target publication. A NumPy-only Tubinge
 client also qualifies fresh/native/converted runs on Chicago for a stochastic
 two-layer MLP. Downloaded random samples support independent forward/loss/SGD
 derivatives; both step and split calls match the oracle. Repeated restores replay
-training samples exactly despite interposed evaluation and all-masked calls, and
+training samples exactly despite interposed evaluation, and
 converted resume preserves the saved seed when the target configuration changes
 it. This covers a single device and default streams; distributed and custom
 generator qualification remain open.

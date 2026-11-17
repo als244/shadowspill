@@ -44,7 +44,7 @@ def test_prepared_workers_share_execution_names_without_merging_local_plans(
             workers = {}
             for rank, worker in source.workers.items():
                 names = []
-                for use in (worker.main, worker.masked, worker.optimizer):
+                for use in (worker.main, worker.optimizer):
                     name = None if use is None else plan_identity(use, None)
                     names.append(name)
                     if name is not None:
@@ -68,8 +68,8 @@ def test_prepared_workers_share_execution_names_without_merging_local_plans(
             for rank, worker in row.workers.items():
                 source = row.source.workers[rank]
                 for name, use in zip(
-                    (worker.main, worker.masked, worker.optimizer),
-                    (source.main, source.masked, source.optimizer),
+                    (worker.main, worker.optimizer),
+                    (source.main, source.optimizer),
                     strict=True,
                 ):
                     if name is not None:
@@ -94,14 +94,8 @@ def choices():
     ):
         source = prepared.families[key][index]
         plans[0][name] = SimpleNamespace(retained=retained)
-        mask = None
-        if source.workers[0].masked is not None:
-            mask = name + ".mask"
-            plans[0][mask] = SimpleNamespace(retained=0)
         rows.append(
-            PlannedCandidate(
-                name, source, None, {0: WorkerPlans(name, mask, None)}, cost
-            )
+            PlannedCandidate(name, source, None, {0: WorkerPlans(name, None)}, cost)
         )
     return prepared, rows, plans
 
@@ -166,9 +160,7 @@ def test_missing_capability_and_unexpected_native_errors_are_never_silently_prun
     monkeypatch,
 ):
     prepared, rows, plans = choices()
-    with pytest.raises(
-        PlanInfeasibleError, match="no admitted candidate for forward"
-    ):
+    with pytest.raises(PlanInfeasibleError, match="no admitted candidate for forward"):
         select_family(prepared, rows[:2], plans, [], max_family_attempts=10)
     failure = ValueError("state geometry changed")
 
@@ -225,7 +217,7 @@ def test_family_collective_order_uses_the_same_saved_worker_comparison():
 
     a, b = plan(["embed", "head"]), plan(["head", "embed"])
     a._accumulation_plan = b._accumulation_plan = None
-    workers = {rank: WorkerPlans("main", None, None) for rank in (0, 1)}
+    workers = {rank: WorkerPlans("main", None) for rank in (0, 1)}
     _collectives(workers, {0: {"main": a}, 1: {"main": a}})
     with pytest.raises(PlanInfeasibleError, match="collective 1") as caught:
         _collectives(workers, {0: {"main": a}, 1: {"main": b}})
@@ -272,7 +264,7 @@ def test_opaque_provider_collectives_require_matching_finalized_graphs():
             _accumulation_plan=None,
         )
 
-    workers = {rank: WorkerPlans("main", None, None) for rank in (0, 1)}
+    workers = {rank: WorkerPlans("main", None) for rank in (0, 1)}
     _collectives(workers, {0: {"main": opaque("same")}, 1: {"main": opaque("same")}})
     with pytest.raises(ValueError, match="opaque provider collective graphs differ"):
         _collectives(workers, {0: {"main": opaque("a")}, 1: {"main": opaque("b")}})

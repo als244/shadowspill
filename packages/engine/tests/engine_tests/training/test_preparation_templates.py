@@ -56,21 +56,23 @@ def inventory(**overrides):
     )
 
 
-def test_step_backward_counts_and_masked_variants_share_exact_captures():
+def test_step_backward_counts_share_captures_and_forward_is_explicit():
+    training = inventory(operations={"step": ["metrics"]})
+    assert len(training.templates) == 3
+    assert {template.kind for template in training.templates.values()} == {"step"}
     result = inventory()
-    assert len(result.templates) == 9  # Three sizes, step/masked/evaluation each.
+    assert len(result.templates) == 6  # Three sizes, training and explicit evaluation.
     step = result.families[OperationKey("step", "metrics")]
     backward = result.families[OperationKey("forward_backward", "metrics")]
     assert len(step) == len(backward) == 5
     for complete, split in zip(step, backward, strict=True):
         a, b = complete.workers[0], split.workers[0]
         assert a.main.template == b.main.template
-        assert a.masked == b.masked
         assert a.main.kind == "step" and b.main.kind == "forward_backward"
         assert a.optimizer is None and b.optimizer.kind == "optim_step"
         assert b.optimizer.template == b.main.template
         assert b.main.count == split.layout.candidate.count
-        for use in (b.main, b.masked):
+        for use in (b.main,):
             template = result.templates[use.template]
             assert template.binding.outputs.schedule.name == "capture"
             assert len(template.binding.outputs.schedule.buffers) == 1
@@ -80,7 +82,7 @@ def test_step_backward_counts_and_masked_variants_share_exact_captures():
     # unaffected by edits to an inspection result.
     evaluation = result.families[OperationKey("forward", "predictions", "evaluation")]
     ref = evaluation[0].workers[0]
-    assert ref.masked is ref.optimizer is None
+    assert ref.optimizer is None
     template = result.templates[ref.main.template]
     assert template.binding.inputs.shapes.keys() == {("inputs", "pixels")}
     signature = template.signature()
@@ -93,11 +95,8 @@ def test_step_backward_counts_and_masked_variants_share_exact_captures():
 
 def test_optimizer_free_backward_and_rank_ownership_are_not_conflated():
     result = inventory(optimizer=None, operations={"forward_backward": ["metrics"]})
-    assert len(result.templates) == 6
-    assert {t.kind for t in result.templates.values()} == {
-        "forward_backward",
-        "forward",
-    }
+    assert len(result.templates) == 3
+    assert {t.kind for t in result.templates.values()} == {"forward_backward"}
     assert all(
         row.workers[0].optimizer is None
         for rows in result.families.values()
@@ -168,7 +167,7 @@ def test_same_geometry_with_distinct_timing_scenarios_keeps_distinct_templates()
             )
         )
     )
-    assert len(result.templates) == 4
+    assert len(result.templates) == 2
     assert {
         t.signature()["scenario"]["typical"]["pattern"]
         for t in result.templates.values()
@@ -246,7 +245,7 @@ from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.templates import capture_inventory
 setup = resolve_training(installed(), **arguments())
 result = capture_inventory(prepare_layouts(setup))
-assert len(result.templates) == 6
+assert len(result.templates) == 3
 assert 'torch' not in [n for n, v in sys.modules.items() if v is not None]
 """,
         ],

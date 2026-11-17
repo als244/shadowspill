@@ -10,11 +10,7 @@ from .templates import CaptureTemplate, TemplateInventory
 
 
 def candidate_title(template: CaptureTemplate, index: int, count: int) -> str:
-    purpose = (
-        "All-masked forward fallback"
-        if template.output_only
-        else template.kind.replace("_", " ").capitalize()
-    )
+    purpose = template.kind.replace("_", " ").capitalize()
     return f"Candidate {index}/{count} · {purpose} · {template.id[:12]}"
 
 
@@ -28,7 +24,7 @@ def describe_candidate(inventory: TemplateInventory, template: CaptureTemplate) 
         if any(
             use is not None and use.template == template.id
             for worker in row.workers.values()
-            for use in (worker.main, worker.masked, worker.optimizer)
+            for use in (worker.main, worker.optimizer)
         )
     }
     buffer = template.binding.inputs.layout.buffer

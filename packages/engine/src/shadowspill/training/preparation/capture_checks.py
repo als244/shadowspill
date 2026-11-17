@@ -70,10 +70,8 @@ def validate_optimizer_program(program: Program, optimizer: ResolvedOptimizer) -
         raise ValueError("optimizer operation requires a captured final gradient scale")
 
 
-def validate_operation_program(
-    program: Program, binding: OperationBinding, *, output_only: bool = False
-) -> None:
-    expected_kind = "forward" if output_only else binding.contract.key.operation
+def validate_operation_program(program: Program, binding: OperationBinding) -> None:
+    expected_kind = binding.contract.key.operation
     if program.bindings.get("kind") != expected_kind:
         raise ValueError("captured program kind differs from the requested operation")
     signatures = program.bindings.get(
@@ -124,15 +122,13 @@ def validate_operation_program(
                 raise ValueError(
                     f"objective control is not consumed by captured tasks: {control}"
                 )
-    _validate_mutations(program, binding, input_aliases, output_only=output_only)
+    _validate_mutations(program, binding, input_aliases)
 
 
 def _validate_mutations(
     program: Program,
     binding: OperationBinding,
     input_aliases: set[str],
-    *,
-    output_only: bool,
 ) -> None:
     aliases = {obj.object_id: obj.alias_group_id for obj in program.objects}
     registrations: dict[str, list[Any]] = {}
@@ -155,10 +151,9 @@ def _validate_mutations(
             if task.phase != "forward" or alias not in registrations:
                 continue
             entries = registrations[alias]
-            if output_only or binding.contract.key.mode == "evaluation":
+            if binding.contract.key.mode == "evaluation":
                 raise ValueError(
-                    "output-only and evaluation must preserve model buffers "
-                    "and parameters"
+                    "evaluation must preserve model buffers and parameters"
                 )
             if any(item["parameter"] for item in entries) or not any(
                 item["name"] in declared for item in entries

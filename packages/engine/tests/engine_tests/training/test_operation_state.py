@@ -51,30 +51,25 @@ def finish(state, command, request_id, **kwargs):
     return pending
 
 
-def test_masked_first_and_later_parts_preserve_first_write_and_generation():
+def test_rejected_empty_parts_preserve_first_write_and_generation():
     state = OperationState()
-    masked = finish(state, "forward_backward", "masked", participates=False)
-    assert masked.skipped and not masked.accumulate_gradients
-    assert state.boundary.accumulation.open
-    assert state.boundary.accumulation.generation == 1
+    before = state.boundary
+    with pytest.raises(ValueError, match="no loss participation"):
+        state.begin("forward_backward", "empty", participates=False)
+    assert state.boundary == before
     first = finish(state, "forward_backward", "first", participates=True)
-    assert not first.skipped and not first.accumulate_gradients
+    assert not first.accumulate_gradients
+    assert state.boundary.accumulation.generation == 1
     before = state.boundary
     finish(state, "forward", "evaluate")
+    with pytest.raises(ValueError, match="no loss participation"):
+        state.begin("forward_backward", "later_empty", participates=False)
     assert state.boundary == before
-    later_mask = finish(state, "forward_backward", "later_mask", participates=False)
-    assert later_mask.skipped and not later_mask.accumulate_gradients
     last = finish(state, "forward_backward", "last", participates=True)
     assert last.accumulate_gradients
-    assert state.boundary.accumulation.contributions == (
-        "masked",
-        "first",
-        "later_mask",
-        "last",
-    )
+    assert state.boundary.accumulation.contributions == ("first", "last")
     assert state.boundary.accumulation.participating_contributions == 2
-    update = finish(state, "optim_step", "update")
-    assert not update.skipped
+    finish(state, "optim_step", "update")
     assert state.boundary.completed_updates == 1
     assert not state.boundary.accumulation.open
     next_part = finish(state, "forward_backward", "next_part", participates=True)
@@ -82,17 +77,18 @@ def test_masked_first_and_later_parts_preserve_first_write_and_generation():
     assert state.boundary.accumulation.generation == 2
 
 
-def test_all_masked_skip_and_explicit_discard_do_not_advance_optimizer():
+def test_empty_step_rejects_and_explicit_discard_does_not_advance_optimizer():
     state = OperationState()
-    assert finish(state, "step", "masked_step", participates=False).skipped
-    finish(state, "forward_backward", "masked_part", participates=False)
-    assert finish(state, "optim_step", "empty_update").skipped
-    assert state.boundary.completed_updates == 0
-    assert not state.boundary.accumulation.open
+    before = state.boundary
+    with pytest.raises(ValueError, match="no loss participation"):
+        state.begin("step", "empty", participates=False)
+    assert state.boundary == before
+    with pytest.raises(RuntimeError, match="open accumulation"):
+        state.begin("optim_step", "empty_update")
     finish(state, "forward_backward", "valid", participates=True)
     finish(state, "discard", "discard")
     assert state.boundary.completed_updates == 0
-    assert state.boundary.accumulation.generation == 2
+    assert state.boundary.accumulation.generation == 1
     assert not finish(
         state, "forward_backward", "new", participates=True
     ).accumulate_gradients
@@ -101,7 +97,7 @@ def test_all_masked_skip_and_explicit_discard_do_not_advance_optimizer():
 @pytest.mark.parametrize("command", ["step", "save", "restore", "close"])
 def test_pending_accumulation_rejects_boundary_changes_without_poisoning(command):
     state = OperationState()
-    finish(state, "forward_backward", "part", participates=False)
+    finish(state, "forward_backward", "part", participates=True)
     before = state.boundary
     with pytest.raises(RuntimeError, match="discard gradients"):
         state.begin(command, "rejected")

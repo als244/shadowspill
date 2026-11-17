@@ -92,7 +92,6 @@ def test_window_spans_every_backward_contribution_and_terminal_optimizer(events)
     execution, capture = worker(events)
     for operation, updates, skipped, name in (
         ("step", 0, False, "warmup"),
-        ("forward_backward", 1, True, "masked"),
         ("optim_step", 1, True, "empty"),
         ("forward", 1, False, "before"),
         ("forward_backward", 1, False, "part-one"),
@@ -110,7 +109,7 @@ def test_window_spans_every_backward_contribution_and_terminal_optimizer(events)
     assert events.count("barrier") == 4
     assert [
         item[1] for item in events if isinstance(item, tuple) and item[0] == "execute"
-    ] == [False] * 3 + [True] * 5 + [False] * 2
+    ] == [False] * 2 + [True] * 5 + [False] * 2
     labels = [
         item[1] for item in events if isinstance(item, tuple) and item[0] == "enter"
     ]

@@ -10,14 +10,14 @@ from shadowspill.training.preparation.failures import (
 )
 
 
-def test_masked_failure_prunes_every_dependent_operation_without_lowering_capacity(
+def test_training_failure_prunes_every_dependent_operation_without_lowering_capacity(
     tmp_path,
 ):
     prepared = inventory()
     key = next(
         key
         for key, t in prepared.templates.items()
-        if t.output_only and t.binding.inputs.layout.buffer.max_datums == 4
+        if t.kind == "step" and t.binding.inputs.layout.buffer.max_datums == 4
     )
     failure = PreparationFailure(key, "profile", "device exhausted")
     path = tmp_path / "failure.ssp"
@@ -41,7 +41,7 @@ def test_lost_universal_witness_keeps_candidates_but_lost_capability_fails():
     failed = {
         key: PreparationFailure(key, "build", "device exhausted")
         for key, template in prepared.templates.items()
-        if template.output_only
+        if template.kind == "step"
         and template.binding.inputs.layout.buffer.max_datums >= 2
     }
     actual, _ = prune_failed_templates(prepared, failed)
@@ -52,7 +52,7 @@ def test_lost_universal_witness_keeps_candidates_but_lost_capability_fails():
         {
             key: PreparationFailure(key, "build", "device exhausted")
             for key, template in prepared.templates.items()
-            if template.output_only
+            if template.kind == "step"
         }
     )
     with pytest.raises(PlanInfeasibleError, match="removed every candidate") as caught:

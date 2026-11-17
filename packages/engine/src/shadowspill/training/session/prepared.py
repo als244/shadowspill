@@ -54,7 +54,7 @@ class PreparedCall:
     restore: ResolvedCheckpoint | None = None
 
     def worker_plans(self, transition: Transition) -> Mapping[int, str | None]:
-        """Select main/masked/optimizer forms using the existing state decision."""
+        """Select the saved compute or optimizer dependency for this request."""
         if self.closed:
             raise RuntimeError("prepared request inputs are closed")
         if (
@@ -80,7 +80,7 @@ class PreparedCall:
             if self.key.operation == "optim_step":
                 plan = None if transition.skipped else worker.optimizer
             else:
-                plan = worker.masked if transition.skipped else worker.main
+                plan = worker.main
             if plan is None and not (
                 self.key.operation == "optim_step" and transition.skipped
             ):

@@ -21,7 +21,7 @@ def candidate_value(candidate: PlannedCandidate) -> dict[str, Any]:
         else candidate.ordering.to_dict(),
         "layout": candidate.source.layout.signature(),
         "workers": [
-            {"rank": rank, "main": w.main, "masked": w.masked, "optimizer": w.optimizer}
+            {"rank": rank, "main": w.main, "optimizer": w.optimizer}
             for rank, w in sorted(candidate.workers.items())
         ],
         "duration_seconds": candidate.duration_seconds,

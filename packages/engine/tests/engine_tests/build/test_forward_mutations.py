@@ -40,9 +40,10 @@ def test_rank_local_buffer_views_keep_their_mutation_contract():
         model=SimpleNamespace(definition=SimpleNamespace(mutable_buffers=("calls",))),
         contract=SimpleNamespace(key=SimpleNamespace(mode="training")),
     )
-    _validate_mutations(value, binding, {"x"}, output_only=False)
+    _validate_mutations(value, binding, {"x"})
+    binding.contract.key.mode = "evaluation"
     with pytest.raises(ValueError, match="must preserve"):
-        _validate_mutations(value, binding, {"x"}, output_only=True)
+        _validate_mutations(value, binding, {"x"})
 
 
 @pytest.mark.parametrize("target", ["parameter", "input"])

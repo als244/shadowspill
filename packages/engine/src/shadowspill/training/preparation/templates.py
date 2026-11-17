@@ -31,7 +31,6 @@ class CaptureTemplate:
     id: str
     binding: OperationBinding
     build: BuildOptions
-    output_only: bool
     representative: RepresentativePattern
     model_build: ModelBuild
     # Canonical JSON keeps nested provenance immutable without retaining another
@@ -40,7 +39,7 @@ class CaptureTemplate:
 
     @property
     def kind(self) -> ProgramKind:
-        if self.output_only or self.binding.contract.key.operation == "forward":
+        if self.binding.contract.key.operation == "forward":
             return "forward"
         if self.binding.contract.key.operation == "step":
             return "step"
@@ -60,7 +59,6 @@ class TemplateUse:
 @dataclass(frozen=True)
 class WorkerTemplates:
     main: TemplateUse
-    masked: TemplateUse | None
     optimizer: TemplateUse | None
 
 
@@ -83,7 +81,7 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
     A canonical output layout has one physical buffer per logical partition.
     Counts refer to that one saved form. Optimizer-backed backward uses the same
     step capture as complete updates; optimizer and persistent backward Programs
-    are derived later. All-masked training keeps a separately captured forward.
+    are derived later. Forward is captured only when explicitly requested.
     No model, tensor, policy object or GPU is constructed here.
     """
     setup = layouts.setup
@@ -110,9 +108,7 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
     }
     model_family = tuple(unique_layouts[key] for key in sorted(unique_layouts))
 
-    def remember(
-        binding: OperationBinding, row: LayoutCandidate, *, output_only: bool
-    ) -> str:
+    def remember(binding: OperationBinding, row: LayoutCandidate) -> str:
         build = setup.config.preparation.cases[row.candidate.case].build
         physical = binding.inputs.layout.buffer
         pattern_key = (
@@ -155,7 +151,6 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
                 "objective": dict(setup.objective.definition.allocation_invariants),
                 "optimizer": {}
                 if setup.optimizer is None
-                or output_only
                 or binding.contract.key.operation == "forward"
                 else dict(setup.optimizer.definition.allocation_invariants),
             },
@@ -167,17 +162,14 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
             "engine_source": setup.config.engine_source.to_dict(),
             "client_source": setup.config.client_source.to_dict(),
             "optimizer": None
-            if setup.config.optimizer is None or output_only
+            if setup.config.optimizer is None
             else setup.config.optimizer.to_dict(),
             "optimizer_source": None
-            if setup.optimizer is None or output_only
+            if setup.optimizer is None
             else setup.optimizer.source.to_dict(),
             "optimizer_master_dtype": None
-            if setup.optimizer is None
-            or output_only
-            or binding.contract.key.operation == "forward"
+            if setup.optimizer is None or binding.contract.key.operation == "forward"
             else setup.optimizer.master_dtype,
-            "output_only": output_only,
             "scenario": {
                 "preset": setup.config.preparation.preset,
                 "source": setup.config.preparation.source.to_dict(),
@@ -195,9 +187,7 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
         key = sha256(identity.encode()).hexdigest()
         templates.setdefault(
             key,
-            CaptureTemplate(
-                key, binding, build, output_only, pattern, model_build, identity
-            ),
+            CaptureTemplate(key, binding, build, pattern, model_build, identity),
         )
         return key
 
@@ -238,15 +228,9 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
                         outputs,
                         partition,
                     )
-                    main = remember(binding, row, output_only=False)
-                    masked = (
-                        remember(binding, row, output_only=True) if training else None
-                    )
+                    main = remember(binding, row)
                     workers[rank] = WorkerTemplates(
                         TemplateUse(main, _kind(key), len(part)),
-                        None
-                        if masked is None
-                        else TemplateUse(masked, "forward", len(part)),
                         TemplateUse(main, "optim_step", 1)
                         if key.operation == "forward_backward"
                         and setup.optimizer is not None

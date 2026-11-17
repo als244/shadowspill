@@ -266,7 +266,6 @@ def test_saved_bundle_initializer_rebinding_rejects_other_changes(saved_family, 
     "change",
     [
         "capability",
-        "masked",
         "optimizer",
         "worker",
         "coverage",
@@ -283,7 +282,7 @@ def test_bundle_rejects_missing_capabilities_and_changed_saved_proofs(
     plans = {rank: dict(plans) for rank, plans in bundle.plans.items()}
     if change == "capability":
         metadata["candidates"].pop()
-    elif change in {"masked", "optimizer"}:
+    elif change == "optimizer":
         name = next(
             row["workers"][0][change]
             for row in metadata["candidates"]

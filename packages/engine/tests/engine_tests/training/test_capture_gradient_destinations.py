@@ -33,7 +33,7 @@ def test_installed_destination_rules_are_resolved_only_for_training(
     templates = [
         template
         for template in inventory.templates.values()
-        if (template.kind == "forward" or template.output_only) == forward
+        if (template.kind == "forward") == forward
     ]
     assert templates
 

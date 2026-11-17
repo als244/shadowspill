@@ -21,7 +21,7 @@ from shadowspill.training.preparation.groups import capture_groups
 def test_capture_groups_deduplicate_counts_but_preserve_all_worker_ownership():
     base = inventory()
     groups = capture_groups(base)
-    assert len(groups) == len(base.templates) == 9
+    assert len(groups) == len(base.templates) == 6
     assert {g[0] for g in groups} == base.templates.keys()
     placement = InputPlacement(
         GroupRef("cooperators", ((2, 0), (3, 1))),

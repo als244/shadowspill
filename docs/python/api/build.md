@@ -122,8 +122,7 @@ contribute to outputs without being committed to model state. Each captured call
 starts from the current buffer values, including when that form is repeated by
 `instantiate_examples`. Temporary values and returned views use the usual
 profiled, planned storage. Buffer aliases are preserved together; parameter-backed
-buffers are rejected. Prepared skipped training calls select this behavior
-automatically for declared mutable buffers.
+buffers are rejected. This is an explicit low-level build option.
 
 Distributed forward can update each worker's own replicated buffers. Parameter
 and submitted-input mutations remain unsupported on that path.

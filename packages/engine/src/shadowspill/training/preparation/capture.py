@@ -47,7 +47,7 @@ def build_template(
             max_bytes=setup.config.execution.max_staging_bytes,
         ) as example,
     ):
-        if template.kind != "forward" and not template.output_only:
+        if template.kind != "forward":
             options["gradient_destination_rules"] = (
                 setup.model.gradient_destination_rules(template.model_build)
             )
@@ -58,7 +58,6 @@ def build_template(
             template.binding,
             example,
             optimizer=setup.optimizer,
-            output_only=template.output_only,
             options={
                 **options,
                 "resources": template.model_build.resources,

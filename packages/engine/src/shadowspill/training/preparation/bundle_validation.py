@@ -111,7 +111,7 @@ def recheck_bundle(
         use.template
         for row in rows
         for worker in row.source.workers.values()
-        for use in (worker.main, worker.masked, worker.optimizer)
+        for use in (worker.main, worker.optimizer)
         if use is not None
     }
     if bundle.sources.keys() != needed_sources:
@@ -122,7 +122,7 @@ def recheck_bundle(
     checked = set()
     for row in rows:
         for rank, worker in row.source.workers.items():
-            for role in ("main", "masked", "optimizer"):
+            for role in ("main", "optimizer"):
                 use = getattr(worker, role)
                 if use is None:
                     continue

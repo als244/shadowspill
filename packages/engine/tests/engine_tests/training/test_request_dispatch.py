@@ -379,25 +379,21 @@ def test_dispatch_rechecks_an_accepted_dependency_that_later_failed(tmp_path):
         assert state.boundary.completed_updates == 0 and state.boundary.valid
 
 
-def test_masked_backward_then_empty_optimizer_preserves_update_count(tmp_path):
+def test_empty_backward_is_rejected_without_dispatch_or_state_change(tmp_path):
     with store(tmp_path) as records:
         state = OperationState()
         dispatcher = RequestDispatcher(records, state, max_pending=1)
         submit(dispatcher, records, "a", 1, "forward_backward")
-        observed = []
-
-        def output_only(transition):
-            observed.append(transition)
-            assert transition.skipped and not transition.participates
-            return HostWork()
-
-        skipped = dispatcher.run("a", output_only, publish, participates=False)
-        assert skipped.state == "skipped"
-        assert skipped.result.accumulation.contributions == ("a",)
-        submit(dispatcher, records, "optim", 2, "optim_step")
-        skipped = dispatcher.run("optim", output_only, publish)
-        assert skipped.state == "skipped" and skipped.result.completed_updates == 0
-        assert not skipped.result.accumulation.open and len(observed) == 2
+        before = state.boundary
+        failed = dispatcher.run(
+            "a",
+            lambda transition: pytest.fail("empty backward dispatched"),
+            publish,
+            participates=False,
+        )
+        assert failed.state == "failed"
+        assert "no loss participation" in failed.failure.message
+        assert state.boundary == before
 
 
 def test_growing_completion_history_is_rejected_before_gpu_work_and_can_be_optimized(

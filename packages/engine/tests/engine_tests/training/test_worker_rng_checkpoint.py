@@ -134,13 +134,13 @@ def test_worker_checkpoint_replays_next_update_and_independent_evaluation(
             invoke(execution, "forward_backward")
             if interpose:
                 invoke(execution, "forward")
-                invoke(execution, "step", masked=True)
+                invoke(execution, "forward")
             invoke(execution, "forward_backward")
             invoke(execution, "optim_step")
         else:
             if interpose:
                 invoke(execution, "forward")
-                invoke(execution, "step", masked=True)
+                invoke(execution, "forward")
             invoke(execution, "step")
         return executor.values["parameter"].clone(), draw()
 

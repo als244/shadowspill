@@ -84,7 +84,7 @@ class TrainingBundle(Artifact):
             for rows in prepared.families.values()
             for candidate in rows
             for worker in candidate.source.workers.values()
-            for use in (worker.main, worker.masked, worker.optimizer)
+            for use in (worker.main, worker.optimizer)
             if use is not None
         }
         bundle = cls(

@@ -214,20 +214,14 @@ def qualify(client, config, initial, memory):
         reference = Oracle(initial_resume)
         observed = []
 
-        def evaluate(masked=False):
-            result = (
-                run.forward_backward(records(masked=True), runtime_trace=interpose)
-                if masked
-                else run.forward(
-                    records(targets=False),
-                    outputs="predictions",
-                    runtime_trace=interpose,
-                )
+        def evaluate():
+            result = run.forward(
+                records(targets=False),
+                outputs="predictions",
+                runtime_trace=interpose,
             ).result(120)
             reference.check(outputs(result, memory), result)
             check_trace(result, run, expected=interpose)
-            if masked:
-                assert result.record.outcome == "skipped"
 
         if interpose:
             evaluate()
@@ -249,7 +243,7 @@ def qualify(client, config, initial, memory):
                 )
                 if interpose and index == 0:
                     evaluate()
-                    evaluate(masked=True)
+                    evaluate()
             final = run.optim_step(
                 optim={"lr": 0.02}, grad_scale=-0.5, runtime_trace=interpose
             ).result(120)

@@ -154,7 +154,9 @@ class WorkerBindings:
         else:
             if candidate.operation != key:
                 raise ValueError("saved candidate differs from the requested operation")
-            plan = worker.masked if command.skipped else worker.main
+            if command.skipped:
+                raise ValueError("training compute requires loss participation")
+            plan = worker.main
         if plan is None and not (key.operation == "optim_step" and command.skipped):
             raise ValueError("saved candidate is missing its required worker form")
         if plan is not None and plan not in self.prepared.plans[self.scope.rank]:

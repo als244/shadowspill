@@ -47,9 +47,8 @@ class Boundary:
 class Transition:
     """Decision at the queue head, valid only for its issuing state machine.
 
-    A skipped compute can still require a prepared output-only invocation. It
-    must not dispatch backward/optimizer tasks. Completion follows that work
-    and required terminal transfers; publication happens after this boundary.
+    Training requires validated global loss participation. Completion follows
+    execution and required terminal transfers; publication follows this boundary.
     """
 
     request_id: str
@@ -111,6 +110,11 @@ class OperationState:
         if command in ("step", "forward_backward"):
             if type(participates) is not bool:
                 raise TypeError("compute requires validated global participation")
+            if not participates:
+                raise ValueError(
+                    "training batch has no loss participation; explicitly prepare "
+                    "and call forward() for output-only work"
+                )
         elif participates is not None:
             raise ValueError("only step/backward commands accept participation")
         if command == "optim_step":

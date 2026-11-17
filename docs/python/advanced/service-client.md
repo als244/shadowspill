@@ -312,8 +312,10 @@ statistics, such as MoE balancing, can have different whole/split trajectories.
 Artificial padding is excluded from the balancing objective by default, while
 every scheduled padding position still counts toward the hard token cap.
 
-All-masked work follows the objective's declared participation rules and can be
-skipped; zero-valued gradients from valid data still constitute an update. Finish
+Training batches with no loss participation are rejected before execution. Use
+an explicitly prepared `forward()` operation for output-only work. Individual
+masked records are allowed within a participating batch; zero-valued losses or
+gradients from valid data still constitute an update. Finish
 an accumulation with `optim_step` or `discard_gradients` before starting a complete
 `step` or saving a checkpoint. Closing a run does not apply pending gradients.
 

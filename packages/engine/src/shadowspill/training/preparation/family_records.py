@@ -17,15 +17,10 @@ from .templates import TemplateCandidate, TemplateInventory
 @dataclass(frozen=True)
 class WorkerPlans:
     main: str
-    masked: str | None
     optimizer: str | None
 
     def members(self) -> tuple[str, ...]:
-        return tuple(
-            name
-            for name in (self.main, self.masked, self.optimizer)
-            if name is not None
-        )
+        return tuple(name for name in (self.main, self.optimizer) if name is not None)
 
 
 @dataclass(frozen=True)

@@ -80,7 +80,6 @@ def family(inv=None):
             for rank, uses in source.workers.items():
                 worker = WorkerPlans(
                     name,
-                    None if uses.masked is None else name + ".mask",
                     None if uses.optimizer is None else name + ".optim",
                 )
                 workers[rank] = worker
@@ -295,26 +294,24 @@ def test_output_defaults_follow_saved_order_within_each_mode(outputs):
             operation_key(setup, bad)
 
 
-def test_empty_masked_and_optimizer_forms_follow_the_single_state_machine(tmp_path):
+@pytest.mark.parametrize("operation", ["step", "forward_backward"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_no_participation_rejects_before_spooling_or_execution(
+    tmp_path, operation, empty
+):
     with store(tmp_path) as journal:
-        prepared, state, dispatcher, inputs = queue(journal, tmp_path)
-        command, wire = upload(records(masked=True), operation="forward_backward")
+        prepared, state, _, inputs = queue(journal, tmp_path)
+        before = state.boundary
+        command, wire = upload(
+            [] if empty else records(masked=True), operation=operation
+        )
         prepared.register(inputs, command)
-        inputs.receive("a", io.BytesIO(wire))
-        data, result = finish(dispatcher, inputs, command)
-        assert not data.participates and result.state == "skipped"
-        assert state.boundary.accumulation.open
-        optim = OperationRequest(request("optim", 2).identity, "optim_step")
-        prepared.register(inputs, optim)
-        assert inputs.receive("optim").state == "accepted"
-        _, result = finish(dispatcher, inputs, optim)
-        assert result.state == "skipped" and not state.boundary.accumulation.open
-        empty = OperationRequest(request("empty", 3).identity, "step")
-        prepared.register(inputs, empty)
-        assert inputs.receive("empty").state == "accepted"
-        _, result = finish(dispatcher, inputs, empty)
-        assert result.state == "skipped" and state.boundary.completed_updates == 0
+        result = inputs.receive("a", io.BytesIO(wire))
+        assert result.state == "failed"
+        assert "no loss participation" in result.failure.message
+        assert state.boundary == before
         assert inputs.staging.used == (0, 0)
+        assert not list(tmp_path.glob("inputs-*"))
 
 
 @pytest.mark.parametrize("failure", ["coefficient", "dtype", "adapter", "unprepared"])

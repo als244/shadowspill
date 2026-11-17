@@ -148,7 +148,7 @@ model = replace(fixture.definitions()[0].definition,
                 config=fixture.Config, build=fixture.describe,
                 gradient_destination_rules=unexpected)
 _, inventory = fixture.prepare(model)
-assert len(inventory.templates) == 6
+assert len(inventory.templates) == 4
 """
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=30

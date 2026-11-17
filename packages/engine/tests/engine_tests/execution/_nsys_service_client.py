@@ -115,8 +115,10 @@ def main():
             first = finish(training.step(records(), optim={"lr": 0.03}), backward=True)
             oracle.update(0.03, 1)
             assert first.completed_updates == 1
-            masked = finish(training.step(records(masked=True)))
-            assert masked.completed_updates == 1 and masked.outcome == "skipped"
+            evaluated = finish(
+                training.forward(records(targets=False), outputs="predictions")
+            )
+            assert evaluated.completed_updates == 1 and evaluated.outcome == "completed"
             whole = finish(
                 training.step(
                     records(),
@@ -140,10 +142,11 @@ def main():
                 training.forward(records(targets=False), outputs="predictions"),
                 capture=enabled,
             )
-            skipped = finish(
-                training.forward_backward(records(masked=True)), capture=enabled
+            evaluated = finish(
+                training.forward(records(targets=False), outputs="predictions"),
+                capture=enabled,
             )
-            assert skipped.outcome == "skipped" and skipped.completed_updates == 2
+            assert evaluated.outcome == "completed" and evaluated.completed_updates == 2
             finish(training.forward_backward(records()), backward=True, capture=enabled)
             split = finish(
                 training.optim_step(optim={"lr": 0.02}, grad_scale=-0.5),

@@ -169,6 +169,8 @@ def test_build_shares_frozen_binaries_and_refreshes_local_allocation_evidence(
     monkeypatch.setattr(
         job_phases, "program_at", lambda *args: Program.load(local_path)
     )
+    monkeypatch.setattr(job_phases, "candidate_title", lambda *args: "Candidate")
+    monkeypatch.setattr(job_phases, "describe_candidate", lambda *args: None)
     captures = []
 
     def build(*args, rank_map):

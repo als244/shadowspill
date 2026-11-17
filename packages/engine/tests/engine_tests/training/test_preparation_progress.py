@@ -15,7 +15,7 @@ from shadowspill.training.preparation.progress import (
 )
 
 
-def test_candidate_descriptions_distinguish_training_and_masked_fallbacks():
+def test_candidate_descriptions_distinguish_training_and_explicit_forward():
     prepared = inventory()
     for index, template in enumerate(prepared.templates.values(), 1):
         lines = []
@@ -23,8 +23,8 @@ def test_candidate_descriptions_distinguish_training_and_masked_fallbacks():
             describe_candidate(prepared, template)
         text = "\n".join(lines)
         title = candidate_title(template, index, len(prepared.templates))
-        assert f"Candidate {index}/9" in title
-        assert ("All-masked forward fallback" in title) == template.output_only
+        assert f"Candidate {index}/6" in title
+        assert ("Forward" in title) == (template.kind == "forward")
         assert "Microbatch size: " in text
         assert "Sequence/item slots: " in text and "inputs.pixels" in text
         assert "Execution chunking: Disabled" in text

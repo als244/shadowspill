@@ -75,7 +75,7 @@ def execution_names(
 
     main = name("main")
     assert main is not None
-    return WorkerPlans(main, name("masked"), name("optimizer"))
+    return WorkerPlans(main, name("optimizer"))
 
 
 def candidate_identity(

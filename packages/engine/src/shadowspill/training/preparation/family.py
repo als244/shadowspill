@@ -63,10 +63,7 @@ def plan_family(
     candidates = [row for rows in inventory.families.values() for row in rows]
     attempts = sum(
         len(_orderings(c))
-        * sum(
-            1 + (w.masked is not None) + (w.optimizer is not None)
-            for w in c.workers.values()
-        )
+        * sum(1 + (w.optimizer is not None) for w in c.workers.values())
         for c in candidates
     )
     if attempts > max_plan_attempts:
@@ -137,9 +134,6 @@ def plan_family(
                 workers = {
                     rank: WorkerPlans(
                         materialize(worker.main, rank, ordering),
-                        None
-                        if worker.masked is None
-                        else materialize(worker.masked, rank, None),
                         None
                         if worker.optimizer is None
                         else materialize(worker.optimizer, rank, None),

@@ -93,9 +93,6 @@ def reconcile_local_plans(
                     rank: WorkerPlans(
                         plan_identity(worker.main, ordering),
                         None
-                        if worker.masked is None
-                        else plan_identity(worker.masked, None),
-                        None
                         if worker.optimizer is None
                         else plan_identity(worker.optimizer, None),
                     )
@@ -122,7 +119,7 @@ def reconcile_local_plans(
         for family in prepared.families.values()
         for row in family
         for worker in row.source.workers.values()
-        for use in (worker.main, worker.masked, worker.optimizer)
+        for use in (worker.main, worker.optimizer)
         if use is not None
     }
     from .bundle_manifest import manifest

@@ -20,12 +20,10 @@ def build_operation(
     example: AdaptedInputs,
     *,
     optimizer: ResolvedOptimizer | None = None,
-    output_only: bool = False,
     options: Mapping[str, Any] | None = None,
 ) -> Program:
     """Build one saved shape template; CPU instantiation supplies later counts.
 
-    A training binding also builds an output-only path for all-masked calls.
     Capture uses replicas and the original module modes are always restored.
     All optimizer operations opt into the existing final-scale consumer binding.
     """
@@ -46,14 +44,11 @@ def build_operation(
     }
     if settings.keys() & reserved:
         raise ValueError("operation build options override a prepared binding")
-    if type(output_only) is not bool:
-        raise TypeError("output_only must be boolean")
     kind = binding.contract.key.operation
-    if kind == "step" and optimizer is None and not output_only:
+    if kind == "step" and optimizer is None:
         raise ValueError("step requires a resolved optimizer")
     if (
         kind != "forward"
-        and not output_only
         and optimizer is not None
         and optimizer.gradient_dtype is not None
     ):
@@ -74,7 +69,7 @@ def build_operation(
     modes = [(module, module.training) for module in model.modules()]
     try:
         model.train(binding.contract.key.mode == "training")
-        if kind == "forward" or output_only:
+        if kind == "forward":
             for name in (
                 "graph_pair_policy",
                 "grad_dtype",
@@ -87,9 +82,6 @@ def build_operation(
                 model,
                 forward_fn=binding.forward,
                 example_args=arguments,
-                preserve_buffers=binding.model.definition.mutable_buffers
-                if output_only
-                else (),
                 **settings,
             )
         elif kind == "step":
@@ -124,12 +116,12 @@ def build_operation(
             program = build_forward_backward(
                 model, objective=binding.objective, example_args=arguments, **settings
             )
-        validate_operation_program(program, binding, output_only=output_only)
+        validate_operation_program(program, binding)
     finally:
         for module, mode in modes:
             module.training = mode
     optimizer_identity = None
-    if kind == "step" and not output_only:
+    if kind == "step":
         assert optimizer is not None
         optimizer_identity = {
             "id": optimizer.definition.id,
@@ -143,7 +135,6 @@ def build_operation(
         }
     provenance = {
         **binding.signature(),
-        "output_only": output_only,
         "optimizer": optimizer_identity,
     }
     return replace(

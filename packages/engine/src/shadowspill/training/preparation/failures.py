@@ -84,7 +84,7 @@ def prune_failed_templates(
             dependencies = {
                 use.template
                 for worker in row.workers.values()
-                for use in (worker.main, worker.masked, worker.optimizer)
+                for use in (worker.main, worker.optimizer)
                 if use is not None
             }
             missing = sorted(dependencies & failures.keys())

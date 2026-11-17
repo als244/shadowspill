@@ -253,8 +253,7 @@ def prepared_worker(inv=None):
                     program.bindings.update(
                         {
                             "kind": "forward"
-                            if name == worker.masked
-                            or row.operation.operation == "forward"
+                            if row.operation.operation == "forward"
                             else "step",
                             "forward_templates": (),
                             "public_outputs": groups,

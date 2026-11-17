@@ -119,6 +119,40 @@ def test_custom_grouping_reports_server_dependency_without_guessing():
         assert "groups inputs on the server" in result.note
 
 
+@pytest.mark.parametrize("operation", ["step", "forward_backward"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_zero_participation_rejects_locally_without_upload_or_state_change(
+    tmp_path, monkeypatch, operation, empty
+):
+    with runtime(tmp_path) as (service, training, run, _):
+        original = service._transport.upload
+        monkeypatch.setattr(
+            service._transport,
+            "upload",
+            lambda *args: pytest.fail("empty training batch uploaded"),
+        )
+        batch = [] if empty else records(masked=True)
+        with pytest.raises(ValueError, match="no loss participation"):
+            training.validate_batch(batch, operation=operation).result(5)
+        with pytest.raises(ValueError, match="no loss participation"):
+            getattr(training, operation)(batch)
+        assert training._next == 1 and run.journal.last_sequence == 0
+        assert not run.workers.calls
+        assert training._slots.used == training._snapshots.used == (0, 0)
+        monkeypatch.setattr(service._transport, "upload", original)
+        # Entirely masked records can coexist with supervised records. Numeric
+        # zero weights do not turn valid data into a rejected empty contribution.
+        mixed = [
+            records(masked=True)[0],
+            replace(
+                records()[1], loss_inputs={**records()[1].loss_inputs, "weights": 0.0}
+            ),
+        ]
+        assert training.step(mixed).result(5).completed_updates == 1
+        assert training.forward(records(masked=True)).result(5).completed_updates == 1
+        training.close().result(5)
+
+
 def test_original_batch_alternatives_are_not_combined_by_client():
     inv = variable_inventory(
         [
@@ -128,7 +162,10 @@ def test_original_batch_alternatives_are_not_combined_by_client():
     )
     preview, _ = validator(family(inv))
     records = [Datum({"x": np.zeros(3), "y": np.zeros(3)})]
-    with preview.snapshot(
-        records, BufferBudget(8 << 20), "forward", None, None
-    ) as snapshot, pytest.raises(ValueError, match="no requested batch option"):
+    with (
+        preview.snapshot(
+            records, BufferBudget(8 << 20), "forward", None, None
+        ) as snapshot,
+        pytest.raises(ValueError, match="no requested batch option"),
+    ):
         preview.validate(snapshot, "forward", None, None)

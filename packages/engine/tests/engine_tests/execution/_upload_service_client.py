@@ -148,8 +148,10 @@ def main():
             backward=True,
         )
         finish(training.forward(records(targets=False), outputs="predictions"))
-        masked = finish(training.forward_backward(records(masked=True)))
-        assert masked.outcome == "skipped" and masked.completed_updates == 2
+        evaluated = finish(
+            training.forward(records(targets=False), outputs="predictions")
+        )
+        assert evaluated.outcome == "completed" and evaluated.completed_updates == 2
         finish(training.forward_backward(records()), backward=True)
         split = finish(training.optim_step(optim={"lr": 0.02}, grad_scale=-0.5))
         oracle.update(0.02, -0.5)

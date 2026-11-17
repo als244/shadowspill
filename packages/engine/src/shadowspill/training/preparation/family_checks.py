@@ -32,7 +32,7 @@ def _orderings(candidate: TemplateCandidate) -> tuple[StepDataOrdering | None, .
 def _collectives(
     workers: Mapping[int, WorkerPlans], plans: Mapping[int, Mapping[str, Plan]]
 ) -> None:
-    for role in ("main", "masked", "optimizer"):
+    for role in ("main", "optimizer"):
         paths = {
             rank: plans[rank][name]
             for rank, worker in workers.items()

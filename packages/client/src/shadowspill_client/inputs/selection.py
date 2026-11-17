@@ -61,6 +61,13 @@ def validate_snapshot(
     validated = validate_batch(
         snapshot, config.inputs, limits, required_paths=tuple(sorted(paths))
     )
+    if key.operation in ("step", "forward_backward") and not (
+        validated.participating_positions(config.participation)
+    ):
+        raise ValueError(
+            "training batch has no loss participation; submit supervised inputs "
+            "or explicitly prepare and call forward()"
+        )
     admissible_batches(validated, config.batches)
     return validated
 

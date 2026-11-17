@@ -235,8 +235,8 @@ class WorkerCall(Record):
             or type(self.accumulate_gradients) is not bool
         ):
             raise TypeError("worker state decisions must be boolean")
-        if self.request.operation == "forward" and self.skipped:
-            raise ValueError("forward cannot select a masked training form")
+        if self.request.operation != "optim_step" and self.skipped:
+            raise ValueError("compute cannot select a skipped training form")
         if self.accumulate_gradients and (
             self.request.operation != "forward_backward" or self.skipped
         ):

@@ -425,7 +425,9 @@ this guarantee. A custom objective that deliberately uses physical microbatch
 statistics instead declares `physical_batch_loss=True`, `reduction="custom"`
 and `padding_safe=False`. Its loss and gradients can change with the selected
 buffer size, padding and split calls. Preparation records this distinction; it
-does not change batching, capacity limits or all-masked update skipping.
+does not change batching or capacity limits. A training batch with no declared
+loss participation is rejected; output-only work uses an explicitly prepared
+`forward()` operation.
 
 `moe_balance` supplies reusable softmax router balancing. Compose
 it with cross entropy, clipped policy or another compatible token objective:
