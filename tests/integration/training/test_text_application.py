@@ -137,3 +137,42 @@ def test_parallelism_accepts_custom_fields_outputs_and_expert_parameter_names(ra
     assert [entry["path"] for entry in wire["inputs"]["fields"]] == [
         list(path) for path in fields
     ]
+
+
+@pytest.mark.parametrize(
+    "projection,experts,expected",
+    [(0, (0, 4), None), (2, (0,), (2,)), (2, (0, 2, 4), (2, 4))],
+)
+def test_application_keeps_expert_chunk_fallback_with_public_candidates(
+    projection, experts, expected
+):
+    settings = TextSettings(
+        data="/client/data",
+        sequence_length=4,
+        sequences_per_step=2,
+        microbatch_sizes=(1, 2),
+        chunk_sizes=(projection,),
+        moe_chunk_sizes=experts,
+    )
+    request = settings.request(
+        model=Model("qwen3moe", config={"preset": "tiny"}),
+        objective=Objective("cross_entropy"),
+        parallelism=None,
+    )
+    cases = request["prepare"].candidates.cases
+    for capacity in (4, 8):
+        choices = [c.build.to_dict() for c in cases if c.microbatch_size == capacity]
+        if expected is None:
+            assert len(choices) == 1 and choices[0]["chunking"] is None
+        else:
+            assert [
+                c["chunking"]["config"]["expert_chunk_size"] for c in choices
+            ] == list(expected)
+            assert all(
+                c["chunking"]["config"]["chunk_size"] == projection for c in choices
+            )
+        assert all(
+            c["graph_pair_policy"]["config"]
+            == {"name": "cost-input", "chunked": bool(projection)}
+            for c in choices
+        )

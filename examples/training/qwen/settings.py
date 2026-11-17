@@ -19,19 +19,11 @@ def objective(weight):
 
 
 def parallelism(ranks, kind="dp"):
-    fields = (
-        ("inputs", "tokens"),
-        ("loss_inputs", "target_tokens"),
-        ("loss_inputs", "loss_mask"),
-        ("loss_inputs", "weights"),
-        ("loss_inputs", "router_mask"),
-    )
     if kind == "dp":
-        return data_parallel(ranks, fields=fields)
+        return data_parallel(ranks)
     if kind == "ep":
         return expert_parallel(
             ranks,
-            fields=fields,
             experts=(
                 "blocks.*.moe.experts.gate_up_weight",
                 "blocks.*.moe.experts.down_weight",

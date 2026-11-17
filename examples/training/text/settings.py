@@ -8,16 +8,14 @@ from pathlib import Path
 from shadowspill_client import (
     BatchConfig,
     BuildCandidates,
-    BuildCase,
-    BuildOptions,
     Execution,
     Memory,
     Optimizer,
     PlanningOptions,
-    Policy,
     Preparation,
     ProfilingOptions,
 )
+from shadowspill_client.text import build_candidates
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -129,32 +127,21 @@ class TextSettings:
         for sequences in self.microbatch_sizes:
             capacity = sequences * self.sequence_length
             for chunk in self.chunk_sizes:
-                for expert in self.moe_chunk_sizes if chunk else (0,):
-                    for retention in self.graph_pair_policies:
-                        case = BuildCase(
-                            capacity,
-                            BuildOptions(
-                                chunking=Policy(
-                                    "shadowspill/text_chunks@1",
-                                    {
-                                        "token_capacity": capacity,
-                                        "chunk_size": chunk,
-                                        "expert_chunk_size": expert or chunk,
-                                    },
-                                )
-                                if chunk
-                                else None,
-                                graph_pair_policy=Policy(
-                                    "shadowspill/text_retention@1",
-                                    {
-                                        "name": retention,
-                                        "chunked": bool(chunk),
-                                    },
-                                ),
-                            ),
-                        )
-                        if case not in cases:
-                            cases.append(case)
+                # Preserve this application's expert-chunk fallback: zero follows
+                # the projection chunk, while an unchunked projection disables
+                # expert chunking. The public helper owns the portable policies.
+                experts = (
+                    tuple(dict.fromkeys(n or chunk for n in self.moe_chunk_sizes))
+                    if chunk
+                    else (0,)
+                )
+                choices = build_candidates(
+                    microbatch_tokens=[capacity],
+                    projection_chunks=[chunk],
+                    moe_chunks=experts,
+                    retention=self.graph_pair_policies,
+                )
+                cases.extend(case for case in choices.cases if case not in cases)
         return dict(
             model=model,
             objective=objective,
