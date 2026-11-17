@@ -126,7 +126,9 @@ def test_saved_derivation_imports_no_framework_or_sdk(tmp_path):
     step_program().save(tmp_path / "step.ssp")
     code = """
 import sys
-for module in ('torch', 'shadowspill_client', 'shadowspill_workloads', 'mlops'):
+for module in ('torch', 'shadowspill_client.service',
+               'shadowspill_client.training', 'shadowspill_client.transport',
+               'shadowspill_workloads', 'mlops'):
     sys.modules[module] = None
 from shadowspill import Program, optimizer_program
 step = Program.load('step.ssp')

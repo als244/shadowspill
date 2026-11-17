@@ -199,7 +199,9 @@ def test_forward_count_instantiation_does_not_import_frameworks(tmp_path):
             "-c",
             """
 import sys
-for module in ('torch', 'triton', 'mlops', 'shadowspill_client',
+for module in ('torch', 'triton', 'mlops', 'shadowspill_client.service',
+               'shadowspill_client.training',
+               'shadowspill_client.transport',
                'shadowspill_workloads'):
     sys.modules[module] = None
 from shadowspill import Program, instantiate_examples

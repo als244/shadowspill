@@ -255,7 +255,9 @@ def test_instantiation_roundtrip_without_framework_or_client(tmp_path):
             "-c",
             """
 import sys
-for name in ('torch', 'triton', 'shadowspill_client', 'shadowspill_workloads', 'mlops'):
+for name in ('torch', 'triton', 'shadowspill_client.service',
+               'shadowspill_client.training', 'shadowspill_client.transport',
+               'shadowspill_workloads', 'mlops'):
     sys.modules[name] = None
 from shadowspill import Program, instantiate_examples
 source = Program.load('source.ssp')

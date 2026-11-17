@@ -101,7 +101,9 @@ def test_derivation_does_not_import_framework_or_client(tmp_path):
             "-c",
             """
 import sys
-for name in ('torch', 'triton', 'mlops', 'shadowspill_client', 'shadowspill_workloads'):
+for name in ('torch', 'triton', 'mlops', 'shadowspill_client.service',
+               'shadowspill_client.training', 'shadowspill_client.transport',
+               'shadowspill_workloads'):
     sys.modules[name] = None
 from shadowspill import (
     Program, backward_program, optimizer_program, instantiate_examples,

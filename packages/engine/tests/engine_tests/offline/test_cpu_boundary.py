@@ -41,7 +41,10 @@ import importlib.abc, sys
 from pathlib import Path
 class NoExecutionImports(importlib.abc.MetaPathFinder):
     def find_spec(self, name, *args):
-        blocked = ('torch', 'mlops', 'shadowspill.runtime', 'shadowspill.pytorch',
+        blocked = ('torch', 'triton', 'mlops', 'shadowspill_workloads',
+                   'shadowspill_client.service', 'shadowspill_client.training',
+                   'shadowspill_client.transport',
+                   'shadowspill.runtime', 'shadowspill.pytorch',
                    'shadowspill.compilation', 'shadowspill.store')
         if any(name == item or name.startswith(item + '.') for item in blocked):
             raise AssertionError('Offline pipeline imported ' + name)
