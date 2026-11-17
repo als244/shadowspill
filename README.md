@@ -57,7 +57,7 @@ Datasets stay on the client, which submits batches.
 Qwen3.5 tokenizer and assistant-token masks. Both fine-tuning examples use this
 same dataset. This one trains all text-decoder parameters on complete,
 variable-length conversations: up to 8,192 model positions per conversation and
-131,072 tokens per step. Run from the repository root on the client;
+65,536 tokens per step. Run from the repository root on the client;
 replace `training-host` with your server's SSH alias.
 
 ```python
@@ -67,7 +67,7 @@ from shadowspill_client import (
 )
 
 data = ConversationBatches(
-    "data/ultrachat-qwen35", max_sequence_length=8192, tokens_per_step=131072,
+    "data/ultrachat-qwen35", max_sequence_length=8192, tokens_per_step=65536,
 )
 model = Model.from_pretrained("Qwen/Qwen3.5-9B")
 optimizer = Optimizer("adamw", precision={
@@ -81,7 +81,7 @@ training = service.create_training_client(
     objective=Objective("cross_entropy"),
     optimizer=optimizer,
     batch=BatchConfig(limits={
-        "token_capacity": 131072, "max_sequence_length": 8192, "max_sequences": 1024,
+        "token_capacity": 65536, "max_sequence_length": 8192, "max_sequences": 1024,
     }),
     memory=Memory(device_gib=24, spill_gib=128),
 ).result()
@@ -91,10 +91,10 @@ report.download("plan.html").result()
 
 for step, batch in enumerate(data):
     if step == 99:
-        result = training.step(batch, optim={"lr": 0.0003}, runtime_trace=True).result()
+        result = training.step(batch, optim={"lr": 0.00001}, runtime_trace=True).result()
         result.traces[0].download_report("runtime.html").result()
         break
-    result = training.step(batch, optim={"lr": 0.0003}).result()
+    result = training.step(batch, optim={"lr": 0.00001}).result()
     print(result.completed_updates, result.loss)
 
 training.save_checkpoint(name="latest").result()
@@ -141,7 +141,8 @@ Start the service once inside an **eight-GPU allocation on one host**. Prepare
 FineWeb-Edu with the Qwen3 tokenizer, as described in the
 [distributed example](docs/examples/client-training.md#eight-gpu-data-parallel-pretraining).
 Reuse the connection, optimizer, report and training loop above, replacing the
-model and training setup with:
+model and training setup with the following. Use `optim={"lr": 0.0003}` for the
+pretraining updates.
 
 ```python
 from examples.training.text_data import TokenBatches

@@ -36,7 +36,7 @@ rsync -a training-host:/path/to/shadowspill/data/ultrachat-qwen35 data/
 ```
 
 The homepage's `ConversationBatches` reads complete, variable-length conversations
-through memory maps. It groups them into batches of at most 131,072 model positions
+through memory maps. It groups them into batches of at most 65,536 model positions
 and 1,024 conversations. The 8,192 length setting is an upper bound per conversation,
 not a padded or fixed length. Conversations above it are skipped, as are those
 without supervised targets; the reader never cuts a conversation or joins two.
