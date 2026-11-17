@@ -12,7 +12,7 @@ from reference.training.text.inputs import (
     source,
 )
 from shadowspill.pytorch.guards import capture_input_signature
-from tests.integration.training._text_recipe import _config
+from tests.integration.reference._text_config import _config
 
 
 def test_packed_normalizer_is_a_runtime_tensor():

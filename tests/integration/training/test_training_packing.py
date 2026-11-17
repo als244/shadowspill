@@ -10,7 +10,7 @@ import torch
 
 from shadowspill_workloads.inputs.text.documents import IGNORE, TokenDocuments
 from shadowspill_workloads.inputs.text.packed import PackedTokens
-from tests.integration.training._synthetic import EOS, LENGTHS, write_dataset
+from tests.integration._text import EOS, LENGTHS, write_dataset
 
 MAX_SEQ_LEN = 512
 TOKENS = 2048

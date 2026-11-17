@@ -2,19 +2,19 @@
 
 import json
 
-from ._synthetic import write_dataset
+from tests.integration._text import write_dataset
 
 
 def _config(tmp_path):
     raw = {
         "settings": [
-            {"@call": "tests.integration.training._synthetic:note", "text": "first"},
-            {"@call": "tests.integration.training._synthetic:note", "text": "second"},
+            {"@call": "tests.integration._text:note", "text": "first"},
+            {"@call": "tests.integration._text:note", "text": "second"},
         ],
         "run_dir": str(tmp_path / "run"),
         "model": {
             "@call": "shadowspill_workloads.models.construction:build_on_meta",
-            "model": "@tests.integration.training._synthetic:TinyModel",
+            "model": "@tests.integration._text:TinyModel",
         },
         "objective": (
             "@shadowspill_workloads.objectives.next_token:next_token_prediction"

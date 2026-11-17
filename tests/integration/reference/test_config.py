@@ -79,14 +79,14 @@ def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
 
     from reference.training.engine import EagerStep
     from shadowspill.pytorch.initialization import reset_parameters
-    from tests.integration.training._synthetic import write_dataset
+    from tests.integration._text import write_dataset
 
     path = _write(
         tmp_path,
         {
             "model": {
                 "@call": "shadowspill_workloads.models.construction:build_on_meta",
-                "model": "@tests.integration.training._synthetic:TinyModel",
+                "model": "@tests.integration._text:TinyModel",
                 "dtype": "bfloat16",
             },
             "objective": (

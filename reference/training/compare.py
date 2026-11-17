@@ -1,6 +1,6 @@
 """Compare runs' loss curves step by step.
 
-    python -m examples.training.compare <reference run dir> <run dir> [<run dir> ...]
+    python -m reference.training.compare <reference run dir> <run dir> [<run dir> ...]
 
 Every run trained on the same batches from the same initial weights, so the
 difference at each step is only what the runs computed differently -- which

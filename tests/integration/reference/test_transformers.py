@@ -20,7 +20,7 @@ LENGTHS = (20, 33, 17, 40, 25, 30)
 
 def test_reference_matches_the_catalog_model_on_a_masked_corpus(tmp_path):
     pytest.importorskip("transformers")
-    from examples.training.reference import reference_loss
+    from reference.training.transformers import reference_loss
 
     family, name = "llama3", "llama3-tiny"
     source = materialized(name)

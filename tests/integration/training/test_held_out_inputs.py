@@ -8,7 +8,7 @@ import torch
 from shadowspill_workloads.inputs.text.documents import IGNORE
 from shadowspill_workloads.inputs.text.packed import PackedTokens
 from shadowspill_workloads.inputs.text.units import held_out
-from tests.integration.training._synthetic import write_dataset
+from tests.integration._text import write_dataset
 
 MAX_SEQ_LEN = 512
 

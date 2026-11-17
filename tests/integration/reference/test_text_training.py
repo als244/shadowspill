@@ -6,8 +6,8 @@ import pytest
 import torch
 
 from reference.training.run import run_config
-from tests.integration.training._synthetic import NOTES
-from tests.integration.training._text_recipe import _config, _records
+from tests.integration._text import NOTES
+from tests.integration.reference._text_config import _config, _records
 
 
 @pytest.mark.parametrize("masters", [False, True])

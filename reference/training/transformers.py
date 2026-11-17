@@ -1,6 +1,6 @@
 """The Hugging Face transformers loss on the documents a run's step trained on.
 
-    python -m examples.training.reference <run dir> [--checkpoint <HF directory>] \\
+    python -m reference.training.transformers <run dir> [--checkpoint <HF directory>] \\
         [--step 1] [--device cuda|cpu|auto] [--dtype bfloat16|float32] [--tag NAME]
 
 Rebuilds the step's documents from the run's packing records and its token

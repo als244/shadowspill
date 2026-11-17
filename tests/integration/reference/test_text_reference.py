@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 from reference.training.run import run_config
-from tests.integration.training._text_recipe import _config, _records
+from tests.integration.reference._text_config import _config, _records
 
 
 def test_reference_uses_shared_bounded_initializer_and_plan_schedule_names(tmp_path):
@@ -15,9 +15,9 @@ def test_reference_uses_shared_bounded_initializer_and_plan_schedule_names(tmp_p
     from reference.training.initialization import initializer
     from shadowspill.artifacts.tensors import TensorChunk
     from shadowspill.pytorch.initialization import initialize_model
-    from tests.integration.training._synthetic import TinyModel, fill_tiny_tensor
+    from tests.integration._text import TinyModel, fill_tiny_tensor
 
-    options = {"initialize": "@tests.integration.training._synthetic:fill_tiny_tensor"}
+    options = {"initialize": "@tests.integration._text:fill_tiny_tensor"}
     with torch.device("meta"):
         model = TinyModel()
     with initializer(options) as fill:
