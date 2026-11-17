@@ -54,7 +54,7 @@ def describe(family, config, context):
                 yield loader
 
         return ModelInitialization(
-            peak_bytes=(240 << 20) + 32 * width,
+            peak_bytes=(1 << 30) + 32 * width,
             chunk_bytes=16 << 20,
             open=open_local,
             disk_bytes=local_files.disk_bytes(manifest),
@@ -79,13 +79,13 @@ def describe(family, config, context):
             ) as loader:
                 yield loader
 
-    # Metadata limits: 1 MiB config, 4 MiB index, 4 MiB aggregate headers,
-    # <=65536 fixed-schema tensor declarations, rank<=8 and bounded key strings.
+    # Metadata limits: 1 MiB config, 32 MiB index, 32 MiB aggregate headers,
+    # <=262144 fixed-schema tensor declarations, rank<=8 and bounded key strings.
     # Includes decoding/retained reader state, 1 MiB HTTP/hash chunks and a 16 MiB
     # destination chunk (large enough for the reader's bounded parallel reads),
     # mapped dtype conversion pages and the existing deterministic generator.
     return ModelInitialization(
-        peak_bytes=(240 << 20) + 32 * width,
+        peak_bytes=(1 << 30) + 32 * width,
         chunk_bytes=16 << 20,
         disk_bytes=weight_files.disk_bytes(manifest),
         open=open_pretrained,

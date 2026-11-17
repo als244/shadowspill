@@ -161,7 +161,7 @@ def test_pretrained_chunks_reproduce_weights_rotary_and_fresh_lora(
     runtime = InitializationRuntime(
         cache, lambda _: pytest.fail("artifact"), initial.disk_bytes
     )
-    assert initial.peak_bytes <= 256 << 20
+    assert initial.peak_bytes <= 2 << 30
     actual = resolved.create()
     expected = dict((*base.named_parameters(), *base.named_buffers()))
     generated = Initialize(family, actual.config, seed=lora_seed or 0)

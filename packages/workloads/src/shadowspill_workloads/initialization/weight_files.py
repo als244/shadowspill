@@ -10,11 +10,11 @@ from shadowspill.checkpoint.inspection import check_json
 
 CONFIG_BYTES = 1 << 20
 
-INDEX_BYTES = 4 << 20
+INDEX_BYTES = 32 << 20
 
 MAX_SHARDS = 512
 
-MAX_TENSORS = 65536
+MAX_TENSORS = 262144
 
 CHUNK_BYTES = 1 << 20
 
