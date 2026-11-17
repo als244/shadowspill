@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 
-import torch
+from shadowspill_client.config.precision import parameter_dtypes
 
 
 @dataclass(frozen=True)
@@ -32,19 +32,27 @@ class Config:
     routed_scaling_factor: float = 2.5
     swiglu_limit: float | None = None
     initializer_range: float = 0.02
-    dtype: torch.dtype = torch.bfloat16
-    router_weight_dtype: torch.dtype = torch.bfloat16
+    dtype: str = "bfloat16"
+    router_weight_dtype: str = "bfloat16"
     expert_storage: str = "bf16"
     gemm_precision: str = "bf16"
     lora_rank: int = 0
     lora_alpha: float = 32.0
-    lora_factor_dtype: torch.dtype = torch.bfloat16
+    lora_factor_dtype: str = "bfloat16"
     lora_head: bool = False
 
     def __post_init__(self):
-        if self.router_weight_dtype not in (torch.bfloat16, torch.float32):
+        # Store portable names; callers may also pass already imported torch dtypes.
+        for name, dtype in parameter_dtypes(
+            {
+                name: str(getattr(self, name)).removeprefix("torch.")
+                for name in ("dtype", "router_weight_dtype", "lora_factor_dtype")
+            }
+        ).items():
+            object.__setattr__(self, name, dtype)
+        if self.router_weight_dtype not in ("bfloat16", "float32"):
             raise ValueError("router_weight_dtype must be BF16 or FP32")
-        if self.dtype != torch.bfloat16:
+        if self.dtype != "bfloat16":
             raise ValueError("GLM sparse attention requires BF16 compute")
         if self.num_attention_heads % 16 or self.kv_lora_rank not in (
             64,

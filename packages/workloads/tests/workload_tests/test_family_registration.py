@@ -13,7 +13,8 @@ from shadowspill_workloads.models import families
 
 def test_catalog_and_family_metadata_load_without_framework_or_engine():
     script = """
-import builtins, sys
+import builtins, sys, json
+from dataclasses import asdict
 original = builtins.__import__
 def guarded(name, *args, **kwargs):
     if name.split('.')[0] in ('torch', 'triton', 'mlops', 'shadowspill'):
@@ -24,6 +25,10 @@ from shadowspill_workloads.models import catalog
 from shadowspill_workloads.models.families import families, checkpoint_families
 assert catalog.names() and checkpoint_families()
 assert all(family.name for family in families())
+for name in catalog.names():
+    config = catalog.entry(name).config()
+    restored = type(config)(**json.loads(json.dumps(asdict(config))))
+    assert config == restored, name
 assert not any('.implementations.' in name for name in sys.modules)
 """
     subprocess.run([sys.executable, "-c", script], check=True, timeout=60)

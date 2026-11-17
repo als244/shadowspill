@@ -1,5 +1,10 @@
 # GLM-5.3
 
+Architecture settings in `config.py` can be inspected without importing Torch or
+MLOps. Dtypes are stored as names such as `"bfloat16"` and `"float32"`; existing
+Python callers may also supply Torch dtype objects. Model construction resolves
+these names to tensor dtypes.
+
 This workload composes the normal GLM-5.3 text architecture: 78 decoder layers,
 three initial dense MLPs, then 256 routed experts/top-8 plus one shared expert.
 It uses ordinary residual connections and positional sparse MLA. Full indexers

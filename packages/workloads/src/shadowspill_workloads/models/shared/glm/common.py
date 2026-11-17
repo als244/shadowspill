@@ -20,7 +20,13 @@ def without_autocast(value):
 
 
 def linear(inputs, outputs, config, device):
-    module = nn.Linear(inputs, outputs, bias=False, device=device, dtype=config.dtype)
+    module = nn.Linear(
+        inputs,
+        outputs,
+        bias=False,
+        device=device,
+        dtype=getattr(torch, str(config.dtype).removeprefix("torch.")),
+    )
     nn.init.normal_(module.weight, std=config.initializer_range)
     return module
 
@@ -28,7 +34,13 @@ def linear(inputs, outputs, config, device):
 class RMSNorm(nn.Module):
     def __init__(self, width, config, device):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(width, device=device, dtype=config.dtype))
+        self.weight = nn.Parameter(
+            torch.ones(
+                width,
+                device=device,
+                dtype=getattr(torch, str(config.dtype).removeprefix("torch.")),
+            )
+        )
         self.eps = config.rms_norm_eps
 
     def forward(self, x):

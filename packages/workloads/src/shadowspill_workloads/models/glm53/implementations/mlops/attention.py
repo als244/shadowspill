@@ -42,7 +42,7 @@ class Indexer(nn.Module):
         self.wq_b = linear(c.q_lora_rank, c.index_n_heads * c.index_head_dim, c, device)
         self.wk = linear(c.hidden_size, c.index_head_dim, c, device)
         self.k_norm = nn.LayerNorm(
-            c.index_head_dim, eps=1e-6, device=device, dtype=c.dtype
+            c.index_head_dim, eps=1e-6, device=device, dtype=getattr(torch, c.dtype)
         )
         self.weights_proj = linear(c.hidden_size, c.index_n_heads, c, device)
         self.requires_grad_(False)

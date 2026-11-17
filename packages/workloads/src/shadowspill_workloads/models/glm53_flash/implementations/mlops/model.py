@@ -69,7 +69,10 @@ class Model(nn.Module):
             None if vision_config is None else VisionModel(vision_config, device=device)
         )
         self.embed_tokens = nn.Embedding(
-            config.vocab_size, config.hidden_size, device=device, dtype=config.dtype
+            config.vocab_size,
+            config.hidden_size,
+            device=device,
+            dtype=getattr(torch, config.dtype),
         )
         nn.init.normal_(self.embed_tokens.weight, std=config.initializer_range)
         self.layers = nn.ModuleList(
@@ -77,7 +80,10 @@ class Model(nn.Module):
         )
         self.norm = RMSNorm(config.hidden_size, config, device)
         self.lm_head = LanguageModelHead(
-            config.hidden_size, config.vocab_size, device=device, dtype=config.dtype
+            config.hidden_size,
+            config.vocab_size,
+            device=device,
+            dtype=getattr(torch, config.dtype),
         )
         nn.init.normal_(self.lm_head.weight, std=config.initializer_range)
         if config.lora_rank:

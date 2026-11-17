@@ -132,7 +132,7 @@ def inventory(reader, model, c, vision, targets, used):
         "gemm_precision": c.gemm_precision,
         "lora_rank": c.lora_rank,
         "lora_alpha": c.lora_alpha,
-        "lora_factor_dtype": str(c.lora_factor_dtype),
+        "lora_factor_dtype": str(getattr(torch, c.lora_factor_dtype)),
         "lora_head": c.lora_head,
         "trainable_parameters": sum(
             p.numel() for p in model.parameters() if p.requires_grad

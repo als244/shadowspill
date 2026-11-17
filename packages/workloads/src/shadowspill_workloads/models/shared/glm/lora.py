@@ -3,6 +3,7 @@ projections and train the routed experts' factors."""
 
 from fnmatch import fnmatchcase
 
+import torch
 from mlops.lora import LoRAConfig, LoRAHead, LoRALinear
 from torch import nn
 
@@ -16,7 +17,7 @@ def enable_lora(model, config):
     recipe = LoRAConfig(
         rank=config.lora_rank,
         alpha=config.lora_alpha,
-        factor_dtype=config.lora_factor_dtype,
+        factor_dtype=getattr(torch, config.lora_factor_dtype),
     )
     for name, module in list(model.named_modules()):
         if not isinstance(module, nn.Linear):

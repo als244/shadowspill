@@ -21,7 +21,11 @@ class GatedNorm(nn.Module):
     def __init__(self, config, device):
         super().__init__()
         self.weight = nn.Parameter(
-            torch.ones(config.linear_head_dim, device=device, dtype=config.dtype)
+            torch.ones(
+                config.linear_head_dim,
+                device=device,
+                dtype=getattr(torch, config.dtype),
+            )
         )
         self.eps = config.rms_norm_eps
 
@@ -91,14 +95,24 @@ class Indexer(nn.Module):
         self.wq_b = linear(c.q_lora_rank, c.index_n_heads * c.index_head_dim, c, device)
         self.wk = linear(c.hidden_size, c.index_head_dim, c, device)
         self.k_norm = nn.LayerNorm(
-            c.index_head_dim, eps=1e-6, device=device, dtype=c.dtype
+            c.index_head_dim, eps=1e-6, device=device, dtype=getattr(torch, c.dtype)
         )
         self.weights_proj = linear(c.hidden_size, c.index_n_heads, c, device)
         self.index_kpool_compress_ape = nn.Parameter(
-            torch.zeros(c.index_kpool, c.index_head_dim, device=device, dtype=c.dtype)
+            torch.zeros(
+                c.index_kpool,
+                c.index_head_dim,
+                device=device,
+                dtype=getattr(torch, c.dtype),
+            )
         )
         self.index_kpool_compress_gate = nn.Parameter(
-            torch.ones(c.index_head_dim, c.hidden_size, device=device, dtype=c.dtype)
+            torch.ones(
+                c.index_head_dim,
+                c.hidden_size,
+                device=device,
+                dtype=getattr(torch, c.dtype),
+            )
         )
         # HF's selection stage is explicitly no_grad. Frozen parameters and an
         # integer result give autograd nothing to record here, and a no_grad

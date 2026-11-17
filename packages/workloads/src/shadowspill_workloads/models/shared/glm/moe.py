@@ -48,7 +48,7 @@ def expert_weight(shape, config, device, *, gate_up):
     device only the components are declared, for a checkpoint to fill.
     """
     if config.expert_storage == "bf16":
-        value = torch.empty(shape, device=device, dtype=config.dtype)
+        value = torch.empty(shape, device=device, dtype=getattr(torch, config.dtype))
         nn.init.normal_(value, std=config.initializer_range)
         return nn.Parameter(value)
     experts, out, inner = shape
@@ -61,10 +61,12 @@ def expert_weight(shape, config, device, *, gate_up):
             container = BlockFP8Weight(
                 torch.empty(shape, device=device, dtype=torch.float8_e4m3fn),
                 torch.empty(blocks, device=device, dtype=torch.float32),
-                dtype=config.dtype,
+                dtype=getattr(torch, config.dtype),
             )
         else:
-            value = torch.empty(shape, device=device, dtype=config.dtype)
+            value = torch.empty(
+                shape, device=device, dtype=getattr(torch, config.dtype)
+            )
             nn.init.normal_(value, std=config.initializer_range)
             container = BlockFP8Weight.quantize(value)
         return nn.Parameter(container, requires_grad=False)
@@ -78,11 +80,11 @@ def expert_weight(shape, config, device, *, gate_up):
             torch.empty((experts, inner, out), **fp8),
             torch.empty((experts, out), **scales),
             torch.empty((experts, inner), **scales),
-            dtype=config.dtype,
+            dtype=getattr(torch, config.dtype),
             interleaved=gate_up,
         )
     else:
-        value = torch.empty(shape, device=device, dtype=config.dtype)
+        value = torch.empty(shape, device=device, dtype=getattr(torch, config.dtype))
         nn.init.normal_(value, std=config.initializer_range)
         container = QuackFP8Weight.quantize(value, interleaved=gate_up)
     return nn.Parameter(container, requires_grad=False)
@@ -98,7 +100,7 @@ class MoE(nn.Module):
             c.moe_intermediate_size,
         )
         router = torch.empty(
-            experts, hidden, device=device, dtype=c.router_weight_dtype
+            experts, hidden, device=device, dtype=getattr(torch, c.router_weight_dtype)
         )
         nn.init.normal_(router, std=c.initializer_range)
         self.router = nn.Parameter(router)
@@ -120,7 +122,7 @@ class MoE(nn.Module):
                 LoRAConfig(
                     rank=c.lora_rank,
                     alpha=c.lora_alpha,
-                    factor_dtype=c.lora_factor_dtype,
+                    factor_dtype=getattr(torch, c.lora_factor_dtype),
                 ),
             )
 

@@ -1,5 +1,10 @@
 # GLM-5.3-Flash
 
+Architecture settings in `config.py` can be inspected without importing Torch or
+MLOps. Dtypes are stored as names such as `"bfloat16"` and `"float32"`; existing
+Python callers may also supply Torch dtype objects. Model construction resolves
+these names to tensor dtypes.
+
 Text architecture: 45 decoder layers (34 KDA, 11 NoPE sparse-MLA), mHC streams, three initial dense MLPs, then 288 routed experts/top-8 plus one shared expert per MoE layer. Operations live in MLOps; this folder owns model composition and Hugging Face naming/layouts.
 
 Each MoE layer is one `mlops.moe` call, or `mlops.lora.experts.expert_lora` when
