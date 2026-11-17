@@ -163,6 +163,7 @@ packages/engine/src/shadowspill/
 │   │       └── pressurefit/   the search that ships
 │   │           └── candidates/  the records the search returns, decoded
 │   └── serialization/     neutral artifact encode/decode
+├── serialization/         compact typed binary records for saved artifacts
 ├── simulator/             the simulator and diagnostic timeline
 │   └── indexing/          the template, one schedule bound onto it, the result
 │                          decoded back, and the buffers all three hand to C
