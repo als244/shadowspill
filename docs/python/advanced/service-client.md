@@ -220,6 +220,24 @@ several. Shape-dependent policies use complete `BuildCase` records so each polic
 names its matching microbatch geometry. These are advanced controls, independent
 of the batch's sequence boundaries and input placement.
 
+For text models, the helper keeps chunk sizes paired with their input shapes and
+uses chunk-aware retention automatically:
+
+```python
+from shadowspill_client.text import build_candidates
+
+prepare = Preparation(candidates=build_candidates(
+    microbatch_tokens=[8192, 16384, 32768],
+    projection_chunks=[0, 8192],
+))
+```
+
+Zero leaves a computation unchunked. `moe_chunks` independently controls expert
+chunks; it defaults to the full microbatch. Advanced searches can add
+`retention=["cost-input", "cost-attention"]`. Retention defaults to cost-input;
+chunking never changes sequence attention boundaries. See the complete
+[long-context example](long-context.md).
+
 For measured inputs without starting a training run, use the same setup with
 `service.prepare_training(**setup).result()`. Initialization can be omitted.
 This runs the existing build, profiling and communication phases, and releases

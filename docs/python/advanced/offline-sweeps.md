@@ -4,10 +4,43 @@ Export a preparation's measurements once, then explore memory budgets and
 hypothetical transfer speeds on your laptop. The optional CPU planner needs no
 GPU, model weights or running service.
 
+## Measure once on the server
+
+Start the service as in the [homepage](../../../README.md#start-the-service).
+This prepares the same 32K LoRA workload as the [long-context example](long-context.md),
+without loading training state or submitting updates. No dataset is needed for
+preparation. Run on the client with the server's SSH alias and port:
+
 ```python
-# After service.prepare_training(...) completes:
-prepared.export().result().download("measurements.zip")
+from shadowspill_client import (
+    SSH, BatchConfig, LoRA, Memory, Model, Objective, Optimizer,
+    Preparation, ServiceClient,
+)
+from shadowspill_client.text import build_candidates
+
+service = ServiceClient(ssh=SSH("training-host", 8000))
+prepared = service.prepare_training(
+    model=Model.from_pretrained("Qwen/Qwen3.5-35B-A3B", lora=LoRA(rank=16)),
+    objective=Objective("cross_entropy"),
+    optimizer=Optimizer("adamw", precision={
+        "gradient_dtype": "bfloat16", "opt_state_dtype": "bfloat16",
+        "master_dtype": "bfloat16", "parameter_rounding": "stochastic",
+        "opt_state_rounding": "stochastic",
+    }),
+    batch=BatchConfig(limits={
+        "token_capacity": 32768, "max_sequence_length": 32768, "max_sequences": 128,
+    }),
+    memory=Memory(device_gib=12, spill_gib=128),
+    prepare=Preparation(candidates=build_candidates(
+        microbatch_tokens=[32768], projection_chunks=[8192], moe_chunks=[8192],
+    )),
+    progress=True,
+).result()
+prepared.export().result().download("measurements.zip").result()
+service.close()
 ```
+
+## Explore on your laptop
 
 Install the CPU planner from a source checkout (Python 3.12+, CMake and a C/C++
 compiler):
