@@ -207,7 +207,11 @@ class LiveRun:
             for node in self._nodes:
                 self._active()
                 processes.update(
-                    node.start(self._artifacts.open, wait=wait_for_resources)
+                    node.start(
+                        self._artifacts.open,
+                        local_source=self._artifacts.local_path,
+                        wait=wait_for_resources,
+                    )
                 )
             self._group = start_processes(processes, stop=self._stop_nodes)
             self._active()

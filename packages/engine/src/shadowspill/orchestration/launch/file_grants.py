@@ -1,12 +1,12 @@
-"""Process-readable opaque file grants backed by retained delivery ownership."""
+"""Process-readable opaque file grants backed by retained storage ownership."""
 
 from __future__ import annotations
 
 import hashlib
 import os
 import stat
-from collections.abc import Callable, Sequence
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import RLock
@@ -19,6 +19,22 @@ from shadowspill_client.protocol.requests import ArtifactRef
 from .staging import COPY_BYTES, FileDelivery
 
 _CODEC = RecordCodec({"node.file": ArtifactRef})
+
+type LocalSource = Callable[[ArtifactRef], AbstractContextManager[Path]]
+
+
+@contextmanager
+def _borrow(
+    source: FileDelivery | LocalSource,
+) -> Iterator[Callable[[ArtifactRef], Path]]:
+    if isinstance(source, FileDelivery):
+        with source.use() as resolve:
+            yield resolve
+    else:
+        # Only a controller-supplied borrow can expose local paths. Its context
+        # retains the original artifact's owner and quota until all links retire.
+        with ExitStack() as pins:
+            yield lambda reference: pins.enter_context(source(reference))
 
 
 def _key(reference: ArtifactRef) -> str:
@@ -67,7 +83,7 @@ class FileGrants:
     """A private flat directory of links; grants retain original storage quotas.
 
     Link names hash the entire reference, not just its ID or content. No incoming
-    path or lookup manifest is interpreted. The delivery and grant directories
+    path or lookup manifest is interpreted. The source and grant directories
     must share a filesystem; there is no hidden, unadmitted copy fallback.
     """
 
@@ -81,13 +97,13 @@ class FileGrants:
             raise
         self.root = Path(self._directory.name)
         self._lock = RLock()
-        self._entries: dict[str, tuple[FileDelivery, int]] = {}
+        self._entries: dict[str, tuple[FileDelivery | LocalSource, int]] = {}
         self._owners: set[FileGrant] = set()
         self._abandoned: set[FileGrant] = set()
         self.closed = False
 
     def lend(
-        self, delivery: FileDelivery, references: Sequence[ArtifactRef]
+        self, source: FileDelivery | LocalSource, references: Sequence[ArtifactRef]
     ) -> FileGrant:
         if not isinstance(references, (tuple, list)) or len(references) > 65536:
             raise ValueError("file grants require a bounded reference list")
@@ -105,7 +121,7 @@ class FileGrants:
             lease = self._memory.reserve(
                 4096 + 8 * metadata + 512 * len(references), timeout=0
             )
-            borrowed = delivery.use()
+            borrowed = _borrow(source)
             try:
                 resolve = borrowed.__enter__()
             except BaseException:
@@ -115,26 +131,26 @@ class FileGrants:
             self._owners.add(owner)
             try:
                 for reference in references:
-                    source = resolve(reference)  # Exact reference owned by delivery.
+                    path = resolve(reference)  # Exact reference pinned by its owner.
                     key = _key(reference)
                     if key in owner._keys:
                         raise ValueError(
                             "one grant cannot repeat an artifact reference"
                         )
                     if key not in self._entries:
-                        os.link(source, self.root / key)
-                        self._entries[key] = delivery, 0
+                        os.link(path, self.root / key)
+                        self._entries[key] = source, 0
                     original, users = self._entries[key]
-                    if original is not delivery:
+                    if original is not source:
                         raise ValueError(
-                            "artifact is already granted from another delivery; "
-                            "reuse that delivery until all its consumers finish"
+                            "artifact is already granted from another source; "
+                            "reuse that source until all its consumers finish"
                         )
                     self._entries[key] = original, users + 1
                     owner._keys.add(key)
             except BaseException:
                 # On a deletion failure the owner remains reachable in this set,
-                # retaining the delivery and both metadata/storage reservations.
+                # retaining the source and both metadata/storage reservations.
                 try:
                     owner.close()
                 except BaseException:
@@ -147,7 +163,7 @@ class FileGrants:
         """Borrow an existing exact grant without copying or transferring ownership.
 
         Startup artifacts can be used again by later requests. Retain the same
-        verified delivery under the grant lock so its last prior consumer cannot
+        storage owner under the grant lock so its last prior consumer cannot
         retire the file between lookup and the new borrow.
         """
         if not isinstance(reference, ArtifactRef):

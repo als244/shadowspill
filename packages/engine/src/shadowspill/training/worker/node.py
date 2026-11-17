@@ -15,7 +15,11 @@ from typing import BinaryIO, Self
 from shadowspill.orchestration.capture.files import CaptureFiles, CollectorLimits
 from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.admission import NodeAdmission, NodeLease
-from shadowspill.orchestration.launch.file_grants import FileGrant, FileGrants
+from shadowspill.orchestration.launch.file_grants import (
+    FileGrant,
+    FileGrants,
+    LocalSource,
+)
 from shadowspill.orchestration.launch.host_arena import HostPartition
 from shadowspill.orchestration.launch.log_files import LogFiles
 from shadowspill.orchestration.launch.publication import OutputFiles
@@ -175,11 +179,16 @@ class WorkerNode:
         self,
         open_source: Callable[[ArtifactRef], AbstractContextManager[BinaryIO]],
         *,
+        local_source: LocalSource | None = None,
         wait: bool = False,
         timeout: float | None = None,
         startup_timeout: float = 120,
     ) -> Mapping[int, WorkerProcess]:
-        """Launch once; a failure leaves reachable owners for explicit cleanup."""
+        """Launch once; a failure leaves reachable owners for explicit cleanup.
+
+        A local source pins authenticated artifacts through worker exit. Without
+        one, startup admits and verifies copies from the supplied transport.
+        """
         if not self._busy.acquire(blocking=False):
             raise RuntimeError("node worker creation is already in progress")
         try:
@@ -222,9 +231,10 @@ class WorkerNode:
                 for launch in self._launches.values()
                 if launch.initial_weights is not None
             )
-            self._delivery = FileDelivery(
-                references, root=root, disk=self._disk, memory=self._memory
-            )
+            if local_source is None:
+                self._delivery = FileDelivery(
+                    references, root=root, disk=self._disk, memory=self._memory
+                )
             self._grants = FileGrants(root=root, memory=self._memory)
             self._outputs = OutputFiles(root=root, disk=self._disk, memory=self._memory)
             # Reserve every stream before any participant starts. A full node's
@@ -254,9 +264,13 @@ class WorkerNode:
                         device_id=device,
                     )
             self._active()
-            self._delivery.receive(open_source)
-            self._active()
-            self._grant = self._grants.lend(self._delivery, references)
+            if local_source is None:
+                assert self._delivery is not None
+                self._delivery.receive(open_source)
+                self._active()
+                self._grant = self._grants.lend(self._delivery, references)
+            else:
+                self._grant = self._grants.lend(local_source, references)
             for rank, launch in self._launches.items():
                 self._active()
                 self._processes[rank] = launch_worker(

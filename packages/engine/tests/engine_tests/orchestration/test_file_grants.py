@@ -93,7 +93,7 @@ def test_identical_ref_from_another_delivery_cannot_transfer_disk_ownership(
         other.receive(lambda _: io.BytesIO(payload))
         with grants.lend(delivery, [ref]):
             before = memory.used[0]
-            with pytest.raises(ValueError, match="another delivery"):
+            with pytest.raises(ValueError, match="another source"):
                 grants.lend(other, [ref])
             assert memory.used[0] == before
             other.close()
