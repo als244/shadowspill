@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from reference.training.weights import Weights as _Masters
+from qualification.reference.training.weights import Weights as _Masters
 from shadowspill.training.observations import (
     StepObservations,
     parameter_norms,

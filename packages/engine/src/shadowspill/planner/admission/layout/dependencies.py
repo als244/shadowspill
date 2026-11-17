@@ -80,7 +80,7 @@ def recover_reuse_dependencies(
     The library takes the placed fixed prefix and the operations it was built
     from and reports every pair of leases sharing an address, the completion
     the later one waits for, and who waits: `shadowspill_recover_layout_reuse`,
-    specified readably in `reference/python/admission/reuse.py`. A predecessor
+    specified readably in `qualification/reference/python/admission/reuse.py`. A predecessor
     that is still live when its successor is acquired, or whose retirement
     publishes no completion, refuses the layout here. The library writes the
     columns the certificate keeps, so nothing is decoded per pair.

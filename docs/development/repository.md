@@ -21,8 +21,7 @@ shadowspill/
 ├── benchmarks/            measurements, saved-Plan runners and planner experiments
 ├── tools/                 trace analysis, source checks and corpus applications
 ├── tests/                 repository and cross-package checks
-├── reference/             independent algorithm and training oracles
-├── qualification/         numerical, performance and release campaigns
+├── qualification/         numerical/performance campaigns and independent references
 ├── docs/                  architecture, APIs, guides and development
 ├── scripts/               environment setup
 └── pyproject.toml         workspace lint, type, and test configuration

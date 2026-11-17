@@ -74,4 +74,4 @@ provides the corpus readers also used by the standalone demos. Setup returns a
 ready training client; runtime loops only submit inputs and read results.
 
 Model implementations live in the workloads package. Independent numerical
-oracles and loss-curve comparison tools live in [reference](../../reference/training/README.md).
+oracles and loss-curve comparison tools live in [reference](../../qualification/reference/training/README.md).

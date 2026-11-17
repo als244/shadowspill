@@ -1,0 +1,294 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
+
+from engine_tests.ir._examples import (
+    SAVE_SELECTION,
+    release_behind_write_back_schedule,
+    representative_program,
+    representative_schedule,
+    write_back_program,
+    write_back_schedule,
+)
+from engine_tests.simulator._examples import (
+    calibrated_config,
+    concurrent_lane_program,
+    initial_only_schedule,
+    ordered_action_program,
+    ordered_action_schedule,
+    overlap_program,
+    overlap_schedule,
+)
+from qualification.reference.python.simulator import simulate_python
+from shadowspill.ir import (
+    AliasGroupSpec,
+    DeviceSpec,
+    MemoryAction,
+    MemoryActionKind,
+    MemoryLocation,
+    MemorySchedule,
+    ObjectRole,
+    ObjectSpec,
+    ResidencySpec,
+    ResourceKind,
+    ResourceSpec,
+    ShadowSpillProgram,
+    TaskProfile,
+    TaskSpec,
+)
+from shadowspill.libraries import shadowspill_library_path
+from shadowspill.simulator import SimulationConfig, SimulationInfeasibleError
+from shadowspill.simulator.indexing import simulate_program
+
+pytestmark = pytest.mark.skipif(
+    shadowspill_library_path() is None,
+    reason="the simulator library is not installed",
+)
+
+
+@pytest.mark.parametrize(
+    ("program", "schedule", "selections", "capacity"),
+    [
+        (
+            representative_program(),
+            representative_schedule(),
+            SAVE_SELECTION,
+            600,
+        ),
+        (overlap_program(), overlap_schedule(), (), 512),
+        (write_back_program(), write_back_schedule(), (), 512),
+        (write_back_program(), release_behind_write_back_schedule(), (), 512),
+        (concurrent_lane_program(), initial_only_schedule(), (), 1024),
+        (ordered_action_program(), ordered_action_schedule(), (), 1024),
+    ],
+)
+def test_compiled_and_python_results_are_identical(
+    program: ShadowSpillProgram,
+    schedule: MemorySchedule,
+    selections: tuple,
+    capacity: int,
+) -> None:
+    config = calibrated_config(device_capacity_bytes=capacity)
+
+    expected = simulate_python(
+        program,
+        schedule,
+        selections=selections,
+        config=config,
+    )
+    actual = simulate_program(
+        program,
+        schedule,
+        selections=selections,
+        config=config,
+    )
+
+    assert actual == expected
+
+
+@pytest.mark.parametrize("workers", [1, 2, 8])
+def test_compiled_replay_is_deterministic_across_worker_counts(workers: int) -> None:
+    program = overlap_program()
+    schedule = overlap_schedule()
+    config = calibrated_config(device_capacity_bytes=512)
+    expected = simulate_python(program, schedule, config=config)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        results = tuple(
+            executor.map(
+                lambda _: simulate_program(program, schedule, config=config),
+                range(32),
+            )
+        )
+
+    assert all(result == expected for result in results)
+
+
+@pytest.mark.parametrize("capacity", [319, 527])
+def test_compiled_and_python_capacity_diagnostics_agree(capacity: int) -> None:
+    config = calibrated_config(device_capacity_bytes=capacity)
+
+    with pytest.raises(SimulationInfeasibleError) as python_caught:
+        simulate_python(
+            representative_program(),
+            representative_schedule(),
+            selections=SAVE_SELECTION,
+            config=config,
+        )
+    with pytest.raises(SimulationInfeasibleError) as compiled_caught:
+        simulate_program(
+            representative_program(),
+            representative_schedule(),
+            selections=SAVE_SELECTION,
+            config=config,
+        )
+
+    python_error = python_caught.value
+    compiled_error = compiled_caught.value
+    assert str(compiled_error) == str(python_error)
+    assert compiled_error.kind == python_error.kind
+    assert compiled_error.task_id == python_error.task_id
+    assert compiled_error.location == python_error.location
+    assert compiled_error.capacity_bytes == python_error.capacity_bytes
+    assert compiled_error.used_bytes == python_error.used_bytes
+    assert compiled_error.requested_bytes == python_error.requested_bytes
+
+
+def test_large_integer_transfer_runtime_does_not_overflow() -> None:
+    size = (1 << 63) + 17
+    bandwidth = (1 << 63) + 101
+    resource = ResourceSpec("cuda_0", ResourceKind.CONTROL)
+    program = ShadowSpillProgram(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=(AliasGroupSpec("storage", "cuda_0", size),),
+        objects=(ObjectSpec("object", "storage", 0, size),),
+        profiles=(TaskProfile("trigger_profile", 0, 0, "trigger_abi"),),
+        tasks=(
+            TaskSpec(
+                "trigger",
+                resource,
+                "trigger_profile",
+                requires_entrypoint=False,
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        initial_residency=(ResidencySpec("storage", MemoryLocation.SPILL),),
+        actions=(
+            MemoryAction(
+                "trigger",
+                "storage",
+                MemoryActionKind.FETCH,
+            ),
+        ),
+        final_residency=(ResidencySpec("storage", MemoryLocation.DEVICE),),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=size,
+        spill_capacity_bytes=size,
+        fetch_solo_bandwidth_bytes_per_second=bandwidth,
+        fetch_concurrent_bandwidth_bytes_per_second=(bandwidth),
+        evict_solo_bandwidth_bytes_per_second=bandwidth,
+        evict_concurrent_bandwidth_bytes_per_second=(bandwidth),
+    )
+
+    expected = simulate_python(program, schedule, config=config)
+    actual = simulate_program(program, schedule, config=config)
+
+    assert actual == expected
+    assert actual.makespan_ns == 1_000_000_000
+
+
+@given(
+    sizes=st.lists(st.integers(min_value=0, max_value=4096), min_size=1, max_size=12),
+    runtimes=st.lists(
+        st.integers(min_value=0, max_value=1_000_000), min_size=1, max_size=12
+    ),
+    workspaces=st.lists(
+        st.integers(min_value=0, max_value=1024), min_size=1, max_size=12
+    ),
+)
+def test_random_linear_programs_match(
+    sizes: list[int],
+    runtimes: list[int],
+    workspaces: list[int],
+) -> None:
+    count = min(len(sizes), len(runtimes), len(workspaces))
+    sizes = sizes[:count]
+    runtimes = runtimes[:count]
+    workspaces = workspaces[:count]
+    resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    aliases = tuple(
+        AliasGroupSpec(f"storage_{index}", "cuda_0", size)
+        for index, size in enumerate(sizes)
+    )
+    objects = tuple(
+        ObjectSpec(
+            f"object_{index}",
+            f"storage_{index}",
+            0,
+            size,
+            ObjectRole.OUTPUT,
+        )
+        for index, size in enumerate(sizes)
+    )
+    profiles = tuple(
+        TaskProfile(
+            f"profile_{index}",
+            runtimes[index],
+            workspaces[index],
+            f"abi_{index}",
+        )
+        for index in range(count)
+    )
+    tasks = tuple(
+        TaskSpec(
+            f"task_{index}",
+            resource,
+            f"profile_{index}",
+            dependencies=(() if index == 0 else (f"task_{index - 1}",)),
+            outputs=(f"object_{index}",),
+        )
+        for index in range(count)
+    )
+    program = ShadowSpillProgram(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=aliases,
+        objects=objects,
+        profiles=profiles,
+        tasks=tasks,
+    )
+    schedule = MemorySchedule(
+        initial_residency=(),
+        actions=(),
+        final_residency=(ResidencySpec(f"storage_{count - 1}", MemoryLocation.DEVICE),),
+    )
+    capacity = sum(sizes) + max(workspaces)
+    config = calibrated_config(device_capacity_bytes=capacity)
+
+    expected = simulate_python(program, schedule, config=config)
+    actual = simulate_program(program, schedule, config=config)
+
+    assert actual == expected
+
+
+def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out() -> None:
+    """The simulator attaches its own interval arrays to a result so
+    a indexed consumer can read the timings without re-encoding them. They
+    address library memory, so anything that writes a result out - `asdict`,
+    `pickle`, `torch.save`, `copy.deepcopy` - must not carry them along."""
+
+    import copy
+    import pickle
+    from dataclasses import asdict
+
+    from shadowspill.simulator.capi import CTaskInterval, CTransferInterval
+    from shadowspill.simulator.indexing import IntervalArrays
+    from shadowspill.simulator.model import SimulationResult
+
+    result = SimulationResult(
+        makespan_ns=1,
+        task_intervals=(),
+        transfer_intervals=(),
+        device_peaks=(),
+        spill_peak_bytes=0,
+    )
+    result.attach_interval_arrays(
+        IntervalArrays(
+            task_intervals=(CTaskInterval * 3)(),
+            task_interval_count=3,
+            transfer_intervals=(CTransferInterval * 2)(),
+            transfer_interval_count=2,
+        )
+    )
+
+    assert result.interval_arrays is not None
+    assert "interval_arrays" not in asdict(result)
+    assert pickle.loads(pickle.dumps(result)) == result
+    assert pickle.loads(pickle.dumps(result)).interval_arrays is None
+    assert copy.deepcopy(result).interval_arrays is None

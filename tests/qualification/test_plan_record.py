@@ -10,16 +10,6 @@ from engine_tests.planner._examples import (
     exact_capacity_program,
     exact_capacity_residency,
 )
-from engine_tests.planner.admission.test_admission import _causal_facts
-from engine_tests.simulator.test_admission_accounting import (
-    _config as causal_config,
-)
-from engine_tests.simulator.test_admission_accounting import (
-    _program as causal_program,
-)
-from engine_tests.simulator.test_admission_accounting import (
-    _schedule as causal_schedule,
-)
 from qualification.plan_record import (
     plan_record,
     write_plan_record,
@@ -33,6 +23,16 @@ from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
 from shadowspill.schema import artifact_schema
+from tests.qualification.reference.admission.test_admission import _causal_facts
+from tests.qualification.reference.simulator.test_admission_accounting import (
+    _config as causal_config,
+)
+from tests.qualification.reference.simulator.test_admission_accounting import (
+    _program as causal_program,
+)
+from tests.qualification.reference.simulator.test_admission_accounting import (
+    _schedule as causal_schedule,
+)
 
 
 def _result() -> ProgramPlanResult:

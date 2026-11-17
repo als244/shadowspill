@@ -12,7 +12,7 @@ leases, and only the ones it keeps.
 The rules the library follows - where an operation sits, why a lease exists,
 and the transitions that emit no operation at all - are specified in
 docs/architecture/admission-leases.md, and stated readably in
-reference/python/admission/lifetimes.py.
+qualification/reference/python/admission/lifetimes.py.
 """
 
 from __future__ import annotations
