@@ -14,6 +14,7 @@ from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.profiles import Profiles
 from shadowspill.artifacts.program import Program
 from shadowspill.communication.binding.groups import GroupBindings
+from shadowspill.diagnostics.progress import event, phase
 from shadowspill.errors import ProfilingError
 from shadowspill.preparation.lifecycle import LoadedPreparations
 from shadowspill.pytorch.control_inputs import ControlInputs
@@ -169,8 +170,14 @@ class MeasurementSession:
     def measure(self, key: str, arguments: Sequence[Any]) -> None:
         if key in self.profiles.tasks:
             return
+        definition = next(
+            item for item in self.program.task_definitions if item.profile_key == key
+        )
         try:
-            with torch.cuda.stream(self.streams[key]):
+            with (
+                phase(f"Measure {definition.name or key} · {key}"),
+                torch.cuda.stream(self.streams[key]),
+            ):
                 result = measure_task(
                     self.function(key),
                     arguments,
@@ -182,13 +189,21 @@ class MeasurementSession:
                     else self.groups.continue_sampling,
                     check=None if self.groups is None else self.groups.check,
                 )
+                duration = (
+                    "Unavailable"
+                    if result.duration_seconds is None
+                    else f"{result.duration_seconds * 1000:.3f} ms"
+                )
+                workspace = (
+                    "Unavailable"
+                    if result.workspace_bytes is None
+                    else f"{result.workspace_bytes / (1 << 20):,.2f} MiB"
+                )
+                event(f"GPU duration: {duration}; workspace: {workspace}")
         except Exception as error:
             raise task_error(
                 ProfilingError, self.program, key, "measurement", error
             ) from error
-        definition = next(
-            item for item in self.program.task_definitions if item.profile_key == key
-        )
         self.profiles.tasks[key] = replace(
             result, compatibility_digest=definition.compatibility_digest
         )

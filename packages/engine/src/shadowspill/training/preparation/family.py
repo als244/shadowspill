@@ -11,6 +11,7 @@ from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.pool_memory import PoolMemoryProfile
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication.info import CommunicationInfo
+from shadowspill.diagnostics.progress import event, phase
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.planner.search import SearchOptions
 from shadowspill.planning.plan import plan_program
@@ -81,6 +82,11 @@ def plan_family(
         int(setup.config.memory.spill_gib * (1 << 30)),
     )
     plans: dict[int, dict[str, Plan]] = {rank: {} for rank in ranks}
+    event(
+        f"Search workers: {search.workers}; logical workers: {len(ranks)}; "
+        f"budgets: GPU {setup.config.memory.device_gib:g} GiB, "
+        f"spill {setup.config.memory.spill_gib:g} GiB"
+    )
     cached: dict[
         tuple[TemplateUse, str | None],
         str | PlanInfeasibleError | PlanSearchExhaustedError,
@@ -98,18 +104,20 @@ def plan_family(
             found = cached[key]
             if isinstance(found, Exception):
                 raise found
+            event(f"Worker {rank} · Reuse {use.kind} Plan {found[:12]}")
             return found
         source = profiled[use.template]
         program = instantiate_template(template, use, source.program)
         try:
-            result = plan_program(
-                apply_profiles(program, source.profiles),
-                memory_budgets=budgets,
-                communication_info=communication[use.template],
-                pool_memory=None if pool_memory is None else pool_memory[rank],
-                search_options=search,
-                ordering=order,
-            )
+            with phase(f"Worker {rank} · {use.kind} · {use.count} microbatches"):
+                result = plan_program(
+                    apply_profiles(program, source.profiles),
+                    memory_budgets=budgets,
+                    communication_info=communication[use.template],
+                    pool_memory=None if pool_memory is None else pool_memory[rank],
+                    search_options=search,
+                    ordering=order,
+                )
         except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
             cached[key] = error
             raise
@@ -124,47 +132,89 @@ def plan_family(
         return name
 
     admitted, rejected = [], list(prior_rejections)
+    total = sum(len(_orderings(candidate)) for candidate in candidates)
+    index = 0
     for candidate in candidates:
         shape = candidate.layout.candidate
         operation = candidate.layout.operation
         for ordering in _orderings(candidate):
+            index += 1
             label = None if ordering is None else ordering.label
             identity = candidate_identity(candidate, ordering)
-            try:
-                workers = {
-                    rank: WorkerPlans(
-                        materialize(worker.main, rank, ordering),
-                        None
-                        if worker.optimizer is None
-                        else materialize(worker.optimizer, rank, None),
+            size = setup.config.preparation.cases[shape.case].microbatch_size
+            operation_title = operation.operation.replace("_", " ").capitalize()
+            title = (
+                f"Layout {index}/{total} · {operation_title} · "
+                f"Batch {shape.batch + 1}, case {shape.case + 1} · "
+                f"Microbatch {size:,} x {shape.count}"
+            )
+            with phase(title) as outcome:
+                if ordering is not None:
+                    event(
+                        f"Ordering: {ordering.depth} passes x "
+                        f"{ordering.breadth} microbatches; "
+                        f"paired terminal: {ordering.pair_loss}; "
+                        f"reverse backward: {ordering.reverse_breadth}"
                     )
-                    for rank, worker in sorted(candidate.workers.items())
-                }
-                _collectives(workers, plans)
-            except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
-                rejected.append(
-                    PlanRejection(
+                try:
+                    workers = {
+                        rank: WorkerPlans(
+                            materialize(worker.main, rank, ordering),
+                            None
+                            if worker.optimizer is None
+                            else materialize(worker.optimizer, rank, None),
+                        )
+                        for rank, worker in sorted(candidate.workers.items())
+                    }
+                    _collectives(workers, plans)
+                except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
+                    outcome.rejected = True
+                    event(f"Reason: {error}")
+                    rejected.append(
+                        PlanRejection(
+                            identity,
+                            operation,
+                            shape.batch,
+                            shape.case,
+                            shape.count,
+                            label,
+                            "planning",
+                            str(error),
+                            isinstance(error, PlanSearchExhaustedError),
+                        )
+                    )
+                    continue
+                duration = max(
+                    plans[rank][worker.main].timeline.makespan_ns / 1e9
+                    for rank, worker in workers.items()
+                )
+                event(f"Estimated {operation.operation} time: {duration:.3f}s")
+                admitted.append(
+                    PlannedCandidate(
                         identity,
-                        operation,
-                        shape.batch,
-                        shape.case,
-                        shape.count,
-                        label,
-                        "planning",
-                        str(error),
-                        isinstance(error, PlanSearchExhaustedError),
+                        candidate,
+                        ordering,
+                        MappingProxyType(workers),
+                        duration,
                     )
                 )
-                continue
-            duration = max(
-                plans[rank][worker.main].timeline.makespan_ns / 1e9
-                for rank, worker in workers.items()
+    with phase("Select jointly compatible Plans"):
+        prepared = select_family(
+            inventory,
+            admitted,
+            plans,
+            rejected,
+            max_family_attempts=max_family_attempts,
+        )
+        event(
+            f"Retained {sum(map(len, prepared.families.values()))} layout/orderings, "
+            f"{sum(map(len, prepared.plans.values()))} worker Plans; "
+            f"rejected {len(prepared.rejected)} candidates"
+        )
+        for rank, memory in sorted(prepared.memory.items()):
+            event(
+                f"Worker {rank} shared layout: "
+                f"GPU {memory.execution_bytes / (1 << 30):.2f} GiB; "
+                f"spill {memory.spill_bytes / (1 << 30):.2f} GiB"
             )
-            admitted.append(
-                PlannedCandidate(
-                    identity, candidate, ordering, MappingProxyType(workers), duration
-                )
-            )
-    return select_family(
-        inventory, admitted, plans, rejected, max_family_attempts=max_family_attempts
-    )
+        return prepared

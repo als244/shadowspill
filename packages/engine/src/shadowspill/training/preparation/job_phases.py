@@ -101,10 +101,13 @@ def profile(directory: str | Path) -> None:
                     reused(path, group, partial(profile_at, root, inventory, key))
                     is None
                 ):
-                    program = program_at(root, inventory, key)
-                    profile_template(
+                    with phase("Load captured program"):
+                        program = program_at(root, inventory, key)
+                    profiled = profile_template(
                         inventory, key, program, rank_map=group.rank_map, cache=cache
-                    ).save(path)
+                    )
+                    with phase("Save task measurements"):
+                        profiled.save(path)
 
             template = inventory.templates[key]
             with phase(candidate_title(template, index, len(groups))) as result:
@@ -176,15 +179,25 @@ def plan(directory: str | Path) -> None:
 
     root, registry, original = load_job(directory)
     inventory, rejected = admitted_inventory(root, original)
-    measured = {
-        key: ProfiledProgram.load(root / "calibrated" / f"{key}.ssp")
-        for key in inventory.templates
-    }
-    communication = {
-        key: CommunicationInfo.load(root / "communication" / f"{key}.ssp")
-        for key in inventory.templates
-    }
-    family = plan_family(inventory, measured, communication, prior_rejections=rejected)
-    bundle = TrainingBundle.from_prepared(family, measured)
-    bundle.recheck(registry)
-    bundle.save(root / BUNDLE_NAME)
+    with phase("Load measured programs and communication"):
+        measured = {
+            key: ProfiledProgram.load(root / "calibrated" / f"{key}.ssp")
+            for key in inventory.templates
+        }
+        communication = {
+            key: CommunicationInfo.load(root / "communication" / f"{key}.ssp")
+            for key in inventory.templates
+        }
+    with phase("Search layouts and orderings"):
+        family = plan_family(
+            inventory, measured, communication, prior_rejections=rejected
+        )
+    with phase("Assemble prepared Plan family"):
+        bundle = TrainingBundle.from_prepared(family, measured)
+    with phase("Validate saved Plans and installed sources"):
+        bundle.recheck(registry)
+    with phase("Save prepared Plans"):
+        bundle.save(root / BUNDLE_NAME)
+        event(
+            f"Archive size: {(root / BUNDLE_NAME).stat().st_size / (1 << 20):,.2f} MiB"
+        )
