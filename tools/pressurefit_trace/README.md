@@ -1,8 +1,7 @@
 # PressureFit capture and analysis
 
 Record planner decisions from saved profiles, inspect every cut, and retain the
-winning schedules. These tools run on CPU, except the Nsight capture of executed
-winners; model build and GPU measurement happen beforehand. Generated data
+winning schedules. These tools run on CPU; model build and GPU measurement happen beforehand. Generated data
 belongs in an ignored run directory such as `runs/`.
 
 ```sh
@@ -43,13 +42,13 @@ and normal frontend semantic-label export. The optional `semantic_labels.json`
 sidecar must have the same program digest; the renderer works with the generic
 object/task labels when that sidecar is absent.
 
-For an already profiled phase quickstart, all collection commands below run
-on CPU. Build/profile/calibrate first with the normal quickstart phases:
+Pass `ProfiledProgram` archives and `CommunicationInfo` saved through the
+[phase APIs](../../docs/python/phases.md). Collection runs entirely on CPU:
 
 ```sh
-# Read request.json, profiled/*.ssp and communication.ssp; no factory import.
-python -m tools.pressurefit_trace dump runs/example/quickstart \
-    --output runs/example/dump
+python -m tools.pressurefit_trace dump runs/example/profiled-*.ssp \
+    --communication runs/example/communication.ssp \
+    --physical-gib 24 --spill-gib 128 --output runs/example/dump
 
 python -m tools.pressurefit_trace plan runs/example/dump --output runs/example/plans
 python -m tools.pressurefit_trace trace runs/example/plans --output runs/example/traces
@@ -65,7 +64,7 @@ python -m tools.pressurefit_trace export runs/example/all_traces \
 
 Dump/plan/trace/export require fresh output directories. The dump enumerates
 supported example orderings from saved Programs without rebuilding. It uses the
-largest requested physical budget unless `dump --physical-gib` overrides it.
+explicit `--physical-gib` and `--spill-gib` budgets.
 Across geometries, it reserves the largest recorded fixed device overhead,
 including communication resources; each candidate's original value is also saved.
 This conservative common allowance makes the diagnostic comparisons consistent.
@@ -76,7 +75,7 @@ options are mutually exclusive. A dump bounds the diagnostic searches at its
 exported cap; export again with a larger `dump --physical-gib` to raise it, using
 the same saved profiles without any GPU work. The artifacts are diagnostic
 planner inputs and annotated JSON, not portable Executor plans. Use the public
-`plan_program` API or normal quickstart plan phase to produce an executable.
+`plan_program` API to produce an executable.
 
 Within the exported cap, one dump can feed several independent budget searches:
 
@@ -105,10 +104,8 @@ the effective calibration, and `trace` reuses it when recording the winner, so
 the cut trajectory corresponds to the hypothetical plan rather than the capture's
 original transfer rates. This records planner decisions, not measured execution.
 
-Failures already recorded by the profile phase remain in `dump.json` and each
-budget's `plans.json`. Unsupported example orderings also remain explicit
-rejections. Dump never runs profiling, retries a failed geometry or changes the
-source archives. This physical-placement diagnostic requires recorded allocation
+Unsupported orderings remain explicit rejections in `dump.json` and each
+budget's `plans.json`. Dump never runs profiling or changes the source archives. This physical-placement diagnostic requires recorded allocation
 evidence. For simulations using estimated memory, use the public
 `plan_program`/`write_report` path; estimates cannot become execution evidence.
 
@@ -121,8 +118,10 @@ Collection arguments:
 
 | Command | Argument | Meaning/default |
 | --- | --- | --- |
-| `dump` | `input`, `--output` | Saved phase quickstart and fresh output directory for diagnostic inputs. |
-| `dump` | `--physical-gib` | Largest exported total GPU cap; defaults to the largest requested quickstart budget. |
+| `dump` | `inputs`, `--output` | One or more ProfiledProgram archives and a fresh output directory. |
+| `dump` | `--communication` | Required saved CommunicationInfo archive. |
+| `dump` | `--physical-gib`, `--spill-gib` | Required total device and spill budgets. |
+| `dump` | `--orderings` | `factors` (default) or `depth-first`; counts come from saved training templates. |
 | `plan` | `input`, `--output` | Capture directory and required fresh planning output directory. |
 | `plan` | `--physical-gib` | Physical execution cap; subtract the capture's runtime/headroom carve-out. |
 | `plan` | `--execution-gib` | Usable planner execution capacity; mutually exclusive with `--physical-gib`. Without either, retain captured budgets. |
@@ -166,39 +165,11 @@ reduction, independently of whether it displays all reductions or only the answe
   values. `analysis.json` reports the total planning budget and whether roles
   could be attributed; all intermediate compositions are verified as well.
 
-## Trace completed quickstart winners with Nsight
+## Runtime traces
 
-Capture separate Nsight Systems reports of the same
-already executed winners. Each fresh worker loads the exact portable Plan from
-`plans/`, initializes with the factory's bounded loader and runs warmup/captured
-updates. It does not build, measure, calibrate or replan. The complete archive
-identity must agree with both the planning index and the completed result;
-memory admission remains unchanged. Each rank retains an `exact-plan.json`.
-Profiler timings are not throughput measurements.
-
-```sh
-python -m tools.pressurefit_trace.profile_winners RUN/quickstart \
-  --output RUN/nsys --warmup-steps 3 --capture-steps 3 \
-  --gpu-metrics-frequency 10000 --nsys /path/to/nsys
-```
-
-`--budget-gib` limits capture to one executed winner. Each attempt retains its
-command, logs, `.nsys-rep` and SQLite export; the budget's `validation.json`
-names the validated attempt's files. Validation requires kernel
-records on every GPU, device metrics, semantic task/transfer NVTX and step ranges
-from every rank. Resume checks identities and hashes before skipping a capture.
-GPU metrics require permission on the allocated node.
-Only GPUs selected through `CUDA_VISIBLE_DEVICES` are sampled. NCCL API tracing
-is enabled when advertised by the installed Nsight version; otherwise collective
-GPU kernels and runtime-transfer ranges remain in the GPU/NVTX trace.
-Worker count comes from the saved Program; optional `--world-size` checks it.
-The saved request's full logical rank mapping is retained. Captures initialize
-the model anew rather than loading the benchmark's final mutable tensors.
-Capture boundaries coordinate over a CPU/Gloo group. The command disables
-Nsight's synchronous flush inside `cudaProfilerStop`; Nsight still flushes at
-collection end. This avoids a documented multi-context profiler-stop hang
-without changing the captured schedule or excluding GPU metrics. Validation
-also requires every requested captured step from every rank.
+Use the service's runtime reporting for training, or
+[Plan measurement](../measure_plan/README.md#nsight) for direct Executor/Nsight
+measurements. Both use the installed execution and capture APIs.
 
 For CPU planning with other memory budgets or communication rates, load a
 `ProfiledProgram`, supply `MemoryBudgets` and `CommunicationInfo`, then call
@@ -210,7 +181,6 @@ bandwidth overrides for detailed PressureFit analysis.
 
 - `collect/`: saved-profile inputs, CPU planning, decision capture and export.
 - `data.py`, `pressure.py`, `explain.py`: replay, memory accounting and cut decisions.
-- `profile_winners/`: saved-Plan Nsight execution and evidence checks.
 - `video/`: every video renderer, command, storyboard, encoder and gallery.
 
 The binary reader lives in `shadowspill.diagnostics.pressurefit_trace`.

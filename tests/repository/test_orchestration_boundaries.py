@@ -27,7 +27,12 @@ def test_repository_clients_have_one_way_dependencies():
         ),
         "tools/measure_plan/api.py": (
             "shadowspill_workloads",
-            "benchmarks.quickstart",
+        ),
+        "tools": (
+            "benchmarks",
+            "shadowspill_workloads.recipes",
+            "shadowspill.training.trainer",
+            "shadowspill.trainer",
         ),
     }
     violations = []

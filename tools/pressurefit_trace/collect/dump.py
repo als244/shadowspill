@@ -6,58 +6,46 @@ from typing import Any
 from shadowspill import CommunicationInfo, MemoryBudgets, ProfiledProgram
 from shadowspill.communication.memory import communication_overhead
 from shadowspill.errors import PlanInfeasibleError
-from tools.pressurefit_trace.artifacts import read
-from tools.pressurefit_trace.planning import orderings
+from shadowspill.step import StepDataOrdering
 
 from .inputs import problem
 from .io import write
 
 
 def dump(args):
-    source = args.input.resolve()
-    request, index = read(source / "request.json"), read(source / "profiled/index.json")
-    programs = {
-        item["name"]: ProfiledProgram.load(source / "profiled" / item["file"])
-        for item in index["candidates"]
-        if "failure" not in item
-    }
-    if not programs:
-        raise ValueError("no successfully profiled candidates")
-    communication = CommunicationInfo.load(
-        request.get("communication_info") or source / "communication.ssp"
-    )
-    physical = max(request["search_budgets"])
-    if args.physical_gib is not None:
-        if not math.isfinite(args.physical_gib) or args.physical_gib <= 0:
-            raise ValueError("physical budget must be positive and finite")
-        physical = int(args.physical_gib * (1 << 30))
+    sources = tuple(path.resolve() for path in args.inputs)
+    if len({path.stem for path in sources}) != len(sources):
+        raise ValueError("ProfiledProgram archives must have distinct filename stems")
+    for name, value in (("physical", args.physical_gib), ("spill", args.spill_gib)):
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} budget must be positive and finite")
+    programs = {path.stem: ProfiledProgram.load(path) for path in sources}
+    communication = CommunicationInfo.load(args.communication)
+    physical = int(args.physical_gib * (1 << 30))
     fixed = max(
         item.fixed_device_bytes + communication_overhead(item.program, communication)[0]
         for item in programs.values()
     )
     if physical <= fixed:
         raise ValueError("budget leaves no execution capacity after recorded overhead")
-    budgets = MemoryBudgets(physical, request["spill_bytes"])
+    budgets = MemoryBudgets(physical, int(args.spill_gib * (1 << 30)))
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     records: list[dict[str, Any]] = []
     failures = []
-    for entry in index["candidates"]:
-        if "failure" in entry:
-            failures.append(entry)
-            continue
-        for ordering in orderings(
-            entry.get("num_examples"), request.get("orderings", "factors")
-        ):
+    for geometry, profiled in programs.items():
+        templates = profiled.program.bindings.get("training_templates")
+        count = None if templates is None else len(templates)
+        for ordering in _orderings(count, args.orderings):
             record = {
-                "geometry": entry["name"],
-                "microbatches": entry.get("num_examples"),
+                "geometry": geometry,
+                "microbatches": count,
                 "ordering": "default" if ordering is None else ordering.label,
-                "profiled_program_digest": programs[entry["name"]].digest,
+                "profiled_program_digest": profiled.digest,
             }
             try:
                 inputs, semantics = problem(
-                    programs[entry["name"]], ordering, budgets, communication, fixed
+                    profiled, ordering, budgets, communication, fixed
                 )
             except PlanInfeasibleError as error:
                 failures.append({**record, "error": str(error), "kind": error.kind})
@@ -74,12 +62,13 @@ def dump(args):
                     "semantics": f"{name}.semantics.json",
                 }
             )
-            print("DUMP", entry["name"], record["ordering"], flush=True)
+            print("DUMP", geometry, record["ordering"], flush=True)
     write(
         output / "dump.json",
         {
             "schema": "pressurefit_collection/v1",
-            "source": str(source),
+            "sources": list(map(str, sources)),
+            "communication": str(args.communication.resolve()),
             "programs": records,
             "infeasible_geometries": failures,
             "physical_budget_bytes": physical,
@@ -90,9 +79,20 @@ def dump(args):
                 + communication_overhead(item.program, communication)[0]
                 for name, item in programs.items()
             },
-            "workload": request.get("label", request["factory"]),
-            "metadata": index.get("metadata", {}),
+            "workload": args.label or ", ".join(programs),
         },
     )
     if not records:
         raise ValueError("no candidate has a supported ordering")
+
+
+def _orderings(count, mode):
+    if count is None:
+        return [None]
+    if mode == "depth-first":
+        return [StepDataOrdering.depth_first(count)]
+    return [
+        StepDataOrdering(depth=depth, breadth=count // depth)
+        for depth in range(1, count + 1)
+        if count % depth == 0
+    ]

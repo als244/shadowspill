@@ -22,7 +22,6 @@ python -m tools.pressurefit_trace.video.batch MATRIX --output runs/videos
 - `encoding.py`: shared encoder process and H.264 settings.
 - `style.py`: shared palette and duration labels.
 - `matrix.py`: prepare cut traces and certified plans for every resolution.
-- `winners/`: prepare video inputs from completed quickstart Plans.
 - `batch.py`: resumable rendering, decode checks and verified publication.
 - `library.py`, `library_html.py`, `library_assets/`: offline catalog and player pages.
 

@@ -11,37 +11,39 @@ import pytest
 from engine_tests.offline._example import communication, profiled
 from tests.tools.planning._profiled import measured
 from tools.pressurefit_trace.__main__ import main
-from tools.pressurefit_trace.artifacts import read, write
 
 
 @pytest.fixture
 def saved_profiles(tmp_path):
-    source = tmp_path / "quickstart"
+    source = tmp_path / "profiles"
     first = measured()
     for name, value in (
         ("first", first),
         ("second", replace(first, fixed_device_bytes=80)),
     ):
-        value.save(source / f"profiled/{name}.ssp")
-    write(
-        source / "profiled/index.json",
-        {
-            "candidates": [
-                {"name": name, "file": f"{name}.ssp"} for name in ("first", "second")
-            ]
-            + [{"name": "failed", "failure": {"type": "DeviceOutOfMemoryError"}}]
-        },
-    )
-    write(
-        source / "request.json",
-        {
-            "factory": "must_not_import:factory",
-            "search_budgets": [4096],
-            "spill_bytes": 4096,
-        },
-    )
+        value.save(source / f"{name}.ssp")
     communication().save(source / "communication.ssp")
     return source
+
+
+def read(path):
+    return json.loads(path.read_text())
+
+
+def dump_command(source, output, physical=4096):
+    return [
+        "dump",
+        str(source / "first.ssp"),
+        str(source / "second.ssp"),
+        "--communication",
+        str(source / "communication.ssp"),
+        "--physical-gib",
+        str(physical / (1 << 30)),
+        "--spill-gib",
+        str(4096 / (1 << 30)),
+        "--output",
+        str(output),
+    ]
 
 
 def test_saved_collection_is_cpu_only_and_preserves_evidence(saved_profiles, tmp_path):
@@ -58,7 +60,7 @@ class Block(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] in {'torch', 'must_not_import'} or any(
             fullname == name or fullname.startswith(name + '.')
             for name in ('shadowspill.build', 'shadowspill.execution',
-                         'benchmarks.quickstart.runner')
+                         'shadowspill.training.preparation')
         ):
             raise AssertionError(fullname)
 sys.meta_path.insert(0, Block())
@@ -67,7 +69,7 @@ for argv in json.loads(sys.argv[1]):
     main(argv)
 """
     commands = [
-        ["dump", str(saved_profiles), "--output", str(output)],
+        dump_command(saved_profiles, output),
         ["plan", str(output), "--output", str(plans), "--workers", "1"],
         ["trace", str(plans), "--output", str(traces), "--programs", "all"],
         ["export", str(traces), "--output", str(exported)],
@@ -89,7 +91,8 @@ for argv in json.loads(sys.argv[1]):
     assert all(path.read_bytes() == value for path, value in original.items())
     capture = read(output / "dump.json")
     assert capture["execution_budget_bytes"] == 4096 - 80
-    assert len(capture["programs"]) == 2 and len(capture["infeasible_geometries"]) == 1
+    assert len(capture["programs"]) == 2
+    assert capture["infeasible_geometries"] == []
     assert capture["fixed_device_bytes_by_candidate"] == {"first": 20, "second": 80}
     semantics = read(output / capture["programs"][0]["semantics"])
     assert semantics["objects"]["weight"]["label"] == "linear.weight"
@@ -100,24 +103,15 @@ for argv in json.loads(sys.argv[1]):
 def test_estimated_memory_is_not_promoted_to_allocation_evidence(
     saved_profiles, tmp_path
 ):
-    profiled().save(saved_profiles / "profiled/first.ssp")
+    profiled().save(saved_profiles / "first.ssp")
     with pytest.raises(SystemExit) as failure:
-        main(["dump", str(saved_profiles), "--output", str(tmp_path / "bad")])
+        main(dump_command(saved_profiles, tmp_path / "bad"))
     assert failure.value.code == 2
 
 
 def test_larger_dump_cap_reuses_profiles(saved_profiles, tmp_path):
     target = tmp_path / "larger"
-    main(
-        [
-            "dump",
-            str(saved_profiles),
-            "--output",
-            str(target),
-            "--physical-gib",
-            str(8192 / (1 << 30)),
-        ]
-    )
+    main(dump_command(saved_profiles, target, physical=8192))
     capture = read(target / "dump.json")
     assert capture["physical_budget_bytes"] == 8192
     assert capture["execution_budget_bytes"] == 8192 - 80

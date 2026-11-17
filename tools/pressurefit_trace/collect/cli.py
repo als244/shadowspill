@@ -12,15 +12,24 @@ from .record import trace
 
 def add_commands(modes):
     dumping = modes.add_parser(
-        "dump", help="Export saved quickstart profiles as diagnostic planner inputs"
+        "dump", help="Export ProfiledProgram archives as diagnostic planner inputs"
     )
-    dumping.add_argument("input", type=Path, help="Completed phase profiling directory")
+    dumping.add_argument(
+        "inputs", type=Path, nargs="+", help="ProfiledProgram archives"
+    )
+    dumping.add_argument("--communication", type=Path, required=True)
     dumping.add_argument("--output", type=Path, required=True)
     dumping.add_argument(
         "--physical-gib",
         type=float,
-        help="Export cap including overhead (default: largest requested budget)",
+        required=True,
+        help="Total device budget including measured overhead",
     )
+    dumping.add_argument("--spill-gib", type=float, required=True)
+    dumping.add_argument(
+        "--orderings", choices=("factors", "depth-first"), default="factors"
+    )
+    dumping.add_argument("--label", help="Workload label for reports and videos")
     dumping.set_defaults(run=dump)
     planning = modes.add_parser(
         "plan", help="Plan every captured program without an accelerator"

@@ -55,20 +55,3 @@ movie for human inspection; successful decoding alone is not a visual review.
 | `batch` | `--emission-timing` | Explain, motion, build, sweep, hold seconds; default `15,12,30,50,8`. |
 | `batch` | `--execution-timing` | The same five durations; default `18,15,30,60,8`. |
 | `batch` | `--cut-options-json` | Extra cut-render CLI settings as a JSON object, for example `'{"explain-seconds":20,"detail-at":"1,50,200"}'`. Defaults to continuous cut playback with no detailed examples. |
-
-## Completed quickstart winners
-
-Read the saved Plans and completed results directly, then render all three views.
-The collector checks that every logical rank completed the same Plan. Execution
-and placement videos use its exact schedule and physical certificate; cut videos
-replay its selected search candidate on CPU. No export hooks or model imports are
-needed. The cut replay must reproduce the saved schedule and timing; a mismatch
-stops the export. `--rank` labels a representative rank of the symmetric program.
-
-```sh
-python -m tools.pressurefit_trace.video.winners RUN/quickstart \
-  --output RUN/winner-videos-inputs --rank 0 --workload 'Example model'
-python -m tools.pressurefit_trace.video.batch RUN/winner-videos-inputs \
-  --output RUN/videos --publish-to '/path/to/Video Library/Example model' \
-  --resolution 4k --quality best --jobs 2
-```
