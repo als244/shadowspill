@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from .._records import Record, record
+from ..config import Resources
 from .requests import ArtifactRef
 from .runs import RunKind, organization
 from .training import ResolvedTraining
@@ -18,6 +19,7 @@ class TrainingCreation(Record):
     name: str | None = None
     labels: Mapping[str, str] = field(default_factory=dict)
     kind: RunKind = "training"
+    resources: Resources | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in ("training", "preparation", "planning"):
@@ -29,6 +31,10 @@ class TrainingCreation(Record):
         object.__setattr__(
             self, "config", record(ResolvedTraining, self.config, "config")
         )
+        if self.resources is not None:
+            object.__setattr__(
+                self, "resources", record(Resources, self.resources, "resources")
+            )
         for name in ("plans", "checkpoint"):
             value = getattr(self, name)
             if value is not None:

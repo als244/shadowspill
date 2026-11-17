@@ -9,12 +9,14 @@ from uuid import uuid4
 
 from ._async import CallFuture
 from ._progress import ProgressDisplay
+from ._records import record
 from .artifacts import ArtifactHandle
 from .checkpoints import CheckpointHandle
+from .config import Resources
 from .protocol.codec import MAX_METADATA_BYTES, decode, digest, encode
 from .protocol.creation import TrainingCreation
 from .protocol.plans import PlanSummaryPage, summary_id
-from .protocol.preview import TrainingPreview
+from .protocol.preview import TrainingDescription
 from .protocol.requests import ArtifactRef, WriterLease, identifier
 from .protocol.runs import RunInfo
 from .protocol.setup import TrainingSetup
@@ -163,6 +165,7 @@ def create_training_client(
     name: str | None = None,
     labels: Mapping[str, str] | None = None,
     progress: bool = False,
+    resources: Resources | None = None,
     **setup: Any,
 ) -> TrainingFuture:
     display = ProgressDisplay(progress)
@@ -174,6 +177,9 @@ def create_training_client(
     from .protocol.runs import organization
 
     frozen_labels = organization(name, {} if labels is None else labels)
+    resource_request = (
+        None if resources is None else record(Resources, resources, "resources")
+    )
     if type(wait_for_resources) is not bool:
         raise TypeError("wait_for_resources must be boolean")
     for value in (plan_ref, checkpoint_ref):
@@ -190,13 +196,13 @@ def create_training_client(
     future = TrainingFuture(service.session_id, uuid4().hex)
 
     def create() -> TrainingClient:
+        selected = resource_request
         if settings is None:
             assert plan_ref is not None and checkpoint_ref is not None
             resolved = _resume_config(service, plan_ref, checkpoint_ref)
         elif isinstance(settings, TrainingSetup):
-            resolved = service._request(
-                "POST", "/v1/training/describe", TrainingPreview, settings
-            ).config
+            preview = service._describe(TrainingDescription.request(settings, selected))
+            resolved, selected = preview.config, preview.resources
         else:
             resolved = settings
         creation = TrainingCreation(
@@ -206,6 +212,7 @@ def create_training_client(
             wait_for_resources=wait_for_resources,
             name=name,
             labels=frozen_labels,
+            resources=selected,
         )
         encode(creation)
         route = f"/v1/runs/{service.session_id}/{future.run_id}"

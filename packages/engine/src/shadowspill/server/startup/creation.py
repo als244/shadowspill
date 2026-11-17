@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 from shadowspill.checkpoint.file_digest import checksum_cache
-from shadowspill.diagnostics.progress import phase
+from shadowspill.diagnostics.progress import event, phase
 from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.admission import (
     NodeLease,
@@ -187,8 +187,19 @@ class LocalCreation:
             )
             ranks = setup.context.parallelism.world_size
             devices = select_devices(
-                factory.node, setup, wait=creation.wait_for_resources
+                factory.node,
+                setup,
+                wait=creation.wait_for_resources,
+                resources=creation.resources,
+                pool=factory.pool,
             )
+            for rank, device_id in enumerate(devices):
+                device = factory.node.devices[device_id]
+                event(
+                    f"Worker {rank}: {factory.node.capacity.node_id}/{device_id}, "
+                    f"{device.name or 'GPU type unknown'}, "
+                    f"{device.capacity_bytes / (1 << 30):.1f} GiB"
+                )
             self._active()
             self._scratch = factory.disk.reserve(
                 limits.preparation_disk_bytes, timeout=0

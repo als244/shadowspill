@@ -15,6 +15,8 @@ choose a training or measurement protocol, or interpret workload configuration.
 | `launch/supervision` | Fresh owned process groups, non-reaping exit observation, bounded logs and orderly/forced shutdown |
 | `launch/connected` | One inherited private control socket per owned child, startup I/O timeout and channel-before-process shutdown |
 | `launch/admission` | Atomic assigned-device and host-memory claims retained through owned child cleanup |
+| `nodes/hardware` | Read already discovered capacity and current claims into an inspectable inventory |
+| `nodes/selection` | Select equivalent assigned devices or honor exact placement constraints, without claiming them |
 | `monitoring/lifecycle` | Append-only host phase journals, including context entry/cleanup and failures |
 | `candidates` | Record a local candidate's device exhaustion after releasing its traceback; other failures propagate |
 | `communication` | Union exact collective requests across compatible caller-selected Programs; measurement remains in the public phase APIs |
@@ -109,8 +111,10 @@ framework/process overhead, spill, initialization, input/output staging and agen
 delivery. Disk is admitted by file/artifact owners and remains reserved until
 file cleanup or storage handoff; stopping workers alone cannot release it. These
 amounts must be computed by the caller, not copied from an untrusted capacity
-claim. Hardware/cgroup discovery and complete training-demand calculation remain
-agent integration work.
+claim. `launch/node_capacity` combines device, host/cgroup and existing Slurm-step
+observations. Training startup separately computes complete worker demand.
+Hardware previews use these observations and current claims; they do not reserve
+resources or infer measured performance.
 
 Impossible requests fail immediately even when waiting is requested. Temporary
 shortages fail by default or wait explicitly, with an optional resource timeout.

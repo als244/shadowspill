@@ -15,6 +15,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Protocol, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from shadowspill.orchestration.nodes.selection import HardwareSelectionError
 from shadowspill.training.session.writers import Attachment
 from shadowspill_client._records import Record, number
 from shadowspill_client.buffers import BufferBudget, BufferLease
@@ -24,8 +25,9 @@ from shadowspill_client.protocol.codec import (
     decode,
     encode,
 )
+from shadowspill_client.protocol.hardware import HardwareInventory
 from shadowspill_client.protocol.payload_io import BufferReader
-from shadowspill_client.protocol.preview import TrainingPreview
+from shadowspill_client.protocol.preview import TrainingDescription, TrainingPreview
 from shadowspill_client.protocol.requests import OperationRequest, identifier
 from shadowspill_client.protocol.results import RequestStatus
 from shadowspill_client.protocol.service import (
@@ -33,8 +35,6 @@ from shadowspill_client.protocol.service import (
     ServiceError,
     ServiceInfo,
 )
-from shadowspill_client.protocol.setup import TrainingSetup
-from shadowspill_client.protocol.training import ResolvedTraining
 
 from .artifacts import ArtifactStore
 from .authentication import BearerTokens
@@ -186,8 +186,8 @@ class HTTPService(ThreadingHTTPServer):
         artifacts: Callable[[str], AbstractContextManager[ArtifactStore]],
         memory: BufferBudget,
         jobs: RunJobs | None = None,
-        describe: Callable[[TrainingSetup | ResolvedTraining], TrainingPreview]
-        | None = None,
+        describe: Callable[[TrainingDescription], TrainingPreview] | None = None,
+        hardware: Callable[[], HardwareInventory] | None = None,
         request_timeout: float = 120,
         tls: ssl.SSLContext | None = None,
     ) -> None:
@@ -198,6 +198,7 @@ class HTTPService(ThreadingHTTPServer):
         # The deployment callback reserves its CPU resolution envelope. HTTP
         # keeps decoded request/response metadata in its existing scratch owner.
         self.describe = describe
+        self.hardware = hardware
         if jobs is not None and jobs.storage.incarnation != self.incarnation:
             raise ValueError("creation registry belongs to another server incarnation")
         if memory.max_bytes < HTTP_SCRATCH_BYTES:
@@ -352,6 +353,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(
                 ServiceError("not_found", "Requested record is unavailable."), 404
             )
+        except HardwareSelectionError as error:
+            self._reply(ServiceError("hardware_selection", str(error)), 400)
         except (ValueError, TypeError):
             self._reply(
                 ServiceError("invalid_request", "Invalid request metadata or body."),
@@ -411,6 +414,11 @@ class _Handler(BaseHTTPRequestHandler):
         if parts == ("v1", "info") and self.command == "GET" and not query:
             self._reply(ServiceInfo(self.server.incarnation, owner))
             return
+        if parts == ("v1", "hardware") and self.command == "GET" and not query:
+            if self.server.hardware is None:
+                raise KeyError("hardware inventory is unavailable")
+            self._reply(self.server.hardware())
+            return
         if parts[:2] == ("v1", "uploads") and not query:
             artifact_routes.uploads(self, owner, parts[2:], body)
             return
@@ -424,8 +432,10 @@ class _Handler(BaseHTTPRequestHandler):
             if self.headers.get("Content-Type") != CONTROL_MEDIA_TYPE:
                 raise ProtocolError("setup has no control media type")
             settings = body.record()
-            if not isinstance(settings, (TrainingSetup, ResolvedTraining)):
-                raise ProtocolError("inspection requires setup or resolved settings")
+            if not isinstance(settings, TrainingDescription):
+                raise ProtocolError(
+                    "inspection requires a training description request"
+                )
             self._reply(self.server.describe(settings))
             return
         if (

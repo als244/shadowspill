@@ -17,6 +17,7 @@ from ..config import (
     Objective,
     Optimizer,
     Preparation,
+    Resources,
 )
 from .captures import NsightManifest
 from .checkpoints import CheckpointManifest, WeightsManifest
@@ -24,11 +25,12 @@ from .controls import ControlSchema
 from .creation import TrainingCreation
 from .definitions import DefinitionSource, OutputSet
 from .frozen import FrozenBase
+from .hardware import HardwareInventory
 from .inputs import InputSchema
 from .metrics import MetricAnnotation, MetricPage, MetricRecord, MetricSnapshot
 from .plans import PlanReportDocument, PlanReportRequest, PlanSummaryPage, SavedPlans
 from .preparation import ResolvedPreparation
-from .preview import TrainingPreview
+from .preview import TrainingDescription, TrainingPreview
 from .progress import ProgressPage, ProgressRequest
 from .reports import ReportDocument, ReportSettings
 from .requests import OperationRequest, WriterLease
@@ -56,6 +58,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "config.memory": Memory,
     "config.execution": Execution,
     "config.preparation": Preparation,
+    "config.resources": Resources,
     "config.resolved_preparation": ResolvedPreparation,
     "config.resolved_training": ResolvedTraining,
     "schema.inputs": InputSchema,
@@ -70,6 +73,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "request.failure": Failure,
     "request.status": RequestStatus,
     "service.info": ServiceInfo,
+    "service.hardware": HardwareInventory,
     "service.error": ServiceError,
     "run.info": RunInfo,
     "run.page": RunPage,
@@ -78,6 +82,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "training.creation": TrainingCreation,
     "training.setup": TrainingSetup,
     "training.preview": TrainingPreview,
+    "training.description": TrainingDescription,
     "plans.summary": PlanSummaryPage,
     "plans.saved": SavedPlans,
     "plans.report": PlanReportRequest,

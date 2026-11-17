@@ -10,7 +10,7 @@ from time import monotonic
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Self
 
-from shadowspill_client._records import integer, number
+from shadowspill_client._records import integer, number, text
 from shadowspill_client.buffers import BufferLease
 from shadowspill_client.protocol.requests import identifier
 
@@ -26,11 +26,14 @@ class AssignedDevice:
     id: str
     visibility: str
     capacity_bytes: int
+    name: str | None = None
 
     def __post_init__(self) -> None:
         identifier(self.id, "assigned device ID")
         identifier(self.visibility, "assigned device visibility")
         integer(self.capacity_bytes, "assigned device capacity", minimum=1)
+        if self.name is not None and len(text(self.name, "device name")) > 256:
+            raise ValueError("device name exceeds its bound")
 
 
 @dataclass(frozen=True)
@@ -46,10 +49,16 @@ class NodeCapacity:
     node_id: str
     devices: Sequence[AssignedDevice]
     host_bytes: int
+    cpu_count: int | None = None
+    driver: str | None = None
 
     def __post_init__(self) -> None:
         identifier(self.node_id, "assigned node ID")
         integer(self.host_bytes, "assigned host capacity")
+        if self.cpu_count is not None:
+            integer(self.cpu_count, "assigned CPUs", minimum=1)
+        if self.driver is not None and len(text(self.driver, "device driver")) > 256:
+            raise ValueError("device driver exceeds its bound")
         if (
             not isinstance(self.devices, (tuple, list))
             or len(self.devices) > 65536

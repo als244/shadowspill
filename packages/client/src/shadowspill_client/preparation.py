@@ -9,12 +9,13 @@ from uuid import uuid4
 
 from ._async import CallFuture
 from ._progress import ProgressDisplay
-from ._records import Value, mapping
+from ._records import Value, mapping, record
 from .artifacts import ArtifactHandle
+from .config import Resources
 from .creation import CreationError, _info
 from .plans import PlansHandle
 from .protocol.creation import TrainingCreation
-from .protocol.preview import TrainingPreview
+from .protocol.preview import TrainingDescription
 from .protocol.requests import identifier
 from .protocol.runs import RunInfo, RunKind, organization
 from .protocol.setup import TrainingSetup
@@ -102,28 +103,32 @@ def _submit[T](
     name: str | None,
     labels: Mapping[str, str] | None,
     progress: bool,
+    resources: Resources | None,
     setup: dict[str, Any],
 ) -> _JobFuture[T]:
     display = ProgressDisplay(progress)
     settings = service._setup(config, setup)
     frozen_labels = organization(name, {} if labels is None else labels)
+    resource_request = (
+        None if resources is None else record(Resources, resources, "resources")
+    )
     if type(wait_for_resources) is not bool:
         raise TypeError("wait_for_resources must be boolean")
 
     def create() -> T:
-        resolved = (
-            service._request(
-                "POST", "/v1/training/describe", TrainingPreview, settings
-            ).config
-            if isinstance(settings, TrainingSetup)
-            else settings
-        )
+        selected = resource_request
+        if isinstance(settings, TrainingSetup):
+            preview = service._describe(TrainingDescription.request(settings, selected))
+            resolved, selected = preview.config, preview.resources
+        else:
+            resolved = settings
         creation = TrainingCreation(
             resolved,
             wait_for_resources=wait_for_resources,
             name=name,
             labels=frozen_labels,
             kind=kind,
+            resources=selected,
         )
         _info(
             service,
@@ -146,6 +151,7 @@ def prepare_training(
     name: str | None = None,
     labels: Mapping[str, str] | None = None,
     progress: bool = False,
+    resources: Resources | None = None,
     **setup: Any,
 ) -> PreparationFuture:
     future = PreparationFuture(service.session_id, uuid4().hex)
@@ -159,6 +165,7 @@ def prepare_training(
         name=name,
         labels=labels,
         progress=progress,
+        resources=resources,
         setup=setup,
     )
     return future
@@ -177,6 +184,7 @@ def plan_training(
     name: str | None = None,
     labels: Mapping[str, str] | None = None,
     progress: bool = False,
+    resources: Resources | None = None,
     **setup: Any,
 ) -> PlanningFuture:
     """Build/profile/plan without loading training state or persistent workers."""
@@ -191,6 +199,7 @@ def plan_training(
         name=name,
         labels=labels,
         progress=progress,
+        resources=resources,
         setup=setup,
     )
     return future

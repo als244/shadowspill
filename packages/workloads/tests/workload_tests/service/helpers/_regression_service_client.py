@@ -23,6 +23,7 @@ from shadowspill_client import (
     PlanningOptions,
     Preparation,
     ProfilingOptions,
+    Resources,
     ServiceClient,
     Weights,
 )
@@ -196,7 +197,11 @@ def closed(client, training):
 
 def qualify(client, initial, dtype, memory, master_dtype=None, *, plan_first=False):
     # Setup is separate from the loop; describe never constructs a model/worker.
+    inventory = client.list_hardware().result(30)
+    selected_node = inventory.nodes[0]
+    resources = Resources(node=selected_node.id, devices=[0])
     preview = client.describe_training(
+        resources=resources,
         model=Model("regression", initialize=Weights.random(seed=0)),
         objective=Objective("weighted_squared_error"),
         optimizer=Optimizer(
@@ -222,18 +227,27 @@ def qualify(client, initial, dtype, memory, master_dtype=None, *, plan_first=Fal
             ),
         ),
     ).result(30)
+    assert preview.hardware[0].device.id == selected_node.devices[0].id
+    assert preview.hardware[0].device.gpu_type
+    assert preview.resources.devices == (selected_node.devices[0].id,)
+    assert client.list_hardware().result(30) == inventory
     planned = None
     reports = {}
     if plan_first:
-        planned = client.plan_training(config=preview.config).result(240)
+        planned = client.plan_training(
+            config=preview.config,
+            resources=preview.resources,
+        ).result(240)
+        assert client.list_hardware().result(30) == inventory
         with TemporaryDirectory(prefix="shadowspill-plan-report-") as directory:
             report = planned.report().result(30)
             path = report.download(Path(directory) / "plan.html").result(30)
             assert '<script id="data"' in path.read_text()
             reports["predicted"] = report.reference.to_dict()
     training = client.create_training_client(
-        config=preview.config, plans=planned
+        config=preview.config, resources=preview.resources, plans=planned
     ).result(240)
+    assert not client.list_hardware().result(30).nodes[0].devices[0].available
     plans, observations = training.plans, []
     initial_checkpoint = training.save_checkpoint(name="initial").result(120)
     first = None
@@ -327,6 +341,7 @@ def qualify(client, initial, dtype, memory, master_dtype=None, *, plan_first=Fal
         np.testing.assert_allclose(actual[name], final[name], rtol=2e-5, atol=1e-6)
     observations.append(result.record.to_dict())
     closed(client, resumed)
+    assert client.list_hardware().result(30) == inventory
     return {
         "runs": [training.run_id, resumed.run_id],
         "observations": observations,
@@ -339,6 +354,8 @@ def qualify(client, initial, dtype, memory, master_dtype=None, *, plan_first=Fal
         "all_masked_rejected_before_submission": True,
         "plan_before_initialization": plan_first,
         "reports": reports,
+        "hardware_inventory": inventory.to_dict(),
+        "hardware_selection": preview.resources.to_dict(),
     }
 
 

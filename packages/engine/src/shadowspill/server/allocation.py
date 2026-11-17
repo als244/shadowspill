@@ -10,6 +10,7 @@ from types import MappingProxyType
 
 from shadowspill.orchestration.launch.admission import NodeAdmission
 from shadowspill.orchestration.launch.node_capacity import discover_capacity
+from shadowspill_client._records import text
 
 
 @dataclass(frozen=True)
@@ -22,8 +23,11 @@ class Allocation:
     """
 
     environment: Mapping[str, str] = field(repr=False)
+    pool: str = "default"
 
     def __post_init__(self) -> None:
+        if len(text(self.pool, "compute pool")) > 256:
+            raise ValueError("compute pool exceeds its size bound")
         if not isinstance(self.environment, Mapping) or any(
             not isinstance(key, str) or not isinstance(value, str)
             for key, value in self.environment.items()
@@ -34,8 +38,8 @@ class Allocation:
         object.__setattr__(self, "environment", MappingProxyType(environment))
 
     @classmethod
-    def from_environment(cls) -> Allocation:
-        return cls(os.environ)
+    def from_environment(cls, *, pool: str = "default") -> Allocation:
+        return cls(os.environ, pool)
 
     def _local_node(self, root: Path, *, controller_host_bytes: int) -> NodeAdmission:
         # Refuse an incomplete deployment before probing or starting workers.

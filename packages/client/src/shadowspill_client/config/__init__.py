@@ -13,6 +13,7 @@ from .preparation import (
     Preparation,
     ProfilingOptions,
 )
+from .resources import Resources
 
 __all__ = [
     "BatchConfig",
@@ -30,5 +31,6 @@ __all__ = [
     "Policy",
     "Preparation",
     "ProfilingOptions",
+    "Resources",
     "Weights",
 ]

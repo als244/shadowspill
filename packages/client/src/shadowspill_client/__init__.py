@@ -19,6 +19,7 @@ from .config import (
     Policy,
     Preparation,
     ProfilingOptions,
+    Resources,
     Weights,
 )
 from .datum import Datum
@@ -47,6 +48,7 @@ __all__ = [
     "Policy",
     "Preparation",
     "ProfilingOptions",
+    "Resources",
     "ServiceClient",
     "TrainingClient",
     "Weights",

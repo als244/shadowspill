@@ -74,6 +74,7 @@ def assigned_capacity(
         )
     step = _step(environment, node_id)
     ceiling = memory.capacity_bytes
+    cpus = len(os.sched_getaffinity(0))
     if step is None:
         if job is not None:
             raise ValueError("Slurm allocation facts require an assigned local step")
@@ -88,6 +89,7 @@ def assigned_capacity(
         if len(devices.devices) != step[1]:
             raise ValueError("CUDA-visible devices differ from the assigned step count")
         ceiling = min(ceiling, job.nodes[node_id].memory_bytes)
+        cpus = min(cpus, job.nodes[node_id].cpus)
     if reserved_host_bytes > ceiling:
         raise ValueError("fixed node host reservation cannot fit the allocation")
     available = min(ceiling, memory.available_bytes)
@@ -98,10 +100,12 @@ def assigned_capacity(
     return NodeCapacity(
         node_id,
         tuple(
-            AssignedDevice(device.uuid, device.uuid, device.total_bytes)
+            AssignedDevice(device.uuid, device.uuid, device.total_bytes, device.name)
             for device in devices.devices
         ),
         available - reserved_host_bytes,
+        cpus,
+        devices.driver,
     )
 
 

@@ -99,6 +99,7 @@ packages/engine/src/shadowspill/
 │   └── observations/      optional bounded runtime norm collection
 ├── orchestration/         installed process launch, capture and phase diagnostics
 │   ├── launch/            process commands, rank/device isolation and host groups
+│   ├── nodes/             assigned hardware inventory and compatible device selection
 │   ├── capture/           external profiler launch and runtime capture boundaries
 │   └── monitoring/        worker phase journals
 ├── checkpoint/            streamed checkpoint format over Executor tensor access

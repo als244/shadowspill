@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -13,17 +13,18 @@ from shadowspill.orchestration.capture.files import CollectorLimits
 from shadowspill.orchestration.launch.admission import (
     NodeAdmission,
 )
+from shadowspill.orchestration.nodes.hardware import node_hardware
+from shadowspill.orchestration.nodes.selection import select_hardware
 from shadowspill.server.startup.model_sources import local_model_source
 from shadowspill.server.storage import ServiceStorage
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.worker.resources import WorkerHost
-from shadowspill_client._records import integer, names
+from shadowspill_client._records import integer, names, text
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.preview import TrainingPreview
+from shadowspill_client.protocol.hardware import HardwareInventory
+from shadowspill_client.protocol.preview import TrainingDescription, TrainingPreview
 from shadowspill_client.protocol.runs import RunInfo
-from shadowspill_client.protocol.setup import TrainingSetup
-from shadowspill_client.protocol.training import ResolvedTraining
 
 if TYPE_CHECKING:
     from .creation import LocalCreation
@@ -86,8 +87,10 @@ class LocalCreationFactory:
         disk: BufferBudget,
         base_host_bytes: int,
         model_root: Path | None = None,
+        pool: str = "default",
     ) -> None:
         self.storage, self.node = storage, node
+        self.pool = text(pool, "compute pool")
         self.packages = names(packages, "definition packages")
         self.root, self.cache = root, cache
         self.model_root = model_root
@@ -104,10 +107,25 @@ class LocalCreationFactory:
 
         return LocalCreation(self, info)
 
-    def describe(self, settings: TrainingSetup | ResolvedTraining) -> TrainingPreview:
+    def inventory(self) -> HardwareInventory:
+        return HardwareInventory((node_hardware(self.node, pool=self.pool),))
+
+    def describe(self, request: TrainingDescription) -> TrainingPreview:
         """Use the same CPU resolver; the caller owns the control-memory envelope."""
         with checksum_cache(self.cache / "source-digests"):
-            return resolve_training(
+            settings = request.config if request.config is not None else request.setup
+            assert settings is not None
+            setup = resolve_training(
                 load_registry(self.packages),
                 local_model_source(settings, self.model_root),
-            ).preview()
+            )
+        selection = select_hardware(
+            self.inventory(),
+            ranks=setup.context.parallelism.world_size,
+            device_bytes=int(setup.config.memory.device_gib * (1 << 30)),
+            resources=request.resources,
+            wait=True,
+        )
+        return replace(
+            setup.preview(), resources=selection.resources, hardware=selection.workers
+        )

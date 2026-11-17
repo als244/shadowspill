@@ -44,6 +44,8 @@ def test_local_capacity_keeps_visible_uuid_and_all_host_allowances():
     assert capacity.host_bytes == 550  # cgroup availability 600, less fixed 50.
     assert capacity.devices[0].id == capacity.devices[0].visibility == UUID
     assert capacity.devices[0].capacity_bytes == 100  # Not the free-memory snapshot.
+    assert capacity.devices[0].name == "assigned" and capacity.driver == "driver"
+    assert capacity.cpu_count == len(os.sched_getaffinity(0))
 
 
 def test_slurm_memory_cpu_and_global_gpu_indices_do_not_replace_local_facts():
@@ -57,6 +59,7 @@ def test_slurm_memory_cpu_and_global_gpu_indices_do_not_replace_local_facts():
     )
     assert capacity.host_bytes == 450  # Actual scheduler allocation 500, not 6 * 100.
     assert capacity.devices[0].visibility == UUID
+    assert capacity.cpu_count == min(6, len(os.sched_getaffinity(0)))
     low = HostMemory(1000, 800, (MemoryLimit("job/step", 400, 100),))
     assert (
         assigned_capacity(

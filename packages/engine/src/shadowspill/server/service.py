@@ -17,9 +17,7 @@ from shadowspill.server.startup.configuration import LocalCreationFactory
 from shadowspill.training.definitions import load_registry
 from shadowspill_client._records import names
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.preview import TrainingPreview
-from shadowspill_client.protocol.setup import TrainingSetup
-from shadowspill_client.protocol.training import ResolvedTraining
+from shadowspill_client.protocol.preview import TrainingDescription, TrainingPreview
 
 from .allocation import Allocation
 from .authentication import BearerTokens
@@ -167,6 +165,7 @@ class Server:
             disk=self._disk,
             base_host_bytes=limits.fixed_host_bytes,
             model_root=self.model_root,
+            pool=self.allocation.pool,
         )
         self._jobs = RunJobs(
             self._storage,
@@ -177,7 +176,7 @@ class Server:
         )
         self._jobs.start()
 
-        def describe(settings: TrainingSetup | ResolvedTraining) -> TrainingPreview:
+        def describe(settings: TrainingDescription) -> TrainingPreview:
             with preview_memory.reserve(limits.job_host_bytes, timeout=0):
                 return factory.describe(settings)
 
@@ -189,6 +188,7 @@ class Server:
             artifacts=self._storage.artifacts,
             jobs=self._jobs,
             describe=describe,
+            hardware=factory.inventory,
             memory=http_memory,
             request_timeout=limits.request_timeout,
             tls=tls,

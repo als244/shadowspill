@@ -15,6 +15,7 @@ from .artifacts import ArtifactHandle, ArtifactTransfers
 from .buffers import BufferBudget
 from .captures import NsightCapture, get_nsys
 from .checkpoints import CheckpointHandle
+from .config import Resources
 from .creation import TrainingFuture, create_training_client, get_training_client
 from .downloads import CHECKPOINT_SCRATCH_BYTES, FILE_SCRATCH_BYTES
 from .metrics import MetricQueries
@@ -29,8 +30,9 @@ from .preparation import (
 )
 from .protocol.checkpoints import CHECKPOINT_MEDIA_TYPE, WEIGHTS_MEDIA_TYPE
 from .protocol.codec import ProtocolError, encode
+from .protocol.hardware import HardwareInventory
 from .protocol.metrics import MetricPage
-from .protocol.preview import TrainingPreview
+from .protocol.preview import TrainingDescription, TrainingPreview
 from .protocol.requests import ArtifactRef, identifier
 from .protocol.service import ServiceInfo
 from .protocol.setup import TrainingSetup
@@ -127,15 +129,25 @@ class ServiceClient:
         encode(settings)
         return settings
 
-    def describe_training(
-        self, *, config: ResolvedTraining | None = None, **setup: Any
-    ) -> CallFuture[TrainingPreview]:
-        settings = self._setup(config, setup)
+    def list_hardware(self) -> CallFuture[HardwareInventory]:
+        """Inspect assigned hardware and service claims without reserving devices."""
         return self._work.submit(
-            lambda: self._request(
-                "POST", "/v1/training/describe", TrainingPreview, settings
-            )
+            lambda: self._request("GET", "/v1/hardware", HardwareInventory)
         )
+
+    def _describe(self, request: TrainingDescription) -> TrainingPreview:
+        return self._request("POST", "/v1/training/describe", TrainingPreview, request)
+
+    def describe_training(
+        self,
+        *,
+        config: ResolvedTraining | None = None,
+        resources: Resources | None = None,
+        **setup: Any,
+    ) -> CallFuture[TrainingPreview]:
+        request = TrainingDescription.request(self._setup(config, setup), resources)
+        encode(request)
+        return self._work.submit(lambda: self._describe(request))
 
     def artifact(self, reference: ArtifactRef) -> ArtifactHandle:
         if not isinstance(reference, ArtifactRef):

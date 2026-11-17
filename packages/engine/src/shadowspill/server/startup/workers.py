@@ -7,8 +7,9 @@ from uuid import uuid4
 from shadowspill.diagnostics.progress import phase
 from shadowspill.orchestration.launch.admission import (
     NodeAdmission,
-    ResourcesUnavailable,
 )
+from shadowspill.orchestration.nodes.hardware import node_hardware
+from shadowspill.orchestration.nodes.selection import select_hardware
 from shadowspill.server.records.requests import RunIdentity
 from shadowspill.server.startup.weights import ResolvedWeights
 from shadowspill.training.preparation.planning.records import PreparedPlans
@@ -17,28 +18,28 @@ from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.worker.checkpoint_records import RankRestore, RankWeights
 from shadowspill.training.worker.protocol import WorkerScope
 from shadowspill.training.worker.runtime import PreparedWorker
+from shadowspill_client import Resources
+from shadowspill_client.protocol.hardware import HardwareInventory
 from shadowspill_client.protocol.requests import ArtifactRef
 
 
 def select_devices(
-    node: NodeAdmission, setup: ResolvedSetup, *, wait: bool
+    node: NodeAdmission,
+    setup: ResolvedSetup,
+    *,
+    wait: bool,
+    resources: Resources | None = None,
+    pool: str = "default",
 ) -> tuple[str, ...]:
     """Choose compatible assigned devices before acquiring any phase owner."""
-    ranks = setup.context.parallelism.world_size
-    needed = int(setup.config.memory.device_gib * (1 << 30))
-    if needed < 1:
-        raise ValueError("worker device budget must contain at least one byte")
-    compatible = [
-        device for device in node.capacity.devices if device.capacity_bytes >= needed
-    ]
-    if len(compatible) < ranks:
-        raise ValueError("requested worker count/budget cannot fit this assigned node")
-    occupied = node.used.devices
-    compatible.sort(key=lambda device: (device.id in occupied, device.id))
-    devices = tuple(device.id for device in compatible[:ranks])
-    if not wait and occupied.intersection(devices):
-        raise ResourcesUnavailable("compatible assigned workers have live owners")
-    return devices
+    selection = select_hardware(
+        HardwareInventory((node_hardware(node, pool=pool),)),
+        ranks=setup.context.parallelism.world_size,
+        device_bytes=int(setup.config.memory.device_gib * (1 << 30)),
+        resources=resources,
+        wait=wait,
+    )
+    return tuple(worker.device.id for worker in selection.workers)
 
 
 def resolve_workers(

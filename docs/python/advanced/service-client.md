@@ -2,6 +2,8 @@
 
 Start with [basic training](../../examples/client-training.md). This reference covers
 setup controls, saved Plans, recovery, artifact transfers and diagnostics.
+Hardware inventory, optional resource selection and planning before initialization
+are covered in [Compute resources](compute-resources.md).
 
 ## Contents
 
@@ -89,7 +91,10 @@ preview = service.describe_training(
 ).result()
 print(preview.summary())
 
-training = service.create_training_client(config=preview.config).result()
+training = service.create_training_client(
+    config=preview.config,
+    resources=preview.resources,
+).result()
 pending = training.step(global_batch, optim={"lr": 0.001})
 request_id = pending.request_id
 pending.accepted().result()  # Server acceptance, beyond the client input copy.

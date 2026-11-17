@@ -20,10 +20,13 @@ with ServiceClient(
     token=options["token"],
     timeout=10,
 ) as client:
+    inventory = client.list_hardware().result(20)
+    assert inventory.nodes and "inspection reserves no hardware" in inventory.summary()
     preview = client.describe_training(**options["setup"]).result(20)
     assert preview.config.model.initialize is None
     assert preview.config.optimizer.defaults == {"lr": 0.01}
     assert client.describe_training(config=preview.config).result(20) == preview
+    assert preview.hardware and preview.resources is not None
     assert "no measured timings or resource reservation" in preview.summary()
 assert client._memory.used == client._work.pending.used == (0, 0)
 assert client._tunnel.closed
@@ -33,6 +36,7 @@ print(
             "client_host": socket.gethostname(),
             "public_service_client": True,
             "preview_roundtrip": True,
+            "hardware_inventory": inventory.to_dict(),
             "absent": absent,
             "estimates": [item.to_dict() for item in preview.preparation],
             "client_resources_released": True,

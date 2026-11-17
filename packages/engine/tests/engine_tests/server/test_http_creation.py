@@ -16,6 +16,7 @@ from shadowspill.server.http import HTTP_SCRATCH_BYTES, HTTPService
 from shadowspill.server.records.requests import RunIdentity
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.creation import TrainingCreation
+from shadowspill_client.protocol.preview import TrainingDescription
 from shadowspill_client.protocol.requests import OperationRequest, RequestIdentity
 from shadowspill_client.protocol.service import ServiceError
 from shadowspill_client.protocol.setup import TrainingSetup
@@ -40,6 +41,7 @@ def endpoint(ctx):
         artifacts=ctx.service.artifacts,
         jobs=ctx.jobs,
         describe=describe,
+        hardware=ctx.factory.inventory,
         memory=memory,
         request_timeout=5,
     )
@@ -222,12 +224,19 @@ def test_http_setup_inspection_is_framework_free_and_creates_no_worker_or_record
         values["model"] = replace(values["model"], initialize=None)
         before = ctx.node.used
         preview = client.request(
-            "POST", "/v1/training/describe", TrainingSetup(**values)
+            "POST",
+            "/v1/training/describe",
+            TrainingDescription(setup=TrainingSetup(**values)),
         ).value
         config = preview.config
         assert config.model.initialize is None
         assert config.objective.defaults == {"temperature": 1.0}
-        assert client.request("POST", "/v1/training/describe", config).value == preview
+        assert (
+            client.request(
+                "POST", "/v1/training/describe", TrainingDescription(config=config)
+            ).value
+            == preview
+        )
         assert ctx.node.used == before and ctx.job_memory.used == (0, 0)
         assert ctx.jobs.used == (0, 0) and not ctx.owners and not ctx.phases
         assert ctx.service.catalog.page("owner", "session") == ()
@@ -238,5 +247,7 @@ def test_http_setup_inspection_is_framework_free_and_creates_no_worker_or_record
         assert bad.value.status == 400
         with ctx.job_memory.reserve(ctx.jobs.host_bytes, timeout=0):
             with pytest.raises(RemoteError) as busy:
-                client.request("POST", "/v1/training/describe", config)
+                client.request(
+                    "POST", "/v1/training/describe", TrainingDescription(config=config)
+                )
             assert busy.value.status == 429
