@@ -337,8 +337,8 @@ Programs with model-owned collective resources and heterogeneous task forms are
 outside this measurement's current scope. Host-copy interference is not inferred.
 No sharded collective transfers means an empty overlay requiring no GPU work.
 
-The normal distributed quickstart and homogeneous text recipes perform this
-enrichment during `communicate`, save `overlap/*.ssp`, and update their saved
+The distributed quickstart and service preparation perform this enrichment
+during communication measurement and retain the overlap evidence in saved
 Profiles/ProfiledProgram before CPU planning. A caller-supplied quickstart
 CommunicationInfo retains the existing no-GPU shortcut: supply compatible
 overlap profiles separately if needed.

@@ -1,10 +1,10 @@
 # Installed process orchestration
 
-Training recipes, benchmarks and developer tools share this small package for
+The training service, benchmarks and developer tools share this package for
 process infrastructure and communication-request composition. It is installed as
 `shadowspill.orchestration` in the engine wheel. It does not select
 a model, construct a search space,
-choose a training or measurement protocol, or interpret a saved recipe directory.
+choose a training or measurement protocol, or interpret workload configuration.
 
 | Module | Responsibility |
 | --- | --- |
@@ -21,13 +21,13 @@ choose a training or measurement protocol, or interpret a saved recipe directory
 | `capture/nsys` | CPU-only Nsight command configuration and runtime capture boundaries |
 | `capture/nsys_worker` | Pre-CUDA per-rank GPU masking, collector launch and report validation; global rank paths support external multi-node launchers |
 
-These modules import no model, recipe, benchmark or qualification implementation.
+These modules import no model, benchmark or qualification implementation.
 Imports are CPU-only; `launch/workers` imports PyTorch when a distributed group is
 entered, and candidate recovery imports it when an operation is attempted.
 Communication request composition imports the engine only when called and
 consumes Programs one at a time. It requires the same build setup and declared
 parallelism, preserving collective sizes, dtypes, ordered ranks and aliasing.
-Recipes and quickstart measure this union once per phase invocation; each
+Service preparation and quickstart measure this union once per phase invocation; each
 candidate still receives its own task/communication overlap measurement. This
 does not reuse calibration across machines or separate phase invocations.
 `capture/_nsys_runtime.UpdateCapture` controls cudaProfilerApi boundaries and rank barriers.
@@ -50,15 +50,15 @@ planning and execution remain in ShadowSpill's phase APIs. A collective
 candidate failure must end its worker group; local OOM recovery is for
 independent single-worker attempts only.
 
-The clients keep their own policies:
+Callers keep their own policies:
 
-- `packages/workloads/src/shadowspill_workloads/recipes` owns workload selection, data, initialization and saved
-  recipe configuration, and composes the public training phases.
+- `shadowspill.training.preparation` composes the public build/profile/plan phases
+  from registered workload definitions. The service owns subsequent execution;
+  model, input, objective and initialization hooks stay with their definitions.
 - `benchmarks/quickstart` owns its candidate factory and budget sweep protocol.
 - `benchmarks/plan_runner` owns saved-Plan benchmarking, warmup exclusion,
-  per-rank timing aggregation, GPU sampling and offline reports. Its `recipe`
-  module is an explicit consumer of saved workload recipes; its generic `run`
-  API accepts caller hooks and has no recipe dependency.
+  per-rank timing aggregation, GPU sampling and offline reports. Its generic
+  `run` API accepts initialization and input hooks.
 
 This package imports no repository client or model catalog. Repository tests
 enforce those dependency boundaries, including CPU-only import checks.

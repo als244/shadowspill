@@ -13,8 +13,8 @@ shadowspill/
 │   ├── csrc/             native planner, runtime, backends and adapter
 │   ├── CMakeLists.txt    native build entry point
 │   └── pyproject.toml    engine metadata and dependencies
-├── packages/workloads/    installable optional model catalog and recipes
-├── examples/              training programs and application configs
+├── packages/workloads/    optional models, objectives and registered setup hooks
+├── examples/              public-client demos and training applications
 ├── benchmarks/            measurements, saved-Plan runners and external baselines
 ├── tools/                 trace analysis, source checks and corpus applications
 ├── tests/                 repository and cross-package checks
