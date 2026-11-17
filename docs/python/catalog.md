@@ -15,6 +15,8 @@ These architectures are supplied by `shadowspill-workloads`:
 | `qwen3moe` | Qwen3 mixture-of-experts text decoder. | `tiny`, `30b-a3b` |
 | `qwen35moe` | Qwen3.5 mixture-of-experts text decoder with hybrid attention. | `tiny`, `35b-a3b` |
 | `olmoe` | OLMoE mixture-of-experts decoder. | `tiny`, `7b-a1b` |
+| `glm53` | GLM-5.3 text decoder with sparse attention. | `tiny`, `published` |
+| `glm53_flash` | GLM-5.3-Flash text decoder with hybrid attention. | `tiny`, `published` |
 | `regression` | Small feed-forward model used in the [split-update example](advanced/training-workflow.md). | — |
 
 For a text model, choose a preset and override architecture settings as needed:
