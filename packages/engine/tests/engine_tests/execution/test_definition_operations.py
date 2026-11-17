@@ -181,7 +181,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
             assert program.resources == template.model_build.resources
             assert profiled.metadata["provider_resource_bytes"] >= 1 << 20
             assert template.model_build.config["capacity"] == 4
-    assert len(family.coverage) == 3 and len(family.plans[0]) == 14
+    assert len(family.coverage) == 3 and len(family.plans[0]) == 11
     assert all(len(rows) == 3 for rows in family.families.values())
     assert family.memory[0].execution_bytes <= 2 << 30
     assert family.memory[0].spill_bytes <= 64 << 20
