@@ -60,8 +60,20 @@ def test_absent_provider_and_single_extension_have_distinct_sources(
         source._provider_digest.cache_clear()
 
 
-def test_shared_training_options_changes_invalidate_every_using_model(monkeypatch):
-    names = ("llama3", "qwen3moe", "qwen35moe", "olmoe", "regression")
+@pytest.mark.parametrize(
+    "shared",
+    ["definitions/training_options.py", "definitions/decoder/configuration.py"],
+)
+def test_shared_training_changes_invalidate_every_using_model(monkeypatch, shared):
+    names = (
+        "llama3",
+        "qwen3",
+        "qwen35",
+        "qwen3moe",
+        "qwen35moe",
+        "olmoe",
+        "regression",
+    )
     original = load_registry(["shadowspill-workloads"])
     saved = {
         name: original.resolve_model(f"shadowspill/{name}@1").source for name in names
@@ -70,7 +82,7 @@ def test_shared_training_options_changes_invalidate_every_using_model(monkeypatc
 
     def changed(digest, name, path):
         add(digest, name, path)
-        if name == "definitions/training_options.py":
+        if name == shared:
             digest.update(b"changed shared implementation")
 
     monkeypatch.setattr(source, "_add", changed)

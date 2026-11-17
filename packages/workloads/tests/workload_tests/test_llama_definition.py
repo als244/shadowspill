@@ -414,7 +414,7 @@ def test_training_logprobs_use_declared_flat_alignment_after_model_input_views()
     ],
 )
 def test_invalid_structural_settings_fail_on_cpu(config):
-    from shadowspill_workloads.models.llama3.training.configuration import Settings
+    from shadowspill_workloads.models.llama3.training import Settings
 
     with pytest.raises(ValueError):
         Settings(**config)

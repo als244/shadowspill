@@ -1,4 +1,4 @@
-"""Packed dense and MoE Qwen families through the public extension API."""
+"""Shared registration for packed decoder families using the extension API."""
 
 from functools import partial
 
@@ -12,7 +12,7 @@ from ..source import definition_source
 from . import configuration
 
 
-def register(registry, settings):
+def register(registry, settings, *, create=configuration.create):
     family = settings.family
     preset = f"shadowspill/{family}_packed@1"
     source = definition_source(
@@ -71,13 +71,13 @@ def register(registry, settings):
         ModelDefinition(
             f"shadowspill/{family}@1",
             settings,
-            configuration.create,
+            create,
             inputs.schema,
             capabilities=("target_logprobs",)
             + (("router_statistics",) if settings.moe else ()),
             input_adapter=inputs.adapter,
             preparation=preset,
-            configure=partial(training_options.configure, label="Qwen"),
+            configure=partial(training_options.configure, label=family),
             build=configuration.build,
             capture_context=training_options.capture_context,
             gradient_destination_rules=gradient_destination_rules

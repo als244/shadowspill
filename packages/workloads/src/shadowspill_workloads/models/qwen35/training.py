@@ -1,14 +1,14 @@
-"""qwen35 settings using the shared Qwen training hooks."""
+"""qwen35 settings using the shared decoder training hooks."""
 
-from shadowspill_workloads.definitions.decoder import register as register_qwen
+from shadowspill_workloads.definitions.decoder import register as register_decoder
 from shadowspill_workloads.definitions.decoder.configuration import (
-    Settings as QwenSettings,
+    Settings as DecoderSettings,
 )
 
 from . import config
 
 
-class Settings(QwenSettings):
+class Settings(DecoderSettings):
     family = "qwen35"
     catalog = config
     moe = False
@@ -16,4 +16,4 @@ class Settings(QwenSettings):
 
 
 def register(registry):
-    register_qwen(registry, Settings)
+    register_decoder(registry, Settings)

@@ -1,4 +1,4 @@
-"""CPU Qwen settings; model and tensor providers load only in build workers."""
+"""CPU decoder settings; model and tensor providers load only in build workers."""
 
 from dataclasses import asdict, dataclass, field, replace
 from importlib import import_module
@@ -56,11 +56,11 @@ class Settings:
             if name not in values:
                 continue
             if type(values[name]) is not int or values[name] <= 0:
-                raise ValueError(f"Qwen {name} must be a positive integer")
+                raise ValueError(f"{self.family} {name} must be a positive integer")
         if "d_ff_shared" in values and (
             type(values["d_ff_shared"]) is not int or values["d_ff_shared"] < 0
         ):
-            raise ValueError("Qwen d_ff_shared must be a nonnegative integer")
+            raise ValueError(f"{self.family} d_ff_shared must be a nonnegative integer")
         for name in (
             "rope_base",
             "norm_epsilon",
@@ -76,20 +76,20 @@ class Settings:
                 or not isfinite(value)
                 or (value < 0 if name == "router_aux_loss_coef" else value <= 0)
             ):
-                raise ValueError(f"invalid Qwen {name}")
+                raise ValueError(f"invalid {self.family} {name}")
         for name in ("zero_centered_norm", "attention_gate", "tied_embeddings"):
             if name in values and type(values[name]) is not bool:
-                raise ValueError(f"Qwen {name} must be boolean")
+                raise ValueError(f"{self.family} {name} must be boolean")
         config = replace(self.catalog.PRESETS[self.preset], **self.architecture)
         implementations = ("mlops", "mlops_ep") if self.moe else ("mlops",)
         if self.implementation not in implementations:
             raise ValueError(f"{self.family} requires {' or '.join(implementations)}")
-        training_options.validate(self, label="Qwen")
+        training_options.validate(self, label=self.family)
         object.__setattr__(self, "architecture", asdict(config))
         if self.moe:
             expert_parallel.validate(self)
         elif self.expert_options is not None:
-            raise ValueError("dense Qwen does not use expert resource settings")
+            raise ValueError(f"{self.family} does not use expert resource settings")
 
 
 def create(config):
