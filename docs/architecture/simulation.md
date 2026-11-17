@@ -185,5 +185,8 @@ The [execution diagnostics guide](../python/advanced/step-diagnostics.md) define
 real-versus-simulated task and transfer fields, clock domains, selected-span
 summary, trace-integrity checks, and investigation workflow.
 
-Previous: [The planning problem](planning-problem.md). Next: [Plan
-search](search.md).
+---
+
+Previous: [PressureFit](pressurefit.md) ·
+[Architecture index](README.md) ·
+Next: [Physical admission and offset handling](physical-admission.md)

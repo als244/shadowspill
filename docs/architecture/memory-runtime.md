@@ -297,4 +297,8 @@ This is automatic by default and disabled by `numa_binding=False` in Python
 restrictions warn without preventing startup. Existing pages are not migrated.
 These are process-lifetime placement changes, not task scheduling operations.
 
-Previous: [Events](events.md). Next: [Task boundaries](task-boundaries.md).
+---
+
+Previous: [Writing a search algorithm](search-algorithm.md) ·
+[Architecture index](README.md) ·
+Next: [Plan identity](plan-identity.md)

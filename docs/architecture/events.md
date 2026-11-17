@@ -90,5 +90,8 @@ A dedicated condition variable lets callers wait for the worker at explicit
 boundaries (`shadowspill_runtime_wait_idle()`) without polling; the worker
 signals it when it has nothing queued and nothing pending.
 
-Previous: [Transfers](transfers.md). Next: [Memory
-runtime](memory-runtime.md).
+---
+
+Previous: [Transfers](transfers.md) ·
+[Architecture index](README.md) ·
+Next: [Task boundaries](task-boundaries.md)

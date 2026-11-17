@@ -112,3 +112,9 @@ See [basic training](../examples/client-training.md),
 [saved Plans](../python/advanced/saved-plans.md),
 [service records](service-records.md) and the
 [phase API](../python/phases.md).
+
+---
+
+Previous: [Step structure and ordering](step.md) ·
+[Architecture index](README.md) ·
+Next: [Durable service records](service-records.md)

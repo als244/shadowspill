@@ -2,7 +2,8 @@
 
 Read the [overview](overview.md) for the phase boundaries and ownership model.
 Then choose the subsystem you need; these pages are references, not a required
-linear reading sequence. For public API usage, use the [Python guide](../python/README.md).
+linear reading sequence. Previous/Next links follow the index order below.
+For public API usage, use the [Python guide](../python/README.md).
 
 The IR, planner, simulator and memory runtime are framework-neutral. PyTorch
 capture and lowering form an adapter. Operator-library semantics enter through

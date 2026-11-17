@@ -145,3 +145,9 @@ conditions do not belong in the planner, simulator, runtime or operator kernels.
 See also [phase APIs](../python/phases.md),
 [graph-pair construction](graph-pair-construction.md), and
 [task boundaries](task-boundaries.md).
+
+---
+
+Previous: [Capture, compilation and lowering](lowering.md) ·
+[Architecture index](README.md) ·
+Next: [Graph-pair construction](graph-pair-construction.md)

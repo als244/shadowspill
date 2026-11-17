@@ -103,5 +103,8 @@ ones named in `SHADOWSPILL_BACKENDS`.
 4. Run the contract canary against the library, then the runtime canaries and
    the PyTorch canaries with `Runtime(backend="<provider>")`.
 
-Previous: [Shared objects](shared-objects.md). Next: [Memory
-pools](memory-pools.md).
+---
+
+Previous: [Shared objects](shared-objects.md) ·
+[Architecture index](README.md) ·
+Next: [Memory pools](memory-pools.md)

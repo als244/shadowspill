@@ -244,3 +244,9 @@ through the closing or abort path after a scope has opened.
 
 See [failure, abort and process exit](failure-and-exit.md) for scope cleanup and
 why a terminating process may abandon the runtime rather than close it.
+
+---
+
+Previous: [Events](events.md) ·
+[Architecture index](README.md) ·
+Next: [Step boundaries](step-boundaries.md)

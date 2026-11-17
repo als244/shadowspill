@@ -222,5 +222,8 @@ Four numbers describe a layout, each held where the information exists:
 The first two are fixed when the layout is made; the last two are what the
 allocator, replayed or real, made of it.
 
-Previous: [From a resolved program to leases](admission-leases.md). Next: [The
-planning pipeline](planning-pipeline.md).
+---
+
+Previous: [From a resolved program to leases](admission-leases.md) ·
+[Architecture index](README.md) ·
+Next: [Writing a search algorithm](search-algorithm.md)

@@ -138,5 +138,8 @@ it in time and require the artifact it promised, rather than trusting an exit
 status alone. Program collection and planning evaluation do; see
 [benchmarking](../../tools/README.md).
 
-Previous: [Task boundaries](task-boundaries.md). Next: [Step
-boundaries](step-boundaries.md).
+---
+
+Previous: [Step boundaries](step-boundaries.md) ·
+[Architecture index](README.md) ·
+Next: [PyTorch adapter](adapter.md)

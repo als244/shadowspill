@@ -101,5 +101,8 @@ fake/meta behavior and alias/mutation schemas. See [graph-pair
 construction](graph-pair-construction.md), [programs](program.md) and
 [planning](planning-pipeline.md).
 
-Previous: [Intermediate representation](ir.md). Next: [Graph-pair
-construction](graph-pair-construction.md).
+---
+
+Previous: [Durable service records](service-records.md) ·
+[Architecture index](README.md) ·
+Next: [Model and task partitioning](partitioning.md)

@@ -36,5 +36,8 @@ rebuilding or remeasuring the tasks. `optimizer_ordering` similarly selects
 stage-interleaved or tail updates. Mutation and random-state dependencies still
 constrain valid schedules; an incompatible ordering is rejected.
 
-Previous: [Graph-pair construction](graph-pair-construction.md). Next:
-[Model tensors and initialization](state-import.md).
+---
+
+Previous: [The ShadowSpillProgram](program.md) ·
+[Architecture index](README.md) ·
+Next: [Training composition](training.md)

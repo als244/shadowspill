@@ -128,4 +128,7 @@ The step-level result of all this is described field by field in
 calls the intervals rest on are in the [backend
 contract](../c/backends.md).
 
-Previous: [PyTorch adapter](adapter.md).
+---
+
+Previous: [PyTorch adapter](adapter.md) ·
+[Architecture index](README.md)

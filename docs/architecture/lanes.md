@@ -328,4 +328,8 @@ contract affordable.
 See [transfers](transfers.md) for routes, queues and calibration, and the
 [lane contract](../c/lanes.md) for the C declarations.
 
-Previous: [Memory pools](memory-pools.md). Next: [Transfers](transfers.md).
+---
+
+Previous: [Memory pools](memory-pools.md) ·
+[Architecture index](README.md) ·
+Next: [Transfers](transfers.md)

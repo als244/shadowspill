@@ -511,5 +511,8 @@ from allocator pointers or FakeTensor storage identity.
 | `shadowspill.profiling` | Measure saved task implementations with the ordinary allocator. |
 | `shadowspill.build.lowering.training` | Bind all variants to canonical objects and save stage templates. |
 
-Previous: [Capture, compilation and lowering](lowering.md). Next: [Step
-structure and ordering](step.md).
+---
+
+Previous: [Model and task partitioning](partitioning.md) ·
+[Architecture index](README.md) ·
+Next: [Axis chunking within a stage](axis-chunking.md)

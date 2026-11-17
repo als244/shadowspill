@@ -683,3 +683,9 @@ Paths below are relative to `csrc/src/planner/search/algorithms/pressurefit/`:
 
 Python resolution expansion and final materialization live in
 `packages/engine/src/shadowspill/planning/memory_search/algorithms/pressurefit/search.py`.
+
+---
+
+Previous: [Graph-pair selection](graph-pair-selection.md) ·
+[Architecture index](README.md) ·
+Next: [Simulation](simulation.md)

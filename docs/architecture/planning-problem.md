@@ -54,5 +54,8 @@ For a `ProfiledProgram` archive, the evaluator derives the diagnostic execution
 limit from its sweep; collection imposes no pool-size ceiling. JSON serialization
 is documented in the [planning format reference](../python/advanced/planning-json.md).
 
-Previous: [The ShadowSpillProgram](program.md). Next:
-[Simulation](simulation.md).
+---
+
+Previous: [Provider resources](resources.md) ·
+[Architecture index](README.md) ·
+Next: [The planning pipeline](planning-pipeline.md)

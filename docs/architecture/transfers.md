@@ -98,4 +98,8 @@ naming the operation, object id, byte size and triggering task. The Executor
 supplies none. Repeated steps reuse the admitted labels; transfer workers do not
 inspect the program or build a label.
 
-Previous: [Lanes](lanes.md). Next: [Events](events.md).
+---
+
+Previous: [Lanes](lanes.md) ·
+[Architecture index](README.md) ·
+Next: [Events](events.md)

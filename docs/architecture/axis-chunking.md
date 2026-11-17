@@ -208,3 +208,9 @@ workspace inside an unsplit operation. Build finalization and profiling run
 without a Plan, so placement cannot spill between their internal child calls.
 A complete task that does not fit is refused; it is not silently replaced by an
 unmeasured implementation.
+
+---
+
+Previous: [Graph-pair construction](graph-pair-construction.md) ·
+[Architecture index](README.md) ·
+Next: [Custom gradient destinations](custom-gradient-destinations.md)

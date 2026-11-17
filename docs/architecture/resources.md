@@ -68,3 +68,9 @@ The generic lifecycle is qualified with a non-distributed custom operator throug
 all three builders and fresh Executor workers. Each distributed backend needs
 its own target-hardware qualification; this interface alone does not certify
 EP transport or a provider's transitive native dependencies.
+
+---
+
+Previous: [The optimizer](optimizer.md) ·
+[Architecture index](README.md) ·
+Next: [The planning problem](planning-problem.md)

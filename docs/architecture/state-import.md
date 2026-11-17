@@ -252,5 +252,8 @@ Executor uses pinned-host spill by default and also accepts `SSDPool` or
 and checkpoint interface serves each backend; model-based pool import is not
 part of the public workflow.
 
-Previous: [Step structure and ordering](step.md). Next: [The
-optimizer](optimizer.md).
+---
+
+Previous: [Retaining forward routing choices](routing-retention.md) ·
+[Architecture index](README.md) ·
+Next: [The optimizer](optimizer.md)

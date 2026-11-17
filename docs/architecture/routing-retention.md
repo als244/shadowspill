@@ -89,3 +89,9 @@ cache entries built before this behavior cannot supply the new cut. The final
 graphs expose their saved tensors normally to compilation, profiling, planning,
 physical admission and serialization. Existing saved Programs and Plans retain
 their original behavior; rebuild and profile to obtain the new default.
+
+---
+
+Previous: [Custom gradient destinations](custom-gradient-destinations.md) ·
+[Architecture index](README.md) ·
+Next: [Model tensors and initialization](state-import.md)

@@ -119,4 +119,8 @@ the saved Plan before initializing tensor values. It uses the saved costs and
 layout without recalibrating or replanning. This keeps large spill allocations
 independent of anonymous full-model initialization and preserves the phase boundary.
 
-Previous: [Backends](backends.md). Next: [Lanes](lanes.md).
+---
+
+Previous: [Backends](backends.md) ·
+[Architecture index](README.md) ·
+Next: [Lanes](lanes.md)

@@ -147,4 +147,8 @@ bytes come from its range allocator, which every reservation updates. So
 list is empty. The fields publication feeds -- `live_allocations` and
 `requested_allocated_bytes` -- are the ones that read as zero there.
 
-Previous: [Plan identity](plan-identity.md). Next: [Backends](backends.md).
+---
+
+Previous: [Plan identity](plan-identity.md) ·
+[Architecture index](README.md) ·
+Next: [Backends](backends.md)

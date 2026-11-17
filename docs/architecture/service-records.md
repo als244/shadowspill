@@ -141,3 +141,9 @@ Recovery marks old runs stopped and preserves their results. It neither starts
 workers nor replays updates. Resume uses an explicit checkpoint in a new run.
 The storage filesystem must provide POSIX locking, exclusive hard-link
 publication and file/directory synchronization semantics.
+
+---
+
+Previous: [Training composition](training.md) ·
+[Architecture index](README.md) ·
+Next: [Capture, compilation and lowering](lowering.md)

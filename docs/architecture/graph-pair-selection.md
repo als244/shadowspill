@@ -302,5 +302,8 @@ Graph-pair construction and profiling are described in the dedicated
 [graph-pair construction](graph-pair-construction.md) page. The IR
 representation is described in [Intermediate representation](ir.md).
 
-Previous: [Writing a search algorithm](search-algorithm.md). Next:
-[PressureFit](pressurefit.md).
+---
+
+Previous: [Plan search](search.md) ·
+[Architecture index](README.md) ·
+Next: [PressureFit](pressurefit.md)

@@ -186,5 +186,8 @@ progress and worker RNG state. Low-level callers provide their own progress and
 RNG metadata; client dataset state and custom generators remain caller-owned.
 See [training composition](training.md).
 
-Previous: [Model tensors and initialization](state-import.md). Next: [The
-ShadowSpillProgram](program.md).
+---
+
+Previous: [Model tensors and initialization](state-import.md) ·
+[Architecture index](README.md) ·
+Next: [Provider resources](resources.md)

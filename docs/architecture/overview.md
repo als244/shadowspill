@@ -181,3 +181,8 @@ implementation boundary:
   [transfers](transfers.md), [backends](backends.md), [PyTorch adapter](adapter.md).
 
 The [documentation index](../README.md) links the remaining implementation pages.
+
+---
+
+[Architecture index](README.md) ·
+Next: [Intermediate representation](ir.md)

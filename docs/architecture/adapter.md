@@ -106,5 +106,8 @@ the adapter publishes is called from `shadowspill.runtime`, which imports no
 framework at all, rather than restated in the frontend. The rule is the same one
 stated for the header: a call the neutral runtime already owns is made there.
 
-Previous: [Step boundaries](step-boundaries.md). Next: [Timelines: how a step
-is measured](timelines.md).
+---
+
+Previous: [Failure, abort, and process exit](failure-and-exit.md) ·
+[Architecture index](README.md) ·
+Next: [Timelines: how a step is measured](timelines.md)

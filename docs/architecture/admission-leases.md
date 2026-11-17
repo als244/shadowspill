@@ -298,5 +298,8 @@ device-global charges from a spill backend, physical availability changes, and
 spill-capacity calibration are separate constraints; this floor does not turn
 them into measured evidence or subtract them from a process budget.
 
-Previous: [Physical admission and offset handling](physical-admission.md).
-Next: [Fixed-offset placement](fixed-placement.md).
+---
+
+Previous: [Physical admission and offset handling](physical-admission.md) ·
+[Architecture index](README.md) ·
+Next: [Fixed-offset placement](fixed-placement.md)

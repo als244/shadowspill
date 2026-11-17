@@ -267,5 +267,8 @@ hold you to it, and physically admits the winner. See
 [PressureFit](pressurefit.md) for what one real implementation does inside
 the seam.
 
-Previous: [Plan search](search.md). Next: [Graph-pair
-selection](graph-pair-selection.md).
+---
+
+Previous: [Fixed-offset placement](fixed-placement.md) ·
+[Architecture index](README.md) ·
+Next: [Memory runtime](memory-runtime.md)

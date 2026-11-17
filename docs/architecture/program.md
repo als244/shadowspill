@@ -172,5 +172,8 @@ program serves an entire budget frontier without being rebuilt: the
 question changes, the program does not. Adding a planning option later
 therefore cannot change what a saved program means.
 
-Previous: [The optimizer](optimizer.md). Next: [The planning
-problem](planning-problem.md).
+---
+
+Previous: [Intermediate representation](ir.md) ·
+[Architecture index](README.md) ·
+Next: [Step structure and ordering](step.md)

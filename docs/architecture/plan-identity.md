@@ -126,5 +126,8 @@ See [task boundaries](task-boundaries.md#what-a-scope-owes-when-it-ends) for
 what a scope owes the allocations it made, and
 [memory runtime](memory-runtime.md) for the lease itself.
 
-Previous: [The planning pipeline](planning-pipeline.md). Next: [Shared
-objects](shared-objects.md).
+---
+
+Previous: [Memory runtime](memory-runtime.md) ·
+[Architecture index](README.md) ·
+Next: [Shared objects](shared-objects.md)

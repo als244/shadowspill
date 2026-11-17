@@ -128,3 +128,9 @@ opaque kernel's internal allocation behavior, or change dispatch. Keep examples
 for individual libraries in their integration guides. The generic
 [operator integration guide](../python/advanced/operator-integration.md) explains the
 required declarations and validation.
+
+---
+
+Previous: [Axis chunking within a stage](axis-chunking.md) ·
+[Architecture index](README.md) ·
+Next: [Retaining forward routing choices](routing-retention.md)
