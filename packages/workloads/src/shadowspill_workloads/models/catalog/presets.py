@@ -16,10 +16,6 @@ def _entries(family):
             geometry=Geometry(1024, tokens, 65536),
             mixture=family.mixture,
             expert_parallel=family.expert_parallel,
-            factory=family.factory,
-            factory_arguments={"tiny": True}
-            if family.factory and size == "tiny"
-            else {},
             description=description,
         )
         for size, tokens, description in family.presets

@@ -32,7 +32,7 @@ def test_a_request_names_a_catalog_model_an_implementation_and_a_mode():
         ModelRequest("llama3-tiny", "jax")
     with pytest.raises(ValueError, match="mode"):
         ModelRequest("llama3-tiny", "pytorch", "partial")
-    with pytest.raises(ValueError, match="factory"):
+    with pytest.raises(ValueError, match="sparse-attention inputs"):
         ModelRequest("glm53", "mlops")
     with pytest.raises(ValueError, match="LoRA"):
         ModelRequest("llama3-tiny", "pytorch", "lora", {"depth": 2})

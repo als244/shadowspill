@@ -129,10 +129,9 @@ into a run, so a fine-tune is a config naming a family and a directory, its
 
 The two GLM families share their building blocks, checkpoint importer and LoRA
 switch through [models/shared/glm/](models/shared/glm), and their stage
-partition and quickstart factories through
-[recipes/text/glm/](recipes/text/glm); their catalog entries name those
-factories, so `--factory shadowspill_workloads.recipes.text.glm.quickstart:glm53_flash`
-with `--factory-args` runs one.
+partition through `policies/glm.py`. Phase benchmark factories are separate
+from the installed model catalog; public training uses the registered model
+definitions and `Model.from_pretrained(...)`.
 
 ## Dtypes and optimizer state
 

@@ -53,10 +53,10 @@ class ModelRequest:
             )
         if self.mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
-        if entry.factory is not None:
+        if entry.family in {"glm53", "glm53_flash"}:
             raise ValueError(
-                f"{self.model} is built by its quickstart factory, which the"
-                " baseline engines do not run"
+                f"{self.model} requires sparse-attention inputs that these"
+                " baseline engines do not implement"
             )
         entry.config(**dict(self.config))
         if self.lora:

@@ -17,7 +17,6 @@ FAMILY = Family(
     ),
     implementations=("mlops",),
     mixture=True,
-    factory="shadowspill_workloads.recipes.text.glm.quickstart:glm53_flash",
     training="shadowspill_workloads.models.glm53_flash.training:register",
     pretrained_config=partial(describe, prefix="model.language_model."),
     checkpoint_types=("glm5_next", "glm5_next_text"),

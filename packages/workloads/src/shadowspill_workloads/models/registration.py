@@ -30,7 +30,6 @@ class Family:
     implementations: tuple[ModelImplementation, ...] = ("pytorch", "mlops")
     mixture: bool = False
     expert_parallel: bool = False
-    factory: str | None = None
     checkpoint_reader: str | None = None
     checkpoint_types: tuple[str, ...] = ()
     initialization: ParameterInitialization | None = None

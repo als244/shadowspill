@@ -112,12 +112,3 @@ def test_mixtures_and_expert_parallel_follow_the_families() -> None:
     assert set(catalog.expert_parallel_names()) == {
         item.name for item in catalog.entries() if item.expert_parallel
     }
-
-
-def test_factory_entries_name_an_importable_factory() -> None:
-    for item in catalog.entries():
-        if item.factory is None:
-            continue
-        module, _, name = item.factory.partition(":")
-        assert callable(getattr(import_module(module), name))
-        assert item.implementations == ("mlops",)

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from importlib import import_module
 from typing import Any
 
@@ -47,8 +46,6 @@ class Entry:
     geometry: Geometry
     mixture: bool = False
     expert_parallel: bool = False
-    factory: str | None = None
-    factory_arguments: Mapping[str, Any] = field(default_factory=dict)
     description: str = ""
 
     def config(self, **changes: Any) -> Any:
