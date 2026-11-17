@@ -168,6 +168,10 @@ class MeasurementSession:
         return self.functions[key]
 
     def measure(self, key: str, arguments: Sequence[Any]) -> None:
+        # Preparing controls can run producer tasks and leave large, unused
+        # allocator blocks on other streams. Reclaim those before observation
+        # or a cached forward's saved-tensor replay, never between timed samples.
+        torch.cuda.empty_cache()
         if key in self.profiles.tasks:
             return
         definition = next(
@@ -258,6 +262,9 @@ class MeasurementSession:
             }
         )
         backward_key = backward["profile_key"]
+        # Keep the real saved tensors alive, but release the forward's cached
+        # scratch before allocating backward-only inputs on the default stream.
+        torch.cuda.empty_cache()
         backward_arguments = prepare_inputs(
             self.program,
             backward_key,
