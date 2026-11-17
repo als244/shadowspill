@@ -1,14 +1,9 @@
-"""Qwen's phase recipe preserves distributed inputs and bounded initialization."""
+"""Qwen input ownership and bounded initialization."""
 
 import json
 import math
-import os
-import subprocess
-import sys
-import tarfile
 
 import numpy as np
-import pytest
 import torch
 
 from shadowspill.execution.tensors import TensorChunk
@@ -16,32 +11,6 @@ from shadowspill_workloads.initialization.decoder import Initialize
 from shadowspill_workloads.inputs.text.calls import Inputs
 from shadowspill_workloads.models.qwen3moe.config import PRESETS
 from shadowspill_workloads.models.shared.decoder import RotaryEmbedding
-from shadowspill_workloads.recipes.text.phases.candidates import batch_sizes
-
-
-def test_replanning_preserves_prior_profile_headroom(tmp_path):
-    from shadowspill.training.preparation.configuration import configure
-
-    data = tmp_path / "tokens"
-    root = tmp_path / "run"
-    recipe = "shadowspill_workloads.recipes.text.catalog"
-    configure(
-        recipe,
-        {
-            "data": str(data),
-            "run_dir": str(root),
-            "model": "qwen3moe-tiny",
-            "external_headroom_mib": 768,
-        },
-        phase="build",
-    )
-    path = root / "config.json"
-    options = json.loads(path.read_text())
-    assert options["external_headroom_mib"] == 768
-    configure(recipe, {"run_dir": str(root), "execution_gib": 4}, phase="plan")
-    restored = json.loads(path.read_text())
-    assert restored["external_headroom_mib"] == 768
-    assert restored["execution_gib"] == 4
 
 
 def test_initializer_reconstructs_identical_shards_and_rotary_tables():
@@ -98,118 +67,3 @@ def test_rank_local_calls_normalize_by_global_tokens_and_restore_cursor(tmp_path
         restored = Inputs(options, rank=rank, world_size=2)
         restored.load_state_dict(source.state_dict())
         torch.testing.assert_close(next(source), next(restored))
-    assert batch_sizes({"sequences_per_step": 64, "microbatch_sizes": [4, 16]}) == (
-        4,
-        16,
-    )
-
-
-@pytest.mark.cuda
-@pytest.mark.parametrize("ranks", [1, 2])
-@pytest.mark.slow
-def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, ranks):
-    if torch.cuda.device_count() < ranks:
-        pytest.skip(f"requires {ranks} distinct GPUs")
-    pytest.importorskip("mlops")
-    data, root = tmp_path / "data", tmp_path / "run"
-    data.mkdir()
-    (np.arange(4096, dtype=np.uint32) % 32).tofile(data / "train.bin")
-    (data / "meta.json").write_text(json.dumps({"vocab_size": 1024}))
-    entrypoint = [
-        sys.executable,
-        *(["-S"] if sys.flags.no_site else []),
-        "-c",
-        "import json, sys; from workload_tests._phase_runner import run; "
-        "run('shadowspill_workloads.recipes.text.catalog', "
-        "json.loads(sys.argv[1]), phase=sys.argv[2])",
-    ]
-    config = {
-        "data": str(data),
-        "run_dir": str(root),
-        "model": "qwen3moe-tiny",
-        "ranks": ranks,
-        "sequence_length": 16,
-        "sequences_per_step": 8,
-        "microbatch_sizes": [2, 4],
-        "steps": 3,
-        "schedule_steps": 10,
-        "learning_rate": 0.001,
-        "execution_gib": 4,
-        "spill_gib": 0.125,
-        "external_headroom_mib": 768,
-        "warmup_seconds": 0.001,
-        "measure_seconds": 0.002,
-        "plots": False,
-        "eval_every": 0,
-        "checkpoint_every": 5,
-    }
-    phases = [
-        "build",
-        "profile",
-        *(["communicate"] if ranks > 1 else []),
-        "plan",
-        "execute",
-    ]
-    for phase in phases:
-        # Separate cold workers must consume the saved implementations. A shared
-        # eager cache can conceal an omitted provider-preparation description:
-        # runtime tuning then changes the profiled task's allocation trace.
-        cache = tmp_path / "caches" / phase
-        arguments = config if phase == "build" else {"run_dir": str(root)}
-        child = subprocess.run(
-            [*entrypoint, json.dumps(arguments), phase],
-            env={
-                **os.environ,
-                "OMP_NUM_THREADS": "1",
-                "TORCHINDUCTOR_CACHE_DIR": str(cache / "inductor"),
-                "TRITON_CACHE_DIR": str(cache / "triton"),
-                "QUACK_CACHE_DIR": str(cache / "quack"),
-                "XDG_CACHE_HOME": str(cache / "xdg"),
-            },
-            capture_output=True,
-            text=True,
-            timeout=900,
-        )
-        logs = "\n".join(path.read_text() for path in (root / "logs").glob("*.log"))
-        assert child.returncode == 0, child.stdout + child.stderr + logs
-    rows = json.loads((root / "search.json").read_text())
-    assert len(rows) == 5 and all("duration_seconds" in row for row in rows)
-    assert {row["sequences_per_example"] for row in rows} == {2, 4}
-    assert {
-        path.parent.name for path in (root / "programs").glob("*/training.ssp")
-    } == {
-        "batch-2",
-        "batch-4",
-    }
-    assert (root / "reports/training/index.html").is_file()
-    for rank in range(ranks):
-        directory = (
-            root / f"training/rank-{rank:05d}" if ranks > 1 else root / "training"
-        )
-        metrics = [
-            json.loads(line)
-            for line in (directory / "metrics.jsonl").read_text().splitlines()
-        ]
-        assert [row["step"] for row in metrics] == [1, 2, 3]
-        assert all(math.isfinite(row["train/loss"]) for row in metrics)
-        assert metrics[-1]["train/loss"] < metrics[0]["train/loss"]
-        with tarfile.open(directory / "checkpoints/step_00000003.ssp") as archive:
-            manifest = json.loads(archive.extractfile("manifest.json").read())
-        assert any(item["dtype"] == "torch.float32" for item in manifest["tensors"])
-    # Replan the actual saved measurements with CUDA hidden; even Torch imports
-    # are forbidden here, not just CUDA execution.
-    child = subprocess.run(
-        [
-            sys.executable,
-            *(["-S"] if sys.flags.no_site else []),
-            "-c",
-            "import sys; sys.modules['torch'] = None; "
-            "from shadowspill.training.preparation.plan import run; run(sys.argv[1])",
-            str(root),
-        ],
-        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
-        capture_output=True,
-        text=True,
-        timeout=90,
-    )
-    assert child.returncode == 0, child.stdout + child.stderr

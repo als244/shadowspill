@@ -33,10 +33,6 @@ def inputs(options, *, rank):
     )
 
 
-def trainer_options(options, metadata):
-    return {}
-
-
 def distributed_coordination(directory):
     """Exercise real Gloo/rank mapping with a CPU-only stand-in for the GPU."""
     import os
@@ -117,4 +113,23 @@ def distributed_coordination(directory):
 if __name__ == "__main__":
     import sys
 
-    distributed_coordination(sys.argv[1])
+    if sys.argv[1] == "single":
+        import json
+
+        from benchmarks.plan_runner import NsysCapture, run
+
+        source, output = map(Path, sys.argv[2:4])
+        options = json.loads(sys.argv[4])
+        if options["nsys"] is not None:
+            options["nsys"] = NsysCapture(**options["nsys"])
+        run(
+            source / "plans/training.ssp",
+            output_dir=output,
+            initializer=lambda context: initializer(
+                {"data": source}, {}, rank=context.rank
+            ),
+            inputs=lambda context: inputs({"data": source}, rank=context.rank),
+            **options,
+        )
+    else:
+        distributed_coordination(sys.argv[1])

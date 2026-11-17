@@ -136,21 +136,7 @@ def test_defaults_fill_what_a_config_leaves_out(tmp_path):
         load_config({k: v for k, v in raw.items() if k != "checkpoint"}, ["run_dir=r"])
 
 
-def test_phase_rank_geometry_and_reference_worker_limit(tmp_path):
-    from shadowspill_workloads.recipes.text.experiment.group import rank_options, ranks
-
-    options = {"ranks": 2, "max_tokens_per_step": 4096, "max_seq_len": 512}
-    assert ranks(options) == 2 and ranks({}) == 1
-    assert rank_options(options)["max_tokens_per_step"] == 2048
-    with pytest.raises(ValueError, match="whole sequences for every rank"):
-        rank_options({"ranks": 3, "max_tokens_per_step": 4096, "max_seq_len": 512})
-    with pytest.raises(ValueError, match="positive integer"):
-        ranks({"ranks": 0})
-    # a recipe giving a rank an unequal share says its tokens outright
-    uneven = {**options, "rank_tokens_per_step": 3072}
-    assert rank_options(uneven)["max_tokens_per_step"] == 3072
-    with pytest.raises(ValueError, match="whole sequences"):
-        rank_options({**options, "rank_tokens_per_step": 3000})
+def test_reference_worker_limit(tmp_path):
     path = tmp_path / "config.json"
     path.write_text(
         json.dumps(

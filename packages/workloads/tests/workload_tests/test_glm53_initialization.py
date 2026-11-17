@@ -119,49 +119,6 @@ def test_random_seed_is_reproducible(mixed_checkpoint):
     )
 
 
-def test_shared_recipe_random_initializer_does_not_read_payloads(
-    mixed_checkpoint, monkeypatch
-):
-    from shadowspill_workloads.recipes.text.glm53_flash_lora.model import checkpoint
-
-    with GLMCheckpoint(mixed_checkpoint) as source:
-        reader_type = type(source.weights.source)
-        original = reader_type.tensor
-
-    def metadata_only(self, name, *, meta=False):
-        assert meta, f"unexpected weight payload read: {name}"
-        return original(self, name, meta=meta)
-
-    monkeypatch.setattr(reader_type, "tensor", metadata_only)
-    options = dict(
-        checkpoint=mixed_checkpoint,
-        layer_limit=None,
-        lora_rank=8,
-        lora_alpha=8,
-        router_weight_dtype=None,
-        seed=7,
-        initialization="random",
-    )
-    with checkpoint(options) as (model, _, initialize):
-        assert initialize.source is None
-        tensors = physical_state(model)
-        names = [
-            name
-            for name, value in tensors.items()
-            if value.dtype == torch.float8_e4m3fn
-        ]
-        assert names
-        name = names[0]
-        value = tensors[name]
-        output = torch.empty(min(value.numel(), 257), dtype=value.dtype, device="cpu")
-        initialize(
-            TensorChunk(name, tuple(value.shape), value.dtype, 0, value.numel()), output
-        )
-        assert (
-            torch.isfinite(output.float()).all() and output.float().count_nonzero() > 0
-        )
-
-
 def test_checkpoint_mode_loads_actual_weights_and_reports_every_tensor(
     mixed_checkpoint,
 ):
@@ -196,9 +153,7 @@ def test_factory_is_meta_only_and_uses_the_shared_phase_contract(family, monkeyp
         pytest.fail("factory construction must not initialize CUDA")
 
     monkeypatch.setattr(torch.cuda, "_lazy_init", no_cuda)
-    spec = getattr(
-        import_module("benchmarks.factories.glm.quickstart"), family
-    )(
+    spec = getattr(import_module("benchmarks.factories.glm.quickstart"), family)(
         device="cuda:0",
         tiny=True,
         sequence_length=8,

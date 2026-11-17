@@ -50,7 +50,7 @@ def test_repository_clients_have_one_way_dependencies():
     assert not violations
 
 
-def test_shared_imports_are_cpu_only_and_recipes_need_no_benchmark_package():
+def test_shared_imports_are_cpu_only_and_preparation_needs_no_benchmark_package():
     script = """
 import importlib, importlib.abc, sys
 class Block(importlib.abc.MetaPathFinder):
@@ -71,12 +71,10 @@ for module in ('launch.processes', 'launch.rank_device', 'launch.workers',
                'capture.nsys', 'capture.nsys_worker',
                'capture.files', 'capture.progress'):
     importlib.import_module('shadowspill.orchestration.' + module)
-for module in ('configuration', 'phases', 'candidates', 'reuse',
-               'plan', 'search', 'job'):
+for module in ('phases', 'plan', 'parallel_search', 'job'):
     importlib.import_module('shadowspill.training.preparation.' + module)
 block.blocked = {'benchmarks', 'qualification'}
-for module in ('shadowspill_workloads.recipes',
-               'shadowspill.training.preparation.phases',
+for module in ('shadowspill.training.preparation.phases',
                'shadowspill.training.preparation.build',
                'shadowspill.training.preparation.profile',
                'shadowspill.training.preparation.communicate',

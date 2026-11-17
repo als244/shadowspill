@@ -68,7 +68,7 @@ if options.get("guard_measurement_reuse"):
         ]
 
     preparation_phases.worker_command = measured_command
-if options.get("cold_llama_workers"):
+if options.get("cold_llama_workers") or options.get("cold_workers"):
     import shadowspill.training.worker.launch as worker_launch
 
     def cold_command(module, arguments):
@@ -79,7 +79,13 @@ if options.get("cold_llama_workers"):
         return [
             sys.executable,
             *(["-S"] if sys.flags.no_site else []),
-            str(Path(__file__).with_name("_llama_cold_worker.py")),
+            str(
+                Path(__file__).with_name(
+                    "_saved_service_worker.py"
+                    if options.get("cold_workers")
+                    else "_llama_cold_worker.py"
+                )
+            ),
             *map(str, arguments),
         ]
 

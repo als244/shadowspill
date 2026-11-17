@@ -1,11 +1,6 @@
-"""Benchmark saved training Plans without building or planning again.
+"""Measure saved training Plans through the public Executor."""
 
-``benchmark`` launches a saved public recipe in fresh single-node workers.
-``run`` accepts arbitrary workload hooks in an already launched worker.
-Both use the public Executor and retain its normal execution checks.
-"""
-
-__all__ = ["Context", "NsysCapture", "benchmark", "run"]
+__all__ = ["Context", "NsysCapture", "run"]
 
 
 def __getattr__(name):
@@ -13,10 +8,6 @@ def __getattr__(name):
         from shadowspill.orchestration.capture.nsys import NsysCapture
 
         return NsysCapture
-    if name == "benchmark":
-        from .recipe import benchmark
-
-        return benchmark
     if name in {"Context", "run"}:
         from . import api
 

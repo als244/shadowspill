@@ -1,4 +1,4 @@
-"""A real family checkpoint through bounded loading and the saved-Plan recipe."""
+"""A real family checkpoint through the shared bounded initializer."""
 
 import json
 import math
@@ -8,8 +8,8 @@ import torch
 from safetensors.torch import save_file
 
 from shadowspill.execution.tensors import TensorChunk
+from shadowspill_workloads.initialization.decoder import FromCheckpoint
 from shadowspill_workloads.lora import configure_lora
-from shadowspill_workloads.recipes.text.qwen35_lora.initialize import Initialize
 from workload_tests.test_checkpoints import built, huggingface_state, metadata
 
 
@@ -30,8 +30,7 @@ def test_bounded_initializer_preserves_base_and_adapter_distributions(checkpoint
     root, base = checkpoint
     expected = dict(base.named_parameters()) | dict(base.named_buffers())
     model = configure_lora(built("qwen35moe-tiny", max_seq_len=32), rank=32, alpha=32)
-    options = {"checkpoint": root, "sequence_length": 32, "seed": 45}
-    with Initialize(options) as initialize:
+    with FromCheckpoint("qwen35moe", root, max_seq_len=32, seed=45) as initialize:
         initialize.block_elements = 257
         for name, tensor in (*model.named_parameters(), *model.named_buffers()):
             values = []
@@ -57,38 +56,3 @@ def test_bounded_initializer_preserves_base_and_adapter_distributions(checkpoint
                 if name.endswith(".lora_a"):
                     assert values[0].abs().max() <= tensor.shape[-1] ** -0.5 + 0.001
     assert initialize.checkpoint.reader._closed
-
-
-def test_random_public_initializer_needs_only_configuration(checkpoint, tmp_path):
-    from shadowspill_workloads.recipes.text.qwen35_lora.adapter import (
-        describe,
-        initializer,
-    )
-
-    root, base = checkpoint
-    (root / "model.safetensors").unlink()
-    data = tmp_path / "data"
-    data.mkdir()
-    (data / "meta.json").write_text(json.dumps({"vocab_size": 32}))
-    options = dict(
-        checkpoint=root, data=data, initialization="random", seed=17, sequence_length=32
-    )
-    info = describe(options)
-    assert info["initialization"] == "random"
-    assert info["frozen_state_id"].startswith("random-v1:")
-    expected = base.embed.weight
-    request = TensorChunk(
-        "embed.weight", tuple(expected.shape), expected.dtype, 0, expected.numel()
-    )
-    with initializer(options, info) as fill:
-        whole = torch.empty(257, dtype=expected.dtype, device="cpu")
-        fill(request, whole)
-        piece = torch.empty(100, dtype=expected.dtype, device="cpu")
-        fill(
-            TensorChunk(
-                request.name, request.shape, request.dtype, 31, request.storage_elements
-            ),
-            piece,
-        )
-    assert torch.equal(piece, whole[31:131])
-    assert torch.isfinite(whole).all() and whole.count_nonzero() > 0

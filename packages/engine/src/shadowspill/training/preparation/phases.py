@@ -1,11 +1,9 @@
-"""Small subprocess driver and saved settings for standalone recipe phases."""
+"""Launch the ordered phases of a resolved preparation job."""
 
-import json
 import os
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 from shadowspill.orchestration.launch.phases import (
     PHASES,
@@ -14,11 +12,6 @@ from shadowspill.orchestration.launch.phases import (
 )
 from shadowspill.orchestration.launch.processes import worker_command
 from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
-
-
-def settings(directory: str | Path) -> tuple[Path, dict[str, Any]]:
-    root = Path(directory)
-    return root, json.loads((root / "config.json").read_text())
 
 
 def _subprocess(invocation: PhaseInvocation) -> PhaseResult:
@@ -33,7 +26,7 @@ def _subprocess(invocation: PhaseInvocation) -> PhaseResult:
 
 
 def _tail(path: Path) -> str:
-    # Keep failure reporting bounded even for legacy standalone phase logs.
+    # Keep failure reporting bounded even for worker phase logs.
     with path.open("rb") as stream:
         stream.seek(0, os.SEEK_END)
         stream.seek(max(0, stream.tell() - (16 << 10)))

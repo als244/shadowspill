@@ -14,7 +14,7 @@ from benchmarks.plan_runner.report import report
 from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
 
 
-def test_runner_import_and_cli_help_need_no_torch_or_workload():
+def test_runner_import_needs_no_torch_or_workload():
     script = """
 import importlib.abc
 import sys
@@ -25,11 +25,9 @@ class Block(importlib.abc.MetaPathFinder):
                                     'shadowspill.execution'))):
             raise AssertionError('CPU launcher imported ' + fullname)
 sys.meta_path.insert(0, Block())
-from benchmarks.plan_runner import Context, NsysCapture, run, benchmark
+from benchmarks.plan_runner import Context, NsysCapture, run
 assert NsysCapture().steps == 2
-from benchmarks.plan_runner.__main__ import main
-sys.argv = ['plan_runner', '--help']
-main()
+assert callable(run)
 """
     result = subprocess.run(
         [sys.executable, *(["-S"] if sys.flags.no_site else []), "-c", script],
@@ -38,7 +36,6 @@ main()
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "run_dir" in result.stdout
 
 
 def test_aggregation_uses_slowest_rank_per_update_and_preserves_losses():
@@ -117,68 +114,6 @@ def test_nsight_and_runtime_trace_exclusions_can_overlap():
         validate(3, 1, None, True, NsysCapture(start_step=3))
     with pytest.raises(ValueError, match="untraced measured"):
         validate(4, 1, None, True, NsysCapture())
-
-
-@pytest.mark.parametrize("report_exists", [False, True])
-@pytest.mark.parametrize("external", [False, True])
-def test_recipe_launcher_requires_nsight_report_and_records_capture(
-    tmp_path, monkeypatch, report_exists, external
-):
-    from benchmarks.plan_runner import recipe
-
-    source, output = tmp_path / "source", tmp_path / "output"
-    capture_dir = tmp_path / "shared" if external else output / "profiling"
-    (source / "plans").mkdir(parents=True)
-    (source / "plans/training.ssp").touch()
-    for name, value in (("config", {"ranks": 2}), ("model", {}), ("selected", {})):
-        (source / f"{name}.json").write_text(json.dumps(value))
-
-    def launch(command, **options):
-        assert command.index("torch.distributed.run") < command.index(
-            "shadowspill.orchestration.capture.nsys_worker"
-        )
-        assert command[command.index("--output-dir") + 1] == str(capture_dir)
-        request = json.loads((output / "request.json").read_text())
-        assert request["nsys"]["start_step"] == 3
-        (output / "result.json").write_text('{"status":"PASS"}')
-        if report_exists:
-            for rank in range(2):
-                folder = capture_dir / f"rank-{rank:05d}"
-                folder.mkdir(parents=True)
-                (folder / "trace.nsys-rep").write_bytes(b"test-report")
-                (folder / "capture.json").write_text(
-                    json.dumps(
-                        dict(
-                            rank=rank,
-                            world_size=2,
-                            status="complete",
-                            report_bytes=len(b"test-report"),
-                        )
-                    )
-                )
-        return SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(recipe.subprocess, "run", launch)
-    options = dict(
-        output_dir=output,
-        steps=5,
-        monitor=False,
-        nsys=NsysCapture(
-            start_step=3,
-            executable="/bin/true",
-            output_dir=capture_dir if external else None,
-        ),
-    )
-    if not report_exists:
-        with pytest.raises(RuntimeError, match="missing Nsight rank"):
-            recipe.benchmark(source, **options)
-    else:
-        result = recipe.benchmark(source, **options)
-        assert len(result["nsys"]["reports"]) == 2
-        for record in result["nsys"]["reports"]:
-            assert record["report_bytes"] == len(b"test-report")
-            assert (output / record["report_path"]).is_file()
-        assert result["nsys"]["content_verified"] is False
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -326,53 +261,6 @@ def test_offline_report_preserves_incomplete_spans_and_missing_samples(tmp_path)
     assert result["unfinished"][0]["name"] == "training.fit"
 
 
-def test_recipe_bridge_reuses_hooks_without_changing_saved_inputs(
-    tmp_path, monkeypatch
-):
-    from benchmarks.plan_runner import recipe
-    from shadowspill.training.preparation import configuration
-
-    source, output = tmp_path / "source", tmp_path / "output"
-    source.mkdir()
-    output.mkdir()
-    for name, value in (
-        ("config", dict(recipe="sample", steps=10, resume="prior")),
-        ("model", {"identity": "saved"}),
-        ("selected", {"sequences_per_example": 4}),
-    ):
-        (source / f"{name}.json").write_text(json.dumps(value))
-    before = {path: path.read_bytes() for path in source.iterdir()}
-    (output / "request.json").write_text(json.dumps(dict(run_dir=str(source), steps=7)))
-    calls = []
-    monkeypatch.setattr(
-        configuration,
-        "adapter",
-        lambda name: SimpleNamespace(
-            initializer=lambda options, metadata, rank: calls.append(
-                (options, metadata, rank)
-            ),
-            inputs=lambda options, rank: (options, rank),
-            trainer_options=lambda options, metadata: {"frozen_state_id": "saved"},
-        ),
-    )
-
-    def capture(path, **kwargs):
-        assert path == source / "plans/training.ssp"
-        context = SimpleNamespace(rank=3)
-        kwargs["initializer"](context)
-        options, rank = kwargs["inputs"](context)
-        assert options["steps"] == 7 and options["sequences_per_example"] == 4
-        assert options["resume"] is None
-        assert options["eval_every"] == options["checkpoint_every"] == 0
-        assert rank == 3 and calls[0][2] == 3
-        assert kwargs["execution_options"] == {}
-        assert kwargs["schedules"] is kwargs["metric_reducer"] is None
-
-    monkeypatch.setattr(recipe, "run", capture)
-    recipe.worker(output)
-    assert all(path.read_bytes() == data for path, data in before.items())
-
-
 @pytest.mark.slow
 def test_real_two_rank_gloo_coordination_and_logical_rank_permutation(tmp_path):
     from shadowspill.orchestration.launch.processes import distributed_command
@@ -408,7 +296,6 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path, n
 
     import torch
 
-    from benchmarks.plan_runner import benchmark
     from engine_tests.build.test_training import Network, objective
     from shadowspill import (
         CommunicationInfo,
@@ -452,9 +339,6 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path, n
     source = tmp_path / "source"
     (source / "plans").mkdir(parents=True)
     torch.save(dict(initial=initial, examples=examples), source / "oracle.pt")
-    options = dict(recipe="tests.benchmarks._plan_runner", ranks=1, data=str(source))
-    for name, value in (("config", options), ("model", {}), ("selected", {})):
-        (source / f"{name}.json").write_text(json.dumps(value))
     with torch.device("meta"):
         template = Network(tied=True)
     program = build_step(
@@ -485,13 +369,30 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path, n
     plan.save(source / "plans/training.ssp")
     before = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
     output = tmp_path / "benchmark"
-    result = benchmark(
-        source,
-        output_dir=output,
-        steps=steps,
-        units_per_step=4 * microbatches,
-        nsys=nsys,
+    from dataclasses import asdict
+
+    from shadowspill.orchestration.launch.processes import worker_command
+
+    command = worker_command(
+        "tests.benchmarks._plan_runner",
+        [
+            "single",
+            source,
+            output,
+            json.dumps(
+                dict(
+                    steps=steps,
+                    units_per_step=4 * microbatches,
+                    nsys=None if nsys is None else asdict(nsys),
+                )
+            ),
+        ],
     )
+    if nsys is not None:
+        command = nsys.rank_command(command, output_dir=output / "profiling")
+    child = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    assert child.returncode == 0, child.stdout + child.stderr
+    result = json.loads((output / "result.json").read_text())
     torch.testing.assert_close(
         torch.tensor([row["loss"] for row in result["per_rank"][0]["steps"]]),
         torch.tensor(losses),
@@ -532,15 +433,12 @@ def test_real_saved_plan_benchmark_matches_eager_without_preparation(tmp_path, n
     timing = report(output)
     assert not timing["unfinished"]
     assert timing["monitors"][0]["status"] == "stopped"
-    assert (
-        next(row for row in timing["phases"] if row["name"] == "workers")["device"][
-            "samples"
-        ]
-        > 0
-    )
     if nsys is not None:
-        assert len(result["nsys"]["reports"]) == 1
-        capture = output / result["nsys"]["reports"][0]["report_path"]
+        from shadowspill.orchestration.capture.nsys_worker import reports
+
+        captures = reports(output / "profiling", ranks=1)
+        assert len(captures) == 1
+        capture = output / "profiling" / captures[0]["report_path"]
         database = capture.with_suffix(".sqlite")
         exported = subprocess.run(
             [

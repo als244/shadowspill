@@ -47,4 +47,4 @@ there is no automatic retry of updates. Optional `--wandb-project NAME` and
 export failure leaves the authoritative local/service results intact.
 
 For saved phase artifacts and CPU replanning, see the
-[phase benchmark](../../../packages/workloads/src/shadowspill_workloads/recipes/regression/README.md).
+[phase benchmark](../../../benchmarks/quickstart.md).

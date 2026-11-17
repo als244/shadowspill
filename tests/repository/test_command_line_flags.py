@@ -132,12 +132,6 @@ def _readers(path: Path) -> list[Path]:
             "shadowspill.orchestration.profiling": (
                 "packages/engine/src/shadowspill/orchestration/profiling.py"
             ),
-            "shadowspill_workloads.recipes.text.training": (
-                CATALOG / "recipes/text/training.py"
-            ),
-            "shadowspill_workloads.recipes.text.catalog": (
-                CATALOG / "recipes/text/catalog.py"
-            ),
         }.items():
             if module in imported:
                 readers.append(ROOT / relative_path)

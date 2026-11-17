@@ -40,20 +40,17 @@ runs: the manifest and its budgets, the readings taken off the runtime, the
 phases (calibrate, plan, warm, measure), and the verdict each gate reaches.
 
 `shadowspill_workloads` supplies optional architectures, registered definitions,
-input/objective implementations and remaining recipes. Qualification budgets and
+input/objective implementations and reusable numerical policies. Qualification budgets and
 acceptance rules live under `qualification/`. Build accepts ordinary user models
 and call examples. The public [training client](../python/client.md) submits global
 batches to the installed service, which owns preparation and execution. Generic
 saved-phase preparation lives in `shadowspill.training.preparation`, and bounded
 initialization/copy helpers live in `shadowspill.checkpoint`. The catalog installs
 independently from `packages/workloads`; custom definitions need no catalog.
-Saved recipe configurations record exact adapter module names. A renamed or
-changed adapter requires a fresh recipe directory; module identities are never
-silently rewritten when reusing artifacts.
 
 `shadowspill_client` supplies portable settings and Datum records with NumPy as
 its only required dependency. Install `./packages/client` independently of the
-engine or catalog; see its [current scope](../../packages/client/README.md).
+engine or catalog; see its [installation guide](../../packages/client/README.md).
 
 Within the engine, `server/http.py` owns authenticated, bounded socket exchanges.
 `server/routes/` separates artifact transfers, run creation and saved Plan names,
@@ -68,16 +65,15 @@ planning and execution do not discover libraries or select policies by their
 names. Architecture documentation describes these generic mechanisms; setup and
 examples for a particular library belong in its integration guide.
 
-`shadowspill.orchestration` owns installed process infrastructure used by recipes,
+`shadowspill.orchestration` owns installed process infrastructure used by the service,
 benchmarks and developer tools. Its launch, capture and monitoring modules take
-explicit worker counts and rank maps, without reading saved recipe configuration.
+explicit worker counts and rank maps.
 The engine imports no repository clients or model catalog. See the
 [ownership map](../../packages/engine/src/shadowspill/orchestration/README.md).
 
 `benchmarks/plan_runner/` owns the saved-Plan measurement protocol, GPU sampling
-and reports. Its generic `run` API accepts initialization and input hooks. The
-separate `recipe` bridge reads saved workload configurations as a client;
-normal training recipes do not depend on the benchmark runner.
+and reports. Its generic `run` API accepts initialization and input hooks. Training applications use the public client. Reproducible model factories live
+under `benchmarks/factories/`, outside the installed catalog.
 
 `benchmarks/quickstart/` composes the public phase APIs in separate workers. The
 `bandwidth_frontier/` package consumes `ProfiledProgram` archives and runs CPU
