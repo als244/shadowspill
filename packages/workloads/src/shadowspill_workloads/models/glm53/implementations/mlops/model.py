@@ -37,10 +37,12 @@ class Model(nn.Module):
     LORA_TARGETS = LORA_TARGETS
     LORA_SHARED_TARGETS = LORA_SHARED_TARGETS
 
-    def __init__(self, config, *, device="cuda", vision_config=None):
+    def __init__(self, config, *, device=None, vision_config=None):
         super().__init__()
         if vision_config is not None:
             raise ValueError("GLM-5.3 is a text-only workload")
+        # Honor the caller's device context, including metadata-only construction.
+        device = torch.empty(0, device=device).device
         self.config = config
         self.embed_tokens = nn.Embedding(
             config.vocab_size,

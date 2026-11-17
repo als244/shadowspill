@@ -54,11 +54,7 @@ def test_configuration_changes_reach_the_entry_and_bad_fields_are_refused() -> N
 
 @pytest.mark.parametrize(
     "item",
-    [
-        item
-        for item in catalog.entries()
-        if item.size == "tiny" and item.factory is None
-    ],
+    [item for item in catalog.entries() if item.size == "tiny"],
     ids=lambda item: item.name,
 )
 def test_tiny_shapes_construct_on_meta_in_every_implementation(item) -> None:
@@ -67,7 +63,31 @@ def test_tiny_shapes_construct_on_meta_in_every_implementation(item) -> None:
         parameters = list(model.parameters())
         assert parameters and all(p.is_meta for p in parameters)
         # A mixer may keep its own state in FP32; the weights follow the dtype.
-        assert model.embed.weight.dtype == torch.bfloat16
+        embeddings = model.get_submodule(
+            "embed" if hasattr(model, "embed") else "embed_tokens"
+        )
+        assert embeddings.weight.dtype == torch.bfloat16
+
+
+@pytest.mark.parametrize("name", ["glm53-tiny", "glm53-flash-tiny"])
+@pytest.mark.parametrize("storage", ["bf16", "fp8_block"])
+def test_glm_catalog_construction_uses_shared_lora_selection(name, storage):
+    model = catalog.build_on_meta(
+        name,
+        "mlops",
+        expert_storage=storage,
+        lora={"rank": 4, "alpha": 8, "factor_dtype": "float32"},
+    )
+    trained = {name: p for name, p in model.named_parameters() if p.requires_grad}
+    assert trained and all("lora_" in name for name in trained)
+    assert "layers.1.mlp.lora_gate_up_a" in trained
+    assert trained["layers.1.mlp.lora_gate_up_a"].shape[1] == 4
+    assert all(p.is_meta and p.dtype == torch.float32 for p in trained.values())
+    assert not any(
+        ".indexer." in name or ".shared_experts." in name or name.startswith("lm_head.")
+        for name in trained
+    )
+    assert not model.layers[1].mlp.w13.requires_grad
 
 
 def test_build_on_meta_applies_lora_and_configuration_changes() -> None:
