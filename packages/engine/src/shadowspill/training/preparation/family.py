@@ -83,7 +83,8 @@ def plan_family(
     )
     plans: dict[int, dict[str, Plan]] = {rank: {} for rank in ranks}
     event(
-        f"Search workers: {search.workers}; logical workers: {len(ranks)}; "
+        f"Search workers: {search.workers or 'Automatic'}; "
+        f"logical workers: {len(ranks)}; "
         f"budgets: GPU {setup.config.memory.device_gib:g} GiB, "
         f"spill {setup.config.memory.spill_gib:g} GiB"
     )

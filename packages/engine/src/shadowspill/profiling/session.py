@@ -175,7 +175,7 @@ class MeasurementSession:
         )
         try:
             with (
-                phase(f"Measure {definition.name or key} · {key}"),
+                phase(f"Measure {definition.name or 'task'} · {key[:12]}"),
                 torch.cuda.stream(self.streams[key]),
             ):
                 result = measure_task(
