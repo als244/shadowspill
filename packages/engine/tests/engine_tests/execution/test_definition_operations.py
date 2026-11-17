@@ -136,7 +136,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         ),
     )
     inventory = capture_inventory(prepare_layouts(setup))
-    assert len(inventory.templates) == 6
+    assert len(inventory.templates) == 4
     resolved, objective = setup.model, setup.objective
     tmp_path = tmp_path / "job"
     bundle = (
@@ -250,7 +250,6 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     for name, identity in (
         ("step", step.main),
         ("backward", backward.main),
-        ("masked", backward.masked),
         ("evaluation", evaluation.main),
         ("optim", backward.optimizer),
     ):

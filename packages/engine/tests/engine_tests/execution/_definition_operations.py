@@ -287,11 +287,6 @@ def check_predictions(value, data):
     torch.testing.assert_close(actual, oracle["predictions"][:3])
 
 
-def check_masked(value, data):
-    assert sum(loss.item() for loss, outputs in value) == 0.0
-    assert sum(outputs["valid_examples"].item() for loss, outputs in value) == 0
-
-
 def no_artifact(identity):
     raise AssertionError("random initialization opened an artifact")
 
@@ -387,9 +382,16 @@ with (
         torch.testing.assert_close(
             before[f"gradient.{name}"].reshape(target.shape), target
         )
-    invoke(
-        "masked", "forward_backward", datums=records(masked=True), observe=check_masked
+    boundary = state.boundary
+    output_count = len(worker_outputs)
+    _, body = submit(
+        "empty-contribution", "forward_backward", datums=records(masked=True)
     )
+    failed = inputs.receive("empty-contribution", body)
+    assert (
+        failed.state == "failed" and "no loss participation" in failed.failure.message
+    )
+    assert state.boundary == boundary and len(worker_outputs) == output_count
     torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
     invoke(
         "update",
