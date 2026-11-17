@@ -241,7 +241,7 @@ def test_checkpoint_directory_keeps_rank_ids_and_requires_every_published_member
             ).read_bytes()
         # Configuration/Plans are not silently copied or required for a backup's
         # registration. Existing restore admission reports them before workers.
-        from shadowspill.server.checkpoint_restore import (
+        from shadowspill.server.startup.checkpoint import (
             require_checkpoint_dependencies,
         )
 
@@ -389,7 +389,7 @@ def test_real_checkpoint_download_upload_to_fresh_storage_restores_every_cpu_ten
     tmp_path,
 ):
     from engine_tests.server.test_checkpoint_restore import compare_saved
-    from shadowspill.server.checkpoint_restore import CheckpointResolver
+    from shadowspill.server.startup.checkpoint import CheckpointResolver
 
     source_root, target_root = tmp_path / "source", tmp_path / "target"
     source_root.mkdir()
@@ -430,7 +430,7 @@ def test_separate_demo_client_resumes_upload_and_copies_real_checkpoint(
     tmp_path, monkeypatch
 ):
     from engine_tests.server.test_checkpoint_restore import compare_saved
-    from shadowspill.server.checkpoint_restore import CheckpointResolver
+    from shadowspill.server.startup.checkpoint import CheckpointResolver
 
     source_root, target_root = tmp_path / "source", tmp_path / "target"
     source_root.mkdir()

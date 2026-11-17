@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from shadowspill.orchestration.launch.admission import NodeAdmission
 from shadowspill.orchestration.launch.host_arena import HostArena, HostPartition
+from shadowspill.server.startup.creation import LocalCreationFactory
 from shadowspill.training.definitions import load_registry
 from shadowspill_client._records import names
 from shadowspill_client.buffers import BufferBudget
@@ -25,7 +26,6 @@ from .authentication import BearerTokens
 from .deployment import ServerLimits
 from .http import HTTP_SCRATCH_BYTES, HTTPService
 from .jobs import RunJobs
-from .local_creation import LocalCreationFactory
 from .storage import ServiceStorage
 
 

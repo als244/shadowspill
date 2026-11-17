@@ -21,8 +21,8 @@ from shadowspill.checkpoint import checkpoint_size, load_checkpoint
 from shadowspill.checkpoint.identity import state_identity
 from shadowspill.orchestration.launch.file_grants import resolve_file
 from shadowspill.orchestration.launch.staging import FileDelivery
-from shadowspill.server.checkpoint_restore import CheckpointResolver
 from shadowspill.server.checkpoints import publish_checkpoint
+from shadowspill.server.startup.checkpoint import CheckpointResolver
 from shadowspill.training.session.acceptance import AcceptanceOrder
 from shadowspill.training.session.checkpoint import CHECKPOINT_METADATA_BYTES
 from shadowspill.training.session.controls import CallControls

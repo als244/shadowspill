@@ -7,7 +7,7 @@ import pytest
 
 from engine_tests.training.test_setup_resolution import arguments
 from shadowspill.server import Server, service
-from shadowspill.server.model_sources import local_model_source
+from shadowspill.server.startup.model_sources import local_model_source
 from shadowspill_client import Model
 from shadowspill_client.protocol.setup import TrainingSetup
 

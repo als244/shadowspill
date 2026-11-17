@@ -6,6 +6,10 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from shadowspill.server.startup.checkpoint import (
+    read_saved_manifest,
+    require_checkpoint_dependencies,
+)
 from shadowspill_client.protocol.checkpoints import (
     CHECKPOINT_MEDIA_TYPE,
     WEIGHTS_MEDIA_TYPE,
@@ -16,11 +20,6 @@ from shadowspill_client.protocol.service import (
     ServiceError,
 )
 from shadowspill_client.protocol.uploads import ArtifactUpload
-
-from ..checkpoint_restore import (
-    read_saved_manifest,
-    require_checkpoint_dependencies,
-)
 
 if TYPE_CHECKING:
     from ..http import _Body, _Handler

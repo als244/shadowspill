@@ -2,12 +2,12 @@
 
 from dataclasses import dataclass, field
 
+from shadowspill.server.startup.creation import LocalCreationLimits
 from shadowspill.training.worker.resources import WorkerHost
 from shadowspill_client._records import integer, number
 
 from .artifact_uploads import UPLOAD_TTL_SECONDS
 from .http import HTTP_SCRATCH_BYTES
-from .local_creation import LocalCreationLimits
 
 
 @dataclass(frozen=True)

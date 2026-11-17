@@ -9,7 +9,7 @@ import pytest
 
 from engine_tests.server.test_artifacts import reference, store
 from engine_tests.server.test_checkpoint_restore import configuration
-from shadowspill.server.weights_initialization import resolve_weights
+from shadowspill.server.startup.weights import resolve_weights
 from shadowspill_client import Optimizer, Weights
 from shadowspill_client.protocol.checkpoints import (
     WEIGHTS_MEDIA_TYPE,
@@ -143,7 +143,7 @@ def test_weights_generation_resolution_import_needs_no_framework_or_catalog():
 import sys
 for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads'):
     sys.modules[name] = None
-from shadowspill.server.weights_initialization import resolve_weights
+from shadowspill.server.startup.weights import resolve_weights
 """,
         ],
         capture_output=True,

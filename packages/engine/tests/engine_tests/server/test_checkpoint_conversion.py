@@ -46,9 +46,9 @@ from shadowspill.orchestration.launch.admission import (
 from shadowspill.orchestration.launch.log_files import LogFiles
 from shadowspill.orchestration.launch.processes import worker_command
 from shadowspill.pytorch._rng import preserve_rng
-from shadowspill.server import checkpoint_conversion as module
-from shadowspill.server.checkpoint_restore import CheckpointResolver
 from shadowspill.server.checkpoints import publish_checkpoint
+from shadowspill.server.startup import conversion as module
+from shadowspill.server.startup.checkpoint import CheckpointResolver
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.worker.checkpoint_records import RankSave
 from shadowspill.training.worker.conversion_records import ConversionCommand

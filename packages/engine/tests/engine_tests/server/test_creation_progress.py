@@ -155,7 +155,7 @@ def test_initializing_worker_logs_are_visible_before_ready(tmp_path, monkeypatch
 
 
 def test_controller_log_caps_bytes_and_preserves_cursors():
-    from shadowspill.server.startup_log import StartupLog
+    from shadowspill.server.startup.progress import StartupLog
 
     log = StartupLog()
     log.append("x" * (2 * log.limit_bytes))

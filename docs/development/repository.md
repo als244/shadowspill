@@ -120,6 +120,7 @@ packages/engine/src/shadowspill/
 ├── operator_preparation/  provider binary capture and saved task binding
 ├── reporting/             CPU-only reports and timeline/summary output
 ├── server/                service storage and transport boundaries
+│   ├── startup/           preparation, restored state and worker startup
 │   ├── records/           durable bounded journal and committed-prefix recovery
 │   └── routes/            run, request, artifact and observation HTTP adapters
 ├── ir/                    framework-neutral values and indexed projections

@@ -23,8 +23,8 @@ from shadowspill.orchestration.launch.admission import (
     ResourceRequest,
 )
 from shadowspill.orchestration.launch.host_arena import HostArena
-from shadowspill.server.creation_records import creation_key
 from shadowspill.server.live import LiveRun
+from shadowspill.server.startup.records import creation_key
 from shadowspill.training.worker import launch as launch_module
 from shadowspill.training.worker.node import WorkerNode
 from shadowspill.training.worker.resources import WorkerHost

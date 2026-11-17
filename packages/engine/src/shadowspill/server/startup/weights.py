@@ -3,13 +3,15 @@
 import sys
 from dataclasses import dataclass
 
+from shadowspill.server.artifacts import ArtifactStore
+from shadowspill.server.startup.checkpoint import (
+    read_saved_manifest,
+    require_checkpoint_dependencies,
+)
 from shadowspill.training.worker.frozen import validate_base
 from shadowspill_client.protocol.checkpoints import WEIGHTS_MEDIA_TYPE, WeightsManifest
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.training import ResolvedTraining
-
-from .artifacts import ArtifactStore
-from .checkpoint_restore import read_saved_manifest, require_checkpoint_dependencies
 
 
 @dataclass(frozen=True)

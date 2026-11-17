@@ -5,6 +5,7 @@ import sys
 from dataclasses import replace
 from typing import BinaryIO
 
+from shadowspill.server.artifacts import ArtifactStore
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.worker.frozen import validate_base
 from shadowspill_client.protocol.checkpoints import (
@@ -20,8 +21,6 @@ from shadowspill_client.protocol.requests import (
     identifier,
 )
 from shadowspill_client.protocol.training import ResolvedTraining
-
-from .artifacts import ArtifactStore
 
 
 def read_saved_manifest(

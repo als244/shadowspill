@@ -9,8 +9,8 @@ from client_tests.test_training_config import resolved
 from engine_tests.server.test_artifacts import store
 from engine_tests.server.test_jobs import configured, until
 from engine_tests.server.test_storage import IDENTITY
-from shadowspill.server.creation_records import CreationRecord, load_creation
 from shadowspill.server.records.artifact_index import storage_key
+from shadowspill.server.startup.records import CreationRecord, load_creation
 from shadowspill_client.protocol.codec import MAX_METADATA_BYTES
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.requests import ArtifactRef

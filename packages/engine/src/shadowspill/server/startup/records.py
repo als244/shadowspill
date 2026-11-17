@@ -4,14 +4,13 @@ import hashlib
 import io
 from dataclasses import dataclass
 
+from shadowspill.server.artifacts import ArtifactStore
+from shadowspill.server.records.requests import RunIdentity
 from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, decode, encode
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.runs import RunInfo
 from shadowspill_client.protocol.service import CONTROL_MEDIA_TYPE
-
-from .artifacts import ArtifactStore
-from .records.requests import RunIdentity
 
 
 def creation_key(identity: RunIdentity, name: str) -> str:

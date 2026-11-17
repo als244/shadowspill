@@ -9,6 +9,8 @@ from pathlib import Path
 from threading import Lock, RLock
 
 from shadowspill.orchestration.capture.nsys import NsysCapture
+from shadowspill.server.startup.checkpoint import CheckpointResolver
+from shadowspill.server.startup.logs import publish_logs, publish_metadata
 from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.session.controller import RunController
@@ -25,9 +27,7 @@ from shadowspill_client.protocol.requests import ArtifactRef, identifier
 from shadowspill_client.protocol.service import ServiceError
 
 from .artifacts import ArtifactStore
-from .checkpoint_restore import CheckpointResolver
 from .checkpoints import RunCheckpoints
-from .creation_logs import publish_logs, publish_metadata
 from .nsight import finalize_manifest, publish_manifest, read_manifest
 from .records.requests import RequestRecords, RunIdentity
 from .results import ResultPublisher

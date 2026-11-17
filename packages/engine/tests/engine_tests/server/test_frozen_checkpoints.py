@@ -15,11 +15,11 @@ from engine_tests.training.test_worker_checkpoints import dispatch, running, sav
 from engine_tests.training.test_worker_frozen_checkpoint import fixture, info
 from shadowspill.checkpoint import checkpoint_size
 from shadowspill.checkpoint.identity import state_identity
-from shadowspill.server.checkpoint_restore import (
+from shadowspill.server.checkpoints import publish_checkpoint
+from shadowspill.server.startup.checkpoint import (
     CheckpointResolver,
     require_checkpoint_dependencies,
 )
-from shadowspill.server.checkpoints import publish_checkpoint
 from shadowspill.training.session.dispatch import RequestDispatcher
 from shadowspill.training.session.state import OperationState
 from shadowspill.training.worker.checkpoint_records import RankRestore, RankSave

@@ -8,6 +8,10 @@ from tempfile import TemporaryDirectory
 from shadowspill.artifacts._values import digest
 from shadowspill.orchestration.launch.connected import ConnectedProcess
 from shadowspill.orchestration.launch.publication import OutputWriter
+from shadowspill.server.artifacts import ArtifactStore
+from shadowspill.server.checkpoints import publish_checkpoint
+from shadowspill.server.startup.checkpoint import CheckpointResolver
+from shadowspill.server.startup.weights import ResolvedWeights, resolve_weights
 from shadowspill.training.session.checkpoint import (
     CHECKPOINT_METADATA_BYTES,
     ResolvedCheckpoint,
@@ -30,11 +34,6 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.checkpoints import CheckpointConversion
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.training import ResolvedTraining
-
-from .artifacts import ArtifactStore
-from .checkpoint_restore import CheckpointResolver
-from .checkpoints import publish_checkpoint
-from .weights_initialization import ResolvedWeights, resolve_weights
 
 
 def _description(

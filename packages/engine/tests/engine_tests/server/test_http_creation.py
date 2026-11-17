@@ -157,7 +157,7 @@ def test_http_run_pages_fit_the_control_envelope_without_losing_cursor_rows(
     tmp_path, monkeypatch
 ):
     with configured(tmp_path, monkeypatch) as ctx, endpoint(ctx) as (client, other):
-        from shadowspill.server.creation_records import CreationRecord
+        from shadowspill.server.startup.records import CreationRecord
 
         creation = CreationRecord.encode(TrainingCreation(ctx.config))
         labels = {f"label-{i}": "x" * 256 for i in range(16)}

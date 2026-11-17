@@ -11,8 +11,8 @@ from engine_tests.server.test_jobs import until
 from engine_tests.server.test_local_creation import configured, submit
 from engine_tests.server.test_storage import IDENTITY
 from shadowspill.orchestration.launch.file_grants import verify_file
-from shadowspill.server import local_creation as module
-from shadowspill.server.weights_initialization import ResolvedWeights
+from shadowspill.server.startup import creation as module
+from shadowspill.server.startup.weights import ResolvedWeights
 from shadowspill_client import Weights
 from shadowspill_client.protocol.checkpoints import (
     WEIGHTS_MEDIA_TYPE,

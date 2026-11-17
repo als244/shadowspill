@@ -17,9 +17,9 @@ from shadowspill.checkpoint import weights_size, write_weights
 from shadowspill.checkpoint.identity import state_identity
 from shadowspill.checkpoint.preparation import plan_states
 from shadowspill.checkpoint.weights_load import load_weights
-from shadowspill.server import checkpoint_conversion as module
 from shadowspill.server.checkpoints import publish_checkpoint
-from shadowspill.server.weights_initialization import ResolvedWeights, resolve_weights
+from shadowspill.server.startup import conversion as module
+from shadowspill.server.startup.weights import ResolvedWeights, resolve_weights
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.worker.checkpoint_records import RankSave, RankSaved
 from shadowspill.training.worker.conversion_records import ConversionCommand

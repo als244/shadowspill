@@ -13,14 +13,14 @@ from engine_tests.server.test_http_creation import endpoint
 from engine_tests.server.test_jobs import until
 from engine_tests.server.test_local_creation import configured
 from engine_tests.server.test_service_client import address
-from shadowspill.server import local_creation
-from shadowspill.server.checkpoint_restore import (
+from shadowspill.server.checkpoints import publish_checkpoint
+from shadowspill.server.records.requests import RunIdentity
+from shadowspill.server.startup import creation as local_creation
+from shadowspill.server.startup.checkpoint import (
     CheckpointResolver,
     validate_resume_optimizer,
 )
-from shadowspill.server.checkpoints import publish_checkpoint
-from shadowspill.server.creation_records import CreationRecord
-from shadowspill.server.records.requests import RunIdentity
+from shadowspill.server.startup.records import CreationRecord
 from shadowspill.training.worker import runtime
 from shadowspill_client import ServiceClient, Weights
 from shadowspill_client.creation import CreationError

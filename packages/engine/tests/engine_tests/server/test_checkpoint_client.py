@@ -13,8 +13,8 @@ from engine_tests.server.test_request_records import store as records_store
 from engine_tests.server.test_service_client import address
 from engine_tests.training.test_prepared_requests import family
 from engine_tests.training.test_worker_checkpoints import running
-from shadowspill.server.checkpoint_restore import CheckpointResolver
 from shadowspill.server.http import RunAccess
+from shadowspill.server.startup.checkpoint import CheckpointResolver
 from shadowspill.training.session.controller import RunController
 from shadowspill.training.session.prepared import PreparedRequests
 from shadowspill.training.session.state import OperationState
