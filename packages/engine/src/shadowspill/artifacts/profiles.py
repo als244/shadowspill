@@ -55,6 +55,9 @@ class TaskProfile:
 
     @shared_writer
     def to_dict(self) -> dict[str, Any]:
+        return self._to_dict(copy_metadata=True)
+
+    def _to_dict(self, *, copy_metadata: bool) -> dict[str, Any]:
         return {
             "duration_seconds": self.duration_seconds,
             "workspace_bytes": self.workspace_bytes,
@@ -65,7 +68,7 @@ class TaskProfile:
             "overlap_costs": None
             if self.overlap_costs is None
             else [item.to_dict() for item in self.overlap_costs],
-            "metadata": plain(self.metadata),
+            "metadata": plain(self.metadata) if copy_metadata else self.metadata,
         }
 
     @classmethod

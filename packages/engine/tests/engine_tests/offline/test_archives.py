@@ -20,14 +20,14 @@ from ._example import communication, options, profiled, profiles, program
 
 def test_immutable_program_reuses_identity_but_replacement_recomputes(monkeypatch):
     source = program()
-    original = type(source).to_dict
+    original = type(source)._to_dict
     calls = []
 
-    def counted(value):
+    def counted(value, **kwargs):
         calls.append(value)
-        return original(value)
+        return original(value, **kwargs)
 
-    monkeypatch.setattr(type(source), "to_dict", counted)
+    monkeypatch.setattr(type(source), "_to_dict", counted)
     first = source.digest
     assert source.digest == first
     assert len(calls) == 1

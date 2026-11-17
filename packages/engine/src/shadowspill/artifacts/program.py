@@ -136,10 +136,15 @@ class Program(Artifact):
         # Programs and their nested metadata are immutable. Runtime setup and
         # repeated checkpoints can share this identity without reserializing IR.
         with writing_metadata():
-            return digest(self.to_dict())
+            return digest(self._to_dict(copy_metadata=False))
 
     @shared_writer
     def to_dict(self) -> dict[str, Any]:
+        return self._to_dict(copy_metadata=True)
+
+    def _to_dict(self, *, copy_metadata: bool) -> dict[str, Any]:
+        # Integrity hashing consumes the same canonical values without making
+        # editable copies of large, already owned allocation/capture metadata.
         value = {
             **{
                 name: [item.to_dict() for item in getattr(self, name)]
@@ -155,15 +160,15 @@ class Program(Artifact):
             },
             "task_definitions": [asdict(item) for item in self.task_definitions],
             "name": self.name,
-            "setup": plain(self.setup),
-            "sources": plain(self.sources),
+            "setup": plain(self.setup) if copy_metadata else self.setup,
+            "sources": plain(self.sources) if copy_metadata else self.sources,
             "fixed_device_bytes": self.fixed_device_bytes,
             "memory_estimated": self.memory_estimated,
             "executables": {
                 key: sha256(value).hexdigest()
                 for key, value in self.executables.items()
             },
-            "bindings": plain(self.bindings),
+            "bindings": plain(self.bindings) if copy_metadata else self.bindings,
             "parallelism": None
             if self.parallelism is None
             else self.parallelism.to_dict(),

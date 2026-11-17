@@ -82,7 +82,7 @@ class ProfiledProgram(Artifact):
     @cached_property
     def digest(self) -> str:
         with writing_metadata():
-            return digest(self.to_dict())
+            return digest(self._to_dict(copy_metadata=False))
 
     @property
     def estimated_memory(self) -> tuple[str, ...]:
@@ -158,13 +158,20 @@ class ProfiledProgram(Artifact):
         transient = self.program.bindings.get("transient_outputs", {})
         manifests = self.program.bindings.get("manifests", {})
         derived = {}
+        workspace_costs: dict[tuple[str, tuple[int, ...]], int] = {}
         for task in self.program.tasks:
-            leaves = transient.get(task.task_id, ())
-            extra = transient_output_workspace(
-                leaves,
-                manifests.get(task.profile_id, {}),
-                self.task_profiles[task.profile_id].metadata,
-            )
+            leaves = tuple(transient.get(task.task_id, ()))
+            identity = task.profile_id, leaves
+            if identity not in workspace_costs:
+                # Repeated layers/microbatches have identical form metadata.
+                # The selected output leaves can differ, so they are part of
+                # the identity; no cache survives this immutable derivation.
+                workspace_costs[identity] = transient_output_workspace(
+                    leaves,
+                    manifests.get(task.profile_id, {}),
+                    self.task_profiles[task.profile_id].metadata,
+                )
+            extra = workspace_costs[identity]
             if extra:
                 key = f"{task.profile_id}.workspace_{extra}"
                 derived[key] = replace(
@@ -185,17 +192,25 @@ class ProfiledProgram(Artifact):
 
     @shared_writer
     def to_dict(self) -> dict[str, Any]:
+        return self._to_dict(copy_metadata=True)
+
+    def _to_dict(self, *, copy_metadata: bool) -> dict[str, Any]:
         # Preserve the immutable metadata's sharing. Building an editable Profiles
         # copy here would thaw, freeze and thaw every shared allocator trace.
         return {
-            "program": self.program.to_dict(),
+            "program": self.program.to_dict()
+            if copy_metadata
+            else self.program._to_dict(copy_metadata=False),
             "profiles": {
-                "setup": plain(self.setup),
+                "setup": plain(self.setup) if copy_metadata else self.setup,
                 "tasks": {
-                    key: record.to_dict() for key, record in self.task_profiles.items()
+                    key: record.to_dict()
+                    if copy_metadata
+                    else record._to_dict(copy_metadata=False)
+                    for key, record in self.task_profiles.items()
                 },
                 "fixed_device_bytes": self.fixed_device_bytes,
-                "metadata": plain(self.metadata),
+                "metadata": plain(self.metadata) if copy_metadata else self.metadata,
             },
         }
 
