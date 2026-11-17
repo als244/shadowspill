@@ -29,6 +29,7 @@ from .metrics import MetricAnnotation, MetricPage, MetricRecord, MetricSnapshot
 from .plans import PlanReportDocument, PlanReportRequest, PlanSummaryPage, SavedPlans
 from .preparation import ResolvedPreparation
 from .preview import TrainingPreview
+from .progress import ProgressPage, ProgressRequest
 from .reports import ReportDocument, ReportSettings
 from .requests import OperationRequest, WriterLease
 from .results import (
@@ -72,6 +73,8 @@ _KINDS: Mapping[str, type[Record]] = {
     "service.error": ServiceError,
     "run.info": RunInfo,
     "run.page": RunPage,
+    "run.progress_request": ProgressRequest,
+    "run.progress": ProgressPage,
     "training.creation": TrainingCreation,
     "training.setup": TrainingSetup,
     "training.preview": TrainingPreview,

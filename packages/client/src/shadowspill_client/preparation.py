@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ._async import CallFuture
+from ._progress import ProgressDisplay
 from ._records import Value, mapping
 from .artifacts import ArtifactHandle
 from .creation import CreationError, _info
@@ -58,7 +59,9 @@ class PreparationFuture(CallFuture[PreparationHandle]):
         self.session_id, self.run_id = session_id, run_id
 
 
-def _prepared(service: ServiceClient, run_id: str) -> PreparationHandle:
+def _prepared(
+    service: ServiceClient, run_id: str, display: ProgressDisplay
+) -> PreparationHandle:
     route = f"/v1/runs/{service.session_id}/{run_id}"
     while True:
         service._work.check()
@@ -66,6 +69,12 @@ def _prepared(service: ServiceClient, run_id: str) -> PreparationHandle:
         info = _info(service, reply.value, run_id)
         if info.kind != "preparation":
             raise ValueError("run is not a measurement-only preparation job")
+        display.update(
+            service,
+            info,
+            final=info.state in ("failed", "stopped")
+            or (reply.status == 200 and info.state != "preparing"),
+        )
         if info.state in ("failed", "stopped"):
             raise CreationError(info)
         if reply.status == 200 and info.state == "prepared":
@@ -80,8 +89,10 @@ def prepare_training(
     wait_for_resources: bool = False,
     name: str | None = None,
     labels: Mapping[str, str] | None = None,
+    progress: bool = False,
     **setup: Any,
 ) -> PreparationFuture:
+    display = ProgressDisplay(progress)
     settings = service._setup(config, setup)
     frozen_labels = organization(name, {} if labels is None else labels)
     if type(wait_for_resources) is not bool:
@@ -110,15 +121,18 @@ def prepare_training(
             ).value,
             future.run_id,
         )
-        return _prepared(service, future.run_id)
+        return _prepared(service, future.run_id, display)
 
     service._work.submit(create, future=future)
     return future
 
 
-def get_preparation(service: ServiceClient, run_id: str) -> PreparationFuture:
+def get_preparation(
+    service: ServiceClient, run_id: str, *, progress: bool = False
+) -> PreparationFuture:
     """Reattach read-only after disconnect, without recreating or replaying a job."""
     identifier(run_id, "preparation run ID")
+    display = ProgressDisplay(progress)
     future = PreparationFuture(service.session_id, run_id)
-    service._work.submit(lambda: _prepared(service, run_id), future=future)
+    service._work.submit(lambda: _prepared(service, run_id, display), future=future)
     return future

@@ -443,6 +443,9 @@ class _Handler(BaseHTTPRequestHandler):
             raise KeyError("route")
 
         identity = RunIdentity(owner, parts[2], parts[3])
+        if parts[4:] == ("progress",):
+            run_routes.progress(self, identity, query, body)
+            return
         if parts[4:] == ("plans",):
             run_routes.plans(self, identity, query, body)
             return

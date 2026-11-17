@@ -14,9 +14,11 @@ from shadowspill_client.protocol.plans import (
     PlanReportRequest,
     SavedPlans,
 )
+from shadowspill_client.protocol.progress import ProgressPage, ProgressRequest
 from shadowspill_client.protocol.runs import RunInfo, RunPage
 from shadowspill_client.protocol.service import CONTROL_MEDIA_TYPE
 
+from ..creation_logs import archived_chunks
 from ..creation_records import CreationRecord
 from ..plan_reports import generate_plan_report
 from ..records.artifact_index import ArtifactAlias
@@ -144,6 +146,29 @@ def require_scope(info: RunInfo, identity: RunIdentity) -> None:
         raise PermissionError("run catalog crossed authenticated scope")
 
 
+def progress(
+    exchange: _Handler, identity: RunIdentity, query: dict[str, list[str]], body: _Body
+) -> None:
+    jobs = exchange.server.jobs
+    if jobs is None:
+        raise KeyError("creation progress is unavailable")
+    if exchange.command != "POST" or query:
+        raise ProtocolError("invalid creation progress route")
+    if exchange.headers.get("Content-Type") != CONTROL_MEDIA_TYPE:
+        raise ProtocolError("creation progress has no control media type")
+    request = body.record()
+    if not isinstance(request, ProgressRequest):
+        raise ProtocolError("creation progress requires log cursors")
+    info = jobs.storage.catalog.get(identity)
+    if info is None:
+        raise KeyError("run")
+    require_scope(info, identity)
+    live = jobs.logs(identity, request)
+    with exchange.server.artifacts(identity.owner_id) as store:
+        chunks = archived_chunks(store, identity, request, live)
+    exchange._reply(ProgressPage(identity.session_id, identity.run_id, chunks))
+
+
 def plan_report(
     exchange: _Handler, identity: RunIdentity, query: dict[str, list[str]], body: _Body
 ) -> None:
@@ -160,7 +185,9 @@ def plan_report(
         raise KeyError("run Plans")
     require_scope(info, identity)
     if not isinstance(request, PlanReportRequest) or (
-        request.session_id, request.run_id, request.plans
+        request.session_id,
+        request.run_id,
+        request.plans,
     ) != (identity.session_id, identity.run_id, info.plans):
         raise ProtocolError("Plan report differs from its source run")
     with exchange.server.artifacts(identity.owner_id) as store:

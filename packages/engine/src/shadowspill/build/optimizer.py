@@ -6,6 +6,7 @@ from typing import Any
 import torch
 from torch import nn
 
+from shadowspill.diagnostics.progress import timed
 from shadowspill.errors import CaptureError
 from shadowspill.parallelism.ownership import ParameterOwnership
 from shadowspill.pytorch.optimizer import OptimizerCapture, capture_optimizer
@@ -44,6 +45,7 @@ class BuiltOptimizer:
     gradient_scale_control: str | None = None
 
 
+@timed("Capture optimizer")
 def capture_update(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,

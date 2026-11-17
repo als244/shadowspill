@@ -146,9 +146,11 @@ class ServiceClient:
         """Measure every case for export, without planning or starting training."""
         return prepare_training(self, **setup)
 
-    def get_preparation(self, run_id: str) -> PreparationFuture:
+    def get_preparation(
+        self, run_id: str, *, progress: bool = False
+    ) -> PreparationFuture:
         """Inspect/rejoin a measurement job in this session without replaying it."""
-        return get_preparation(self, run_id)
+        return get_preparation(self, run_id, progress=progress)
 
     def get_metrics(
         self,
@@ -164,9 +166,9 @@ class ServiceClient:
         )
 
     def get_training_client(
-        self, run_id: str, *, read_only: bool = False
+        self, run_id: str, *, read_only: bool = False, progress: bool = False
     ) -> TrainingFuture:
-        return get_training_client(self, run_id, read_only=read_only)
+        return get_training_client(self, run_id, read_only=read_only, progress=progress)
 
     def get_plans(self, run_id: str, *, name: str) -> CallFuture[PlansHandle]:
         """Retrieve named Plans in this session, including after worker close."""

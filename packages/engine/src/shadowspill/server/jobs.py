@@ -10,6 +10,7 @@ from typing import Protocol
 
 from shadowspill_client._records import integer, number
 from shadowspill_client.buffers import BufferBudget, BufferLease
+from shadowspill_client.protocol.progress import LogChunk, ProgressRequest
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.runs import RunInfo, RunKind
 from shadowspill_client.protocol.service import ServiceError
@@ -40,6 +41,8 @@ class Creation(Protocol):
     def interrupt(self) -> None: ...
 
     def close(self) -> None: ...
+
+    def logs(self, request: ProgressRequest) -> tuple[LogChunk, ...]: ...
 
 
 @dataclass
@@ -130,6 +133,23 @@ class RunJobs:
         """All run owners and the creation envelope have been released."""
         with self._mutex:
             return identity not in self._jobs
+
+    def logs(
+        self, identity: RunIdentity, request: ProgressRequest
+    ) -> tuple[LogChunk, ...]:
+        """Borrow a creation owner without launching or attaching training workers."""
+        with self._mutex:
+            job = self._jobs.get(identity)
+            if job is None or job.owner is None or job.retiring:
+                return ()
+            job.users += 1
+            owner = job.owner
+        try:
+            return owner.logs(request)
+        finally:
+            with self._mutex:
+                job.users -= 1
+            self._wake.set()
 
     def start(self) -> None:
         with self._mutex:

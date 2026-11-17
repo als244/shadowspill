@@ -19,6 +19,7 @@ from shadowspill.build.metadata import (
 )
 from shadowspill.build.optimizer import BuiltOptimizer
 from shadowspill.build.training_capture import TrainingCapture
+from shadowspill.diagnostics.progress import timed
 from shadowspill.ir import DeviceSpec, MemoryLocation, Persistence, ResidencySpec
 from shadowspill.parallelism import Parallelism
 from shadowspill.parallelism.ownership import ParameterOwnership
@@ -40,6 +41,7 @@ from .residency import derive_training_residency
 from .templates import stage_templates
 
 
+@timed("Lower training program")
 def lower_training(
     captured: TrainingCapture,
     compiled: dict[str, BuiltTask],

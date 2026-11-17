@@ -18,6 +18,7 @@ from shadowspill.build.metadata import (
     root_sources,
     signature_record,
 )
+from shadowspill.diagnostics.progress import timed
 from shadowspill.ir import DeviceSpec
 
 from ..catalog import CompiledTasks
@@ -27,6 +28,7 @@ from .residency import derive_forward_residency
 from .tasks import emit_forward_tasks
 
 
+@timed("Lower forward program")
 def lower_forward(
     captured: ForwardCapture, compiled: tuple[BuiltTask, ...], *, setup: dict[str, Any]
 ) -> Program:

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 import torch
 
+from shadowspill.diagnostics.progress import timed
 from shadowspill.pytorch.capture.objective import TrainingObjectiveCapture
 
 from ..partition import PartitionSpec, partition_export
@@ -18,6 +19,7 @@ from .policy import GraphPairPolicy
 from .store import GraphPairStore
 
 
+@timed("Partition and differentiate stages")
 def partition_training_capture(
     capture: TrainingObjectiveCapture,
     *,

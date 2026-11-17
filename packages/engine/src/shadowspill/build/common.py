@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 
 import torch
 
+from shadowspill.diagnostics.progress import phase, timed
 from shadowspill.errors import CompilationError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.toolchain import build_setup as build_setup
@@ -13,6 +14,7 @@ from .compilation.chunking import compile_chunk_task
 from .compilation.regions import compile_region_task
 
 
+@timed("Compile tasks")
 def compile_artifacts(
     artifacts: Iterable[GraphArtifact],
     device: torch.device,
@@ -38,9 +40,10 @@ def compile_artifacts(
                 compile_child(child)
             built = compile_chunk_task(artifact, children)
         else:
-            built = compile_task(
-                artifact, input_offsets=(input_offsets or {}).get(key, ())
-            )
+            with phase(f"Task {len(children) + 1} · {artifact.kind} · {key[:12]}"):
+                built = compile_task(
+                    artifact, input_offsets=(input_offsets or {}).get(key, ())
+                )
         children[key] = built
         return built
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.diagnostics.progress import event, phase
 from shadowspill.errors import CaptureError
 
 from ..partition.artifacts import PartitionedExport
@@ -49,19 +50,24 @@ def capture_training_stages(
     }
     captured: list[DifferentiatedStage] = []
     for index in reversed(range(len(partitioned.stages))):
-        stage = _capture_training_stage(
-            partitioned,
-            index,
-            roots=tuple(sorted(needed[index])),
-            graph_pair_store=store,
-            graph_pair_policy=graph_pair_policy,
-            accumulating=accumulating,
-            gradient_dtype=gradient_dtype,
-            fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
-            variants=(
-                variants if index in read_later else forward_sink_variants(variants)
-            ),
-        )
+        with phase(
+            f"Stage {index + 1}/{len(partitioned.stages)} "
+            f"· {partitioned.stages[index].stage.stage_id}"
+        ):
+            stage = _capture_training_stage(
+                partitioned,
+                index,
+                roots=tuple(sorted(needed[index])),
+                graph_pair_store=store,
+                graph_pair_policy=graph_pair_policy,
+                accumulating=accumulating,
+                gradient_dtype=gradient_dtype,
+                fuse_narrow_gradient_accumulation=fuse_narrow_gradient_accumulation,
+                variants=(
+                    variants if index in read_later else forward_sink_variants(variants)
+                ),
+            )
+            event(f"Graph-pair cache: {store.hits} hits, {store.misses} misses")
         captured.append(stage)
         pair = stage.graph_pairs.reference
         output = next(

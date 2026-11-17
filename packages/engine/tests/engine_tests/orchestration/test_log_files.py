@@ -51,10 +51,18 @@ os.write(2, b'done\\n')
         )
         assert child.stream.read(5) == b"ready"
         child.ready()
+        # Read the capped live prefix without declaring it immutable or stopping
+        # its producer. Both original finalization guards remain in force.
+        data, complete, capped = files.read("stdout", 0)
+        assert data == b"x" * 1024 and not complete and capped
+        assert files.read("stdout", 1024) == (b"", False, True)
+        with pytest.raises(ValueError, match="bounds"):
+            files.read("stdout", 1025)
         for operation in (files.references, files.close):
             with pytest.raises(RuntimeError, match="termination"):
                 operation()
         lease.close()
+        assert files.read("stderr", 0) == (b"done\n", True, False)
         assert child.process.logs[0].truncated
         assert node.used.host_bytes == 1 << 20
         references = files.references()

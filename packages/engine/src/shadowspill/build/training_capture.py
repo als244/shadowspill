@@ -10,6 +10,7 @@ import torch
 from torch import nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
+from shadowspill.diagnostics.progress import timed
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.capture.gradients import GradientDestinationRule
 from shadowspill.pytorch.capture.inputs import flat_runtime_arguments
@@ -39,6 +40,7 @@ class TrainingCapture:
     constant_values: tuple[Mapping[str, torch.Tensor], ...]
 
 
+@timed("Capture training graph")
 def capture_training_model(
     model: nn.Module,
     objective: Callable[..., Any],

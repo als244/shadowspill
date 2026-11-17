@@ -11,6 +11,7 @@ import torch.nn as nn
 from torch.export.graph_signature import InputKind, OutputKind
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.diagnostics.progress import timed
 from shadowspill.errors import CaptureError, ObjectiveError
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
@@ -86,6 +87,7 @@ def capture_training(
     )
 
 
+@timed("Export model and objective")
 def capture_training_objective(
     model: nn.Module,
     objective: Callable[..., torch.Tensor | ObjectiveResult],

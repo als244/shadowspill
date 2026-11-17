@@ -152,6 +152,21 @@ the earlier writer; `read_only=True` permits inspection without takeover.
 
 ## Preparation and local planning
 
+Pass `progress=True` to `create_training_client` or `prepare_training` to display
+the existing worker logs as preparation runs. The same option on
+`get_training_client` or `get_preparation` displays retained logs after reconnect.
+Each worker records UTC timestamps, rank/process identity, nested operation starts,
+completions, failures and elapsed host durations. Build output identifies candidate
+shapes and policies, CPU/compiler thread settings, graph capture, stage construction,
+task compilation and kernel finalization. These durations are host wall times;
+they are separate from the GPU timings used for planning. No periodic messages
+or estimated completion percentages are emitted.
+
+Display is optional and defaults to silent. Logs remain in the service after a
+disconnect or creation failure. Reads use bounded byte cursors, including across
+UTF-8 boundaries; the display reports when a stream reaches its configured log
+limit. A display failure does not cancel or recreate accepted server work.
+
 Defaults come from the installed workload's preparation preset. For built-in
 packed text, the microbatch token capacities are 1, 2 and 4 times the maximum
 sequence length, capped by the per-worker share of the global token limit.

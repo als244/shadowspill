@@ -11,6 +11,13 @@ from shadowspill_client.protocol.runs import RunInfo
 from shadowspill_client.protocol.service import CONTROL_MEDIA_TYPE
 
 from .artifacts import ArtifactStore
+from .records.requests import RunIdentity
+
+
+def creation_key(identity: RunIdentity, name: str) -> str:
+    return hashlib.sha256(
+        "\0".join((identity.session_id, identity.run_id, name)).encode()
+    ).hexdigest()
 
 
 def _reference(kind: str, body: bytes) -> ArtifactRef:

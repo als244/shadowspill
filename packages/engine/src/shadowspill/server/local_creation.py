@@ -56,6 +56,7 @@ from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.checkpoints import WEIGHTS_MEDIA_TYPE
 from shadowspill_client.protocol.preparation import PREPARATION_MEDIA_TYPE
 from shadowspill_client.protocol.preview import TrainingPreview
+from shadowspill_client.protocol.progress import LogChunk, ProgressRequest
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.runs import CreationStage, RunInfo
 from shadowspill_client.protocol.setup import TrainingSetup
@@ -64,7 +65,8 @@ from shadowspill_client.protocol.training import ResolvedTraining
 from .artifacts import ArtifactStore
 from .checkpoint_conversion import prepare_state
 from .checkpoint_restore import CheckpointResolver
-from .creation_records import load_creation
+from .creation_logs import live_chunks
+from .creation_records import creation_key, load_creation
 from .live import LiveRun
 from .model_sources import local_model_source
 from .plan_summaries import publish_summary
@@ -182,6 +184,13 @@ class LocalCreation:
     def _active(self) -> None:
         if self._cancelled.is_set() or self.closed:
             raise RuntimeError("creation ownership has stopped")
+
+    def logs(self, request: ProgressRequest) -> tuple[LogChunk, ...]:
+        phases, conversion = self._phases, self._conversion_logs
+        logs = {} if phases is None else dict(phases.logs)
+        if conversion is not None:
+            logs["converting"] = conversion
+        return live_chunks(logs, request)
 
     def _progress(self, phase: str) -> None:
         self._active()
@@ -597,9 +606,7 @@ class LocalCreation:
             self._starting.release()
 
     def _key(self, name: str) -> str:
-        return hashlib.sha256(
-            "\0".join((self.identity.session_id, self.identity.run_id, name)).encode()
-        ).hexdigest()
+        return creation_key(self.identity, name)
 
     def _convert_state[Saved: (ResolvedCheckpoint, ResolvedWeights)](
         self,
@@ -676,6 +683,7 @@ class LocalCreation:
                 {
                     **self.identity.to_dict(),
                     "phase": "converting",
+                    "limit_bytes": self._conversion_logs.limit_bytes,
                     "streams": {
                         name: reference.to_dict()
                         for name, reference in references.items()
@@ -790,6 +798,7 @@ class LocalCreation:
                         {
                             **self.identity.to_dict(),
                             "phase": phase,
+                            "limit_bytes": logs.limit_bytes,
                             "streams": references,
                         },
                     )

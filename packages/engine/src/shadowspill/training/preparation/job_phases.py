@@ -1,6 +1,7 @@
 """Resolved definition jobs use the ordinary build/profile/calibrate/plan APIs."""
 
 import json
+import os
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.artifacts.program import Program
 from shadowspill.communication.info import CommunicationInfo
+from shadowspill.diagnostics.progress import event, logged_phase, phase
 from shadowspill.orchestration.launch.workers import workers
 
 from .allocation_coverage import allocation_coverage
@@ -26,12 +28,24 @@ from .job_artifacts import (
 from .measurement_reuse import REUSE_NAME
 
 
+@logged_phase("Build")
 def build(directory: str | Path) -> None:
+    import torch
+    from torch._inductor import config as inductor
+
     from .capture import build_template
 
     root, registry, inventory = load_job(directory)
     with workers(inventory.layouts.setup.context.parallelism.world_size) as group:
-        for peers in capture_groups(inventory):
+        groups = capture_groups(inventory)
+        event(
+            f"Workers: {group.count} rank(s), candidates run sequentially per rank; "
+            f"CPU threads: {torch.get_num_threads()}, "
+            f"interop: {torch.get_num_interop_threads()}, "
+            f"Inductor compiler pool: {inductor.compile_threads}; "
+            f"CPU affinity: {len(os.sched_getaffinity(0))}"
+        )
+        for index, peers in enumerate(groups, 1):
             key = peers[group.logical_rank]
             path = root / "programs" / f"{key}.ssp"
 
@@ -59,10 +73,20 @@ def build(directory: str | Path) -> None:
                             },
                         ).save(path)
 
-            attempt(root, key, "build", capture, group)
+            template = inventory.templates[key]
+            geometry = dict(template.binding.inputs.layout.buffer.fields)
+            with phase(
+                f"Candidate {index}/{len(groups)} · {template.kind} · {key[:12]}"
+            ):
+                event(
+                    f"Input shapes: {geometry}; "
+                    f"build options: {template.build.to_dict()}"
+                )
+                attempt(root, key, "build", capture, group)
     admitted_inventory(root, inventory)
 
 
+@logged_phase("Profile")
 def profile(directory: str | Path) -> None:
     from shadowspill import TaskProfileCache
 
@@ -72,7 +96,8 @@ def profile(directory: str | Path) -> None:
     inventory, _ = admitted_inventory(root, original)
     with workers(inventory.layouts.setup.context.parallelism.world_size) as group:
         cache = TaskProfileCache(root / "cache")
-        for peers in capture_groups(inventory):
+        groups = capture_groups(inventory)
+        for index, peers in enumerate(groups, 1):
             key = peers[group.logical_rank]
             path = root / "profiled" / f"{key}.ssp"
 
@@ -86,10 +111,12 @@ def profile(directory: str | Path) -> None:
                         inventory, key, program, rank_map=group.rank_map, cache=cache
                     ).save(path)
 
-            attempt(root, key, "profile", measure, group)
+            with phase(f"Candidate {index}/{len(groups)} · {key[:12]}"):
+                attempt(root, key, "profile", measure, group)
     admitted_inventory(root, original)
 
 
+@logged_phase("Communication measurement")
 def communicate(directory: str | Path) -> None:
     from shadowspill import (
         OverlapProfileCache,
@@ -146,6 +173,7 @@ def communicate(directory: str | Path) -> None:
             communication.save(root / "communication" / f"{key}.ssp")
 
 
+@logged_phase("Plan")
 def plan(directory: str | Path) -> None:
     from .family import plan_family
 

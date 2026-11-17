@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from ._async import CallFuture
+from ._progress import ProgressDisplay
 from .artifacts import ArtifactHandle
 from .checkpoints import CheckpointHandle
 from .protocol.codec import MAX_METADATA_BYTES, decode, digest, encode
@@ -46,7 +47,9 @@ def _info(service: ServiceClient, value: object, run_id: str) -> RunInfo:
     return value
 
 
-def _ready(service: ServiceClient, run_id: str, *, read_only: bool) -> RunInfo:
+def _ready(
+    service: ServiceClient, run_id: str, *, read_only: bool, progress: ProgressDisplay
+) -> RunInfo:
     route = f"/v1/runs/{service.session_id}/{run_id}"
     while True:
         service._work.check()
@@ -54,6 +57,12 @@ def _ready(service: ServiceClient, run_id: str, *, read_only: bool) -> RunInfo:
         info = _info(service, reply.value, run_id)
         if info.kind != "training":
             raise ValueError("measurement-only preparation has no training client")
+        final = (
+            read_only
+            or info.state in ("failed", "closed", "stopped")
+            or (reply.status == 200 and info.state != "preparing")
+        )
+        progress.update(service, info, final=final)
         if read_only or (reply.status == 200 and info.state == "ready"):
             return info
         if info.state in ("failed", "closed", "stopped"):
@@ -95,15 +104,20 @@ def _config(service: ServiceClient, reference: ArtifactRef) -> ResolvedTraining:
 
 
 def get_training_client(
-    service: ServiceClient, run_id: str, *, read_only: bool = False
+    service: ServiceClient,
+    run_id: str,
+    *,
+    read_only: bool = False,
+    progress: bool = False,
 ) -> TrainingFuture:
     identifier(run_id, "run ID")
     if type(read_only) is not bool:
         raise TypeError("read_only must be boolean")
+    display = ProgressDisplay(progress)
     future = TrainingFuture(service.session_id, run_id)
 
     def attach() -> TrainingClient:
-        info = _ready(service, run_id, read_only=read_only)
+        info = _ready(service, run_id, read_only=read_only, progress=display)
         config = _config(service, info.configuration)
         writer = None if read_only else _attach(service, info)
         return TrainingClient(service, info, config, writer)
@@ -148,8 +162,10 @@ def create_training_client(
     wait_for_resources: bool = False,
     name: str | None = None,
     labels: Mapping[str, str] | None = None,
+    progress: bool = False,
     **setup: Any,
 ) -> TrainingFuture:
+    display = ProgressDisplay(progress)
     plan_ref = plans.reference if isinstance(plans, ArtifactHandle) else plans
     checkpoint_ref = (
         checkpoint.reference if isinstance(checkpoint, ArtifactHandle) else checkpoint
@@ -199,8 +215,9 @@ def create_training_client(
             future.run_id,
         )
         if info.state in ("failed", "closed", "stopped"):
+            display.update(service, info, final=True)
             raise CreationError(info)
-        info = _ready(service, future.run_id, read_only=False)
+        info = _ready(service, future.run_id, read_only=False, progress=display)
         return TrainingClient(service, info, resolved, _attach(service, info))
 
     service._work.submit(create, future=future)

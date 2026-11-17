@@ -11,6 +11,7 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.program import Program
 from shadowspill.artifacts.tasks import stage_jobs
+from shadowspill.diagnostics.progress import phase, timed
 from shadowspill.errors import CompilationError
 from shadowspill.preparation.lifecycle import BuildPreparations
 from shadowspill.pytorch.control_inputs import ControlInputs
@@ -28,6 +29,7 @@ from .kernels import capture_kernels, freeze_kernels
 from .output_devices import resolve_output_devices
 
 
+@timed("Finalize kernels")
 def finalize_tasks(
     program: Program,
     device: torch.device,
@@ -90,7 +92,13 @@ def _finalize_tasks(
 
     def invoke(key: str, arguments: Sequence[Any]) -> Any:
         try:
-            return finalize(key, arguments)
+            if key not in pending:
+                return finalize(key, arguments)
+            with phase(
+                f"Task {len(executables) - len(pending) + 1}/{len(executables)} "
+                f"· {key[:12]}"
+            ):
+                return finalize(key, arguments)
         except Exception as error:
             raise task_error(
                 CompilationError, program, key, "kernel finalization", error

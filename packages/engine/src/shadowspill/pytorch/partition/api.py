@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from torch.fx import Node
 
+from shadowspill.diagnostics.progress import timed
 from shadowspill.pytorch.capture.export import ExportCapture
 
 from .artifacts import PartitionedExport, StageRecord
@@ -24,6 +25,7 @@ from .split import (
 from .values import StageOutputKey
 
 
+@timed("Partition graph")
 def partition_export(
     capture: ExportCapture,
     module: nn.Module,

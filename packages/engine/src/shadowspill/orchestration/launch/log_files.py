@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from shadowspill_client._records import integer
 from shadowspill_client.buffers import BufferBudget
+from shadowspill_client.protocol.progress import LOG_CHUNK_BYTES
 from shadowspill_client.protocol.requests import ArtifactRef
 
 from .admission import NodeLease
@@ -25,9 +26,10 @@ from .staging import COPY_BYTES
 class LogFiles:
     """Two capped streams owned independently of the worker's resource lease.
 
-    The lease confirms every owned producer has stopped before logs can be read
-    or deleted. A transfer keeps both quota and files alive until its stream is
-    closed. The publisher may retain a separate immutable copy before cleanup.
+    Live readers receive bounded prefixes. Immutable publication and deletion
+    require confirmation that every owned producer has stopped. A transfer keeps
+    both quota and files alive until its stream closes; published copies survive
+    cleanup.
     """
 
     def __init__(
@@ -76,6 +78,38 @@ class LogFiles:
             raise RuntimeError("worker log storage is closed")
         if not self._lease.closed:
             raise RuntimeError("worker log producers have not confirmed termination")
+
+    def read(self, name: str, offset: int) -> tuple[bytes, bool, bool] | None:
+        """Read a bounded live prefix without asserting finalized content identity.
+
+        None means storage has retired; callers may use its published artifact.
+        The lock prevents deletion during this read. Existing immutable opens
+        still require producer termination and verified final hashes.
+        """
+        if name not in ("stdout", "stderr"):
+            raise ValueError("unknown log stream")
+        integer(offset, "log offset")
+        with self._lock:
+            if self.closed:
+                return None
+            finished = self._lease.closed
+            try:
+                stream = _open_regular(self.directory / f"{name}.log")
+            except FileNotFoundError:
+                if offset:
+                    raise ValueError("log offset exceeds available bytes") from None
+                return b"", finished, False
+            with stream:
+                size = os.fstat(stream.fileno()).st_size
+                if not 0 <= offset <= size <= self.limit_bytes:
+                    raise ValueError("log offset or size exceeds available bounds")
+                stream.seek(offset)
+                data = stream.read(min(LOG_CHUNK_BYTES, size - offset))
+            return (
+                data,
+                finished and offset + len(data) == size,
+                size == self.limit_bytes,
+            )
 
     def references(self) -> Mapping[str, ArtifactRef]:
         """Hash finalized capped files with bounded scratch; reuse verified digests."""

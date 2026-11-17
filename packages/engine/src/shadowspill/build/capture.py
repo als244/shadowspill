@@ -11,6 +11,7 @@ from torch import nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils._pytree import TreeSpec, tree_flatten
 
+from shadowspill.diagnostics.progress import timed
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
@@ -43,6 +44,7 @@ class ForwardCapture:
     constant_values: Mapping[str, torch.Tensor]
 
 
+@timed("Capture forward graph")
 def capture_forward_model(
     model: nn.Module,
     args: Sequence[Any],
