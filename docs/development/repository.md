@@ -18,7 +18,6 @@ shadowspill/
 │   ├── demos/             short runnable clients with explicit training settings
 │   ├── extensions/        standalone custom-definition package
 │   └── training/          shared corpus readers and CLI application loops
-├── benchmarks/            measurements, saved-Plan runners and planner experiments
 ├── tools/                 trace analysis, source checks and corpus applications
 ├── tests/                 repository and cross-package checks
 ├── qualification/         numerical/performance campaigns and independent references
@@ -73,17 +72,11 @@ explicit worker counts and rank maps.
 The engine imports no repository clients or model catalog. See the
 [ownership map](../../packages/engine/src/shadowspill/orchestration/README.md).
 
-`benchmarks/plan_runner/` owns the saved-Plan measurement protocol, GPU sampling
-and reports. Its generic `run` API accepts initialization and input hooks. Training applications use the public client. Reproducible model factories live
-under `benchmarks/factories/`, outside the installed catalog.
-
-`benchmarks/quickstart/` composes the public phase APIs in separate workers. The
-`bandwidth_frontier/` package consumes `ProfiledProgram` archives and runs CPU
-planning/plotting only. Corpus collection/evaluation remain
-separate: collection builds and profiles, while evaluation reads the saved
-corpus and plans budgets and transfer assumptions. Shared benchmark host-memory
-preflight lives in `benchmarks/host_memory/`; it checks physical/cgroup limits
-before the baseline worker creates spill pools.
+`tools/planning/` groups GPU corpus collection and CPU planner evaluation.
+`tools/measure_plan/` measures an existing executable Plan; `tools/stage_traces/`
+inspects individual compiled stages. Ordinary training and hypothetical memory
+sweeps use the public APIs shown in the client demos and Advanced guides.
+Training-system comparisons live in the separate `shadowspill_baselines` project.
 
 ## Python package
 
@@ -241,7 +234,6 @@ The test tree mirrors the boundary under test, all the way down: a test for
 ```text
 tests/
 ├── integration/    application checks across installed packages
-├── benchmarks/     corpus/frontier and baseline harness tests
 ├── tools/          reusable source-tool tests
 ├── qualification/  gate runner and acceptance-rule tests
 └── repository/     packaging, naming, documentation and boundary checks
@@ -299,7 +291,7 @@ mypy
 ```
 
 `pytest` runs the default suite. The options in `pyproject.toml` deselect two
-markers: `slow`, the end-to-end service and quickstart runs of minutes each,
+markers: `slow`, the end-to-end service runs of minutes each,
 which `pytest -m slow` runs alone; and `fresh_process`, the tests that assert
 their own process's allocator state, which CTest runs one per process.
 `packages/engine/tests/engine_tests/native/test_canaries.py` runs the editable build tree's CTest canaries

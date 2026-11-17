@@ -795,10 +795,9 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
             ROOT / "README.md",  # Concrete server installation prerequisites.
             DOCS / "python/advanced/saved-plans.md",  # Concrete GPU remapping.
             ROOT / "qualification/reference/training/README.md",
-            ROOT / "benchmarks/quickstart.md",
-            ROOT / "benchmarks/stage_traces/README.md",
-            ROOT / "benchmarks/program_collection/README.md",
-            ROOT / "benchmarks/plan_runner/README.md",
+            ROOT / "tools/stage_traces/README.md",
+            ROOT / "tools/planning/corpus/README.md",
+            ROOT / "tools/measure_plan/README.md",
             ROOT / "packages/engine/src/shadowspill/orchestration/README.md",
             DOCS / "python/api/build.md",
             DOCS / "python/api/communication.md",

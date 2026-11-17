@@ -25,7 +25,7 @@ def test_repository_clients_have_one_way_dependencies():
             "reference",
             "tools",
         ),
-        "benchmarks/plan_runner/api.py": (
+        "tools/measure_plan/api.py": (
             "shadowspill_workloads",
             "benchmarks.quickstart",
         ),

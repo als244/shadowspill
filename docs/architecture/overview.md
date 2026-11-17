@@ -7,7 +7,7 @@ ShadowSpill controls tensor residency, movement, readiness and safe memory reuse
 
 ## Public phases
 
-Preparation and execution have explicit boundaries. Quickstart composes these
+Preparation and execution have explicit boundaries. Service preparation composes these
 APIs; applications can call each phase independently.
 
 ```mermaid
@@ -107,7 +107,7 @@ PyTorch or install the execution allocator.
 | `pytorch/` | PyTorch capture, AOT graph pairs, storage contracts, kernel choices, saved-code restoration and runtime adapters. |
 | `ir/`, `planner/`, `simulator/`, `runtime/` | Framework-neutral IR and native-library interfaces. |
 
-Recipes, quickstart and qualification runners compose the same public phases.
+Service preparation, developer tools and qualification runners compose the same public phases.
 Low-level IR and runtime APIs support tooling; they do not provide a separate
 model-preparation path.
 

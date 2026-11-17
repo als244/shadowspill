@@ -15,8 +15,8 @@ build_step → Program → measure_program → Profiles
 ```
 
 The public [phase API](../python/phases.md) defines the artifacts and their
-save/load boundaries. [Program collection](../../benchmarks/program_collection/README.md)
-stops at a saved `ProfiledProgram`; [planning evaluation](../../benchmarks/planning_eval/README.md)
+save/load boundaries. [Program collection](../../tools/planning/corpus/README.md)
+stops at a saved `ProfiledProgram`; [planning evaluation](../../tools/planning/evaluation/README.md)
 consumes it without importing a model or framework.
 
 ## Planning-time ordering

@@ -126,7 +126,7 @@ assert not any(name in sys.modules for name in ('torch','mlops','triton'))
 def test_existing_recipe_constructs_meta_model_with_portable_resources(
     family, monkeypatch
 ):
-    from benchmarks.factories.expert_parallel import experiment
+    from workload_tests.cases.expert_parallel import experiment
 
     def forbidden(*args, **kwargs):
         raise AssertionError("declarative model construction touched a live group")

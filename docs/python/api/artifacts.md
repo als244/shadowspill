@@ -235,9 +235,7 @@ it never silently fills missing values. Framework collective costs and resources
 come separately from `CommunicationInfo` during planning.
 
 `TaskProfileCache` shares compatible task measurements across candidates and
-processes. The recipe runner and quickstart each create one automatically under
-`<run>/cache/v<artifact-version>/profiling/tasks`. Direct callers can share one
-explicitly, including across runs:
+processes. Direct callers can share one explicitly, including across runs:
 
 ```python
 from shadowspill import TaskProfileCache, measure_program, apply_profiles
@@ -337,11 +335,10 @@ Programs with model-owned collective resources and heterogeneous task forms are
 outside this measurement's current scope. Host-copy interference is not inferred.
 No sharded collective transfers means an empty overlay requiring no GPU work.
 
-The distributed quickstart and service preparation perform this enrichment
-during communication measurement and retain the overlap evidence in saved
-Profiles/ProfiledProgram before CPU planning. A caller-supplied quickstart
-CommunicationInfo retains the existing no-GPU shortcut: supply compatible
-overlap profiles separately if needed.
+Service preparation performs this enrichment during communication measurement
+and retains the overlap evidence in saved Profiles/ProfiledProgram before CPU
+planning. Direct callers supplying CommunicationInfo can attach compatible
+overlap profiles with `apply_profiles`.
 
 ## ProfiledProgram
 

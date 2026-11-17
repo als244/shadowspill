@@ -27,7 +27,7 @@ entered, and candidate recovery imports it when an operation is attempted.
 Communication request composition imports the engine only when called and
 consumes Programs one at a time. It requires the same build setup and declared
 parallelism, preserving collective sizes, dtypes, ordered ranks and aliasing.
-Service preparation and quickstart measure this union once per phase invocation; each
+Service preparation measures this union once per phase invocation; each
 candidate still receives its own task/communication overlap measurement. This
 does not reuse calibration across machines or separate phase invocations.
 `capture/_nsys_runtime.UpdateCapture` controls cudaProfilerApi boundaries and rank barriers.
@@ -55,8 +55,8 @@ Callers keep their own policies:
 - `shadowspill.training.preparation` composes the public build/profile/plan phases
   from registered workload definitions. The service owns subsequent execution;
   model, input, objective and initialization hooks stay with their definitions.
-- `benchmarks/quickstart` owns its candidate factory and budget sweep protocol.
-- `benchmarks/plan_runner` owns saved-Plan benchmarking, warmup exclusion,
+- `tools/planning` owns measurement corpora and planner comparisons.
+- `tools/measure_plan` owns saved-Plan measurement, warmup exclusion,
   per-rank timing aggregation, GPU sampling and offline reports. Its generic
   `run` API accepts initialization and input hooks.
 

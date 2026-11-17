@@ -15,10 +15,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 from qualification.numerical.cases import build_case
+from qualification.numerical.model_case import ModelImplementation, NumericalCase
 from qualification.precision import dtype_overrides
 from shadowspill.memory import SpillPool
-from shadowspill_workloads.numerical import ModelImplementation, NumericalCase
-from shadowspill_workloads.precision import TrainingDtypes
+from tools.planning.cases.dtypes import TrainingDtypes
 
 #: The reference arm: the same step, fully compiled, without ShadowSpill.
 REFERENCE_EXECUTION = "torch.compile.inductor.fullgraph"

@@ -37,7 +37,7 @@ shortcuts with `options`; conflicting specifications are rejected.
 - [Bounds and defaults](#bounds-and-defaults)
 - [What actually runs](#what-actually-runs)
 - [Cache reuse and artifacts](#cache-reuse-and-artifacts)
-- [Service preparation and quickstart](#service-preparation-and-quickstart)
+- [Service preparation](#service-preparation)
 - [Task warmup versus sustained GPU operation](#task-warmup-versus-sustained-gpu-operation)
 - [Task measurement](#task-measurement)
 - [Profile overrides](#profile-overrides)
@@ -174,7 +174,7 @@ certifies that profiling matches sustained training conditions.
 See [measurement artifacts and cache modes](artifacts.md#profiles-and-taskprofile)
 for refresh/require behavior and physical memory admission.
 
-## Service preparation and quickstart
+## Service preparation
 
 The public client exposes the same policy through `Preparation(profiling=...)`:
 
@@ -187,14 +187,10 @@ preparation = Preparation(profiling=ProfilingOptions(
 ))
 ```
 
-Pass this as `preparation=preparation` when creating a training client. The
+Pass this as `prepare=preparation` when creating a training client. The
 server records the effective policy with the measurements. See the
 [client preparation reference](../advanced/service-client.md) for candidate and
 measurement reuse controls.
-
-The direct `benchmarks.quickstart.run(..., profiling=timing)` API accepts
-`shadowspill.ProfilingOptions`. Its two duration shortcuts are mutually exclusive
-with an explicit policy.
 
 ## Task warmup versus sustained GPU operation
 

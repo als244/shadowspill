@@ -240,7 +240,7 @@ worker receives the same combined result. It runs no compiled compute tasks.
 The subsequent `measure_overlap` call runs saved task/collective pairs on those
 workers and adds supported interference measurements to the compute profiles.
 This preserves single-GPU build/ordinary profiling and CPU-only planning.
-The service preparation path and quickstart reuse compatible paired evidence
+Service preparation reuses compatible paired evidence
 across search candidates through `OverlapProfileCache`. Standalone callers can pass the same
 cache instance to each `measure_overlap` call. By default, cheap probes take three
 trials and expensive probes take one; pass `trials=N` to override. Allocator

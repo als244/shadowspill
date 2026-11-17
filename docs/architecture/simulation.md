@@ -159,7 +159,7 @@ the nominal object schedule would otherwise permit it.
 
 `simulate()` always uses the installed C simulator and fails closed if the
 library or ABI is unavailable. The readable Python implementation is a
-non-installed differential oracle under `reference/python/simulator`; it is
+non-installed differential oracle under `qualification/reference/python/simulator`; it is
 never selected by production configuration or a diagnostic flag.
 
 ## Fidelity

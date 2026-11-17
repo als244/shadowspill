@@ -6,17 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from benchmarks.planning_eval.plan_artifacts import (
-    load_annotated_plan,
-    save_annotated_plan,
-)
-from benchmarks.program_collection.artifacts import (
-    load_program,
-    save_profiled_program,
-)
-from benchmarks.program_collection.corpus import (
-    ProgramCaseIdentity,
-)
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -41,7 +30,18 @@ from shadowspill.planner.program import (
     TransferBandwidths,
 )
 from shadowspill.simulator import SimulationConfig
-from tests.benchmarks._fixtures import _fixture
+from tests.tools.planning._fixtures import _fixture
+from tools.planning.corpus.artifacts import (
+    load_program,
+    save_profiled_program,
+)
+from tools.planning.corpus.corpus import (
+    ProgramCaseIdentity,
+)
+from tools.planning.evaluation.plan_artifacts import (
+    load_annotated_plan,
+    save_annotated_plan,
+)
 
 
 def _pressurefit_program() -> ShadowSpillPlanningProblem:

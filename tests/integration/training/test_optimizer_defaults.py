@@ -6,10 +6,10 @@ import pytest
 import torch
 from torch import nn
 
-from shadowspill_workloads.numerical import build_case
-from shadowspill_workloads.policies.optimizer import build_optimizer
-from shadowspill_workloads.policies.precision import Precision
-from shadowspill_workloads.precision import TrainingDtypes
+from qualification.numerical.model_case import build_case
+from qualification.reference.training.optimizer import build_optimizer
+from tools.planning.cases.dtypes import TrainingDtypes
+from workload_tests.cases.precision import Precision
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])

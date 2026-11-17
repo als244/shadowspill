@@ -77,4 +77,4 @@ using the shared execution workspace; see
 [shared Plans](../python/api/executor.md#sharing-state-across-plans).
 `run(..., profiler_annotations=True)` optionally adds semantic task/transfer
 ranges for an external profiler. See the
-[saved-Plan capture tool](../../benchmarks/quickstart.md#nsight-captures-of-saved-winners).
+[preparation settings](../../docs/python/advanced/service-client.md).

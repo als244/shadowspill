@@ -37,7 +37,7 @@ policies belong outside `models/shared/`; generic planning and execution belong
 in the engine.
 
 Put application loops in `examples/training/` and benchmark drivers in
-`benchmarks/`. A model family supplies declarations and computation, not a
+`tools/planning/`. A model family supplies declarations and computation, not a
 training loop or its own service startup path. This includes both GLM families;
 their hooks reuse decoder setup and supply their checkpoint storage, attention
 requirements and provider contracts. Family READMEs describe architecture details;

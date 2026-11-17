@@ -7,7 +7,7 @@ from pathlib import Path
 
 import torch
 
-from benchmarks.spill import record, resolve
+from qualification.spill import record, resolve
 
 from . import kernel_selection
 from .metrics import state_digest

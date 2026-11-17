@@ -12,7 +12,6 @@ import traceback
 from dataclasses import replace
 from pathlib import Path
 
-from benchmarks.spill import parse_remote, record
 from qualification.device_defaults import (
     add_memory_budget_arguments,
     performance_defaults,
@@ -20,6 +19,7 @@ from qualification.device_defaults import (
 from qualification.pipeline.process import profile_and_plan, run_phase
 from qualification.pipeline.retention import remove_execution_files
 from qualification.precision import add_dtype_arguments
+from qualification.spill import parse_remote, record
 from shadowspill.schema import artifact_schema
 
 from .manifest import _planning_spill_budget
@@ -235,7 +235,7 @@ def main() -> int:
             if isinstance(ratio, float):
                 print(f"  REGRESSION RATIO: {ratio:.2%}")
             # Reported, never gated: how close this run is to the predecessor
-            # system ShadowSpill replaces. See shadowspill_workloads.full_model for the
+            # system ShadowSpill replaces. See tools.planning.cases.full_model for the
             # provenance.
             ratio = result["predecessor_throughput_ratio"]
             if isinstance(ratio, float):

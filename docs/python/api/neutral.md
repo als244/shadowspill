@@ -94,7 +94,7 @@ Both fields are serialized and included in program identity. The neutral
 `TaskMeasurement` record carries the same fields into lowering. Custom callers
 can supply this evidence explicitly. `measure_overlap` adds independently measured
 task/NCCL interference to existing profiles after communication calibration.
-The distributed quickstart and service preparation run it during their
+Service preparation runs it during its
 communication phase. Empty overlap evidence retains isolated timing and is
 reported as unmeasured, not a measured absence of interference. For calibration,
 see [distributed phases](distributed.md#ownership-and-setup).
@@ -734,7 +734,7 @@ Every step of physical admission runs in the library: `pressurefit()` selects
 candidates there, the operations a schedule implies are derived there, and each
 lease is placed at a fixed offset there. Missing or ABI-incompatible libraries
 fail immediately rather than falling back, and the readable Python equivalents
-live outside the package in `reference/python/`, where production never imports
+live outside the package in `qualification/reference/python/`, where production never imports
 them.
 
 See the [PressureFit formulation and

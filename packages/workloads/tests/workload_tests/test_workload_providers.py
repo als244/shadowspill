@@ -10,7 +10,7 @@ import torch
 from mlops.dispatch import use_implementations
 from mlops.dispatch.context import deterministic_required, implementation_override
 
-from shadowspill_workloads.numerical import NumericalCase
+from qualification.numerical.model_case import NumericalCase
 
 
 def test_numerical_defaults_do_not_pin_operation_implementations() -> None:

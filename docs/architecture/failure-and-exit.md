@@ -136,7 +136,7 @@ A child that stops making progress is not distinguishable from a child that is
 working, so anything running planning or execution in a subprocess should bound
 it in time and require the artifact it promised, rather than trusting an exit
 status alone. Program collection and planning evaluation do; see
-[benchmarking](../../benchmarks/README.md).
+[benchmarking](../../tools/README.md).
 
 Previous: [Task boundaries](task-boundaries.md). Next: [Step
 boundaries](step-boundaries.md).

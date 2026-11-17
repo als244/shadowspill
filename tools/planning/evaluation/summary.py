@@ -1,0 +1,343 @@
+"""Aggregate comparison tables over independently committed point records."""
+
+from __future__ import annotations
+
+import csv
+import json
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+from shadowspill.schema import artifact_schema
+from tools._serialization import atomic_json, atomic_text
+from tools.planning.evaluation.manifest import BaselinePaths
+from tools.planning.journals import read_object, utc_now
+
+from .matrix import FrontierPointRequest
+
+_CSV_FIELDS = (
+    "case_id",
+    "status",
+    "family",
+    "provider",
+    "tokens_per_microbatch",
+    "sequence_length",
+    "accumulation_rounds",
+    "tokens_per_optimizer_step",
+    "execution_budget_bytes",
+    "spill_budget_bytes",
+    "bandwidth_scale_numerator",
+    "bandwidth_scale_denominator",
+    "fetch_solo_bytes_per_second",
+    "fetch_concurrent_bytes_per_second",
+    "evict_solo_bytes_per_second",
+    "evict_concurrent_bytes_per_second",
+    "makespan_ns",
+    "tokens_per_second",
+    "total_selection_wall_time_ns",
+    "search_wall_time_ns",
+    "physical_admission_wall_time_ns",
+    "orchestration_wall_time_ns",
+    "task_duration_sum_ns",
+    "compute_idle_ns",
+    "fetch_bytes",
+    "evict_bytes",
+    "device_peak_bytes",
+    "spill_peak_bytes",
+    "resolved_program_count",
+    "valid_resolved_program_count",
+    "candidate_policy_count",
+    "candidate_evaluation_count",
+    "valid_candidate_evaluation_count",
+    "repair_attempt_count",
+    "pressure_boundary_repair_attempt_count",
+    "residency_evaluations",
+    "residency_cache_hits",
+    "schedule_emissions",
+    "schedule_cache_hits",
+    "simulation_requests",
+    "simulation_calls",
+    "simulation_cache_hits",
+    "admission_calls",
+    "section_total_ns",
+    "section_prepare_ns",
+    "section_setup_ns",
+    "section_reduce_ns",
+    "section_emit_ns",
+    "section_simulate_ns",
+    "section_repair_ns",
+    "section_digest_ns",
+    "section_place_ns",
+    "section_select_ns",
+    "section_teardown_ns",
+    "section_admit_ns",
+    "section_residual_ns",
+    "action_count",
+    "layout_required_bytes",
+    "layout_slack_bytes",
+    "plan_digest",
+    "schedule_digest",
+    "selection_digest",
+    "option_counts_json",
+    "annotated_plan_path",
+    "error_type",
+    "error_kind",
+    "error_message",
+    "point_path",
+)
+
+
+def write_frontier_summary(
+    paths: BaselinePaths,
+    *,
+    expected_programs: int,
+    expected_points_per_program: int,
+    case_failures: dict[str, dict[str, object]] | None = None,
+) -> dict[str, object]:
+    """Regenerate JSONL, CSV, and aggregate counts from point source-of-truth."""
+
+    point_paths = tuple(sorted(paths.cases_directory.glob("*/points/*/point.json")))
+    points = tuple(read_object(path) for path in point_paths)
+    requests = tuple(
+        _point_request(path, point)
+        for path, point in zip(point_paths, points, strict=True)
+    )
+    rows = tuple(
+        _csv_row(path, point, request)
+        for path, point, request in zip(point_paths, points, requests, strict=True)
+    )
+    atomic_text(
+        paths.jsonl_path,
+        "".join(json.dumps(item, sort_keys=True) + "\n" for item in points),
+    )
+    _write_csv(paths.csv_path, rows)
+    statuses = Counter(str(item.get("status", "invalid")) for item in points)
+    transfer_pairs = sorted(
+        {
+            tuple(
+                _bandwidth(request, name)
+                for name in (
+                    "fetch_solo",
+                    "fetch_concurrent",
+                    "evict_solo",
+                    "evict_concurrent",
+                )
+            )
+            for request in requests
+        }
+    )
+    expected_points = expected_programs * expected_points_per_program
+    summary: dict[str, object] = {
+        "schema": artifact_schema("search_frontier_summary"),
+        "baseline_id": paths.directory.name,
+        "updated_at": utc_now(),
+        "expected_programs": expected_programs,
+        "expected_points_per_program": expected_points_per_program,
+        "expected_points": expected_points,
+        "completed_points": len(points),
+        "pending_points": expected_points - len(points),
+        "status_counts": dict(sorted(statuses.items())),
+        "observed_transfer_bandwidth_combinations": [
+            {
+                "fetch_solo_bytes_per_second": fetch,
+                "fetch_concurrent_bytes_per_second": fetch_concurrent,
+                "evict_solo_bytes_per_second": evict,
+                "evict_concurrent_bytes_per_second": evict_concurrent,
+            }
+            for fetch, fetch_concurrent, evict, evict_concurrent in transfer_pairs
+        ],
+        "case_failures": dict(sorted((case_failures or {}).items())),
+        "artifacts": {
+            "csv": str(paths.csv_path),
+            "jsonl": str(paths.jsonl_path),
+            "point_root": str(paths.cases_directory),
+        },
+    }
+    atomic_json(paths.summary_path, summary)
+    return summary
+
+
+def _csv_row(
+    path: Path,
+    point: dict[str, Any],
+    request: dict[str, Any],
+) -> dict[str, object]:
+    case = _point_case(path, point)
+    identity = _mapping(case.get("identity"))
+    geometry = _mapping(case.get("data_geometry"))
+    budgets = _mapping(request.get("memory_budgets"))
+    bandwidth = _mapping(request.get("transfer_bandwidths"))
+    result = _mapping(point.get("result"))
+    simulation = _mapping(result.get("simulation"))
+    transfers = _mapping(simulation.get("transfers"))
+    fetch = _mapping(transfers.get("fetch"))
+    evict = _mapping(transfers.get("evict"))
+    throughput = _mapping(result.get("throughput"))
+    selection = _mapping(result.get("selection"))
+    search = _mapping(selection.get("search_diagnostics"))
+    search_summary = _mapping(search.get("summary"))
+    search_repairs = _mapping(search.get("repairs"))
+    search_work = _mapping(search.get("work"))
+    residency_work = _mapping(search_work.get("residency"))
+    schedule_work = _mapping(search_work.get("schedule"))
+    simulation_work = _mapping(search_work.get("simulation"))
+    admission_work = _mapping(search_work.get("admission"))
+    sections = _mapping(search_work.get("sections"))
+    schedule = _mapping(result.get("schedule"))
+    admission = _mapping(result.get("physical_admission"))
+    plan = _mapping(result.get("annotated_plan"))
+    timing = _mapping(point.get("timing"))
+    error = _mapping(point.get("error"))
+    error_fields = _mapping(error.get("fields"))
+    return {
+        "case_id": path.parents[2].name,
+        "status": point.get("status"),
+        "family": identity.get("family"),
+        "provider": identity.get("provider"),
+        "tokens_per_microbatch": geometry.get(
+            "tokens_per_microbatch", identity.get("tokens_per_microbatch")
+        ),
+        "sequence_length": geometry.get(
+            "sequence_length", identity.get("sequence_length")
+        ),
+        "accumulation_rounds": geometry.get(
+            "accumulation_rounds",
+            identity.get("accumulation_rounds", identity.get("accumulation_steps")),
+        ),
+        "tokens_per_optimizer_step": throughput.get(
+            "tokens_per_optimizer_step", throughput.get("tokens_per_step")
+        ),
+        "execution_budget_bytes": budgets.get("execution_bytes"),
+        "spill_budget_bytes": budgets.get("spill_bytes"),
+        "bandwidth_scale_numerator": bandwidth.get("scale_numerator"),
+        "bandwidth_scale_denominator": bandwidth.get("scale_denominator"),
+        "fetch_solo_bytes_per_second": bandwidth.get("fetch_solo_bytes_per_second"),
+        "fetch_concurrent_bytes_per_second": (
+            bandwidth.get("fetch_concurrent_bytes_per_second")
+        ),
+        "evict_solo_bytes_per_second": bandwidth.get("evict_solo_bytes_per_second"),
+        "evict_concurrent_bytes_per_second": (
+            bandwidth.get("evict_concurrent_bytes_per_second")
+        ),
+        "makespan_ns": simulation.get("makespan_ns"),
+        "tokens_per_second": throughput.get("tokens_per_second"),
+        "total_selection_wall_time_ns": timing.get("total_selection_wall_time_ns"),
+        "search_wall_time_ns": timing.get("search_wall_time_ns"),
+        "physical_admission_wall_time_ns": timing.get(
+            "physical_admission_wall_time_ns"
+        ),
+        "orchestration_wall_time_ns": timing.get("orchestration_wall_time_ns"),
+        "task_duration_sum_ns": simulation.get("task_duration_sum_ns"),
+        "compute_idle_ns": simulation.get("compute_idle_within_selected_span_ns"),
+        "fetch_bytes": fetch.get("bytes"),
+        "evict_bytes": evict.get("bytes"),
+        "device_peak_bytes": _mapping(simulation.get("device_peak")).get("total_bytes"),
+        "spill_peak_bytes": simulation.get("spill_peak_bytes"),
+        "resolved_program_count": search_summary.get("resolved_program_count"),
+        "valid_resolved_program_count": search_summary.get(
+            "valid_resolved_program_count"
+        ),
+        "candidate_policy_count": search_summary.get("candidate_policy_count"),
+        "candidate_evaluation_count": search_summary.get("candidate_evaluation_count"),
+        "valid_candidate_evaluation_count": search_summary.get(
+            "valid_candidate_evaluation_count"
+        ),
+        "repair_attempt_count": search_repairs.get("total_attempts"),
+        "pressure_boundary_repair_attempt_count": search_repairs.get(
+            "pressure_boundary_attempts"
+        ),
+        "residency_evaluations": residency_work.get("evaluations"),
+        "residency_cache_hits": residency_work.get("cache_hits"),
+        "schedule_emissions": schedule_work.get("emissions"),
+        "schedule_cache_hits": schedule_work.get("cache_hits"),
+        "simulation_requests": simulation_work.get("requests"),
+        "simulation_calls": simulation_work.get("calls"),
+        "simulation_cache_hits": simulation_work.get("cache_hits"),
+        "admission_calls": admission_work.get("calls"),
+        # Disjoint spans that sum to the total, so a row can be read as a
+        # breakdown rather than a set of overlapping measurements.
+        **{
+            f"section_{name}": sections.get(name)
+            for name in (
+                "total_ns",
+                "prepare_ns",
+                "setup_ns",
+                "reduce_ns",
+                "emit_ns",
+                "simulate_ns",
+                "repair_ns",
+                "digest_ns",
+                "place_ns",
+                "select_ns",
+                "teardown_ns",
+                "admit_ns",
+                "residual_ns",
+            )
+        },
+        "action_count": schedule.get("action_count"),
+        "layout_required_bytes": admission.get("required_bytes"),
+        "layout_slack_bytes": admission.get("slack_bytes"),
+        "plan_digest": plan.get("plan_digest"),
+        "schedule_digest": schedule.get("digest"),
+        "selection_digest": selection.get("selection_digest"),
+        "option_counts_json": json.dumps(
+            _mapping(selection.get("option_counts")), sort_keys=True
+        ),
+        "annotated_plan_path": plan.get("path"),
+        "error_type": error.get("type"),
+        "error_kind": error_fields.get("kind"),
+        "error_message": error.get("message"),
+        "point_path": str(path),
+    }
+
+
+def _point_request(path: Path, point: dict[str, Any]) -> dict[str, Any]:
+    """Read the complete request embedded in one current point record."""
+
+    request = _mapping(point.get("request"))
+    if not request:
+        raise ValueError(f"frontier point has no embedded request at {path}")
+    expected_digest = point.get("request_digest")
+    actual = FrontierPointRequest.from_value(request)
+    if actual.digest != expected_digest:
+        raise ValueError(f"frontier point request changed at {path}")
+    return request
+
+
+def _point_case(path: Path, point: dict[str, Any]) -> dict[str, Any]:
+    """Read the complete case identity embedded in one current point record."""
+
+    case = _mapping(point.get("case"))
+    if case:
+        return case
+    raise ValueError(f"frontier point has no embedded case identity at {path}")
+
+
+def _bandwidth(request: dict[str, Any], direction: str) -> int:
+    bandwidths = _mapping(request.get("transfer_bandwidths"))
+    key = f"{direction}_bytes_per_second"
+    value = bandwidths.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"frontier point has invalid {key}")
+    return value
+
+
+def _write_csv(path: Path, rows: tuple[dict[str, object], ...]) -> None:
+    import io
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=_CSV_FIELDS)
+    writer.writeheader()
+    writer.writerows(rows)
+    atomic_text(path, buffer.getvalue())
+
+
+def _mapping(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
+__all__ = ["write_frontier_summary"]

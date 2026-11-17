@@ -7,8 +7,8 @@ from importlib import import_module
 import pytest
 import torch
 
-from shadowspill_workloads.full_model import spec
 from shadowspill_workloads.models import catalog
+from tools.planning.cases.full_model import spec
 
 
 def test_names_are_family_then_size_and_unique() -> None:

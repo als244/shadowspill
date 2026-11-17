@@ -1,18 +1,16 @@
-# Source-tree tools
+# Developer tools
 
-This package contains repository support files outside ShadowSpill's wheel.
+Run these modules from the repository root. They are outside the installed packages.
 
-- `check_naming.py` enforces naming and component boundaries.
-- `sanitizers/` contains tool-specific support files.
-- [`pressurefit_trace/`](pressurefit_trace/README.md) contains capture and
-  analysis tools and all three video renderers: residency cuts, action emission
-  plus placement, and simulated compute/fetch/evict execution. Start with that
-  guide for inputs, examples, CLI arguments, and the code map.
+| Task | Tool |
+| --- | --- |
+| Collect GPU measurements and compare planner behavior | [Planning](planning/README.md) |
+| Measure an existing executable Plan | [Plan measurement](measure_plan/README.md) |
+| Inspect a compiled stage with Nsight | [Stage traces](stage_traces/README.md) |
+| Analyze planner decisions and render traces | [PressureFit traces](pressurefit_trace/README.md) |
+| Prepare tokenized training data | [Dataset tools](datasets/) |
 
-[Qualification](../qualification/README.md) owns gate orchestration and
-acceptance checks. Runtime diagnostics and occupancy rendering live in the
-installed `shadowspill.diagnostics` package; see the
-[occupancy guide](../docs/python/advanced/occupancy.md).
-
-The development install and test configuration put `src/` on Python's import
-path. Product behavior remains in `packages/engine/src/shadowspill/`.
+`check_naming.py` checks source conventions; `sanitizers/` supports instrumented builds.
+[Qualification](../qualification/README.md) owns correctness and regression gates.
+For training, use the [client demos](../examples/demos/README.md). For hypothetical
+memory or bandwidth changes, use [offline sweeps](../docs/python/advanced/offline-sweeps.md).

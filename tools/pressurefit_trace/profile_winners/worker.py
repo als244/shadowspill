@@ -6,9 +6,9 @@ from contextlib import contextmanager, nullcontext
 import torch
 import torch.distributed as dist
 
-from benchmarks.quickstart.phases.common import experiment, plan_identity, write
 from shadowspill import Executor, Plan
 from shadowspill.orchestration.launch.workers import workers
+from tools.pressurefit_trace.artifacts import experiment, plan_identity, write
 
 from .selection import completed
 

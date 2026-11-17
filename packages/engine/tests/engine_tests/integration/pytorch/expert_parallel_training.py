@@ -7,13 +7,12 @@ from the state ShadowSpill held before it and compares the step it took.
 """
 
 import argparse
+import json
 import os
 import subprocess
 from fractions import Fraction
 from pathlib import Path
 
-from benchmarks.quickstart import main as resume
-from benchmarks.quickstart import run
 from shadowspill import CommunicationInfo, MemoryBudgets, ProfiledProgram, plan_program
 from shadowspill.orchestration.launch.processes import worker_command
 from shadowspill.planner import SearchOptions
@@ -31,17 +30,14 @@ def main():
     root = args.out.resolve()
     if int(os.environ.get("WORLD_SIZE", "1")) != 1:
         parser.error("launch once; the runner creates the distributed phase workers")
-    run(
-        "benchmarks.factories.expert_parallel:experiment",
-        output_dir=root,
-        phase="build",
-        rank_map={0: 1, 1: 0},
-        steps=args.steps,
-        external_headroom_gib=2,
-        warmup_seconds=0.005,
-        measure_seconds=0.01,
-        plots=False,
-        factory_args={
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "logs").mkdir()
+    request = {
+        "rank_map": {0: 1, 1: 0},
+        "steps": args.steps,
+        "warmup_seconds": 0.005,
+        "measure_seconds": 0.01,
+        "model_settings": {
             # The reference arm sums each microbatch's gradient in the BF16
             # parameter's .grad; the Program under test accumulates at the same
             # dtype, so the two arms differ only in kernels, not in contract.
@@ -62,9 +58,23 @@ def main():
                 "vocab_size": 512,
             },
         },
-    )
-    for phase in ("profile", "communicate"):
-        resume(["--phase", phase, "--output-dir", str(root)])
+    }
+    (root / "request.json").write_text(json.dumps(request) + "\n")
+    for phase in ("build", "profile", "communicate"):
+        command = worker_command(
+            "engine_tests.execution.expert_parallel.preparation",
+            [root, phase],
+            ranks=2,
+        )
+        with (root / "logs" / (phase + ".log")).open("w") as log:
+            subprocess.run(
+                command,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                env={**os.environ, "OMP_NUM_THREADS": "1"},
+                check=True,
+                timeout=600,
+            )
     profiled = ProfiledProgram.load(root / "profiled/candidate-0000.ssp")
     plan = plan_program(
         profiled,

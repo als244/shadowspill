@@ -9,6 +9,7 @@ from torch.utils._pytree import tree_map
 from qualification.reference.training import config
 from qualification.reference.training.hyperparameters import set_hyperparams
 from qualification.reference.training.inputs import on_device
+from qualification.reference.training.optimizer import build_optimizer
 from qualification.reference.training.text.hyperparameters import (
     scheduled_arguments,
 )
@@ -18,7 +19,6 @@ from shadowspill.pytorch.initialization import initialize_model, model_mode
 from shadowspill.pytorch.objectives import ScaledObjective
 from shadowspill.training.observations import StepObservations, parameter_norms
 from shadowspill.training.results import StepResult
-from shadowspill_workloads.policies.optimizer import build_optimizer
 
 
 class EagerStep:

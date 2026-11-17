@@ -3,8 +3,8 @@
 import re
 import subprocess
 
-from benchmarks.quickstart.phases.common import write
 from shadowspill.orchestration.launch.processes import worker_command
+from tools.pressurefit_trace.artifacts import write
 
 from .evidence import validate_sqlite
 from .selection import completed, digest, fingerprint, verified_capture

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 
-from shadowspill_workloads.full_model import FullModelSpec, spec
 from shadowspill_workloads.providers import ModelImplementation
+from tools.planning.cases.full_model import FullModelSpec, spec
 
 _GIB = 1 << 30
 

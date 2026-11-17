@@ -37,5 +37,5 @@ they do not add another trainer. Shared process infrastructure lives in
 - [Training examples](../../../../docs/examples/README.md)
 - [Custom definitions](../../../../docs/python/advanced/definitions.md)
 - [Non-text training](../../../../docs/examples/generic-training.md)
-- [Benchmark quickstart](../../../../benchmarks/quickstart.md)
+- [preparation settings](../../../../docs/python/advanced/service-client.md)
 - [Distributed API](../../../../docs/python/api/distributed.md)

@@ -212,6 +212,5 @@ Invalid inputs and implementation errors propagate.
 This convenience loop uses default traversal; it does not search microbatch
 sizes, chunk policies or orderings. For explicit orderings, loop over
 `plan_program`. For build/profile candidate generation as well, use the
-[service preparation controls](../advanced/service-client.md#preparation-and-local-planning) or
-[quickstart](../../../benchmarks/quickstart.md). See the
+[service preparation controls](../advanced/service-client.md#preparation-and-local-planning). See the
 [budget-sweep example](../../examples/reusable-planning.md) for saving winners.

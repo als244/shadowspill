@@ -80,10 +80,9 @@ remain unchanged.
 ## A model-scale example
 
 [GLMStages](../../packages/workloads/src/shadowspill_workloads/policies/glm.py) implements this same
-protocol using exported module paths. The GLM [workload factory](../../benchmarks/factories/glm/quickstart.py)
-passes the policy to `build_step` through its build options when asked
-(`partition="glm_stages"`). Quickstart saves the resulting Program, profiles it
-and searches its budgets/orderings without rebuilding the partition.
+protocol using exported module paths. Pass an instance as `partition=` to
+`build_step`. The resulting Program can be measured and planned with different
+budgets and orderings without rebuilding its partition.
 Model operators contain no partition API calls. Other architectures can supply
 their own policy in exactly the same way.
 
@@ -126,7 +125,7 @@ lifetime rules control movement and explicitly permitted local replay.
 
 [`GraphPairPolicy`](../python/api/frontend.md#graph-pair-policies) separately
 controls the SAVE and RECOMPUTE cuts. Retention does not pin a tensor to a device:
-the planner still chooses variants, placement and transfers. Quickstart can
-[search each retention policy's chunk candidates](../../benchmarks/quickstart.md#searching-chunk-and-retention-policies),
-profile every resulting Program, and choose the admitted Plan with the lowest
-simulated time across the candidates.
+the planner still chooses variants, placement and transfers. The service's
+[preparation settings](../python/advanced/service-client.md) let callers search
+multiple configurations and select the admitted Plan with the lowest simulated
+time.

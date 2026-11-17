@@ -4,10 +4,10 @@ import json
 import sys
 from pathlib import Path
 
-from benchmarks.spill import resolve
 from qualification.pipeline.observe import Observe
 from qualification.pipeline.state import initialize, load_inputs
 from qualification.runtime_evidence import check_physical_budget
+from qualification.spill import resolve
 from shadowspill import Executor, Plan
 from shadowspill.runtime.plan.annotations import set_profiler_annotations
 

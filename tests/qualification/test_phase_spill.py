@@ -5,10 +5,10 @@ from argparse import Namespace
 
 import pytest
 
-from benchmarks.spill import resolve
 from qualification.numerical.prepare import load_request, save_request
 from qualification.numerical.request import CaseRequest, PlannedRequest
 from qualification.numerical.tolerances import SPILL_BUDGET
+from qualification.spill import resolve
 from shadowspill.network import RemotePool
 from shadowspill.ssd import SSDPool
 

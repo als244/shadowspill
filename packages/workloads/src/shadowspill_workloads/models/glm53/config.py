@@ -162,5 +162,5 @@ def from_huggingface(metadata, **overrides):
 
 
 #: The named shapes the catalog serves: the published architecture, and the
-#: small random fixture the quickstart factory builds with ``tiny=True``.
+#: small random fixture used by model and provider tests.
 PRESETS: Mapping[str, Config] = {"published": Config(), "tiny": Config.tiny()}

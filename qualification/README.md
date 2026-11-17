@@ -1,5 +1,8 @@
 # Qualification
 
+[Independent references](reference/README.md) supply algorithm and training oracles.
+Their tests live under `tests/qualification/reference/`.
+
 Run the default gates serially:
 
 ```bash

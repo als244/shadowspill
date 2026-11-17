@@ -37,11 +37,8 @@ result = sweep_programs(
 ```
 
 `plan_program` accepts the same optional argument. The selected `Plan` saves the
-evidence, including raw observations. Quickstart accepts `pool_memory=...`, or
-`--pool-memory pool-memory.ssp` on the CLI, and uses it for every chunk, policy,
-ordering and budget candidate. Calibration is explicit; search never reacquires
-a large pool for each candidate. Existing callers without this argument retain
-their current behavior and do not acquire fabricated measurement evidence.
+evidence, including raw observations. Calibration is explicit; search reuses it
+across candidates without reacquiring a large pool.
 
 ## Two different constraints
 

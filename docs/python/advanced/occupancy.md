@@ -16,8 +16,7 @@ where the digest is the selection's `program_digest`. A certified plan's
 admitted layout is in `certificate.npz` beside its selection, and the tool
 reads the two together; a selection with no certificate beside it is read as
 it stands. The tool finds the program from the selection; `--program` names
-one explicitly. These are low-level planner artifacts. For phase archives and
-quickstart results, use `write_report(result, path)`.
+one explicitly. These are low-level planner artifacts. For portable Plans, use `write_report(result, path)`.
 
 Some entries under `results/` name a plan without carrying its evidence (no
 `simulation_result`); the tool refuses those and says so.

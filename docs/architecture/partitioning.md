@@ -132,11 +132,10 @@ workload PartitionPolicy
   -> separate measurement, profile application and planning
 ```
 
-Quickstart factories return the same object in
-`experiment["build_options"]["partition"]`. The generic runner passes it to build;
-planning chooses among the resulting variants. Comparing different partitions
-requires building different Programs. The runner does not recognize architecture
-names or substitute a model-specific policy.
+Planning chooses among the resulting variants. Comparing different partitions
+requires building different Programs. Workload definitions can supply partition
+policies through their preparation hooks; the engine does not infer them from
+architecture names.
 
 The [custom partitioning example](../examples/custom-partitioning.md) shows a
 small standalone policy. Larger workload policies belong beside their models;

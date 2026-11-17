@@ -1,0 +1,370 @@
+"""Rank-local saved-Plan execution, with no model or preparation dependency."""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import statistics
+import time
+from collections.abc import Mapping
+from contextlib import ExitStack
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from shadowspill.orchestration.capture.nsys import NsysCapture
+from shadowspill.orchestration.monitoring.lifecycle import Lifecycle
+
+from .monitor import GpuMonitor
+
+if TYPE_CHECKING:
+    from shadowspill import Plan
+
+
+@dataclass(frozen=True)
+class Context:
+    """Workload hook context; ``rank`` is the Plan's logical rank."""
+
+    plan: Plan
+    rank: int
+    worker_rank: int
+    world_size: int
+
+
+def validate(steps, warmup_steps, units_per_step, trace_final_step, nsys=None):
+    if type(steps) is not int or steps < 1:
+        raise ValueError("steps must be a positive integer")
+    if type(warmup_steps) is not int or not 0 <= warmup_steps < steps:
+        raise ValueError("warmup_steps must leave at least one measured update")
+    if type(trace_final_step) is not bool:
+        raise TypeError("trace_final_step must be a bool")
+    if trace_final_step and steps <= warmup_steps + 1:
+        raise ValueError(
+            "final-step tracing must leave at least one untraced measured update"
+        )
+    if nsys is not None:
+        if not isinstance(nsys, NsysCapture):
+            raise TypeError("nsys must be NsysCapture or None")
+        if nsys.start_step + nsys.steps - 1 > steps:
+            raise ValueError("Nsight capture must fit within the requested updates")
+        measured = set(range(warmup_steps + 1, steps + 1))
+        measured.difference_update(nsys.step_numbers)
+        if trace_final_step:
+            measured.discard(steps)
+        if not measured:
+            raise ValueError("Nsight capture must leave an untraced measured update")
+    if units_per_step is not None and (
+        isinstance(units_per_step, bool)
+        or not math.isfinite(units_per_step)
+        or units_per_step <= 0
+    ):
+        raise ValueError("units_per_step must be finite and positive")
+
+
+def run(
+    plan,
+    *,
+    initializer,
+    inputs,
+    output_dir,
+    steps=7,
+    warmup_steps=1,
+    execution_options=None,
+    schedules=None,
+    metric_reducer=None,
+    parameter_norms_every=0,
+    rank_map=None,
+    units_per_step=None,
+    unit_label="items",
+    monitor=True,
+    trace_final_step=True,
+    nsys=None,
+):
+    """Execute a saved training Plan in each participating fresh worker.
+
+    ``initializer(context)`` is a context manager yielding Executor's bounded
+    ``fill_tensor(chunk, destination)`` callback. ``inputs(context)`` returns an
+    iterable of Executor.run keyword mappings for complete updates. Both run
+    after Executor installs its allocator. Execution options may be a mapping
+    or a context-taking factory. Schedules and metric reduction run in this
+    benchmark caller, outside the measured Executor/host-result interval.
+
+    Launch distributed workers with torchrun and
+    shadowspill.orchestration.launch.rank_device; each process must see its
+    assigned GPU as cuda:0. WORLD_SIZE must match the Plan.
+    No model construction, build, profiling, planning, evaluation, checkpoints,
+    or startup diagnostic runs are added here. By default the final real update
+    collects a runtime trace on every rank. Warmup and traced updates still
+    train, but are excluded from the reported steady median. Trace files are
+    written after runtime cleanup; set ``trace_final_step=False`` to disable.
+    ``nsys=NsysCapture(...)`` bounds an external capture and enables semantic
+    annotations. Launch each worker with ``nsys.rank_command`` inside torchrun
+    to collect each assigned GPU. Captured updates are excluded
+    from steady timing; run() does not launch a collector inside an existing worker.
+    """
+    validate(steps, warmup_steps, units_per_step, trace_final_step, nsys)
+    if type(parameter_norms_every) is not int or parameter_norms_every < 0:
+        raise ValueError("parameter_norms_every must be a nonnegative integer")
+    worker_rank = int(os.environ.get("RANK", "0"))
+    root = Path(output_dir)
+    local = root / f"rank-{worker_rank:05d}"
+    local.mkdir(parents=True, exist_ok=False)
+    with (
+        Lifecycle(local / "phases.jsonl", rank=worker_rank) as timing,
+        ExitStack() as stack,
+    ):
+        if monitor:
+            # The rank_device launcher exposes exactly one physical GPU. A
+            # standalone worker also uses visible ordinal zero.
+            visible = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0]
+            stack.enter_context(GpuMonitor(local, devices=visible))
+        with timing.phase("execution"):
+            return _execute(
+                Path(plan),
+                initializer,
+                inputs,
+                root,
+                local,
+                timing,
+                steps,
+                warmup_steps,
+                execution_options,
+                schedules,
+                metric_reducer,
+                parameter_norms_every,
+                rank_map,
+                units_per_step,
+                unit_label,
+                trace_final_step,
+                nsys,
+            )
+
+
+def _execute(
+    path,
+    initializer,
+    inputs,
+    root,
+    local,
+    timing,
+    steps,
+    warmup_steps,
+    execution_options,
+    schedules,
+    metric_reducer,
+    parameter_norms_every,
+    rank_map,
+    units_per_step,
+    unit_label,
+    trace_final_step,
+    nsys,
+):
+    with timing.phase("imports"):
+        from shadowspill import Executor, Plan
+        from shadowspill.orchestration.launch.workers import workers
+        from shadowspill.training._logs import emit
+
+        from .updates import updates
+
+    with timing.phase("plans.load"):
+        plan = Plan.load(path)
+        if plan.program.bindings.get("kind") != "step":
+            raise ValueError("measure_plan requires a saved training Plan (build_step)")
+        count = (
+            1
+            if plan.program.parallelism is None
+            else plan.program.parallelism.world_size
+        )
+    records = []
+    diagnostics = None
+
+    def completed(result):
+        nonlocal diagnostics
+        if not math.isfinite(result.loss) or not math.isfinite(result.seconds):
+            raise FloatingPointError("training returned a nonfinite loss or duration")
+        timing.event(
+            "training.step_completed", step=result.step, seconds=result.seconds
+        )
+        records.append(
+            dict(
+                step=result.step,
+                seconds=result.seconds,
+                loss=result.loss,
+                scalars=dict(result.summary.scalars),
+            )
+        )
+        if trace_final_step and result.step == steps:
+            diagnostics = result.diagnostics
+            if diagnostics is None:
+                raise RuntimeError(
+                    "final update did not return the requested runtime trace"
+                )
+
+    with timing.managed("control_group", workers(count, rank_map=rank_map)) as group:
+        context = Context(plan, group.logical_rank, group.rank, group.count)
+        with timing.phase("configuration"):
+            options = (
+                execution_options(context)
+                if callable(execution_options)
+                else execution_options
+            )
+            options = dict(options or {})
+            forbidden = {
+                "plans",
+                "rank_map",
+                "device",
+                "parameter_norms",
+            } & options.keys()
+            if forbidden:
+                raise ValueError(
+                    f"runner owns these Executor options: {sorted(forbidden)}"
+                )
+        with ExitStack() as runtime:
+            with timing.phase("runtime.create"):
+                executor = Executor(
+                    plan,
+                    rank_map=group.rank_map,
+                    parameter_norms=parameter_norms_every > 0,
+                    **options,
+                )
+                runtime.enter_context(timing.managed("runtime", executor))
+                started = time.perf_counter()
+            with timing.phase("weights.initialize"), initializer(context) as initialize:
+                executor.initialize(initialize)
+            with timing.phase("inputs.create"):
+                source = inputs(context)
+            with (
+                timing.phase("training.updates"),
+                (local / "metrics.jsonl").open("x", buffering=1) as stream,
+            ):
+                for result in updates(
+                    executor,
+                    _traced_inputs(source, steps, trace_final_step),
+                    steps=steps,
+                    schedules=schedules,
+                    metric_reducer=metric_reducer,
+                    parameter_norms_every=parameter_norms_every,
+                    nsys=nsys,
+                    rank=group.rank,
+                ):
+                    emit(result, time.perf_counter() - started, stream, None)
+                    completed(result)
+            capacity = executor.spill_capacity_bytes
+        trace = None
+        if diagnostics is not None:
+            with timing.phase("trace.write"):
+                from shadowspill.diagnostics.step_file import write_step_diagnostics
+
+                trace_path = local / "trace" / "step.json"
+                trace_path.parent.mkdir()
+                events = write_step_diagnostics(trace_path, diagnostics)
+                trace = dict(
+                    step=steps,
+                    diagnostics_path=str(trace_path.relative_to(root)),
+                    events_path=str(events.relative_to(root)),
+                    runtime_event_overflow=diagnostics.runtime.event_overflow,
+                    allocation_event_overflow=diagnostics.runtime.allocation_event_overflow,
+                    allocator_overflow=diagnostics.allocator.overflow,
+                )
+            del diagnostics
+        # Gather only after runtime teardown, so cleanup cannot hide behind a
+        # successful result file. Small host records never retain GPU outputs.
+        with timing.phase("results.gather"):
+            per_rank = group.gather(
+                dict(
+                    rank=group.logical_rank,
+                    worker_rank=group.rank,
+                    steps=records,
+                    spill_capacity_bytes=capacity,
+                    trace=trace,
+                )
+            )
+    if group.rank != 0:
+        return None
+    with timing.phase("results.write"):
+        result = summarize(
+            per_rank,
+            steps=steps,
+            warmup_steps=warmup_steps,
+            units_per_step=units_per_step,
+            unit_label=unit_label,
+            trace_final_step=trace_final_step,
+            nsys=nsys,
+        )
+        result.update(
+            plan=str(path.resolve()),
+            program_digest=plan.program.digest,
+            schedule_digest=plan.schedule.digest,
+            predicted_seconds=plan.timeline.makespan_ns / 1e9,
+            execution_budget_bytes=plan.memory_budgets.execution_bytes,
+            spill_budget_bytes=plan.memory_budgets.spill_bytes,
+        )
+        result["measured_over_predicted"] = (
+            result["median_seconds"] / result["predicted_seconds"]
+            if result["predicted_seconds"] > 0
+            else None
+        )
+        (root / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+    return result
+
+
+def _traced_inputs(source, steps, trace_final_step):
+    for index, data in enumerate(source, 1):
+        if not isinstance(data, Mapping):
+            raise TypeError(
+                "each source item must contain keyword arguments for Executor.run"
+            )
+        if "runtime_trace" in data:
+            raise ValueError("measure_plan owns runtime_trace; use trace_final_step")
+        yield dict(data, runtime_trace=trace_final_step and index == steps)
+
+
+def summarize(
+    per_rank,
+    *,
+    steps,
+    warmup_steps,
+    units_per_step,
+    unit_label,
+    trace_final_step=False,
+    nsys=None,
+):
+    """Compare synchronous updates by max-rank time before taking the median."""
+    validate(steps, warmup_steps, units_per_step, trace_final_step, nsys)
+    per_rank = sorted(per_rank, key=lambda row: row["rank"])
+    if not per_rank or len({row["rank"] for row in per_rank}) != len(per_rank):
+        raise ValueError("expected one result for every distinct logical rank")
+    expected = list(range(1, steps + 1))
+    if any([r["step"] for r in rank["steps"]] != expected for rank in per_rank):
+        raise ValueError("workers did not complete the requested updates")
+    combined = [
+        dict(step=index + 1, seconds=max(row["seconds"] for row in rows))
+        for index, rows in enumerate(
+            zip(*(rank["steps"] for rank in per_rank), strict=True)
+        )
+    ]
+    nsys_steps = [] if nsys is None else list(nsys.step_numbers)
+    steady = [
+        row
+        for row in combined[warmup_steps : steps - int(trace_final_step)]
+        if row["step"] not in nsys_steps
+    ]
+    median = statistics.median(row["seconds"] for row in steady)
+    return dict(
+        status="PASS",
+        steps=combined,
+        per_rank=per_rank,
+        warmup_steps=warmup_steps,
+        trace_step=steps if trace_final_step else None,
+        nsys_steps=nsys_steps,
+        steady_steps=[row["step"] for row in steady],
+        median_seconds=median,
+        units_per_step=units_per_step,
+        unit_label=unit_label,
+        units_per_second=None if units_per_step is None else units_per_step / median,
+        timing_definition=(
+            "median of per-update maximum rank Executor/host-result seconds, "
+            "excluding warmup and traced updates"
+        ),
+    )

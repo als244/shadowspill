@@ -227,7 +227,7 @@ costs. Equal final task contracts can share code/profiles; a changed saved cut
 cannot borrow another cut's memory evidence. See
 [graph-pair construction](../../architecture/graph-pair-construction.md#save),
 [artifact metadata](artifacts.md#aot-graph-pair-cache), and the
-[candidate example](../../../benchmarks/quickstart.md#searching-chunk-and-retention-policies).
+[preparation settings](../../../docs/python/advanced/service-client.md).
 
 For unusual cost classification, subclass `RetentionPolicy.classify(node)`.
 It receives a traced FX node and returns `OperatorClass.MEMORY_BOUND`,
@@ -295,8 +295,7 @@ Use deterministic structural rules and a stable configuration representation.
 Subclassing the protocol is optional: implementing the method is sufficient.
 
 Pass the same policy as `partition=policy` to `build_forward`, `build_forward_backward`,
-`build_step`. A quickstart factory supplies it
-in `build_options={"partition": policy}`. Direct API calls do not infer policy from a model name.
+or `build_step`. Direct API calls do not infer policy from a model name.
 
 The policy defines forward-stage boundaries. ShadowSpill derives object inputs,
 outputs, explicit mutations and aliases, then constructs backward alternatives

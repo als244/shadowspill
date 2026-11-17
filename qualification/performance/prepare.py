@@ -40,7 +40,7 @@ def read_request(directory: Path) -> tuple[Namespace, FullModelManifest]:
 
 def run(directory: Path) -> None:
     from qualification.pipeline.build import build_case as build_program
-    from shadowspill_workloads.full_model import build_case
+    from tools.planning.cases.full_model import build_case
 
     arguments, manifest = read_request(directory)
     case = build_case(manifest, seed=arguments.seed)

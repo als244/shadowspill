@@ -3,7 +3,6 @@ from dataclasses import replace
 import pytest
 import torch
 
-from shadowspill_workloads.full_model import build_model, initialize_model, spec
 from shadowspill_workloads.models.qwen3moe.config import Config as Qwen3MoEConfig
 from shadowspill_workloads.models.qwen3moe.implementations.mlops import (
     Model as Qwen3MoE,
@@ -12,6 +11,7 @@ from shadowspill_workloads.models.qwen35moe.config import Config as Qwen35MoECon
 from shadowspill_workloads.models.qwen35moe.implementations.mlops import (
     Model as Qwen35MoE,
 )
+from tools.planning.cases.full_model import build_model, initialize_model, spec
 
 
 def tiny(config):

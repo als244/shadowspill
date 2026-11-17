@@ -74,23 +74,12 @@ model = Model(PRESETS["8b"])
 ```
 
 `shadowspill_workloads.models.catalog.build_on_meta("llama3-8b", "mlops", dtype="bfloat16")`
-declares the same model on `meta`, and the quickstart runs it with
-the [phase benchmark factory](../../../../../../benchmarks/factories/text/README.md)
-with `model="llama3-8b"`. The
+declares the same model on `meta`. The
 [model catalog](../../MODELS.md) covers dtypes, LoRA, inputs and the loss.
 
-## Target logprobs
+## Objectives
 
-Both implementations expose `target_logprobs(tokens, targets, sequence_lengths=None,
-*, head_chunk_size=None)` for the installed summed token objectives. The result is
-FP32 with the target shape. The head runs in row chunks and accepts arbitrary
-per-token gradients, including signed weights and policy losses. LoRA heads and
-tied embeddings use their ordinary projection modules.
-
-The default bounds each FP32 logits block to 64 MiB or one vocabulary row,
-whichever is larger. `head_chunk_size` is a positive structural row count. This
-is a per-projection bound: the engine must still plan retained activations and
-backward workspace. The existing scalar `loss()` path remains unchanged while
-trainer callers migrate. CPU value, gradient and update checks cover full, tied,
-frozen-head and LoRA-head cases; service/GPU and throughput qualification of the
-new target-logprob path remain outstanding.
+The shared [objective definitions](../../../../../../docs/python/advanced/objectives.md) provide token
+cross entropy and policy objectives. Their head integration bounds temporary
+logits by processing token rows in chunks; the planner accounts for the retained
+activations and gradients.

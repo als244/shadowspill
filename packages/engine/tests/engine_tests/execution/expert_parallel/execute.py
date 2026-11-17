@@ -12,8 +12,8 @@ import torch
 from engine_tests.execution._cold import forbid_preparation
 
 forbid_preparation()
-from benchmarks.quickstart.phases.common import experiment, read  # noqa: E402
 from engine_tests.execution._trace_checks import check_trace  # noqa: E402
+from engine_tests.execution.expert_parallel.preparation import experiment, read  # noqa: E402
 from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
 from shadowspill.orchestration.launch.workers import workers  # noqa: E402
 

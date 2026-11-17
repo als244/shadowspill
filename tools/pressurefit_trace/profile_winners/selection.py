@@ -2,8 +2,8 @@
 
 from hashlib import file_digest
 
-from benchmarks.quickstart.phases.common import plan_identity, read
 from shadowspill import Plan
+from tools.pressurefit_trace.artifacts import plan_identity, read
 
 
 def digest(path):

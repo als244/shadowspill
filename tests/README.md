@@ -18,8 +18,7 @@ packages/workloads/tests/workload_tests/
 
 tests/
 ├── integration/    application checks across installed packages
-├── benchmarks/     corpus/frontier and baseline harness tests
-├── tools/          reusable source-tool tests
+├── tools/          planning, Plan measurement and diagnostic-tool tests
 ├── qualification/  gate runner and acceptance-rule tests
 └── repository/     packaging, naming, documentation and boundary checks
 ```
@@ -30,7 +29,7 @@ Inside `engine_tests/`, the mirror goes all the way down: a test for
 belongs to the one it is about, not the one it imports for a fixture.
 
 Independent PyTorch training and checkpoint checks live in
-`tests/integration/reference/`; their implementation belongs to `reference/training/`.
+`tests/qualification/reference/training/`; their implementation belongs to `qualification/reference/training/`.
 
 `packages/engine/tests/engine_tests/native/` mirrors `packages/engine/csrc/` the same way: `runtime/`, `simulator/`, `backends/`,
 `adapter/`, `network/` and `planner/search/algorithms/pressurefit/` hold the

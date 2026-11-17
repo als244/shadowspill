@@ -63,7 +63,7 @@ def build_case(
         return case
     if case_options:
         raise ValueError("case_options require a custom case_factory")
-    from shadowspill_workloads.numerical import build_case as supplied_case
+    from qualification.numerical.model_case import build_case as supplied_case
 
     return supplied_case(
         family,
