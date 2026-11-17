@@ -1,1 +1,1 @@
-"""Configured packed-text experiments with independently runnable phases."""
+"""Text phase helpers shared by heterogeneous execution and reference tests."""

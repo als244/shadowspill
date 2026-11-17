@@ -152,13 +152,8 @@ use FP32 even when stored weights and activations use BF16 or FP16.
 Ordinary constructors follow PyTorch's default dtype unless a dtype is supplied
 or the module is converted. The catalog's `build_on_meta(..., dtype=...)`
 selects storage dtype without allocating weights. Quickstart does not choose
-FP16 automatically on older hardware. For example:
-
-```bash
-python -m examples.training.train examples/training/configs/llama3_1b.json \
-  model.dtype=float16 grad_dtype=@torch:float32 \
-  optimizer_args.opt_state_dtype=@torch:float32 master_dtype=null
-```
+FP16 automatically on older hardware. For public-client settings, see the
+[precision guide](../../../../docs/python/advanced/precision.md).
 
 For stock `torch.optim.AdamW`, FP32 moments with FP16 compute weights require
 FP32 masters. MLOps AdamW supports independently selected moment storage. See
@@ -373,27 +368,10 @@ with torch.device("meta"):
 print(sum(p.numel() for p in model.parameters()))  # 34,660,610,688
 ```
 
-A saved text recipe names a catalog model, its implementation and dtype, and
-any configuration field it changes:
-
-```json
-{
-  "model": {
-    "@call": "shadowspill_workloads.models.catalog:build_on_meta",
-    "model": "llama3-numerical",
-    "implementation": "mlops",
-    "dtype": "bfloat16",
-    "max_seq_len": 2048
-  }
-}
-```
-
-This is the model portion of a request. Complete runnable examples are
-[Llama](../../../../examples/training/configs/llama3_1b.json),
-[dense Qwen](../../../../examples/training/configs/qwen35_1b.json), and
-[OLMoE](../../../../examples/training/configs/olmoe_1b.json). The
-[training guide](../../../../docs/examples/README.md) explains data preparation, overrides,
-optimizer schedules, evaluation, W&B, and checkpoints.
+For client training, select a public model with `Model("llama3", config={...})`.
+The [client catalog](../../../../docs/python/catalog.md) lists presets, LoRA and
+trainable-parameter settings. [Runnable demos](../../../../examples/demos/README.md)
+show complete setup, data submission, reports and saved-Plan reuse.
 
 For a benchmark using a supplied throughput preset and saved resolution plans:
 
@@ -427,7 +405,7 @@ workers recreate the explicitly described resources.
 | [policies/](policies) | Chunking, retention and optional partition policies |
 | [precision.py](precision.py) | Supplied workload precision configuration |
 | [full_model.py](full_model.py) | Reproducible full-model specifications and construction |
-| [examples/training/configs/](../../../../examples/training/configs) | Concrete example training requests |
+| [examples/demos/](../../../../examples/demos) | Concrete public-client training examples |
 
 The shared Qwen package factors code two architectures use, including
 DeltaNet and full attention. Family packages remain small; adding EP does

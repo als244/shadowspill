@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 
-from examples.training.runner import run_config
+from reference.training.run import run_config
 from tests.integration.training._text_recipe import _config, _records
 
 
@@ -54,7 +54,7 @@ class Block(importlib.abc.MetaPathFinder):
             if fullname == name or fullname.startswith(name + '.'):
                 raise AssertionError('reference imported ' + fullname)
 sys.meta_path.insert(0, Block())
-from examples.training.runner import run_config
+from reference.training.run import run_config
 result = run_config(sys.argv[1], ['steps=2', 'checkpoint_every=0', 'eval_every=0'])
 assert result.step == 2
 """

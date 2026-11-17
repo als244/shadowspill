@@ -1,4 +1,4 @@
-"""Validate and expand the supplied text recipe configuration."""
+"""Validate model, objective and data settings for the independent text reference."""
 
 import copy
 import difflib

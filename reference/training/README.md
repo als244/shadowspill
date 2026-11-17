@@ -1,10 +1,17 @@
 # PyTorch text reference
 
-Select `"engine": "pytorch"` in the [text runner](../../packages/workloads/src/shadowspill_workloads/recipes/text/experiment) configuration
-to train with ordinary PyTorch. Use `"device": "cpu"` or `"device": "cuda:0"`
-and `"compile": false` for eager execution; compilation defaults to `true`.
-The model, objective and data configuration are shared with the phase runner.
-Select one fixed `max_tokens_per_microbatch`; the reference does not search.
+Run an independent training reference with ordinary PyTorch:
+
+```python
+from reference.training.run import run_config
+
+result = run_config("reference.json", ["device=cpu", "compile=false"])
+```
+
+The configuration names a model, objective, optimizer, initializer and data
+source. Select one fixed `max_tokens_per_microbatch`; the reference does not
+search. `device` selects CPU or an accelerator, and `compile` defaults to `true`.
+The reference runs one worker and does not start a service.
 
 The files each own one part of the reference:
 
@@ -20,8 +27,7 @@ The files each own one part of the reference:
 | `hyperparameters.py` | Apply scheduled optimizer values and model-buffer controls. |
 | `inputs.py` | Move reference inputs to the selected device. |
 
-The reference uses ordinary allocations. It does not depend on `Trainer`, the
-preparation phases or a ShadowSpill Plan. Its weight helper retains compute
+The reference uses ordinary allocations. It does not depend on the preparation phases or a ShadowSpill Plan. Its weight helper retains compute
 weights, optional masters and separately accumulated gradients. Model materialization
 and explicit objective scaling use shared `shadowspill.pytorch` helpers. Metric callbacks
 remain eager. `parameter_norms_every` enables norms on selected updates; observations

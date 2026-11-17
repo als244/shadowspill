@@ -9,13 +9,22 @@ import torch
 from shadowspill.training import config
 from shadowspill_workloads.recipes.text.experiment import inputs, logging
 
+from .configuration import load_config
 from .engine import EagerStep
 from .initialization import initializer
 from .loop import fit
 
 
-def run_config(path, overrides=(), *, options=None):
-    options = config.load(path, list(overrides)) if options is None else dict(options)
+def run_config(path, overrides=()):
+    options = load_config(path, overrides)
+    if options.get("engine", "pytorch") != "pytorch":
+        raise ValueError("the reference runner uses ordinary PyTorch")
+    if (
+        options.get("ranks", 1) != 1
+        or options.get("nodes")
+        or options.get("heterogeneous")
+    ):
+        raise ValueError("the PyTorch reference runs one worker")
     if options.get("startup_diagnostics"):
         raise ValueError("the PyTorch reference has no startup step timelines")
     root = Path(options["run_dir"])

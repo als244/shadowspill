@@ -1,11 +1,11 @@
-"""The supplied text recipe composes the generic trainer, including exact resume."""
+"""Independent PyTorch reference: packing, observations and exact resume."""
 
 from __future__ import annotations
 
 import pytest
 import torch
 
-from examples.training.runner import run_config
+from reference.training.run import run_config
 from tests.integration.training._synthetic import NOTES
 from tests.integration.training._text_recipe import _config, _records
 

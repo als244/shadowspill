@@ -9,11 +9,11 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
-from examples.training.runner import run_config
 from reference.training.configuration import (
     expand_checkpoint,
     load_config,
 )
+from reference.training.run import run_config
 from shadowspill.training import config
 from shadowspill_workloads.recipes.text.experiment.hyperparameters import (
     scheduled_arguments,
@@ -136,7 +136,7 @@ def test_defaults_fill_what_a_config_leaves_out(tmp_path):
         load_config({k: v for k, v in raw.items() if k != "checkpoint"}, ["run_dir=r"])
 
 
-def test_ranks_share_the_steps_tokens_and_need_the_shadowspill_engine(tmp_path):
+def test_phase_rank_geometry_and_reference_worker_limit(tmp_path):
     from shadowspill_workloads.recipes.text.experiment.group import rank_options, ranks
 
     options = {"ranks": 2, "max_tokens_per_step": 4096, "max_seq_len": 512}
@@ -166,9 +166,5 @@ def test_ranks_share_the_steps_tokens_and_need_the_shadowspill_engine(tmp_path):
             }
         )
     )
-    with pytest.raises(ValueError, match="ranks needs the shadowspill engine"):
+    with pytest.raises(ValueError, match="reference runs one worker"):
         run_config(path)
-    with pytest.raises(ValueError, match="host copies in the profile phase"):
-        run_config(path, ["engine=shadowspill", "ranks=1"], phase="communicate")
-    with pytest.raises(ValueError, match="carries its own nodes"):
-        run_config(path, ["engine=shadowspill", 'heterogeneous={"nodes": []}'])

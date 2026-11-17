@@ -296,8 +296,9 @@ differs. A rank's contribution stays `loss_sum / global_normalizer` with the
 normalizer counting the whole update over every rank, so ranks taking different
 shares of a step are weighted correctly. Backend settings that belong to one
 node, such as the interface it reaches the network through, may differ between
-workers. The [heterogeneous text recipe](../../../packages/workloads/src/shadowspill_workloads/recipes/text/heterogeneous/README.md)
-runs this from one config.
+workers. These are worker setup choices; a public client still connects to one
+service endpoint and submits global batches. See the
+[service deployment reference](../advanced/service-client.md) for launcher support.
 
 ## Fresh execution workers
 
