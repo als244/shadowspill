@@ -1,4 +1,4 @@
-"""Bounded real-data qualification of the public README DP8 training example.
+"""Real-data public training qualification for Qwen pretraining and GLM LoRA.
 
 Run inside an existing eight-GPU allocation. ``--preflight`` is CPU-only and
 checks the exact settings, layouts and retained corpus before requesting GPUs.
@@ -23,6 +23,7 @@ import numpy as np
 from examples.training.text_data import TokenBatches
 from shadowspill_client import (
     BatchConfig,
+    LoRA,
     Memory,
     Model,
     Objective,
@@ -32,14 +33,14 @@ from shadowspill_client import (
     Weights,
 )
 from shadowspill_client.display import CommandTable
-from shadowspill_client.parallelism import data_parallel
+from shadowspill_client.parallelism import data_parallel, expert_parallel
 from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.text import build_candidates, text_batch_statistics
 
 
-def settings():
+def settings(kind="qwen", parallelism="dp", checkpoint=None):
     """Same model, optimizer, batch, budgets and build choices as the README."""
-    return {
+    result = {
         "model": Model(
             "qwen3moe", config={"preset": "30b-a3b"}, initialize=Weights.random(seed=0)
         ),
@@ -73,6 +74,45 @@ def settings():
             )
         ),
     }
+    if parallelism == "ep":
+        result["model"] = Model(
+            "qwen3moe",
+            config={"preset": "30b-a3b"},
+            implementation="mlops_ep",
+            initialize=Weights.random(seed=0),
+        )
+        result["parallelism"] = expert_parallel(
+            8,
+            experts=[
+                "blocks.*.moe.experts.gate_up_weight",
+                "blocks.*.moe.experts.down_weight",
+            ],
+        )
+    if kind == "glm":
+        if checkpoint is None:
+            raise ValueError("GLM qualification requires a real pretrained checkpoint")
+        result.update(
+            model=Model.from_pretrained(
+                str(checkpoint),
+                lora=LoRA(32, alpha=32),
+                implementation="mlops_ep" if parallelism == "ep" else "mlops",
+            ),
+            objective=Objective("cross_entropy"),
+            memory=Memory(device_gib=40, spill_gib=96),
+            batch=BatchConfig(
+                limits={
+                    "token_capacity": 262144,
+                    "max_sequence_length": 32768,
+                    "max_sequences": 128,
+                }
+            ),
+            prepare=Preparation(candidates=build_candidates(microbatch_tokens=[32768])),
+        )
+        if parallelism == "ep":
+            result["parallelism"] = expert_parallel(
+                8, experts=["layers.*.mlp.experts.*"]
+            )
+    return result
 
 
 def write_json(path, value):
@@ -81,20 +121,22 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-def preflight(data, output):
+def preflight(data, output, requested, *, cache_root=None):
+    from shadowspill.checkpoint.file_digest import checksum_cache
     from shadowspill.training.definitions import load_registry
     from shadowspill.training.preparation.layouts import prepare_layouts
     from shadowspill.training.preparation.setup import resolve_training
     from shadowspill.training.preparation.templates import capture_inventory
 
     batch = data[0]
-    assert len(batch) == 512
-    assert sum(len(d.inputs["tokens"]) for d in batch) == 2097152
-    assert all(np.max(d.inputs["tokens"]) < 151936 for d in batch)
-    setup = resolve_training(
-        load_registry(["shadowspill", "shadowspill-workloads"]),
-        TrainingSetup(**settings()),
-    )
+    limits = requested["batch"].limits
+    assert sum(len(d.inputs["tokens"]) for d in batch) == limits["token_capacity"]
+    assert all(np.max(d.inputs["tokens"]) < data.vocab_size for d in batch)
+    with checksum_cache(None if cache_root is None else cache_root / "source-digests"):
+        setup = resolve_training(
+            load_registry(["shadowspill", "shadowspill-workloads"]),
+            TrainingSetup(**requested),
+        )
     layouts = prepare_layouts(setup)
     inventory = capture_inventory(layouts)
     write_json(
@@ -103,7 +145,11 @@ def preflight(data, output):
             "status": "PASS",
             "host": socket.gethostname(),
             "data": data.identity,
-            "batch": {"sequences": 512, "tokens": 2097152, "length": 4096},
+            "batch": {
+                "sequences": len(batch),
+                "tokens": limits["token_capacity"],
+                "length": limits["max_sequence_length"],
+            },
             "build_cases": len(setup.config.preparation.cases),
             "microbatch_counts": list(
                 setup.config.preparation.planning.microbatch_counts
@@ -114,7 +160,7 @@ def preflight(data, output):
             },
         },
     )
-    write_json(output / "requested.json", TrainingSetup(**settings()).to_dict())
+    write_json(output / "requested.json", TrainingSetup(**requested).to_dict())
     print(setup.preview().summary(), flush=True)
     return batch
 
@@ -127,7 +173,7 @@ def report_document(path):
     )
 
 
-def train(service, batch, data, output, steps):
+def train(service, batch, data, output, steps, requested, lr):
     receipt = {
         "host": socket.gethostname(),
         "data": data.identity,
@@ -136,7 +182,7 @@ def train(service, batch, data, output, steps):
         "started_utc": datetime.now(UTC).isoformat(),
     }
     start = monotonic()
-    preview = service.describe_training(**settings()).result(300)
+    preview = service.describe_training(**requested).result(300)
     write_json(output / "preview.json", preview.to_dict())
     training = service.create_training_client(
         config=preview.config, progress=True
@@ -176,10 +222,11 @@ def train(service, batch, data, output, steps):
             )
             assert result.execution_seconds is not None and result.execution_seconds > 0
             assert all(math.isfinite(float(v)) for v in result.metrics.values())
-            assert (
-                "tokens.loss_sum" in result.metrics
-                and "balance.loss_sum" in result.metrics
-            )
+            if "terms" in requested["objective"].config:
+                assert (
+                    "tokens.loss_sum" in result.metrics
+                    and "balance.loss_sum" in result.metrics
+                )
             receipt["steps"].append(result.record.to_dict())
             write_json(output / "receipt.json", receipt)
             if index == steps - 1:
@@ -192,7 +239,7 @@ def train(service, batch, data, output, steps):
         pending = None
         for index in range(steps):
             following = training.step(
-                batch, optim={"lr": 0.0003}, runtime_trace=index == steps - 1
+                batch, optim={"lr": lr}, runtime_trace=index == steps - 1
             )
             table.track(
                 "step",
@@ -224,14 +271,29 @@ def main():
     parser.add_argument("--data", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--service-root", type=Path)
+    parser.add_argument("--cache-root", type=Path)
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--preflight", action="store_true")
+    parser.add_argument("--model", choices=("qwen", "glm"), default="qwen")
+    parser.add_argument("--parallelism", choices=("dp", "ep"), default="dp")
+    parser.add_argument("--checkpoint", type=Path)
     args = parser.parse_args()
     if args.steps < 2:
         parser.error("at least two steps are needed to check learning")
     args.output.mkdir(parents=True, exist_ok=True)
-    data = TokenBatches(args.data, sequence_length=4096, sequences_per_step=512)
-    batch = preflight(data, args.output)
+    if args.model == "glm" and args.checkpoint is None:
+        parser.error("GLM requires --checkpoint")
+    requested = settings(args.model, args.parallelism, args.checkpoint)
+    limits = requested["batch"].limits
+    data = TokenBatches(
+        args.data,
+        sequence_length=limits["max_sequence_length"],
+        sequences_per_step=limits["token_capacity"] // limits["max_sequence_length"],
+    )
+    cache_root = args.cache_root or (
+        (args.service_root or args.output).parent / "cache"
+    )
+    batch = preflight(data, args.output, requested, cache_root=cache_root)
     if args.preflight:
         return
     if args.service_root is None:
@@ -243,13 +305,24 @@ def main():
     try:
         with Server(
             service_root=args.service_root,
-            cache_root=args.service_root.parent / "cache",
+            cache_root=cache_root,
+            model_root=None
+            if args.checkpoint is None
+            else args.checkpoint.resolve().parent,
         ) as server:
             server.start(port=0)
             with ServiceClient(
                 f"http://127.0.0.1:{server.address[1]}", token=token
             ) as client:
-                train(client, batch, data, args.output, args.steps)
+                train(
+                    client,
+                    batch,
+                    data,
+                    args.output,
+                    args.steps,
+                    requested,
+                    1e-4 if args.model == "glm" else 3e-4,
+                )
     except BaseException:
         write_json(
             args.output / "failure.json",
