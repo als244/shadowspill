@@ -92,6 +92,13 @@ microbatches of 8 exceeds `max_examples=8` and is excluded; specifying counts do
 not relax the cap. Preparation measures supported candidates and selects fitting
 Plans. Omit `prepare` to use installed defaults instead.
 
+Server preparation searches independent variants concurrently. Set
+`PlanningOptions(workers=16)` to cap the total planning CPU budget; the default
+uses the CPUs available to the process. Equivalent distributed workers share
+one complete Plan for each variant. Different hardware or computation layouts
+remain separate searches. Input placement and state initialization stay specific
+to each worker; training calls still take one global batch.
+
 For the supplied packed text models, a CPU-only helper creates the build policies:
 
 ```python
