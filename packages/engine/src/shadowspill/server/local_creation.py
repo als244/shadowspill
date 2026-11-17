@@ -32,6 +32,7 @@ from shadowspill.orchestration.launch.phases import NodePhases
 from shadowspill.orchestration.launch.processes import worker_command
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.bundle import TrainingBundle
+from shadowspill.training.preparation.family_records import PreparedPlans
 from shadowspill.training.preparation.job import BUNDLE_NAME, measure_job, prepare_job
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.local_plans import (
@@ -40,7 +41,7 @@ from shadowspill.training.preparation.local_plans import (
 )
 from shadowspill.training.preparation.local_reconciliation import reconcile_local_plans
 from shadowspill.training.preparation.measurement_export import export_measurements
-from shadowspill.training.preparation.setup import resolve_training
+from shadowspill.training.preparation.setup import ResolvedSetup, resolve_training
 from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.worker.checkpoint_records import RankRestore, RankWeights
@@ -56,6 +57,7 @@ from shadowspill.training.worker.runtime import PreparedWorker
 from shadowspill_client._records import integer, names
 from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.checkpoints import WEIGHTS_MEDIA_TYPE
+from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.preparation import PREPARATION_MEDIA_TYPE
 from shadowspill_client.protocol.preview import TrainingPreview
 from shadowspill_client.protocol.progress import LogChunk, ProgressRequest
@@ -270,244 +272,25 @@ class LocalCreation:
             with phase("Resolve installed training definitions"):
                 registry = load_registry(factory.packages)
                 setup = resolve_training(registry, config=creation.config)
-            checkpoint = (
-                None
-                if creation.checkpoint is None
-                else CheckpointResolver(
-                    self._artifacts,
-                    session_id=self.identity.session_id,
-                    world_size=None,
-                    configuration=setup.config,
-                ).resolve(creation.checkpoint)
+            checkpoint, weights_source, weights = self._resolve_initialization(
+                creation, setup
             )
-            weights = []
-            weights_source = None
-            initial = creation.config.model.initialize
-            if (
-                checkpoint is None
-                and creation.kind == "training"
-                and initial is not None
-                and initial.kind == "artifact"
-            ):
-                assert initial.reference is not None
-                ref = self._artifacts.get(initial.reference)
-                if ref is None:
-                    raise ValueError(
-                        "initial weights are not in this owner's artifact storage"
-                    )
-                if ref.media_type == WEIGHTS_MEDIA_TYPE:
-                    weights_source = resolve_weights(self._artifacts, ref, setup.config)
-                else:
-                    weights.append(ref)
-            saved = checkpoint if checkpoint is not None else weights_source
-            # Complete saved state supplies all model values. Only declared
-            # frozen omissions need an installed base initializer and its source.
-            if saved is None and creation.kind == "training":
-                prepare_initialization(setup)
-            elif saved is not None:
-                base = saved.manifest.info.frozen_base
-                if base is not None:
-                    for rank in range(setup.context.parallelism.world_size):
-                        initial_base = prepare_frozen_initialization(setup, base, rank)
-                        restore_staging(initial_base, execution.max_staging_bytes)
-                if base is not None and base.artifact is not None:
-                    weights.append(base.artifact)
             ranks = setup.context.parallelism.world_size
-            needed = int(setup.config.memory.device_gib * (1 << 30))
-            if needed < 1:
-                raise ValueError("worker device budget must contain at least one byte")
-            compatible = [
-                device
-                for device in factory.node.capacity.devices
-                if device.capacity_bytes >= needed
-            ]
-            if len(compatible) < ranks:
-                raise ValueError(
-                    "requested worker count/budget cannot fit this assigned node"
-                )
-            occupied = factory.node.used.devices
-            compatible.sort(key=lambda device: (device.id in occupied, device.id))
-            devices = tuple(device.id for device in compatible[:ranks])
-            if not creation.wait_for_resources and occupied.intersection(devices):
-                raise ResourcesUnavailable(
-                    "compatible assigned workers have live owners"
-                )
-            command_bytes = 16 * (1 << 20) * ranks
-            arena_bytes = (
-                limits.transfer_bytes
-                + limits.publication_bytes
-                + command_bytes
-                + execution.max_staging_bytes
-            )
+            devices = self._select_devices(setup, wait=creation.wait_for_resources)
             self._active()
             self._scratch = factory.disk.reserve(
                 limits.preparation_disk_bytes, timeout=0
             )
             self._directory = TemporaryDirectory(prefix="creation-", dir=factory.root)
             root = Path(self._directory.name)
-            job_root = root / "preparation"
             rebound = False
             if creation.plans is None:
-                self._admit_host(
-                    limits.transfer_bytes + limits.preparation_host_bytes,
-                    2,
-                    wait=creation.wait_for_resources,
-                )
-                transfers = self._partition(
-                    limits.transfer_bytes, 16 * ranks + 32
-                ).budget
-                phase_host = self._partition(limits.preparation_host_bytes, 1)
-                self._phases = NodePhases(
-                    factory.node,
-                    devices=devices,
-                    host_bytes=limits.preparation_host_bytes,
-                    root=root,
-                    disk=factory.disk,
-                    memory=transfers,
-                    log_limit_bytes=limits.log_bytes,
-                    wait_for_resources=creation.wait_for_resources,
-                    admitted=self._progress,
-                    host=phase_host,
-                )
-                context = {
-                    "server_incarnation": factory.storage.incarnation,
-                    "devices": list(devices),
-                }
-                stage_preparation_reuse(
-                    self._artifacts,
-                    factory.storage.catalog,
-                    creation.config,
-                    job_root,
-                    packages=factory.packages,
-                    context=context,
-                    max_disk_bytes=limits.preparation_disk_bytes,
-                    max_files=limits.max_preparation_files,
-                )
-                if creation.kind == "preparation":
-                    measure_job(
-                        job_root,
-                        packages=factory.packages,
-                        config=creation.config,
-                        environment=factory.environment,
-                        launch=self._phases,
-                    )
-                    self._active()
-                    exported = export_measurements(
-                        job_root,
-                        root / "measurements.zip",
-                        max_disk_bytes=limits.preparation_disk_bytes,
-                        max_files=limits.max_preparation_files,
-                        context=context,
-                    )
-                    reference = self._publish_file(
-                        exported, "measurements", media_type=PREPARATION_MEDIA_TYPE
-                    )
-                    factory.storage.catalog.prepared(self.identity, reference)
+                prepared = self._prepare(creation, devices, root)
+                if prepared is None:
                     return
-                bundle = prepare_job(
-                    job_root,
-                    packages=factory.packages,
-                    config=creation.config,
-                    environment=factory.environment,
-                    launch=self._phases,
-                )
-                with phase("Publish prepared Plans and measurements"):
-                    self._check_files()
-                    plans = self._publish_file(job_root / BUNDLE_NAME, "bundle")
-                    self._archive_preparation()
-                self._phases.close()
-                self._phases = None
-                # Decoded results belong to the registry's host envelope. All
-                # temporary process/log owners retire before execution admission.
-                self._release_host()
+                bundle, plans = prepared
             else:
-                plans = creation.plans
-                if self._artifacts.get(plans.id) != plans:
-                    raise ValueError(
-                        "saved Plans are not in this owner's artifact storage"
-                    )
-                # Use the existing bounded immutable artifact stream. The archive
-                # loader checks decompressed metadata/payload limits before decoding.
-                if plans.size_bytes > limits.preparation_disk_bytes:
-                    raise ValueError("saved Plans exceed the preparation disk envelope")
-                path = root / BUNDLE_NAME
-                with self._artifacts.open(plans) as source, path.open("wb") as target:
-                    digest = hashlib.sha256()
-                    while block := source.read(64 << 10):
-                        target.write(block)
-                        digest.update(block)
-                if digest.hexdigest() != plans.sha256:
-                    raise ValueError("saved Plans failed their content checksum")
-                if plans.media_type == LOCAL_PLANS_MEDIA_TYPE:
-                    submitted = LocalPlans.load(path)
-                    path.unlink()  # Owned upload scratch; the original remains stored.
-                    if submitted.config != creation.config:
-                        raise ValueError(
-                            "local Plans differ from the resolved configuration"
-                        )
-                    self._admit_host(
-                        limits.transfer_bytes + limits.preparation_host_bytes,
-                        1,
-                        wait=creation.wait_for_resources,
-                    )
-                    receipt = stage_preparation_reuse(
-                        self._artifacts,
-                        factory.storage.catalog,
-                        creation.config,
-                        job_root,
-                        packages=factory.packages,
-                        context={
-                            "server_incarnation": factory.storage.incarnation,
-                            "devices": list(devices),
-                        },
-                        max_disk_bytes=limits.preparation_disk_bytes,
-                        max_files=limits.max_preparation_files,
-                    )
-                    if receipt is None or not receipt["calibration_reused"]:
-                        raise ValueError(
-                            "local Plans require compatible measured target calibration"
-                        )
-                    self._progress("plan")
-                    bundle, edits = reconcile_local_plans(
-                        submitted,
-                        job_root,
-                        capture_inventory(prepare_layouts(setup)),
-                    )
-                    bundle.save(job_root / BUNDLE_NAME)
-                    evidence = root / "local-planning.json"
-                    evidence.write_text(
-                        json.dumps(
-                            {
-                                "source": receipt["source"],
-                                "submission": plans.to_dict(),
-                                "edits": edits,
-                                "local_rejections": dict(submitted.rejected),
-                            },
-                            sort_keys=True,
-                        )
-                    )
-                    if evidence.stat().st_size > 16 << 20:
-                        raise ValueError(
-                            "local planning evidence exceeds its metadata bound"
-                        )
-                    self._check_files()
-                    changes = self._publish_file(
-                        evidence, "local-planning", media_type="application/json"
-                    )
-                    plans = self._publish_file(job_root / BUNDLE_NAME, "bundle")
-                    self._publish_metadata(
-                        "local-planning",
-                        {
-                            **self.identity.to_dict(),
-                            "plans": plans.to_dict(),
-                            "evidence": changes.to_dict(),
-                        },
-                    )
-                    self._archive_preparation()
-                    self._release_host()
-                else:
-                    with phase("Decode saved Plans"):
-                        bundle = TrainingBundle.load(path)
+                bundle, plans = self._load_plans(creation, setup, devices, root)
                 if bundle.config != creation.config:
                     bundle = bundle.with_initialization(creation.config)
                     rebound = True
@@ -545,95 +328,383 @@ class LocalCreation:
                     root,
                     wait=creation.wait_for_resources,
                 )
-            with phase("Resolve worker initialization and storage"):
-                workers = {
-                    rank: PreparedWorker.resolve(
-                        family,
-                        WorkerScope(
-                            self.identity.run_id,
-                            factory.storage.incarnation,
-                            "worker-" + uuid4().hex,
-                            rank,
-                        ),
-                        bundle=plans,
-                        rank_map={worker: worker for worker in range(ranks)},
-                        weights=weights,
-                        restore=None
-                        if checkpoint is None
-                        else RankRestore(
-                            checkpoint.reference,
-                            checkpoint.manifest.info,
-                            checkpoint.manifest.ranks[rank],
-                        ),
-                        initial_weights=None
-                        if initial_weights is None or weights_source is None
-                        else RankWeights(
-                            weights_source.reference,
-                            initial_weights.reference,
-                            initial_weights.manifest.info,
-                            initial_weights.manifest.ranks[rank],
-                        ),
-                    )
-                    for rank in sorted(family.plans)
-                }
-            worker_bytes = sum(
-                limits.worker.peak_bytes(worker.startup) for worker in workers.values()
-            )
-            if capture is not None:
-                worker_bytes += ranks * limits.nsys.host_bytes
-            self._admit_host(
-                arena_bytes + worker_bytes, 5, wait=creation.wait_for_resources
-            )
-            transfers = self._partition(limits.transfer_bytes, 16 * ranks + 32).budget
-            publication = self._partition(limits.publication_bytes, 3).budget
-            metadata = self._partition(command_bytes, 2).budget
-            uploads = self._partition(
-                execution.max_staging_bytes, execution.max_pending_requests
-            ).budget
-            worker_host = self._partition(worker_bytes, 1)
-            self._node = WorkerNode(
-                factory.node,
-                workers,
-                dict(zip(workers, devices, strict=True)),
-                dict.fromkeys(workers, limits.worker),
-                packages=factory.packages,
-                weights=weights,
-                root=root,
-                cache=factory.cache,
-                disk=factory.disk,
-                memory=transfers,
-                # This adapter owns all ranks on one host. A fresh, run-owned
-                # file rendezvous avoids sharing the allocation's launcher port
-                # with preparation phases or another live training group.
-                environment={
-                    **factory.environment,
-                    "SHADOWSPILL_RENDEZVOUS": (root / "rendezvous").as_uri(),
-                },
-                log_limit_bytes=limits.log_bytes,
-                host_memory=worker_host,
-                capture_limits=None if capture is None else limits.nsys,
-            )
-            self.run = LiveRun(
-                factory.storage,
-                self.identity,
+            self._start_workers(
+                creation,
                 family,
-                [self._node],
-                plans=plans,
-                history_id="history-" + uuid4().hex,
+                plans,
                 checkpoint=checkpoint,
-                parent_checkpoint=creation.checkpoint,
+                weights_source=weights_source,
+                initial_weights=initial_weights,
+                weights=weights,
+                devices=devices,
                 root=root,
-                metadata=metadata,
-                uploads=uploads,
-                publication=publication,
-                disk=factory.disk,
+                capture=capture,
             )
-            self._active()
-            with phase("Start training workers"):
-                self.run.start(wait_for_resources=creation.wait_for_resources)
         finally:
             self._startup_log.finish()
             self._starting.release()
+
+    def _resolve_initialization(
+        self, creation: TrainingCreation, setup: ResolvedSetup
+    ) -> tuple[ResolvedCheckpoint | None, ResolvedWeights | None, list[ArtifactRef]]:
+        """Resolve saved values and only the model initializers they still need."""
+        assert self._artifacts is not None
+        execution = creation.config.execution
+        checkpoint = (
+            None
+            if creation.checkpoint is None
+            else CheckpointResolver(
+                self._artifacts,
+                session_id=self.identity.session_id,
+                world_size=None,
+                configuration=setup.config,
+            ).resolve(creation.checkpoint)
+        )
+        weights = []
+        weights_source = None
+        initial = creation.config.model.initialize
+        if (
+            checkpoint is None
+            and creation.kind == "training"
+            and initial is not None
+            and initial.kind == "artifact"
+        ):
+            assert initial.reference is not None
+            ref = self._artifacts.get(initial.reference)
+            if ref is None:
+                raise ValueError(
+                    "initial weights are not in this owner's artifact storage"
+                )
+            if ref.media_type == WEIGHTS_MEDIA_TYPE:
+                weights_source = resolve_weights(self._artifacts, ref, setup.config)
+            else:
+                weights.append(ref)
+        saved = checkpoint if checkpoint is not None else weights_source
+        # Complete saved state supplies all model values. Only declared
+        # frozen omissions need an installed base initializer and its source.
+        if saved is None and creation.kind == "training":
+            prepare_initialization(setup)
+        elif saved is not None:
+            base = saved.manifest.info.frozen_base
+            if base is not None:
+                for rank in range(setup.context.parallelism.world_size):
+                    initial_base = prepare_frozen_initialization(setup, base, rank)
+                    restore_staging(initial_base, execution.max_staging_bytes)
+            if base is not None and base.artifact is not None:
+                weights.append(base.artifact)
+        return checkpoint, weights_source, weights
+
+    def _select_devices(self, setup: ResolvedSetup, *, wait: bool) -> tuple[str, ...]:
+        """Choose compatible assigned devices before acquiring any phase owner."""
+        factory = self._factory
+        ranks = setup.context.parallelism.world_size
+        needed = int(setup.config.memory.device_gib * (1 << 30))
+        if needed < 1:
+            raise ValueError("worker device budget must contain at least one byte")
+        compatible = [
+            device
+            for device in factory.node.capacity.devices
+            if device.capacity_bytes >= needed
+        ]
+        if len(compatible) < ranks:
+            raise ValueError(
+                "requested worker count/budget cannot fit this assigned node"
+            )
+        occupied = factory.node.used.devices
+        compatible.sort(key=lambda device: (device.id in occupied, device.id))
+        devices = tuple(device.id for device in compatible[:ranks])
+        if not wait and occupied.intersection(devices):
+            raise ResourcesUnavailable("compatible assigned workers have live owners")
+        return devices
+
+    def _prepare(
+        self, creation: TrainingCreation, devices: tuple[str, ...], root: Path
+    ) -> tuple[TrainingBundle, ArtifactRef] | None:
+        """Run the existing phases and retire their owners before worker startup.
+
+        Measurement-only requests publish their result and return without Plans.
+        """
+        factory, limits = self._factory, self._factory.limits
+        assert self._artifacts is not None
+        ranks = len(devices)
+        job_root = root / "preparation"
+        self._admit_host(
+            limits.transfer_bytes + limits.preparation_host_bytes,
+            2,
+            wait=creation.wait_for_resources,
+        )
+        transfers = self._partition(limits.transfer_bytes, 16 * ranks + 32).budget
+        phase_host = self._partition(limits.preparation_host_bytes, 1)
+        self._phases = NodePhases(
+            factory.node,
+            devices=devices,
+            host_bytes=limits.preparation_host_bytes,
+            root=root,
+            disk=factory.disk,
+            memory=transfers,
+            log_limit_bytes=limits.log_bytes,
+            wait_for_resources=creation.wait_for_resources,
+            admitted=self._progress,
+            host=phase_host,
+        )
+        context = {
+            "server_incarnation": factory.storage.incarnation,
+            "devices": list(devices),
+        }
+        stage_preparation_reuse(
+            self._artifacts,
+            factory.storage.catalog,
+            creation.config,
+            job_root,
+            packages=factory.packages,
+            context=context,
+            max_disk_bytes=limits.preparation_disk_bytes,
+            max_files=limits.max_preparation_files,
+        )
+        if creation.kind == "preparation":
+            measure_job(
+                job_root,
+                packages=factory.packages,
+                config=creation.config,
+                environment=factory.environment,
+                launch=self._phases,
+            )
+            self._active()
+            exported = export_measurements(
+                job_root,
+                root / "measurements.zip",
+                max_disk_bytes=limits.preparation_disk_bytes,
+                max_files=limits.max_preparation_files,
+                context=context,
+            )
+            reference = self._publish_file(
+                exported, "measurements", media_type=PREPARATION_MEDIA_TYPE
+            )
+            factory.storage.catalog.prepared(self.identity, reference)
+            return None
+        bundle = prepare_job(
+            job_root,
+            packages=factory.packages,
+            config=creation.config,
+            environment=factory.environment,
+            launch=self._phases,
+        )
+        with phase("Publish prepared Plans and measurements"):
+            self._check_files()
+            plans = self._publish_file(job_root / BUNDLE_NAME, "bundle")
+            self._archive_preparation()
+        self._phases.close()
+        self._phases = None
+        # Decoded results belong to the registry's host envelope. All
+        # temporary process/log owners retire before execution admission.
+        self._release_host()
+        return bundle, plans
+
+    def _load_plans(
+        self,
+        creation: TrainingCreation,
+        setup: ResolvedSetup,
+        devices: tuple[str, ...],
+        root: Path,
+    ) -> tuple[TrainingBundle, ArtifactRef]:
+        """Load uploaded Plans, reconciling CPU-planned layouts when requested."""
+        factory, limits = self._factory, self._factory.limits
+        assert self._artifacts is not None and creation.plans is not None
+        job_root = root / "preparation"
+        plans = creation.plans
+        if self._artifacts.get(plans.id) != plans:
+            raise ValueError("saved Plans are not in this owner's artifact storage")
+        # Use the existing bounded immutable artifact stream. The archive
+        # loader checks decompressed metadata/payload limits before decoding.
+        if plans.size_bytes > limits.preparation_disk_bytes:
+            raise ValueError("saved Plans exceed the preparation disk envelope")
+        path = root / BUNDLE_NAME
+        with self._artifacts.open(plans) as source, path.open("wb") as target:
+            digest = hashlib.sha256()
+            while block := source.read(64 << 10):
+                target.write(block)
+                digest.update(block)
+        if digest.hexdigest() != plans.sha256:
+            raise ValueError("saved Plans failed their content checksum")
+        if plans.media_type == LOCAL_PLANS_MEDIA_TYPE:
+            submitted = LocalPlans.load(path)
+            path.unlink()  # Owned upload scratch; the original remains stored.
+            if submitted.config != creation.config:
+                raise ValueError("local Plans differ from the resolved configuration")
+            self._admit_host(
+                limits.transfer_bytes + limits.preparation_host_bytes,
+                1,
+                wait=creation.wait_for_resources,
+            )
+            receipt = stage_preparation_reuse(
+                self._artifacts,
+                factory.storage.catalog,
+                creation.config,
+                job_root,
+                packages=factory.packages,
+                context={
+                    "server_incarnation": factory.storage.incarnation,
+                    "devices": list(devices),
+                },
+                max_disk_bytes=limits.preparation_disk_bytes,
+                max_files=limits.max_preparation_files,
+            )
+            if receipt is None or not receipt["calibration_reused"]:
+                raise ValueError(
+                    "local Plans require compatible measured target calibration"
+                )
+            self._progress("plan")
+            bundle, edits = reconcile_local_plans(
+                submitted,
+                job_root,
+                capture_inventory(prepare_layouts(setup)),
+            )
+            bundle.save(job_root / BUNDLE_NAME)
+            evidence = root / "local-planning.json"
+            evidence.write_text(
+                json.dumps(
+                    {
+                        "source": receipt["source"],
+                        "submission": plans.to_dict(),
+                        "edits": edits,
+                        "local_rejections": dict(submitted.rejected),
+                    },
+                    sort_keys=True,
+                )
+            )
+            if evidence.stat().st_size > 16 << 20:
+                raise ValueError("local planning evidence exceeds its metadata bound")
+            self._check_files()
+            changes = self._publish_file(
+                evidence, "local-planning", media_type="application/json"
+            )
+            plans = self._publish_file(job_root / BUNDLE_NAME, "bundle")
+            self._publish_metadata(
+                "local-planning",
+                {
+                    **self.identity.to_dict(),
+                    "plans": plans.to_dict(),
+                    "evidence": changes.to_dict(),
+                },
+            )
+            self._archive_preparation()
+            self._release_host()
+        else:
+            with phase("Decode saved Plans"):
+                bundle = TrainingBundle.load(path)
+        return bundle, plans
+
+    def _start_workers(
+        self,
+        creation: TrainingCreation,
+        family: PreparedPlans,
+        plans: ArtifactRef,
+        *,
+        checkpoint: ResolvedCheckpoint | None,
+        weights_source: ResolvedWeights | None,
+        initial_weights: ResolvedWeights | None,
+        weights: list[ArtifactRef],
+        devices: tuple[str, ...],
+        root: Path,
+        capture: NsysCapture | None,
+    ) -> None:
+        """Admit storage and start the one live run using the resolved Plans."""
+        factory, limits = self._factory, self._factory.limits
+        execution = creation.config.execution
+        ranks = len(devices)
+        command_bytes = 16 * (1 << 20) * ranks
+        arena_bytes = (
+            limits.transfer_bytes
+            + limits.publication_bytes
+            + command_bytes
+            + execution.max_staging_bytes
+        )
+        with phase("Resolve worker initialization and storage"):
+            workers = {
+                rank: PreparedWorker.resolve(
+                    family,
+                    WorkerScope(
+                        self.identity.run_id,
+                        factory.storage.incarnation,
+                        "worker-" + uuid4().hex,
+                        rank,
+                    ),
+                    bundle=plans,
+                    rank_map={worker: worker for worker in range(ranks)},
+                    weights=weights,
+                    restore=None
+                    if checkpoint is None
+                    else RankRestore(
+                        checkpoint.reference,
+                        checkpoint.manifest.info,
+                        checkpoint.manifest.ranks[rank],
+                    ),
+                    initial_weights=None
+                    if initial_weights is None or weights_source is None
+                    else RankWeights(
+                        weights_source.reference,
+                        initial_weights.reference,
+                        initial_weights.manifest.info,
+                        initial_weights.manifest.ranks[rank],
+                    ),
+                )
+                for rank in sorted(family.plans)
+            }
+        worker_bytes = sum(
+            limits.worker.peak_bytes(worker.startup) for worker in workers.values()
+        )
+        if capture is not None:
+            worker_bytes += ranks * limits.nsys.host_bytes
+        self._admit_host(
+            arena_bytes + worker_bytes, 5, wait=creation.wait_for_resources
+        )
+        transfers = self._partition(limits.transfer_bytes, 16 * ranks + 32).budget
+        publication = self._partition(limits.publication_bytes, 3).budget
+        metadata = self._partition(command_bytes, 2).budget
+        uploads = self._partition(
+            execution.max_staging_bytes, execution.max_pending_requests
+        ).budget
+        worker_host = self._partition(worker_bytes, 1)
+        self._node = WorkerNode(
+            factory.node,
+            workers,
+            dict(zip(workers, devices, strict=True)),
+            dict.fromkeys(workers, limits.worker),
+            packages=factory.packages,
+            weights=weights,
+            root=root,
+            cache=factory.cache,
+            disk=factory.disk,
+            memory=transfers,
+            # This adapter owns all ranks on one host. A fresh, run-owned
+            # file rendezvous avoids sharing the allocation's launcher port
+            # with preparation phases or another live training group.
+            environment={
+                **factory.environment,
+                "SHADOWSPILL_RENDEZVOUS": (root / "rendezvous").as_uri(),
+            },
+            log_limit_bytes=limits.log_bytes,
+            host_memory=worker_host,
+            capture_limits=None if capture is None else limits.nsys,
+        )
+        self.run = LiveRun(
+            factory.storage,
+            self.identity,
+            family,
+            [self._node],
+            plans=plans,
+            history_id="history-" + uuid4().hex,
+            checkpoint=checkpoint,
+            parent_checkpoint=creation.checkpoint,
+            root=root,
+            metadata=metadata,
+            uploads=uploads,
+            publication=publication,
+            disk=factory.disk,
+        )
+        self._active()
+        with phase("Start training workers"):
+            self.run.start(wait_for_resources=creation.wait_for_resources)
 
     def _key(self, name: str) -> str:
         return creation_key(self.identity, name)
