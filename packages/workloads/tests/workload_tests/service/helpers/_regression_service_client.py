@@ -194,13 +194,13 @@ def closed(client, training):
     assert reply.status == 200 and reply.value.state == "closed"
 
 
-def qualify(client, initial, dtype, memory, master_dtype=None):
+def qualify(client, initial, dtype, memory, master_dtype=None, *, plan_first=False):
     # Setup is separate from the loop; describe never constructs a model/worker.
     preview = client.describe_training(
-        model=Model("shadowspill/regression@1", initialize=Weights.random(seed=0)),
-        objective=Objective("shadowspill/weighted_squared_error@1"),
+        model=Model("regression", initialize=Weights.random(seed=0)),
+        objective=Objective("weighted_squared_error"),
         optimizer=Optimizer(
-            "mlops/adamw@1",
+            "adamw",
             precision={
                 "gradient_dtype": dtype,
                 "opt_state_dtype": "float32",
@@ -222,7 +222,18 @@ def qualify(client, initial, dtype, memory, master_dtype=None):
             ),
         ),
     ).result(30)
-    training = client.create_training_client(config=preview.config).result(240)
+    planned = None
+    reports = {}
+    if plan_first:
+        planned = client.plan_training(config=preview.config).result(240)
+        with TemporaryDirectory(prefix="shadowspill-plan-report-") as directory:
+            report = planned.report().result(30)
+            path = report.download(Path(directory) / "plan.html").result(30)
+            assert '<script id="data"' in path.read_text()
+            reports["predicted"] = report.reference.to_dict()
+    training = client.create_training_client(
+        config=preview.config, plans=planned
+    ).result(240)
     plans, observations = training.plans, []
     initial_checkpoint = training.save_checkpoint(name="initial").result(120)
     first = None
@@ -256,7 +267,20 @@ def qualify(client, initial, dtype, memory, master_dtype=None):
                 observations.append(result.record.to_dict())
             result = training.optim_step(optim=optim, grad_scale=0.5).result(120)
         else:
-            result = training.step(records(), optim=optim, grad_scale=0.5).result(120)
+            result = training.step(
+                records(), optim=optim, grad_scale=0.5, runtime_trace=plan_first
+            ).result(120)
+            if plan_first:
+                with TemporaryDirectory(
+                    prefix="shadowspill-runtime-report-"
+                ) as directory:
+                    path = (
+                        result.traces[0]
+                        .download_report(Path(directory) / "runtime.html")
+                        .result(30)
+                    )
+                    assert '<script id="data"' in path.read_text()
+                    reports["runtime"] = True
             np.testing.assert_allclose(
                 result.loss, oracle.forward_backward()[1], rtol=2e-5, atol=1e-6
             )
@@ -274,11 +298,14 @@ def qualify(client, initial, dtype, memory, master_dtype=None):
 
     checkpoint = training.save_checkpoint(name="after-one").result(120)
     checkpoint_oracle = copy.deepcopy(oracle)
-    result = training.step(records(masked=True)).result(120)
-    assert result.outcome == "skipped" and result.completed_updates == 1
+    try:
+        training.step(records(masked=True), optim={"lr": DEFAULTS["lr"]})
+    except ValueError as error:
+        assert "no loss participation" in str(error)
+    else:
+        raise AssertionError("all-masked training was not rejected before submission")
     check(training, oracle, memory, counter=2)
-    observations.append(result.record.to_dict())
-    for optim in ({"lr": 0.0}, None):
+    for optim in ({"lr": 0.0}, {"lr": DEFAULTS["lr"]}):
         result = training.step(records(), optim=optim).result(120)
         np.testing.assert_allclose(
             result.loss, oracle.forward_backward()[1], rtol=2e-5, atol=1e-6
@@ -293,7 +320,7 @@ def qualify(client, initial, dtype, memory, master_dtype=None):
     ).result(240)
     oracle = checkpoint_oracle
     check(resumed, oracle, memory, counter=2)
-    result = resumed.step(records()).result(120)
+    result = resumed.step(records(), optim={"lr": DEFAULTS["lr"]}).result(120)
     oracle.update(oracle.forward_backward()[2])
     actual = check(resumed, oracle, memory, counter=4)
     for name in oracle.weights:
@@ -309,6 +336,9 @@ def qualify(client, initial, dtype, memory, master_dtype=None):
         "evaluation_isolation": True,
         "adamw_resume": True,
         "zero_lr_preserves_moments": True,
+        "all_masked_rejected_before_submission": True,
+        "plan_before_initialization": plan_first,
+        "reports": reports,
     }
 
 
@@ -343,6 +373,7 @@ def main():
             options["gradient_dtype"],
             memory,
             options["master_dtype"],
+            plan_first=options.get("plan_first", False),
         )
     assert memory.used == client._memory.used == client._work.pending.used == (0, 0)
     receipt.update(

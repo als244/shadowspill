@@ -20,12 +20,12 @@ class TrainingCreation(Record):
     kind: RunKind = "training"
 
     def __post_init__(self) -> None:
-        if self.kind not in ("training", "preparation"):
+        if self.kind not in ("training", "preparation", "planning"):
             raise ValueError("unknown creation kind")
-        if self.kind == "preparation" and (
+        if self.kind != "training" and (
             self.plans is not None or self.checkpoint is not None
         ):
-            raise ValueError("measurement jobs do not load Plans or checkpoints")
+            raise ValueError("preparation jobs do not load Plans or checkpoints")
         object.__setattr__(
             self, "config", record(ResolvedTraining, self.config, "config")
         )

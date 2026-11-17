@@ -135,7 +135,7 @@ class ServiceStorage:
         if info is None:
             raise KeyError("unknown owner/session/run")
         if info.kind != "training":
-            raise ValueError("measurement-only jobs have no training request journal")
+            raise ValueError("preparation jobs have no training request journal")
         create = (
             info.state == "preparing" and info.server_incarnation == self.incarnation
         )
@@ -200,7 +200,9 @@ class ServiceStorage:
                         "server_restarted",
                         "Server restarted; recover training state from a checkpoint."
                         if info.kind == "training"
-                        else "Server restarted; submit a new measurement job.",
+                        else "Server restarted; submit a new measurement job."
+                        if info.kind == "preparation"
+                        else "Server restarted; submit a new planning job.",
                     ),
                 )
                 after = position

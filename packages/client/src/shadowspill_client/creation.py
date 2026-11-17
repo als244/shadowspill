@@ -56,7 +56,7 @@ def _ready(
         reply = service._transport.request("GET", route)
         info = _info(service, reply.value, run_id)
         if info.kind != "training":
-            raise ValueError("measurement-only preparation has no training client")
+            raise ValueError("preparation jobs have no training client")
         final = (
             read_only
             or info.state in ("failed", "closed", "stopped")

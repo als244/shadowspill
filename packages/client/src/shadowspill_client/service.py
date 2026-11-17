@@ -19,7 +19,14 @@ from .creation import TrainingFuture, create_training_client, get_training_clien
 from .downloads import CHECKPOINT_SCRATCH_BYTES, FILE_SCRATCH_BYTES
 from .metrics import MetricQueries
 from .plans import PlansHandle, get_plans
-from .preparation import PreparationFuture, get_preparation, prepare_training
+from .preparation import (
+    PlanningFuture,
+    PreparationFuture,
+    get_planning,
+    get_preparation,
+    plan_training,
+    prepare_training,
+)
 from .protocol.checkpoints import CHECKPOINT_MEDIA_TYPE, WEIGHTS_MEDIA_TYPE
 from .protocol.codec import ProtocolError, encode
 from .protocol.metrics import MetricPage
@@ -145,6 +152,14 @@ class ServiceClient:
     def prepare_training(self, **setup: Any) -> PreparationFuture:
         """Measure every case for export, without planning or starting training."""
         return prepare_training(self, **setup)
+
+    def plan_training(self, **setup: Any) -> PlanningFuture:
+        """Build/profile/plan for inspection before initializing training workers."""
+        return plan_training(self, **setup)
+
+    def get_planning(self, run_id: str, *, progress: bool = False) -> PlanningFuture:
+        """Inspect/rejoin accepted planning without replaying its GPU phases."""
+        return get_planning(self, run_id, progress=progress)
 
     def get_preparation(
         self, run_id: str, *, progress: bool = False

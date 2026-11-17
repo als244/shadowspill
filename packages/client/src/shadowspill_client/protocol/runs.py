@@ -12,8 +12,10 @@ from .preparation import PREPARATION_MEDIA_TYPE
 from .requests import ArtifactRef, identifier
 from .service import ServiceError
 
-type RunKind = Literal["training", "preparation"]
-type RunState = Literal["preparing", "ready", "prepared", "failed", "stopped", "closed"]
+type RunKind = Literal["training", "preparation", "planning"]
+type RunState = Literal[
+    "preparing", "ready", "prepared", "planned", "failed", "stopped", "closed"
+]
 type CreationStage = Literal[
     "queued", "build", "profile", "communicate", "plan", "converting", "initializing"
 ]
@@ -71,7 +73,7 @@ class RunInfo(Record):
     preparation_export: ArtifactRef | None = None
 
     def __post_init__(self) -> None:
-        if self.kind not in ("training", "preparation"):
+        if self.kind not in ("training", "preparation", "planning"):
             raise ValueError("unknown run kind")
         for name in ("owner_id", "session_id", "run_id", "server_incarnation"):
             identifier(getattr(self, name), name)
@@ -120,6 +122,7 @@ class RunInfo(Record):
             "preparing",
             "ready",
             "prepared",
+            "planned",
             "failed",
             "stopped",
             "closed",
@@ -145,14 +148,27 @@ class RunInfo(Record):
             or self.stage in ("plan", "converting", "initializing")
         ):
             raise ValueError("measurement jobs cannot plan or own training state")
+        if self.state == "planned" and (self.kind != "planning" or self.plans is None):
+            raise ValueError("completed planning requires immutable Plans")
+        if self.kind != "training" and (
+            self.initial_history_id is not None
+            or self.state in ("ready", "closed")
+            or self.stage in ("converting", "initializing")
+        ):
+            raise ValueError("preparation jobs cannot own training state")
+        if self.kind == "planning" and (self.plans is not None) != (
+            self.state == "planned"
+        ):
+            raise ValueError("only completed planning has Plans")
         if (self.stage in CREATION_STAGES) != (self.state == "preparing") or (
             self.state != "preparing" and self.stage is not None
         ):
             raise ValueError("only preparing runs have a creation stage")
         if (self.error is not None) != (self.state in ("failed", "stopped")):
             raise ValueError("failed or stopped runs require a lifecycle diagnostic")
-        if (self.plans is None) != (self.initial_history_id is None) or (
-            self.state in ("ready", "closed") and self.plans is None
+        if self.kind == "training" and (
+            (self.plans is None) != (self.initial_history_id is None)
+            or (self.state in ("ready", "closed") and self.plans is None)
         ):
             raise ValueError("initialized runs require Plans and a history identity")
         if self.state in ("preparing", "failed") and self.plans is not None:

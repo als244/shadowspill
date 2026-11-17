@@ -171,9 +171,9 @@ the earlier writer; `read_only=True` permits inspection without takeover.
 
 ## Preparation and local planning
 
-Pass `progress=True` to `create_training_client` or `prepare_training` to display
+Pass `progress=True` to `create_training_client`, `plan_training` or `prepare_training` to display
 the existing worker logs as preparation runs. The same option on
-`get_training_client` or `get_preparation` displays retained logs after reconnect.
+`get_training_client`, `get_planning` or `get_preparation` displays retained logs after reconnect.
 Each worker records UTC timestamps, rank/process identity, nested operation starts,
 completions, failures and elapsed host durations. Build output identifies candidate
 shapes and policies, CPU/compiler thread settings, graph capture, stage construction,

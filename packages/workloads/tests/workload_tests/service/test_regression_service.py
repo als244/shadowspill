@@ -113,6 +113,7 @@ def test_supplied_regression_public_step_split_and_adamw_resume(
                 },
                 "gradient_dtype": dtype,
                 "master_dtype": master_dtype,
+                "plan_first": dtype == "float32" and master_dtype is None,
             }
         )
     )
@@ -137,3 +138,6 @@ def test_supplied_regression_public_step_split_and_adamw_resume(
     assert receipt["adamw_resume"] and receipt["zero_lr_preserves_moments"]
     assert len(receipt["runs"]) == 2
     assert receipt["master_dtype"] == master_dtype
+    if dtype == "float32" and master_dtype is None:
+        assert receipt["plan_before_initialization"]
+        assert receipt["reports"]["predicted"] and receipt["reports"]["runtime"]

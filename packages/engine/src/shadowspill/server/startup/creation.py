@@ -218,6 +218,9 @@ class LocalCreation:
                 plans = self._publish_file(path, "bundle")
             with phase("Publish Plan summaries"):
                 publish_summary(self._artifacts, plans, family)
+            if creation.kind == "planning":
+                factory.storage.catalog.planned(self.identity, plans)
+                return
             if (
                 checkpoint is not None
                 and not checkpoint.manifest.info.plans.same_content(plans)

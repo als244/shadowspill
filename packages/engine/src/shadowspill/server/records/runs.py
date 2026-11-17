@@ -48,7 +48,7 @@ def _transition(before: RunInfo, after: RunInfo) -> None:
         or before.server_incarnation != after.server_incarnation
     ):
         raise ValueError("run registration and creation identity are immutable")
-    if before.state in ("failed", "stopped", "closed", "prepared"):
+    if before.state in ("failed", "stopped", "closed", "prepared", "planned"):
         raise ValueError("terminal run lifecycle records are immutable")
     if before.state == "ready":
         if after.state not in ("stopped", "closed") or (
@@ -67,6 +67,9 @@ def _transition(before: RunInfo, after: RunInfo) -> None:
     elif after.state == "prepared":
         if before.kind != "preparation" or before.stage != "communicate":
             raise ValueError("preparation completion must follow target measurement")
+    elif after.state == "planned":
+        if before.kind != "planning" or before.stage != "plan":
+            raise ValueError("planning completion must follow Plan construction")
     elif after.state == "preparing":
         assert before.stage is not None and after.stage is not None
         if CREATION_STAGES.index(after.stage) <= CREATION_STAGES.index(before.stage):
@@ -260,6 +263,15 @@ class RunCatalog:
                 replace(
                     before, state="prepared", stage=None, preparation_export=export
                 ),
+            )
+
+    def planned(self, identity: RunIdentity, plans: ArtifactRef) -> RunInfo:
+        """Publish completed Plans without creating training state or workers."""
+        reference_bytes(plans)
+        with self._mutex:
+            before = self._require(identity, live=True)
+            return self._update(
+                before, replace(before, state="planned", stage=None, plans=plans)
             )
 
     def fail(self, identity: RunIdentity, error: ServiceError) -> RunInfo:

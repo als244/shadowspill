@@ -114,3 +114,36 @@ def test_measurement_records_have_no_training_state_or_restore_choices():
     ):
         with pytest.raises(ValueError):
             replace(info, **change)
+
+
+def test_planned_records_require_plans_without_any_training_state():
+    creation = TrainingCreation(resolved(), kind="planning")
+    assert decode(encode(creation)) == creation
+    plans = ArtifactRef("plans", "a" * 64, 100)
+    info = RunInfo(
+        "owner",
+        "session",
+        "run",
+        "server",
+        "b" * 64,
+        ArtifactRef("configuration", "c" * 64, 100),
+        kind="planning",
+        state="planned",
+        stage=None,
+        plans=plans,
+    )
+    assert decode(encode(info)) == info
+    for change in ({"plans": plans}, {"checkpoint": plans}):
+        with pytest.raises(ValueError):
+            replace(creation, **change)
+    for change in (
+        {"plans": None},
+        {"initial_history_id": "history"},
+        {"kind": "training"},
+        {"kind": "preparation"},
+        {"state": "ready"},
+        {"state": "preparing", "stage": "plan"},
+        {"state": "preparing", "stage": "initializing", "plans": None},
+    ):
+        with pytest.raises(ValueError):
+            replace(info, **change)

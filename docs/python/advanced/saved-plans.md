@@ -5,6 +5,32 @@ Starting from compatible Plans skips build, profiling and planning. Model
 initialization and worker startup still happen. A checkpoint is separate: it
 restores trained weights, optimizer state and progress.
 
+## Inspect Plans before initializing training
+
+Use the named setup arguments from the [basic example](../../../README.md), or
+an existing preview's resolved configuration:
+
+```python
+plans = service.plan_training(config=preview.config, progress=True).result()
+plans.report().result().download("plan.html").result()
+plans.download("plans.ssp").result()
+
+training = service.create_training_client(
+    config=preview.config, plans=plans, progress=True,
+).result()
+```
+
+`plan_training()` runs build, profiling and planning, then releases its temporary
+resources. It publishes all prepared variants and their predicted HTML report
+without loading training weights or starting persistent training workers.
+Creation from those Plans initializes the workers without repeating preparation.
+The report opens offline on your laptop.
+
+Planning returns a future with a `run_id`. After reconnecting to the same session,
+`service.get_planning(run_id).result()` retrieves its outcome without repeating
+the job. For measurement exports used by laptop sweeps, use the separate
+[`prepare_training()` workflow](offline-sweeps.md).
+
 ## Save a prepared run
 
 After `create_training_client(...).result()`, even before the first step:

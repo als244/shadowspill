@@ -203,7 +203,7 @@ def reply(exchange: _Handler, info: RunInfo, identity: RunIdentity) -> None:
         info.state == "preparing"
         or (info.state == "ready" and not exchange.server.jobs.available(identity))
         or (
-            info.state in ("closed", "failed", "stopped", "prepared")
+            info.state in ("closed", "failed", "stopped", "prepared", "planned")
             and not exchange.server.jobs.retired(identity)
         )
     )

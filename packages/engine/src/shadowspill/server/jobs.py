@@ -318,8 +318,8 @@ class RunJobs:
             run = None if owner is None else owner.run
             if not running and job.error is None and not self._closing:
                 info = self.storage.catalog.get(identity)
-                if info is not None and info.state == "prepared":
-                    pass  # A measurement-only job has no persistent execution run.
+                if info is not None and info.state in ("prepared", "planned"):
+                    pass  # Completed preparation has no persistent execution run.
                 elif run is None or not run.ready:
                     job.error = "Creation returned without initialized workers."
                 elif not run.finished:
