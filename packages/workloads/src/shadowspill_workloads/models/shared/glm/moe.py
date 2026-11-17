@@ -91,7 +91,7 @@ def expert_weight(shape, config, device, *, gate_up):
 
 
 class MoE(nn.Module):
-    def __init__(self, config, device):
+    def __init__(self, config, device, *, expert_factory=None):
         super().__init__()
         c = self.config = config
         experts, hidden, width = (
@@ -108,23 +108,32 @@ class MoE(nn.Module):
             "e_score_correction_bias",
             torch.zeros(experts, device=device, dtype=torch.float32),
         )
-        gate_up, down = self.expert_shapes
-        self.w13 = expert_weight(gate_up, c, device, gate_up=True)
-        self.w2 = expert_weight(down, c, device, gate_up=False)
+        self.expert_factory = expert_factory
+        self.experts = None
+        if expert_factory is None:
+            gate_up, down = self.expert_shapes
+            self.w13 = expert_weight(gate_up, c, device, gate_up=True)
+            self.w2 = expert_weight(down, c, device, gate_up=False)
         self.shared_experts = (
             DenseMLP(replace(c, intermediate_size=width * c.n_shared_experts), device)
             if c.n_shared_experts
             else None
         )
         if c.lora_rank:
-            add_factors(
-                self,
+            self.configure_expert_lora(
                 LoRAConfig(
                     rank=c.lora_rank,
                     alpha=c.lora_alpha,
                     factor_dtype=getattr(torch, c.lora_factor_dtype),
                 ),
             )
+
+    def configure_expert_lora(self, config):
+        if self.expert_factory is None:
+            add_factors(self, config)
+        else:
+            self.experts = self.expert_factory(config)
+            self.lora_config = config
 
     @property
     def expert_shapes(self):
@@ -153,6 +162,19 @@ class MoE(nn.Module):
             "swiglu_limit": c.swiglu_limit,
         }
         with without_autocast(x):
+            if self.experts is not None:
+                from mlops.lora.routing import routing, routing_logits
+
+                weights, ids = routing(
+                    routing_logits(x, self.router),
+                    c.num_experts_per_tok,
+                    "sigmoid_noaux_tc",
+                    bias=self.e_score_correction_bias,
+                    routed_scaling=c.routed_scaling_factor,
+                )
+                return base + self.experts(x, ids, weights)
+            if self.expert_factory is not None:
+                raise ValueError("the expert provider requires routed LoRA targets")
             lora = getattr(self, "lora_config", None)
             if lora is None:
                 output, *_ = mlops.moe(

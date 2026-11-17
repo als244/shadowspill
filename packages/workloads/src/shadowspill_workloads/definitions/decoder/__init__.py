@@ -12,7 +12,18 @@ from ..source import definition_source
 from . import configuration
 
 
-def register(registry, settings, *, create=configuration.create):
+def register(
+    registry,
+    settings,
+    *,
+    create=configuration.create,
+    build=configuration.build,
+    initialization=configuration.initialization,
+    capture_context=training_options.capture_context,
+    capabilities=None,
+    sources=(),
+    providers=(),
+):
     family = settings.family
     preset = f"shadowspill/{family}_packed@1"
     source = definition_source(
@@ -42,6 +53,7 @@ def register(registry, settings, *, create=configuration.create):
             f"models/{family}",
             "models/shared",
             "lora",
+            *sources,
         ),
         providers=(
             "mlops",
@@ -56,6 +68,7 @@ def register(registry, settings, *, create=configuration.create):
             "httpx2",
             "httpcore2",
             *((*PROVIDERS, "moonep") if settings.moe else ()),
+            *providers,
         ),
     )
     registry.add_preparation(
@@ -73,18 +86,20 @@ def register(registry, settings, *, create=configuration.create):
             settings,
             create,
             inputs.schema,
-            capabilities=("target_logprobs",)
+            capabilities=capabilities
+            if capabilities is not None
+            else ("target_logprobs",)
             + (("router_statistics",) if settings.moe else ()),
             input_adapter=inputs.adapter,
             preparation=preset,
             configure=partial(training_options.configure, label=family),
-            build=configuration.build,
-            capture_context=training_options.capture_context,
+            build=build,
+            capture_context=capture_context,
             gradient_destination_rules=gradient_destination_rules
             if settings.moe
             else None,
-            initialization=configuration.initialization,
-            temporary_initialization=configuration.initialization,
+            initialization=initialization,
+            temporary_initialization=initialization,
             parameter_dtypes=family_definition(family).parameter_dtypes,
         ),
         source=source,

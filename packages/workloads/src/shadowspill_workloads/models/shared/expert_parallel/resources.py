@@ -25,10 +25,46 @@ def initialize(*, name, device, groups, options):
     from mlops.expert_parallel.quack.resources import initialize as initialize_provider
 
     signature = config_signature(configuration(options["config"]))
+    if "lora" in options:
+        from mlops.expert_parallel.lora import signature as lora_signature
+
+        signature = lora_signature(signature, lora_configuration(options["lora"]))
     layers = [{"name": layer, "config": signature} for layer in options["layers"]]
     return initialize_provider(
         name=name, device=device, groups=groups, options={"layers": layers}
     )
+
+
+def lora_configuration(values):
+    from mlops.expert_parallel.lora import LoRAConfig
+
+    return LoRAConfig(
+        rank=values["rank"],
+        alpha=values["alpha"],
+        gradient_dtype=getattr(torch, values["gradient_dtype"]),
+    )
+
+
+def lora_factory(options):
+    """Deferred expert-only provider; routing and shared experts stay in the model."""
+    from mlops.expert_parallel import QuackMoELoRA
+
+    names = iter(options["layers"])
+    config = configuration(options["config"])
+    lora = lora_configuration(options["lora"])
+
+    def create(selected):
+        if (selected.rank, selected.alpha, selected.factor_dtype) != (
+            lora.rank,
+            lora.alpha,
+            lora.compute_dtype,
+        ):
+            raise ValueError("routed adapter differs from its prepared resource")
+        result = QuackMoELoRA.from_resource(config, next(names), lora=lora)
+        result.register_parameter("router_weight", None)
+        return result
+
+    return create
 
 
 def model(entry, config, options, precision):

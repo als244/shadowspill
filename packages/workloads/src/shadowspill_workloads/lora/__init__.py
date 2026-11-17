@@ -111,7 +111,11 @@ def configure_lora(
     else:
         select_trainable(model, trainable_base)
     for module in routed:
-        add_factors(module, config)
+        configure = getattr(module, "configure_expert_lora", None)
+        if configure is None:
+            add_factors(module, config)
+        else:
+            configure(config)
     return model
 
 

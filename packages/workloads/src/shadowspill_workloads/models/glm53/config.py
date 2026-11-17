@@ -8,6 +8,7 @@ from shadowspill_client.config.precision import parameter_dtypes
 
 @dataclass(frozen=True)
 class Config:
+    max_seq_len: int = 262144
     hidden_size: int = 6144
     vocab_size: int = 154880
     num_hidden_layers: int = 78

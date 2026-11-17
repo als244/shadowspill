@@ -46,7 +46,7 @@ def data_parallel(
 def expert_parallel(
     ranks: int,
     *,
-    fields: Sequence[Sequence[str]],
+    fields: Sequence[Sequence[str]] | None = None,
     experts: Sequence[str],
     outputs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:

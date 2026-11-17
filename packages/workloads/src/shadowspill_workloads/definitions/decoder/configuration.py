@@ -20,6 +20,7 @@ class Settings:
     catalog: ClassVar[ModuleType]
     moe: ClassVar[bool] = False
     hybrid: ClassVar[bool] = False
+    expert_lora: ClassVar[bool] = False
     preset: str = "tiny"
     architecture: dict = field(default_factory=dict)
     implementation: str = "mlops"

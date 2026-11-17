@@ -36,6 +36,7 @@ class Family:
     initialization: ParameterInitialization | None = None
     training: str | None = None
     validate_pretrained: Callable[[dict, Any], None] | None = None
+    pretrained_config: Callable[[dict, dict, dict], dict] | None = None
     parameter_dtypes: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self):

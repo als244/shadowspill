@@ -22,6 +22,7 @@ class Config:
 
     hidden_size: int = 4096
     vocab_size: int = 154880
+    max_seq_len: int = 262144
     num_hidden_layers: int = 45
     first_k_dense_replace: int = 3
     intermediate_size: int = 12288

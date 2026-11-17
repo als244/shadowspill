@@ -5,8 +5,9 @@ from importlib import import_module
 
 from shadowspill.training.definitions import ModelReferenceDefinition
 from shadowspill_client._records import plain
-from shadowspill_workloads.initialization import hub, hub_files, local_files
+from shadowspill_workloads.initialization import headers, hub, hub_files, local_files
 from shadowspill_workloads.models.families import checkpoint_families, families
+from shadowspill_workloads.models.families import family as family_definition
 
 from .source import definition_source
 
@@ -31,6 +32,23 @@ WEIGHT_GEOMETRY = {
     "lin_v_head_dim",
     "lin_conv_kernel",
     "attention_gate",
+    "hidden_size",
+    "num_hidden_layers",
+    "first_k_dense_replace",
+    "intermediate_size",
+    "moe_intermediate_size",
+    "num_local_experts",
+    "n_shared_experts",
+    "num_attention_heads",
+    "q_lora_rank",
+    "kv_lora_rank",
+    "qk_nope_head_dim",
+    "qk_rope_head_dim",
+    "v_head_dim",
+    "linear_num_heads",
+    "linear_head_dim",
+    "linear_conv_kernel_dim",
+    "hc_mult",
 }
 
 
@@ -90,10 +108,31 @@ def _resolved(requested, revision, metadata, manifest):
     if not isinstance(overrides, dict):
         raise ValueError("pretrained architecture overrides must be a mapping")
     family, values = architecture(metadata, overrides)
+    config = {**config, "architecture": values}
+    describe = family_definition(family).pretrained_config
+    if describe is not None:
+        from pathlib import Path
+
+        from shadowspill_workloads.initialization.weight_files import files
+
+        inventory = files(manifest)
+        tensors = (
+            headers.read(Path(weights.reference), inventory)
+            if local_files.accepts(weights.reference)
+            else headers.from_hub(weights.reference, revision, inventory)
+        )
+        described = describe(metadata, tensors, values)
+        for name, value in described.get("architecture", {}).items():
+            if name in overrides and overrides[name] != value:
+                raise ValueError(f"checkpoint storage differs from requested {name}")
+        for name, value in described.items():
+            if name != "architecture" and name in config and config[name] != value:
+                raise ValueError(f"checkpoint {name} differs from requested storage")
+        config.update(described)
     return replace(
         requested,
         definition=f"shadowspill/{family}@1",
-        config={**config, "architecture": values},
+        config=config,
         initialize=replace(
             weights,
             revision=revision,
@@ -111,6 +150,7 @@ def register(registry):
             "initialization/weight_files.py",
             "initialization/local_files.py",
             "initialization/headers.py",
+            "initialization/glm_metadata.py",
             "models/families.py",
             "models/registration.py",
             "definitions/text_metadata.py",

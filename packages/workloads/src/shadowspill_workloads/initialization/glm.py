@@ -29,8 +29,9 @@ class Initialize:
                     "this recipe does not convert expert formats"
                 )
             self.roles = {
-                name: "lora_a" if is_a else "zero"
-                for name, is_a in source.lora_initializers.items()
+                name: "lora_a" if name.endswith("_a") else "zero"
+                for name in tensors
+                if name.rsplit(".", 1)[-1].startswith("lora_")
             }
 
     def __call__(self, request, destination):

@@ -17,11 +17,13 @@ from .attention import SparseMLA, positions_for
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self, config, index, device):
+    def __init__(self, config, index, device, *, expert_factory=None):
         super().__init__()
         self.self_attn = SparseMLA(config, index, device)
-        self.mlp = (DenseMLP if index < config.first_k_dense_replace else MoE)(
-            config, device
+        self.mlp = (
+            DenseMLP(config, device)
+            if index < config.first_k_dense_replace
+            else MoE(config, device, expert_factory=expert_factory)
         )
         self.input_layernorm = RMSNorm(config.hidden_size, config, device)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, config, device)
@@ -39,7 +41,7 @@ class Model(nn.Module):
     LORA_SHARED_TARGETS = LORA_SHARED_TARGETS
     token_features = token_features
 
-    def __init__(self, config, *, device=None, vision_config=None):
+    def __init__(self, config, *, device=None, vision_config=None, expert_factory=None):
         super().__init__()
         if vision_config is not None:
             raise ValueError("GLM-5.3 is a text-only workload")
@@ -54,7 +56,8 @@ class Model(nn.Module):
         )
         nn.init.normal_(self.embed_tokens.weight, std=config.initializer_range)
         self.layers = nn.ModuleList(
-            DecoderLayer(config, i, device) for i in range(config.num_hidden_layers)
+            DecoderLayer(config, i, device, expert_factory=expert_factory)
+            for i in range(config.num_hidden_layers)
         )
         self.norm = RMSNorm(config.hidden_size, config, device)
         self.lm_head = LanguageModelHead(

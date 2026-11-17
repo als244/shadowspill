@@ -98,37 +98,44 @@ def validate(config):
     if config.implementation == "mlops_ep":
         if config.compute_dtype != "bfloat16":
             raise ValueError("Quack EP requires BF16 compute")
-        if config.lora is not None:
+        if config.lora is not None and not getattr(config, "expert_lora", False):
             raise ValueError("the installed EP definitions support full training")
     elif config.expert_options is not None:
         raise ValueError("expert resource settings require the mlops_ep implementation")
 
 
 def validate_ownership(architecture, parallelism):
+    validate_parameters(
+        parallelism,
+        (
+            f"blocks.{layer}.moe.experts.{projection}"
+            for layer in range(architecture.n_layers)
+            for projection in ("gate_up_weight", "down_weight")
+        ),
+    )
+
+
+def validate_parameters(parallelism, names):
     ranks = parallelism.ranks_per_replica
     if parallelism.groups.get("all_ranks") != (tuple(range(ranks)),):
         raise ValueError("Quack EP requires one ordered all_ranks group per replica")
     if parallelism.default_parameter_placement != Replicated("all_ranks"):
         raise ValueError("Quack EP requires replicated dense model parameters")
-    for layer in range(architecture.n_layers):
-        for projection in ("gate_up_weight", "down_weight"):
-            name = f"blocks.{layer}.moe.experts.{projection}"
-            placement = select(
-                (name,),
-                parallelism.parameter_placements,
-                parallelism.default_parameter_placement,
-            )
-            if placement != Sharded("all_ranks", 0):
-                raise ValueError(f"{name}: Quack EP requires expert-axis sharding")
-            storage = select(
-                (name,), parallelism.parameter_storage, ParameterStorage()
-            ).inherit(parallelism.default_parameter_storage)
-            for component in ("weights", "gradients", "optimizer"):
-                group = parallelism.group(storage.group_for(component))
-                if any(len(members) != 1 for members in group.groups):
-                    raise ValueError(
-                        f"{name}: expert {component} storage must be local"
-                    )
+    for name in names:
+        placement = select(
+            (name,),
+            parallelism.parameter_placements,
+            parallelism.default_parameter_placement,
+        )
+        if placement != Sharded("all_ranks", 0):
+            raise ValueError(f"{name}: Quack EP requires expert-axis sharding")
+        storage = select(
+            (name,), parallelism.parameter_storage, ParameterStorage()
+        ).inherit(parallelism.default_parameter_storage)
+        for component in ("weights", "gradients", "optimizer"):
+            group = parallelism.group(storage.group_for(component))
+            if any(len(members) != 1 for members in group.groups):
+                raise ValueError(f"{name}: expert {component} storage must be local")
 
 
 def build(config, architecture, family, context):
