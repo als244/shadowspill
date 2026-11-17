@@ -185,8 +185,8 @@ training = service.create_training_client(
 ).result()
 ```
 
-`parallelism` enters preparation: it determines rank-specific builds, parameter
-storage, input placement and Plans. This DP configuration shards parameter storage
+`parallelism` enters preparation: it determines parameter storage, input placement
+and communication between workers. This DP configuration shards parameter storage
 across eight GPUs. Each `step()` submits **one global batch** of 512 × 4,096 =
 2,097,152 tokens (2M); workers accumulate microbatches and apply one update.
 Scheduled padding counts toward that token cap. The execution budget is **20 GiB
@@ -195,6 +195,6 @@ Each rank accumulates four unchunked 64K microbatches, with FP32 gradients,
 master weights and Adam state. The default allows 128 sequences per microbatch
 (8× sixteen 4K sequences); the attention length bound remains 4K.
 
-See the [client guide](docs/python/client.md), [model catalog](docs/python/catalog.md)
-and [documentation index](docs/README.md). [Advanced usage](docs/python/advanced/README.md)
-covers custom models, objectives, optimizers, split updates and direct engine APIs.
+See [runnable demos](examples/demos/README.md), the [client guide](docs/python/client.md)
+and [model catalog](docs/python/catalog.md). The [documentation index](docs/README.md)
+includes [advanced usage](docs/python/advanced/README.md) and direct engine APIs.
