@@ -31,7 +31,7 @@ class OptimizerDefinition:
     existing optimizer-parameter capture, without changing model dtype. Ordinary
     parameters need no separate copy when they already meet that precision.
     ``gradient_dtype`` sets stored gradients and their accumulation. None leaves
-    this to the model build; "parameter" uses each parameter's native dtype.
+    this to the model build; "parameter" uses each parameter's own dtype.
     """
 
     id: str

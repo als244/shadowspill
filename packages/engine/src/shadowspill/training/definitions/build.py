@@ -24,7 +24,7 @@ class ModelBuildContext:
     device, process group or live allocation is exposed during description.
     ``gradient_dtype`` carries the optimizer's gradient choice so providers can
     produce directly into the same storage. None leaves the model build default;
-    "parameter" requests native parameter precision.
+    "parameter" requests each parameter's own precision.
     """
 
     layout: InputLayout
