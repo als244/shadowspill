@@ -19,14 +19,14 @@ from shadowspill import Trainer
 from shadowspill.pytorch.guards import capture_input_signature
 from shadowspill.training import config
 from shadowspill_workloads.recipes.text.experiment import results
-from shadowspill_workloads.recipes.text.experiment.execute import (
-    checkpoint_directory,
-    resume_path,
-)
 from shadowspill_workloads.recipes.text.experiment.inputs import (
     call_inputs,
     candidates,
     source,
+)
+from shadowspill_workloads.recipes.text.heterogeneous.checkpoint_paths import (
+    checkpoint_directory,
+    resume_path,
 )
 from tests.integration.training._text_recipe import _config, _records
 

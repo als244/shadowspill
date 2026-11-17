@@ -10,11 +10,11 @@ import torch
 from safetensors.torch import save_file
 
 from examples.training.runner import run_config
-from shadowspill.training import config
-from shadowspill_workloads.recipes.text.configuration import (
+from reference.training.configuration import (
     expand_checkpoint,
     load_config,
 )
+from shadowspill.training import config
 from shadowspill_workloads.recipes.text.experiment.hyperparameters import (
     scheduled_arguments,
 )

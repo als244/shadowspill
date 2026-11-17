@@ -4,8 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+from reference.training.configuration import load_config
 from shadowspill.training.preparation.phases import run_phases
-from shadowspill_workloads.recipes.text.configuration import load_config
 
 
 def run_config(path, overrides=(), *, phase="all"):

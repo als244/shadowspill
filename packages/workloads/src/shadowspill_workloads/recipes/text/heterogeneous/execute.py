@@ -15,7 +15,7 @@ from shadowspill.training import config
 from shadowspill.training.preparation.phases import settings
 from shadowspill_workloads.inputs.text.units import held_out
 from shadowspill_workloads.recipes.text.experiment import logging, results
-from shadowspill_workloads.recipes.text.experiment.execute import (
+from shadowspill_workloads.recipes.text.heterogeneous.checkpoint_paths import (
     checkpoint_directory,
     resume_path,
 )

@@ -11,7 +11,9 @@ from shadowspill.training import config
 from shadowspill_workloads.inputs.text.documents import IGNORE
 from shadowspill_workloads.inputs.text.packed import PackedTokens
 from shadowspill_workloads.inputs.text.units import held_out
-from shadowspill_workloads.recipes.text.experiment.execute import checkpoint_directory
+from shadowspill_workloads.recipes.text.heterogeneous.checkpoint_paths import (
+    checkpoint_directory,
+)
 from shadowspill_workloads.recipes.text.heterogeneous.data import (
     UnitUpdates,
     unit_ranges,
