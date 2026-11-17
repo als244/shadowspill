@@ -89,13 +89,23 @@ training = service.create_training_client(
 report = training.plans.report().result()
 report.download("plan.html").result()
 
+pending = None
 for step, batch in enumerate(data):
+    following = training.step(
+        batch, optim={"lr": 0.00001}, runtime_trace=step == 99,
+    )
+    if pending is not None:
+        result = pending.result()
+        print(result.completed_updates, result.loss)
+    pending = following
     if step == 99:
-        result = training.step(batch, optim={"lr": 0.00001}, runtime_trace=True).result()
-        result.traces[0].download_report("runtime.html").result()
         break
-    result = training.step(batch, optim={"lr": 0.00001}).result()
+
+if pending is not None:
+    result = pending.result()
     print(result.completed_updates, result.loss)
+    if result.traces:
+        result.traces[0].download_report("runtime.html").result()
 
 training.save_checkpoint(name="latest").result()
 training.close().result()
@@ -107,6 +117,7 @@ times, and GPU/spill memory breakdowns. It works offline. Conversations retain
 their individual attention boundaries and are packed automatically. The reader
 skips conversations over the length limit and averages cross entropy across all
 unmasked target tokens in each global batch.
+The loop queues the next batch before waiting, keeping at most two steps in flight.
 
 The final step records a runtime trace. Open `runtime.html` for measured compute
 and transfer timings, alongside that step's predicted Plan. Its memory breakdown
