@@ -12,6 +12,7 @@ from engine_tests.training.test_worker_output_frame import description, result
 from shadowspill.orchestration.launch.file_grants import FileGrants, resolve_file
 from shadowspill.orchestration.launch.publication import OutputFiles, require_output
 from shadowspill.training.session.dispatch import ExecutionNotStarted
+from shadowspill.training.worker import requests as request_module
 from shadowspill.training.worker.connection import WorkerConnection
 from shadowspill.training.worker.group import WorkerGroup
 from shadowspill.training.worker.output_files import FileOutputs
@@ -130,6 +131,32 @@ def test_results_retain_inputs_outputs_and_metadata_through_verification(
         work.close()
         assert ctx.metadata.used == ctx.disk.used == (0, 0)
         assert ctx.group.valid
+
+
+def test_execution_time_excludes_file_preparation_and_later_publication(
+    tmp_path, monkeypatch
+):
+    with configured(tmp_path, monkeypatch) as ctx:
+        clock = [10.0]
+        monkeypatch.setattr(request_module, "monotonic", lambda: clock[0])
+        prepare, run = ctx.transport._prepare, ctx.group.run
+
+        def slow_prepare(*args):
+            clock[0] += 100
+            return prepare(*args)
+
+        def execute(*args):
+            clock[0] += 2.5
+            return run(*args)
+
+        monkeypatch.setattr(ctx.transport, "_prepare", slow_prepare)
+        monkeypatch.setattr(ctx.group, "run", execute)
+        work = ctx.transport.execute(ctx.data, ctx.transition)
+        assert work.execution_seconds == 2.5
+        clock[0] += 100
+        work.verify()
+        assert work.execution_seconds == 2.5
+        work.close()
 
 
 def test_discard_needs_command_metadata_but_no_tensor_file_owners(

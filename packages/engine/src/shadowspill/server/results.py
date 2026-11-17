@@ -109,6 +109,7 @@ class ResultPublisher:
                 checkpoint=checkpoint,
                 weights=weights,
                 metadata=metadata,
+                execution_seconds=work.execution_seconds,
             )
             try:
                 if layout is not None and layout.outputs.tensors:

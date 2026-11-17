@@ -35,6 +35,7 @@ class Work:
     def __init__(self, call):
         self.frames, self.files, self.values = {}, {}, {}
         self.verified = self.closed = False
+        self.execution_seconds = 1.25 if call.key is not None else None
         if call.candidate is None:
             return
         layout = call.candidate.source.layout
@@ -145,6 +146,7 @@ def test_optional_trace_failure_keeps_successful_update_and_durable_result(
         assert status.state == "completed" and status.result.state_valid
         assert status.result.completed_updates == state.boundary.completed_updates == 1
         assert status.result.loss is not None
+        assert status.result.execution_seconds == 1.25
         assert work.closed and executed == [1]
         if failure:
             assert not status.result.traces

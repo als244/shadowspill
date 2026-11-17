@@ -60,6 +60,7 @@ def result():
         optim={"lr": 0.01},
         grad_scale=0.5,
         loss=0.75,
+        execution_seconds=1.25,
     )
 
 
@@ -172,6 +173,7 @@ def test_state_commands_reject_compute_inputs_and_controls(options, operation):
         {"optim": {"lr": 1}},
         {"loss_params": {"temperature": 1}},
         {"accumulation": Accumulation(1, True, ("old",), 1)},
+        {"execution_seconds": 1.25},
     ],
 )
 @pytest.mark.parametrize("operation", ["discard", "close"])
@@ -207,6 +209,9 @@ def test_state_command_result_records_only_resolved_state(options, operation):
         ),
         lambda: replace(result(), grad_scale=None),
         lambda: replace(result(), loss=float("nan")),
+        lambda: replace(result(), execution_seconds=-1),
+        lambda: replace(result(), execution_seconds=float("inf")),
+        lambda: replace(result(), execution_seconds=True),
         lambda: replace(result(), operation="optim_step", loss=1),
     ],
 )

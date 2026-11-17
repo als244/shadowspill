@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from threading import Lock, RLock
+from time import monotonic
 from types import MappingProxyType
 from typing import BinaryIO, Self
 
@@ -163,11 +164,14 @@ class WorkerRequests:
                     raise ExecutionNotStarted(str(error)) from error
                 raise
             try:
+                started = monotonic()
                 replies = (
                     self.group.run(commands)
                     if checkpoint is None
                     else self._save(result, commands, checkpoint)
                 )
+                if call.key is not None:
+                    result.execution_seconds = monotonic() - started
                 if call.restore is not None:
                     assert self._checkpoints is not None
                     self._checkpoints.restored(call.restore)
@@ -383,6 +387,7 @@ class WorkerResults:
         self.replies: Mapping[int, WorkerReply] = {}
         self.checkpoint: CheckpointFiles | None = None
         self.publication_error: str | None = None
+        self.execution_seconds: float | None = None
         self._active = self.ready = self.closed = False
         self._producing: set[OutputFile] = set()
         self._lock = RLock()

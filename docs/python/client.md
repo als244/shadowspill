@@ -133,6 +133,12 @@ Objective sums are not automatically averaged: use input weights or an explicit
 `grad_scale`. `text_batch` supplies weights for a mean token loss. Construct it
 once before splitting the resulting list across backward calls for one update.
 
+`result.execution_seconds` measures server-side worker execution, including input
+staging, synchronization and collection of worker outputs. It excludes client
+batch preparation, upload, queue wait and final artifact publication. Use this
+duration for step time and real input tokens per second. Runtime tracing adds
+measurement overhead when enabled.
+
 Batch limits include scheduled padding. For example, a 128K-token cap cannot
 execute three 64K microbatches.
 

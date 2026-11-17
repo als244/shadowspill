@@ -200,6 +200,7 @@ class OperationResult(Record):
     checkpoint: ArtifactRef | None = None
     metadata: Mapping[str, Value] = field(default_factory=dict)
     weights: ArtifactRef | None = None
+    execution_seconds: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -210,6 +211,15 @@ class OperationResult(Record):
             "skipped",
         ):
             raise ValueError("unknown result operation or outcome")
+        if self.execution_seconds is not None:
+            number(self.execution_seconds, "execution seconds", minimum=0)
+            if self.operation not in (
+                "step",
+                "forward_backward",
+                "optim_step",
+                "forward",
+            ):
+                raise ValueError("only compute results have execution seconds")
         if self.checkpoint is not None:
             object.__setattr__(
                 self, "checkpoint", record(ArtifactRef, self.checkpoint, "checkpoint")
