@@ -1,7 +1,13 @@
 /* How a pool's memory is acquired and released, and where a location
    resolves to. */
+#define _GNU_SOURCE
 #include "internal.h"
 #include "../../numa.h"
+
+#include <unistd.h>
+#if defined(__linux__)
+#include <sched.h>
+#endif
 
 ShadowSpillMemoryPool *shadowspill_runtime_pool(
     ShadowSpillRuntime *runtime,
@@ -92,6 +98,69 @@ static int device_release(void *state, void *base, uint64_t capacity) {
     return backend->free_device(backend->state, base, capacity);
 }
 
+typedef struct {
+    unsigned char *base;
+    size_t bytes;
+} HostPages;
+
+static void *populate_host_pages(void *argument) {
+    const HostPages *pages = argument;
+    /* The kernel must allocate/zero every page before it can be pinned. Doing
+     * this in parallel avoids serial page faults inside driver registration. */
+    memset(pages->base, 0, pages->bytes);
+    return NULL;
+}
+
+static void prefault_host_pages(void *base, uint64_t capacity) {
+    enum { MAX_WORKERS = 8 };
+    const uint64_t grain = UINT64_C(64) << 20U;
+    if (capacity < 2U * grain) {
+        return;
+    }
+    unsigned workers = MAX_WORKERS;
+    const long online = sysconf(_SC_NPROCESSORS_ONLN);
+    if (online > 0 && online < (long)workers) {
+        workers = (unsigned)online;
+    }
+#if defined(__linux__)
+    /* New threads inherit the caller's affinity, including the runtime's
+     * device-local NUMA binding. Never exceed its permitted CPU count. */
+    cpu_set_t allowed;
+    if (sched_getaffinity(0, sizeof(allowed), &allowed) == 0) {
+        const int count = CPU_COUNT(&allowed);
+        if (count > 0 && (unsigned)count < workers) {
+            workers = (unsigned)count;
+        }
+    }
+#endif
+    if (capacity / grain < workers) {
+        workers = (unsigned)(capacity / grain);
+    }
+    pthread_t threads[MAX_WORKERS];
+    HostPages pieces[MAX_WORKERS];
+    unsigned started = 0U;
+    const size_t stride = (size_t)(capacity / workers / grain * grain);
+    for (unsigned index = 0U; index < workers; ++index) {
+        const size_t offset = (size_t)index * stride;
+        /* Pack only successfully created threads; a failed creation performs
+         * that piece here and leaves no borrowed stack argument behind. */
+        pieces[started] = (HostPages){
+            .base = (unsigned char *)base + offset,
+            .bytes = index + 1U == workers ? (size_t)capacity - offset : stride,
+        };
+        if (index + 1U < workers && pthread_create(
+                &threads[started], NULL, populate_host_pages, &pieces[started]
+            ) == 0) {
+            ++started;
+        } else {
+            (void)populate_host_pages(&pieces[started]);
+        }
+    }
+    for (unsigned index = 0U; index < started; ++index) {
+        (void)pthread_join(threads[index], NULL);
+    }
+}
+
 /* An anonymous private mapping, so the pool owns page-aligned memory the C
  * allocator never touches, and the backend pins it in place. */
 static int pinned_host_acquire(
@@ -110,6 +179,7 @@ static int pinned_host_acquire(
     }
     const ShadowSpillBackend *backend = &runtime->backend;
     shadowspill_numa_place(host, capacity, runtime->host_numa_node);
+    prefault_host_pages(host, capacity);
     if (backend->register_host_memory(backend->state, host, capacity) != 0) {
         (void)munmap(host, (size_t)capacity);
         return -1;

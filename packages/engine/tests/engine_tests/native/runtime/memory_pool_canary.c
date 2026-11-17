@@ -1,14 +1,17 @@
+#define _DEFAULT_SOURCE
 #include "internal.h"
 
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 /*
  * This canary links the generic MemoryPool implementation directly. These
- * two dependencies are intentionally tiny because the test does not create a
- * backend memory or submit an event; it exercises only pool-owned transitions.
+ * two dependencies are intentionally tiny: the test exercises pool-owned
+ * transitions and host acquisition without creating device memory or events.
  */
 void shadowspill_event_lease_retain(ShadowSpillEventLease *lease) {
     if (lease != NULL) {
@@ -448,7 +451,62 @@ static int metadata_grows_past_its_reserve(void) {
 }
 
 
+static int check_populated_host_memory(void *state, void *address, uint64_t bytes) {
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) { return -1; }
+    const size_t pages = ((size_t)bytes - 1U) / (size_t)page_size + 1U;
+    unsigned char *resident = malloc(pages);
+    if (resident == NULL) { return -1; }
+    int failed = mincore(address, (size_t)bytes, resident) != 0;
+    for (size_t index = 0U; !failed && index < pages; ++index) {
+        /* Check residency before reading any byte: the callback must not be
+         * responsible for faulting in a missing page, including the tail. */
+        failed = (resident[index] & 1U) == 0U;
+    }
+    free(resident);
+    if (failed) { return -1; }
+    for (size_t offset = 0U; offset < (size_t)bytes; offset += (size_t)page_size) {
+        if (((unsigned char *)address)[offset] != 0U) { return -1; }
+    }
+    if (((unsigned char *)address)[bytes - 1U] != 0U) { return -1; }
+    ++*(int *)state;
+    return 0;
+}
+
+static int release_populated_host_memory(void *state, void *address, uint64_t bytes) {
+    (void)address; (void)bytes;
+    ++*(int *)state;
+    return 0;
+}
+
+static int host_pages_are_populated_before_registration(void) {
+    int callbacks = 0;
+    ShadowSpillRuntime runtime = {
+        .host_numa_node = -1,
+        .backend = {
+            .state = &callbacks,
+            .register_host_memory = check_populated_host_memory,
+            .unregister_host_memory = release_populated_host_memory,
+        },
+    };
+    ShadowSpillPoolMemoryDescription descriptions[2];
+    shadowspill_builtin_pool_memory_describe(&runtime, descriptions);
+    const ShadowSpillPoolMemoryDescription *host = &descriptions[1];
+    const uint64_t bytes = (UINT64_C(128) << 20U) + 17U;
+    void *base = NULL, *state = NULL;
+    if (host->acquire(host->configuration, bytes, &base, &state) != 0) {
+        return -1;
+    }
+    const int failed = callbacks != 1 || base == NULL || state != &runtime;
+    const int released = host->release(state, base, bytes);
+    return failed || released != 0 || callbacks != 2 ? -1 : 0;
+}
+
 int main(void) {
+    if (host_pages_are_populated_before_registration() != 0) {
+        fprintf(stderr, "host pages were not ready before registration\n");
+        return 1;
+    }
     if (completion_without_successor_frees_and_coalesces() != 0) {
         fprintf(stderr, "completion-to-free transition failed\n");
         return 1;
