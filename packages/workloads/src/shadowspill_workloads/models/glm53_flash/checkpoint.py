@@ -6,20 +6,7 @@ from shadowspill_workloads.models.shared.glm.checkpoint import (
 
 from .config import from_huggingface
 from .implementations.mlops import Model, VisionConfig
-
-
-def source_name(name):
-    if name.startswith("visual."):
-        return "model." + name
-    for short, original in (("attn_hc", "hc_attn"), ("ffn_hc", "hc_ffn")):
-        for field in ("fn", "base", "scale"):
-            name = name.replace(f".{short}.{field}", f".{original}_{field}")
-    name = name.replace(".forget_gate.", ".")
-    name = name.replace(".mlp.router", ".mlp.gate.weight")
-    name = name.replace(
-        ".mlp.e_score_correction_bias", ".mlp.gate.e_score_correction_bias"
-    )
-    return name if name.startswith("lm_head.") else "model.language_model." + name
+from .weights import source_name
 
 
 class GLMCheckpoint(BaseCheckpoint):

@@ -6,14 +6,7 @@ from shadowspill_workloads.models.shared.glm.checkpoint import (
 
 from .config import from_huggingface
 from .implementations.mlops import Model
-
-
-def source_name(name):
-    name = name.replace(".mlp.router", ".mlp.gate.weight")
-    name = name.replace(
-        ".mlp.e_score_correction_bias", ".mlp.gate.e_score_correction_bias"
-    )
-    return name if name.startswith("lm_head.") else "model." + name
+from .weights import source_name
 
 
 class GLMCheckpoint(BaseCheckpoint):
