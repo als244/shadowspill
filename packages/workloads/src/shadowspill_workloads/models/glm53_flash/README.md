@@ -43,7 +43,7 @@ model = source.build_model(lora_rank=32, lora_alpha=32)
 # from the same checkpoint and initializes adapter factors separately.
 ```
 
-The GLM recipes' [initializer](../../recipes/text/glm/initialize.py) supplies
+The shared GLM [initializer](../../initialization/glm.py) supplies
 those bounded fills, including deterministic random initialization. No
 whole-model or expert-bank host staging copy is required. Checkpoint and random
 initialization use the same shapes and dtypes. The recipe's bounded loader

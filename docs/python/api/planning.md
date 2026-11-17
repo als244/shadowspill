@@ -122,7 +122,9 @@ the certified construction if bounded search fails. The witness must remain in
 the family, and saved certificates rederive their proof when loaded. These are
 input geometry guarantees; model padding/independence, compiled metadata bounds,
 memory admission and collective compatibility still require separate preparation
-checks. The public trainer preparation path is not yet wired to these primitives.
+checks. For service training, `training.validate_batch(batch).result()` checks
+the actual batch against prepared layouts, including packing and scheduled
+padding. Declared batch limits alone do not guarantee that every batch fits.
 
 Installed `ModelDefinition` records can supply an `input_adapter(config, layout)`
 function returning an `InputAdapter`. `ResolvedModel.bind_inputs(InputLayout(...))`
@@ -148,8 +150,9 @@ also require a declared reduction across microbatches, separate from the worker
 reduction. Declare these in `TensorOutput(source=("inputs", "tokens"), ...)`
 and `TensorOutput(..., ordering="global", reduction="max")`, respectively.
 They travel in the resolved output contract. Saved layouts recompute their
-derived mappings and reject discrepancies. The mappings retain no GPU tensors and can drive bounded artifact
-writes; artifact streaming/publication is still separate implementation work.
+derived mappings and reject discrepancies. The mappings retain no GPU tensors
+and support bounded artifact writes. Service results expose explicit
+[output downloads](../advanced/service-client.md#results-and-saved-metadata).
 
 Traversal is a planning choice; microbatch geometry is a build choice. For eight
 instantiated calls, `StepDataOrdering(depth=2, breadth=4)` makes two passes of four
@@ -209,6 +212,6 @@ Invalid inputs and implementation errors propagate.
 This convenience loop uses default traversal; it does not search microbatch
 sizes, chunk policies or orderings. For explicit orderings, loop over
 `plan_program`. For build/profile candidate generation as well, use the
-[recipe runner](../../../packages/workloads/src/shadowspill_workloads/recipes/README.md) or
+[service preparation controls](../advanced/service-client.md#preparation-and-local-planning) or
 [quickstart](../../../benchmarks/quickstart.md). See the
 [budget-sweep example](../../examples/reusable-planning.md) for saving winners.
