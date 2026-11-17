@@ -152,6 +152,7 @@ def check_trace(result, run, *, expected, accumulated=False):
                 "manifest.json",
                 "step.json",
                 "step.events.npz",
+                "report.html",
             }
             manifest = json.loads(archive.read("manifest.json"))
             assert manifest["request"] == result.identity.to_dict()
@@ -175,6 +176,14 @@ def check_trace(result, run, *, expected, accumulated=False):
                 for name in ("runtime", "allocator"):
                     sequence = events[name + ".sequence"]
                     np.testing.assert_array_equal(sequence, np.arange(len(sequence)))
+            html = archive.read("report.html")
+            assert html.startswith(b"<!doctype html>")
+        report = (
+            result.traces[0]
+            .download_report(Path(directory) / "runtime.html")
+            .result(30)
+        )
+        assert report.read_bytes() == html
 
 
 def qualify(client, config, initial, memory):
@@ -292,7 +301,6 @@ def qualify(client, config, initial, memory):
                 "forward_backward",
                 "optim_step",
                 "forward",
-                "masked",
             ],
             "trace_failure_preserves_update": True,
             "trace_download_after_close": True,
@@ -364,7 +372,6 @@ def qualify(client, config, initial, memory):
                     "forward_backward",
                     "optim_step",
                     "forward",
-                    "masked",
                 ],
             }
         )

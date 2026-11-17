@@ -188,4 +188,8 @@ def test_public_stochastic_step_split_and_checkpoint_resume(tmp_path, monkeypatc
     assert receipt["optional_trace_failures_injected"] == 1
     assert receipt["runs"][0]["trace_failure_preserves_update"]
     assert receipt["runs"][0]["trace_download_after_close"]
-    assert all(len(run["runtime_traces"]) == 5 for run in receipt["runs"])
+    assert all(
+        set(run["runtime_traces"])
+        == {"step", "forward_backward", "optim_step", "forward"}
+        for run in receipt["runs"]
+    )
