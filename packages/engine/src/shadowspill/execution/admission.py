@@ -103,6 +103,7 @@ def prepare(
     actions = actions_by_task(plan.schedule.actions)
     descriptions = {e["task_id"]: e for e in plan.program.bindings["entrypoints"]}
     functions, result = {}, []
+    envelopes: dict[tuple[str, tuple[int, ...]], TaskMemoryEnvelope] = {}
     for task, entry in zip(tasks, entries, strict=True):
         function, description, envelope = None, {}, None
         bindings = outputs.get(task.task_id, ())
@@ -144,10 +145,16 @@ def prepare(
             measurement = measurements[key]
             function = functions[key]
             description = plan.program.bindings["task_inputs"][key]
-            envelope = task_memory_envelope(
-                measurement,
-                retained_output_leaves=tuple(b.leaf_index for b in bindings),
-            )
+            retained = tuple(b.leaf_index for b in bindings)
+            envelope_key = key, retained
+            # Repeated layers and microbatches share one measured allocator
+            # trace. Its immutable limits depend only on that profile and the
+            # retained leaves, never the invocation's runtime object handles.
+            if envelope_key not in envelopes:
+                envelopes[envelope_key] = task_memory_envelope(
+                    measurement, retained_output_leaves=retained
+                )
+            envelope = envelopes[envelope_key]
         input_aliases = tuple(dict.fromkeys(aliases[o] for o in task.inputs))
         task_actions = actions.get(task.task_id, ())
         handle = admit_task(
