@@ -1,4 +1,4 @@
-"""Optional token/sequence candidates for text recipes."""
+"""Optional token/sequence candidates for direct phase benchmarks."""
 
 
 def search_geometries(

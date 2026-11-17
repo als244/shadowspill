@@ -1,4 +1,4 @@
-"""Explicit provider contracts for GLM's ordinary packed-token recipe."""
+"""Explicit GLM chunk policies and their provider allocation contracts."""
 
 from shadowspill.integrations.mlops import (
     mhc_chunk_rules,

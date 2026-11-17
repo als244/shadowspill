@@ -73,35 +73,6 @@ def test_references_name_objects_calls_and_partials() -> None:
         config.resolve("@fractions")
 
 
-CONFIGS = Path(__file__).resolve().parents[3] / "examples/training" / "configs"
-
-
-@pytest.mark.parametrize(
-    "path", sorted(CONFIGS.glob("*.json")), ids=lambda path: path.stem
-)
-def test_a_config_on_mlops_asks_it_for_weight_gradients_at_its_grad_dtype(
-    path: Path,
-) -> None:
-    """mlops kernels return the weight gradients they sum unrounded only when
-    asked at the dtype gradients are kept at; a config keeping them at the
-    weights' own asks for nothing."""
-
-    raw = json.loads(path.read_text())
-    settings = raw.get("settings", [])
-    if raw.get("model", {}).get("implementation") != "mlops":
-        pytest.skip("the model does not run on mlops kernels")
-    assert all(
-        setting.get("@call") != "shadowspill_workloads.providers:select_implementation"
-        for setting in settings
-    )
-    asked = [
-        setting.get("dtype")
-        for setting in settings
-        if setting.get("@call") == "mlops.dispatch:set_weight_gradient_dtype"
-    ]
-    assert asked == ([raw["grad_dtype"]] if "grad_dtype" in raw else [])
-
-
 @pytest.mark.parametrize("master", [None, "@torch:float32"])
 def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
     import torch

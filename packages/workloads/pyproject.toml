@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "shadowspill-workloads"
 version = "0.1.0.dev0"
-description = "Optional model integrations and training recipes for ShadowSpill"
+description = "Optional model architectures and training definitions for ShadowSpill"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["shadowspill==0.1.0.dev0"]

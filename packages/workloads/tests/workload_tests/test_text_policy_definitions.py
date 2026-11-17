@@ -242,7 +242,7 @@ def test_policy_provider_change_invalidates_saved_source(monkeypatch):
         )
 
 
-def test_policy_description_and_resolution_import_no_recipe_or_framework():
+def test_policy_description_and_resolution_import_no_repository_or_framework():
     script = """
 import sys
 from shadowspill.training.definitions import load_registry
@@ -255,7 +255,7 @@ for case in preparation().candidates.cases:
         assert resolved.config
 assert not any(name in sys.modules for name in (
     'torch', 'triton', 'mlops', 'fla', 'quack', 'sonicmoe', 'cutlass'))
-assert not any(name.startswith('shadowspill_workloads.recipes.')
+assert not any(name.split('.')[0] in {'benchmarks', 'reference', 'qualification'}
                for name in sys.modules)
 """
     result = subprocess.run(

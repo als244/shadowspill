@@ -12,9 +12,8 @@ family, declared in ``registration.py``.
 
 An entry also records which implementations build it, the geometry a
 benchmark of it starts from, whether its objective carries a router
-balancing term, whether the mlops implementation can shard its experts over
-an expert-parallel group and, for a checkpoint-bound family, the quickstart
-factory that builds it. Adding a model is one family package and one entry
+balancing term, whether the mlops implementation supports direct
+expert-parallel construction. Adding a model is one family package and one entry
 in ``models/families.py``."""
 
 from collections.abc import Mapping
@@ -30,9 +29,8 @@ from .presets import ENTRIES
 _BY_NAME: Mapping[str, Entry] = {item.name: item for item in ENTRIES}
 assert len(_BY_NAME) == len(ENTRIES), "catalog names repeat"
 
-#: Each family's checkpoint reader class lives under
-#: ``shadowspill_workloads.models.<family>.checkpoint``;
-#: the GLM families load through their own recipe.
+#: Readers supporting the direct config/tensor convenience constructor.
+#: Structured or compressed storage can use a model's initialization hook.
 READERS: Mapping[str, str] = {
     item.name: item.checkpoint_reader
     for item in registered_families()
@@ -97,8 +95,7 @@ def build_on_meta(
 ) -> Any:
     """A catalog model declared on ``meta`` (or built with values on another
     ``device``): structure in ``dtype``, LoRA applied when ``lora`` names
-    its options, ``changes`` on the entry's configuration. The form a saved
-    training recipe names."""
+    its options, ``changes`` on the entry's configuration."""
 
     from ..construction import build_on_meta as declare
 
@@ -126,8 +123,8 @@ def build_from_checkpoint(
     """The ``family`` model a local Hugging Face checkpoint describes, declared
     on ``meta`` at the checkpoint's configuration with ``changes`` (such as
     ``max_seq_len``) over it: structure in ``dtype``, LoRA applied when
-    ``lora`` names its options. The form a fine-tuning config names, beside
-    ``shadowspill_workloads.initialization.decoder.from_checkpoint``."""
+    ``lora`` names its options. Public clients use Model.from_pretrained and
+    the family's registered initialization hook."""
 
     from ..construction import build_on_meta as declare
 

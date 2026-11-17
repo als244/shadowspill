@@ -1,8 +1,7 @@
-"""Precision controls shared by text benchmark factories and recipes."""
+"""Precision controls shared by phase benchmark factories."""
 
 from __future__ import annotations
 
-import argparse
 import functools
 from dataclasses import dataclass
 from typing import Any, cast
@@ -33,20 +32,6 @@ class Precision:
     parameter_rounding: str | None = None
     opt_state_rounding: str | None = None
     fuse_narrow_gradient_accumulation: bool = True
-
-    @classmethod
-    def from_arguments(cls, arguments: argparse.Namespace) -> Precision:
-        return cls(
-            model_dtype=arguments.model_dtype,
-            master_dtype=arguments.master_dtype,
-            grad_dtype=arguments.grad_dtype,
-            opt_state_dtype=arguments.opt_state_dtype,
-            parameter_rounding=arguments.parameter_rounding,
-            opt_state_rounding=arguments.opt_state_rounding,
-            fuse_narrow_gradient_accumulation=bool(
-                arguments.fuse_narrow_gradient_accumulation
-            ),
-        )
 
     @staticmethod
     def _dtype(name: str | None) -> torch.dtype | None:
@@ -106,47 +91,3 @@ class Precision:
             from mlops.dispatch import set_weight_gradient_dtype
 
             set_weight_gradient_dtype(self._dtype(self.grad_dtype))
-
-    def lines(self) -> tuple[tuple[str, str, str], ...]:
-        """The banner's rows: a label, the value, and what it means."""
-
-        gradients = self.grad_dtype or "the weights'"
-        return (
-            ("model dtype", self.model_dtype, "the model weights and activations"),
-            (
-                "master dtype",
-                self.master_dtype or "none",
-                "the optimizer steps the weights themselves"
-                if self.master_dtype is None
-                else "a master copy of every weight trained at another dtype",
-            ),
-            (
-                "grad dtype",
-                self.grad_dtype or "weights'",
-                f"gradients summed over the microbatches at {gradients} dtype;"
-                + (
-                    " a multiply adds a narrower gradient in as it writes it"
-                    if self.fuse_narrow_gradient_accumulation
-                    else " a narrower gradient is written by its multiply, then added"
-                ),
-            ),
-            (
-                "opt state dtype",
-                self.opt_state_dtype or "default",
-                "the moments at the optimizer's default dtype"
-                if self.opt_state_dtype is None
-                else "the moments at that dtype ('parameter': what it steps)",
-            ),
-            (
-                "parameter rounding",
-                self.parameter_rounding or "default",
-                "how the optimizer rounds the weights it steps; its default"
-                " is to nearest",
-            ),
-            (
-                "opt state rounding",
-                self.opt_state_rounding or "default",
-                "ShadowSpill defaults to stochastic for BF16 AdamW moments;"
-                " nearest otherwise",
-            ),
-        )

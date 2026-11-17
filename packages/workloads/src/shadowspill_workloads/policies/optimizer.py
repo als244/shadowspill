@@ -1,8 +1,8 @@
 """Optimizer defaults shared by text benchmarks, training and eager references.
 
-The recipes prefer stochastic rounding for BF16 MLOps AdamW moments. This is
-an explicit recipe choice; the generic training API does not inspect optimizer
-implementation names or change their numerical defaults.
+The benchmark/reference policy prefers stochastic rounding for BF16 MLOps AdamW
+moments. This is an explicit workload policy; the generic training API does not
+inspect optimizer implementation names or change their numerical defaults.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ def build_optimizer(
     parameters: Iterable[Any],
     arguments: Mapping[str, Any],
 ) -> torch.optim.Optimizer:
-    """Apply the text recipes' optimizer defaults, preserving explicit choices.
+    """Apply the benchmark/reference optimizer defaults, preserving explicit choices.
 
     Explicit constructor and group rounding choices win. Other optimizers and
     caller-owned optimizer instances retain their own semantics. Mixed moment

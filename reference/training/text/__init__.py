@@ -1,1 +1,1 @@
-"""Text phase helpers shared by heterogeneous execution and reference tests."""
+"""Packed text inputs, schedules and logging for the PyTorch reference."""
