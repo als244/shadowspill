@@ -38,7 +38,7 @@ def test_fragmented_128k_requires_requested_larger_shape_not_count_overflow():
     assert proof.schedule == large and proof.construction == "aggregate"
     for lengths in (
         [40 * 1024] * 3,
-        [38 * 1024, 32 * 1024, 19 * 1024, 13 * 1024, 13 * 1024, 13 * 1024],
+        [40 * 1024, 28 * 1024, 20 * 1024, 16 * 1024, 12 * 1024, 12 * 1024],
     ):
         with batch(lengths, bound) as data:
             packed = proof.select(data, [small, large], max_repair_nodes=0)

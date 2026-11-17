@@ -24,7 +24,7 @@ class PackedAssignment:
     schedule: PackingSchedule
     records: tuple[tuple[int, ...], ...]
     groups: tuple[tuple[tuple[int, ...], ...], ...]
-    strategy: Literal["best_fit", "repair", "coverage"]
+    strategy: Literal["best_fit", "balanced", "repair", "coverage"]
     repair_nodes: int = 0
 
 
@@ -125,7 +125,7 @@ def pack_batch(
     used = [[0] * len(maxima) for _ in buffers]
     assigned: list[list[int]] = [[] for _ in buffers]
 
-    def candidates(group: int) -> list[int]:
+    def candidates(group: int, *, balanced: bool = False) -> list[int]:
         result = []
         for index, capacity in enumerate(capacities):
             if not compatible[group][index] or any(
@@ -144,7 +144,8 @@ def pack_batch(
         return sorted(
             result,
             key=lambda i: (
-                sum(
+                (-1 if balanced else 1)
+                * sum(
                     (cap - a - b) / max(cap, 1)
                     for a, b, cap in zip(
                         used[i], costs[group], capacities[i], strict=True
@@ -162,13 +163,23 @@ def pack_batch(
         else:
             assert assigned[index].pop() == group
 
-    greedy = True
-    for group_index in order:
-        choices = candidates(group_index)
-        if not choices:
-            greedy = False
+    strategy: Literal["best_fit", "balanced", "repair", "coverage"] = "best_fit"
+    for balanced in (False, True):
+        # Filling one buffer first can exhaust another buffer's record slots
+        # before its token capacity. Try spreading the same atomic groups before
+        # spending the bounded repair budget; all compatibility checks are shared.
+        assigned = [[] for _ in buffers]
+        used = [[0] * len(maxima) for _ in buffers]
+        greedy = True
+        for group_index in order:
+            choices = candidates(group_index, balanced=balanced)
+            if not choices:
+                greedy = False
+                break
+            assign(group_index, choices[0], 1)
+        if greedy:
+            strategy = "balanced" if balanced else "best_fit"
             break
-        assign(group_index, choices[0], 1)
     nodes = 0
     if not greedy:
         assigned = [[] for _ in buffers]
@@ -210,7 +221,7 @@ def pack_batch(
         schedule,
         tuple(tuple(i for group in groups for i in group) for groups in result_groups),
         result_groups,
-        "best_fit" if greedy else "repair",
+        strategy if greedy else "repair",
         nodes,
     )
 

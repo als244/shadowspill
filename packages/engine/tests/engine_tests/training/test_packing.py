@@ -125,18 +125,18 @@ def test_128k_cap_rejects_three_64k_buffers_and_uses_only_requested_larger_shape
         assert sorted(packed.records[0]) == [0, 1, 2]
 
 
-def test_bounded_repair_finds_two_bins_when_best_fit_fragmentation_would_overflow():
+def test_bounded_repair_finds_two_bins_when_both_greedy_passes_overflow():
     bound, placement = limits(128, 64), InputPlacement.independent(1)
     choice = schedule("two_64", 64, 2)
-    with batch([38, 32, 19, 13, 13, 13], bound) as data:
+    with batch([40, 28, 20, 16, 12, 12], bound) as data:
         with pytest.raises(PackingError, match="repair nodes 0"):
             pack_batch(data, schema(), bound, placement, choice, max_repair_nodes=0)
         packed = pack_batch(data, schema(), bound, placement, choice)
         assert packed.strategy == "repair" and 0 < packed.repair_nodes < 10000
         assert sorted(
-            sorted([38, 32, 19, 13, 13, 13][i] for i in records)
+            sorted([40, 28, 20, 16, 12, 12][i] for i in records)
             for records in packed.records
-        ) == [[13, 13, 38], [13, 19, 32]]
+        ) == [[12, 12, 40], [16, 20, 28]]
 
 
 def test_many_short_and_empty_examples_have_no_hidden_count_or_loss_normalization():
