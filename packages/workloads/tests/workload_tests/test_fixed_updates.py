@@ -69,7 +69,7 @@ def test_text_example_really_updates_llama_weights_and_matches_unsplit_gradient(
         model,
         {
             "objective": (
-                "@shadowspill_workloads.recipes.text.objectives:next_token_prediction"
+                "@shadowspill_workloads.objectives.next_token:next_token_prediction"
             ),
             "optimizer": "@torch.optim:SGD",
             "optimizer_args": {"lr": 0.01},

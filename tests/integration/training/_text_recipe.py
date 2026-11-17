@@ -17,7 +17,7 @@ def _config(tmp_path):
             "model": "@tests.integration.training._synthetic:TinyModel",
         },
         "objective": (
-            "@shadowspill_workloads.recipes.text.objectives:next_token_prediction"
+            "@shadowspill_workloads.objectives.next_token:next_token_prediction"
         ),
         "optimizer": "@torch.optim:AdamW",
         "optimizer_args": {"lr": 0.01},

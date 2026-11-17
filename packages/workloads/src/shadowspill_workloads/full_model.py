@@ -20,6 +20,9 @@ from shadowspill_workloads.models.shared.decoder import (
 from shadowspill_workloads.precision import TrainingDtypes
 from shadowspill_workloads.providers import MODEL_DTYPES, ModelImplementation
 
+# Shared by both qualification arms and phase benchmarks; supplied per update.
+LEARNING_RATE = 3.0e-4
+
 _RETAINED_HEAD_SCRATCH_BYTES = 512 << 20
 
 

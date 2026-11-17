@@ -119,7 +119,7 @@ def test_fp16_model_and_optimizer_precision_survive_config(tmp_path, master):
                 "dtype": "bfloat16",
             },
             "objective": (
-                "@shadowspill_workloads.recipes.text.objectives:next_token_prediction"
+                "@shadowspill_workloads.objectives.next_token:next_token_prediction"
             ),
             "optimizer": "@mlops.optim:AdamW",
             "optimizer_args": {},

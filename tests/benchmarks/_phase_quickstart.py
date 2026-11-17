@@ -2,7 +2,7 @@
 
 import torch
 
-from shadowspill_workloads.recipes.regression.benchmark import experiment as regression
+from benchmarks.factories.regression import experiment as regression
 
 
 def mixed_examples(*, device, rows=8, width=8, outputs=8):

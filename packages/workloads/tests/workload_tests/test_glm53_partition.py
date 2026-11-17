@@ -6,9 +6,9 @@ from torch import nn
 
 pytest.importorskip("mlops")
 
+from benchmarks.factories.glm.quickstart import glm53_flash as experiment
 from shadowspill.pytorch.partition.policy import resolve_partition_assignments
 from shadowspill_workloads.policies.glm import GLMStages
-from shadowspill_workloads.recipes.text.glm.quickstart import glm53_flash as experiment
 
 
 class Experts(nn.Module):

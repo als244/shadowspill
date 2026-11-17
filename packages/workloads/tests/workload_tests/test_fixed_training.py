@@ -22,7 +22,7 @@ from shadowspill import (
 from shadowspill_workloads.inputs.text.calls import Inputs
 from shadowspill_workloads.models.llama3.config import Config
 from shadowspill_workloads.models.llama3.implementations.pytorch import Model
-from shadowspill_workloads.recipes.text.objectives import (
+from shadowspill_workloads.objectives.next_token import (
     normalized_next_token_prediction as loss,
 )
 from workload_tests.test_fixed_updates import corpus

@@ -121,7 +121,7 @@ def test_defaults_fill_what_a_config_leaves_out(tmp_path):
     }
     assert (
         expanded["objective"]
-        == "@shadowspill_workloads.recipes.text.objectives:next_token_prediction"
+        == "@shadowspill_workloads.objectives.next_token:next_token_prediction"
     )
     assert expanded["optimizer"] == "@mlops.optim:AdamW"
     assert expanded["model"]["@call"].endswith("build_from_checkpoint")

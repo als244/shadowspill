@@ -48,7 +48,7 @@ Python constructor arguments; the GLM families run their experts locally. An
 experiment factory supplies groups and resources; a catalog name alone does
 not enable EP.
 
-For a non-text example, see the [regression recipe](recipes/regression/benchmark.py) and
+For a non-text example, see the [regression recipe](../../../../benchmarks/factories/regression.py) and
 [generic training walkthrough](../../../../docs/examples/generic-training.md).
 
 ## Preset dimensions and parameter counts

@@ -94,12 +94,12 @@ def setup(options, *, rank=0):
     from shadowspill import Parallelism
     from shadowspill.training.preparation.contracts import BuildSetup
     from shadowspill_workloads.models.catalog import entry
-    from shadowspill_workloads.policies.text import build_options
-    from shadowspill_workloads.providers import operator_preparations
-    from shadowspill_workloads.recipes.text.objectives import (
+    from shadowspill_workloads.objectives.next_token import (
         normalized_next_token_prediction,
     )
-    from shadowspill_workloads.recipes.text.precision import Precision
+    from shadowspill_workloads.policies.precision import Precision
+    from shadowspill_workloads.policies.text import build_options
+    from shadowspill_workloads.providers import operator_preparations
 
     precision = Precision(
         master_dtype="float32", grad_dtype="float32", opt_state_dtype="float32"
@@ -157,7 +157,7 @@ def initializer(options, metadata, *, rank=0):
         from shadowspill_workloads.initialization.expert_parallel import (
             Initialize as ExpertInitialize,
         )
-        from shadowspill_workloads.recipes.text.precision import Precision
+        from shadowspill_workloads.policies.precision import Precision
 
         _, _, provider, _, _ = _expert_setup(options, Precision(grad_dtype="float32"))
         initialize = ExpertInitialize(

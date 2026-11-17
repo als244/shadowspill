@@ -5,13 +5,17 @@ from dataclasses import replace
 import torch
 
 from shadowspill import Parallelism
-from shadowspill_workloads.full_model import build_model, full_model_objective, spec
+from shadowspill_workloads.full_model import (
+    LEARNING_RATE,
+    build_model,
+    full_model_objective,
+    spec,
+)
 from shadowspill_workloads.initialization.decoder import Initialize
 from shadowspill_workloads.lora import configure_lora
+from shadowspill_workloads.policies.optimizer import build_optimizer
+from shadowspill_workloads.policies.precision import Precision
 from shadowspill_workloads.providers import operator_preparations
-from shadowspill_workloads.recipes.defaults import LEARNING_RATE
-from shadowspill_workloads.recipes.text.optimizer import build_optimizer
-from shadowspill_workloads.recipes.text.precision import Precision
 
 from .inputs import candidates
 

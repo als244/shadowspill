@@ -6,7 +6,7 @@ from shadowspill_workloads.definitions.expert_parallel import describe, ownershi
 from shadowspill_workloads.initialization.expert_parallel import Initialize
 from shadowspill_workloads.models import catalog
 from shadowspill_workloads.models.shared.expert_parallel import resources
-from shadowspill_workloads.recipes.text.precision import Precision
+from shadowspill_workloads.policies.precision import Precision
 
 from ..text.factory import experiment as text_experiment
 

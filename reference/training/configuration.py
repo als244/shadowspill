@@ -71,7 +71,7 @@ REQUIRED_KEYS = ("run_dir", "data", "max_seq_len", "max_tokens_per_step", "steps
 
 #: What a config may leave out.
 DEFAULTS = {
-    "objective": "@shadowspill_workloads.recipes.text.objectives:next_token_prediction",
+    "objective": "@shadowspill_workloads.objectives.next_token:next_token_prediction",
     "optimizer": "@mlops.optim:AdamW",
 }
 

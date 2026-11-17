@@ -195,7 +195,7 @@ the build API or GLM rule in the neutral planner.
 
 ## Quickstart configuration
 
-[quickstart.py](../../recipes/text/glm/quickstart.py) supplies the model to the shared phase runner.
+[quickstart.py](../../../../../../benchmarks/factories/glm/quickstart.py) supplies the model to the shared phase runner.
 Both GLM families use the same runner as other models. Factory arguments choose
 checkpoint, initialization (`"random"` by default or `"checkpoint"`), sequence
 length, examples per step, LoRA settings and DP storage. `tiny=True` selects the

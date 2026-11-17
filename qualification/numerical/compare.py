@@ -14,7 +14,7 @@ from typing import Any
 
 import torch
 
-from shadowspill_workloads.recipes.defaults import LEARNING_RATE
+from shadowspill_workloads.full_model import LEARNING_RATE
 
 from .execution import PlannedRun
 from .metrics import compare_states

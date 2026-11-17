@@ -34,7 +34,7 @@ from benchmarks.quickstart import run
 
 run(
     # An importable factory supplies the model, objective, data and candidates.
-    factory="shadowspill_workloads.recipes.regression.benchmark:experiment",
+    factory="benchmarks.factories.regression:experiment",
     factory_args={"rows": 64, "width": 16, "outputs": 8},
 
     # Search each device budget with the same measured candidates and host pool.
@@ -90,7 +90,7 @@ Start with build alone, without selecting planning budgets yet:
 
 ```bash
 python -m benchmarks.quickstart --phase build \
-  --factory shadowspill_workloads.recipes.regression.benchmark:experiment --output-dir runs/regression
+  --factory benchmarks.factories.regression:experiment --output-dir runs/regression
 python -m benchmarks.quickstart --phase profile --output-dir runs/regression
 python -m benchmarks.quickstart --phase communicate --output-dir runs/regression
 CUDA_VISIBLE_DEVICES='' python -m benchmarks.quickstart --phase plan \
@@ -155,7 +155,7 @@ build/profile pass cannot leave its old completion index eligible for planning.
 
 ## Factory inputs
 
-The [regression factory](../packages/workloads/src/shadowspill_workloads/recipes/regression/benchmark.py) is a complete example.
+The [regression factory](factories/regression.py) is a complete example.
 It returns a plain mapping:
 
 | Entry | Purpose |

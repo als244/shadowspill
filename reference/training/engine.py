@@ -15,10 +15,10 @@ from shadowspill.pytorch.objectives import ScaledObjective
 from shadowspill.training import config
 from shadowspill.training.observations import StepObservations, parameter_norms
 from shadowspill.training.results import StepResult
+from shadowspill_workloads.policies.optimizer import build_optimizer
 from shadowspill_workloads.recipes.text.experiment.hyperparameters import (
     scheduled_arguments,
 )
-from shadowspill_workloads.recipes.text.optimizer import build_optimizer
 
 
 class EagerStep:

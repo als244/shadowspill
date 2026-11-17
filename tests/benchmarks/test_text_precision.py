@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from shadowspill_workloads.recipes.text.precision import Precision
+from shadowspill_workloads.policies.precision import Precision
 
 
 def _arguments(**overrides):

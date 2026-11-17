@@ -9,8 +9,8 @@ import torch
 from shadowspill import Parallelism
 from shadowspill_workloads.initialization.glm import Initialize
 from shadowspill_workloads.policies.glm import GLMStages
+from shadowspill_workloads.policies.precision import Precision
 from shadowspill_workloads.providers import operator_preparations
-from shadowspill_workloads.recipes.text.precision import Precision
 
 from .inputs import candidates
 from .model import declare

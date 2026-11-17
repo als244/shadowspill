@@ -16,7 +16,7 @@ The ordinary Llama3, Qwen3, Qwen3.5, OLMoE, Qwen3MoE and Qwen3.5MoE catalog
 entries share this factory. `model_config` overrides the family's configuration;
 `implementation` selects its supported `mlops` or `pytorch` implementation.
 GLM-5.3 and GLM-5.3-Flash have their own factories in
-[`glm/quickstart.py`](../../../packages/workloads/src/shadowspill_workloads/recipes/text/glm/README.md), and expert parallelism has
+[`glm/quickstart.py`](../glm/README.md), and expert parallelism has
 [its own](../expert_parallel/README.md).
 
 Factory options:

@@ -10,7 +10,7 @@ budgets using the same public phase APIs:
 
 ```bash
 python -m benchmarks.quickstart \
-  --factory shadowspill_workloads.recipes.regression.benchmark:experiment \
+  --factory benchmarks.factories.regression:experiment \
   --search-budget-gib 2 3 --spill-gib 0.125 --output-dir runs/regression-benchmark
 ```
 

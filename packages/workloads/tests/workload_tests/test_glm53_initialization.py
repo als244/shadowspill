@@ -7,11 +7,11 @@ pytest.importorskip("mlops")
 
 from mlops.kernels.block_fp8 import quantize_blocks
 
+from benchmarks.factories.glm.quickstart import glm53_flash as experiment
 from shadowspill.execution.tensors import TensorChunk
 from shadowspill_workloads.initialization.glm import Initialize
 from shadowspill_workloads.models.glm53_flash.checkpoint import GLMCheckpoint
 from shadowspill_workloads.models.shared.glm.checkpoint import physical_state
-from shadowspill_workloads.recipes.text.glm.quickstart import glm53_flash as experiment
 from workload_tests.test_glm53_checkpoint import (
     _materialized,
     _write,
@@ -197,7 +197,7 @@ def test_factory_is_meta_only_and_uses_the_shared_phase_contract(family, monkeyp
 
     monkeypatch.setattr(torch.cuda, "_lazy_init", no_cuda)
     spec = getattr(
-        import_module("shadowspill_workloads.recipes.text.glm.quickstart"), family
+        import_module("benchmarks.factories.glm.quickstart"), family
     )(
         device="cuda:0",
         tiny=True,

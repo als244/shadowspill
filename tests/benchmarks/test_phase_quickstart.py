@@ -297,7 +297,7 @@ def test_build_keeps_every_examples_arguments(tmp_path, monkeypatch, form):
 @pytest.mark.parametrize(
     "factory",
     [
-        "shadowspill_workloads.recipes.regression.benchmark:experiment",
+        "benchmarks.factories.regression:experiment",
         "tests.benchmarks._phase_quickstart:mixed_examples",
     ],
 )
