@@ -6,26 +6,18 @@ import hashlib
 import json
 import zipfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, TypeVar, cast
+from typing import BinaryIO, TypeVar, cast
 
 from shadowspill.artifacts.archive import Artifact
-from shadowspill.artifacts.budgets import MemoryBudgets
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.artifacts.profiles import Profiles
 from shadowspill.communication.info import CommunicationInfo
-from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
-from shadowspill.planner import SearchOptions
-from shadowspill.planning.plan import plan_program
-from shadowspill.profiling.apply import apply_profiles
 from shadowspill_client.protocol.training import ResolvedTraining
 
-from .cost_evidence import communication_edits, profile_edits
-from .identity import without_initialization
 from .local_plans import LocalPlans
 from .planning_requests import PlanningRequest
-from .templates import instantiate_program
 
 T = TypeVar("T", bound=Artifact)
 
@@ -124,83 +116,12 @@ class PlanningInputs:
         infeasible searches are retained as diagnostics; no runtime fallback is
         produced. The server makes the final joint admission decision.
         """
-        normalized = replace(
-            config,
-            memory=self.config.memory,
-            execution=self.config.execution,
-            origins=self.config.origins,
-            preparation=replace(
-                config.preparation,
-                reuse=self.config.preparation.reuse,
-                origins=self.config.preparation.origins,
-                planning=replace(
-                    config.preparation.planning,
-                    search=self.config.preparation.planning.search,
-                    workers=self.config.preparation.planning.workers,
-                ),
-            ),
-        )
-        if without_initialization(normalized) != without_initialization(self.config):
-            raise ValueError("local planning settings require different exported cases")
-        supplied = {} if profiles is None else profiles
-        comm = {} if communication is None else communication
-        if (
-            not supplied.keys() <= self.sources.keys()
-            or not comm.keys() <= self.sources.keys()
-        ):
-            raise ValueError("edited costs refer to an unexported capture")
-        costs = {
-            key: supplied.get(key, source.profiles)
-            for key, source in self.sources.items()
-        }
-        communication = {
-            key: comm.get(key, value) for key, value in self.communication.items()
-        }
-        for key, source in self.sources.items():
-            profile_edits(source.profiles, costs[key])
-            communication_edits(self.communication[key], communication[key])
-        selected = tuple(self.candidates if candidates is None else candidates)
-        if not set(selected) <= self.candidates.keys() or len(set(selected)) != len(
-            selected
-        ):
-            raise ValueError("local planning requires distinct exported candidates")
-        required = {key for candidate in selected for key in self.candidates[candidate]}
-        settings = config.preparation.planning
-        assert settings.search is not None and settings.workers is not None
-        search = replace(
-            SearchOptions.from_dict(settings.search, "search"), workers=settings.workers
-        )
-        plans: dict[str, Any] = {}
-        rejected = {}
-        for key in sorted(required):
-            request = self.requests[key]
-            template = request.use.template
-            program = instantiate_program(request.use, self.sources[template].program)
-            try:
-                plan = plan_program(
-                    apply_profiles(program, costs[template]),
-                    memory_budgets=MemoryBudgets(
-                        int(config.memory.device_gib * (1 << 30)),
-                        int(config.memory.spill_gib * (1 << 30)),
-                    ),
-                    communication_info=communication[template],
-                    search_options=search,
-                    ordering=request.ordering,
-                )
-                if plan.simulation_only_reasons:
-                    raise ValueError("local Plan lacks physical memory admission")
-                plans[key] = plan.to_dict()
-            except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
-                rejected[key] = str(error)
-        selected = tuple(
-            key for key in selected if set(self.candidates[key]) <= plans.keys()
-        )
-        needed = {key for candidate in selected for key in self.candidates[candidate]}
-        templates = {self.requests[key].use.template for key in needed}
-        return LocalPlans(
-            config,
-            {key: costs[key] for key in templates},
-            {key: plans[key] for key in needed},
-            selected,
-            rejected,
-        )
+        from .local_search import search
+
+        return search(
+            self,
+            config=config,
+            profiles=profiles,
+            communication=communication,
+            candidates=candidates,
+        ).proposal()
