@@ -6,8 +6,8 @@ models, choose execution plans, or manage ShadowSpill pools.
 
 | Module | Responsibility |
 | --- | --- |
-| `prepare.py` | Download/tokenize parquet text and write corpus metadata; also used by baseline preparation |
-| `prepare_chat.py` | Render conversations through the chat template, tokenize them, end each with a token no conversation contains, and write the mask marking the assistant's tokens beside the token files |
+| `corpus.py` | Tokenize parquet text and write corpus metadata |
+| `chat.py` | Render and tokenize conversations with assistant-token masks |
 | `tokenizer.py` | Identify local tokenizer files |
 | `fixed.py` | Resumable fixed-length `TokenUpdates` with one batch per example |
 | `calls.py` | `Inputs`: fixed windows as ordinary per-example calls, with the resume position |
@@ -20,6 +20,9 @@ models, choose execution plans, or manage ShadowSpill pools.
 ```bash
 python -m tools.datasets.prepare_text --help
 ```
+
+The command-line programs live in `tools/datasets/prepare_text.py` and
+`tools/datasets/prepare_chat.py`; they call these shared helpers.
 
 Use `from shadowspill_workloads.inputs.text.fixed import TokenUpdates` for fixed
 sequences or `from shadowspill_workloads.inputs.text.packed import PackedTokens` for

@@ -185,7 +185,7 @@ packages/engine/src/shadowspill/
 │   ├── inputs/            owned global input validation and packing
 │   ├── session/           confirmed operation boundaries and participation
 │   ├── worker/            bounded commands and fixed prepared worker bindings
-│   └── preparation/       model-independent saved recipe phases and reuse
+│   └── preparation/       service preparation and saved phase reuse
 └── pytorch/
     ├── capture/           Export/AOT capture and semantic storage contracts
     │   ├── artifacts/     graph records, geometry, identity and output schemas
@@ -300,7 +300,7 @@ mypy
 ```
 
 `pytest` runs the default suite. The options in `pyproject.toml` deselect two
-markers: `slow`, the end-to-end recipe and quickstart runs of minutes each,
+markers: `slow`, the end-to-end service and quickstart runs of minutes each,
 which `pytest -m slow` runs alone; and `fresh_process`, the tests that assert
 their own process's allocator state, which CTest runs one per process.
 `packages/engine/tests/engine_tests/native/test_canaries.py` runs the editable build tree's CTest canaries

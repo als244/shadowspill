@@ -19,6 +19,7 @@ The files each own one part of the reference:
 | --- | --- |
 | `config.py`, `configuration.py` | Resolve and validate reference configuration. |
 | `text/` | Packed data, schedule arguments and logging used by this reference. |
+| `logger.py` | Optional W&B export of completed reference updates and tables. |
 | `run.py` | Resolve configuration, initialize the model and choose fixed geometry. |
 | `initialization.py` | Fill the model through the configured `initialize` in bounded chunks, or reset its parameters from the seed when none is given. |
 | `engine.py` | Forward/backward, gradient accumulation, schedules, optimizer update and evaluation. |
