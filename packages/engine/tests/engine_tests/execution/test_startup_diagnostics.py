@@ -43,7 +43,7 @@ def objective(model, features, target):
 
 
 def test_diagnostics_require_explicit_optimizer_guarantee_and_host_rates():
-    from shadowspill.training.diagnostics.state import learning_rates
+    from shadowspill.diagnostics.startup.state import learning_rates
 
     bindings = {}
     path = SimpleNamespace(
@@ -65,7 +65,7 @@ def test_diagnostics_require_explicit_optimizer_guarantee_and_host_rates():
 
 
 def test_diagnostics_allow_only_declared_optimizer_publications():
-    from shadowspill.training.diagnostics.state import buffer_aliases
+    from shadowspill.diagnostics.startup.state import buffer_aliases
 
     def task(phase, profile, target):
         return SimpleNamespace(
@@ -161,7 +161,7 @@ def test_saved_startup_diagnostics_preserve_state_and_rng(tmp_path, stochastic):
         [
             sys.executable,
             *(["-S"] if sys.flags.no_site else []),
-            str(Path(__file__).with_name("_diagnostics.py")),
+            str(Path(__file__).with_name("_startup_diagnostics.py")),
             str(tmp_path),
         ],
         env={

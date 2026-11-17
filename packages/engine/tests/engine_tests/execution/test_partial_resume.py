@@ -89,7 +89,7 @@ def test_partial_trainer_preserves_masters_mutations_evaluation_and_resume(tmp_p
             [
                 sys.executable,
                 *(["-S"] if sys.flags.no_site else []),
-                str(Path(__file__).with_name("_partial_train.py")),
+                str(Path(__file__).with_name("_partial_resume.py")),
                 str(tmp_path),
                 mode,
             ],

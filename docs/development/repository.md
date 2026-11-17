@@ -129,6 +129,7 @@ packages/engine/src/shadowspill/
 │   └── ordering.py        StepDataOrdering: the walk through the microbatches
 ├── diagnostics/           what one traced step turned out to cost, as
 │   │                      immutable evidence, and the reading of it
+│   ├── startup/           no-update startup calls, state preservation and reports
 │   ├── step.py            the summary, the two timelines, and the clock each
 │   │                      is read against
 │   ├── timing.py          what one invocation measures about itself: the
@@ -184,7 +185,6 @@ packages/engine/src/shadowspill/
 │   └── timing.py          an instant recorded on a stream, and the time between two
 ├── training/              saved-Plan training loops, schedules and checkpoints
 │   ├── definitions/       public model/objective functions and CPU schema resolution
-│   ├── diagnostics/       no-update startup calls, state preservation and reports
 │   ├── inputs/            owned global input validation and packing
 │   ├── session/           confirmed operation boundaries and participation
 │   ├── worker/            bounded commands and fixed prepared worker bindings

@@ -11,7 +11,7 @@ from shadowspill.execution.distributed.checks import coordinated
 from . import report, state
 
 if TYPE_CHECKING:
-    from ..trainer import Trainer
+    from shadowspill.training.trainer import Trainer
 
 
 def diagnose(

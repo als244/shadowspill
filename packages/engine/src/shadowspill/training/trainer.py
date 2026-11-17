@@ -284,7 +284,7 @@ class Trainer:
         snapshotted; optimizer state is never copied. Input loaders must be
         repeatable indexed readers, as for Executor.run.
         """
-        from .diagnostics import diagnose
+        from shadowspill.diagnostics.startup import diagnose
 
         return diagnose(
             self,

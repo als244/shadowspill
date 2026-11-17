@@ -86,7 +86,7 @@ def test_trainer_updates_and_cold_resume_match_independent_eager_loop(tmp_path):
             [
                 sys.executable,
                 *(["-S"] if sys.flags.no_site else []),
-                str(Path(__file__).with_name("_train.py")),
+                str(Path(__file__).with_name("_training_resume.py")),
                 str(tmp_path),
                 mode,
             ],

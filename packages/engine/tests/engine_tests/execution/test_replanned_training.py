@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from engine_tests.training._replanned_model import fixture
+from engine_tests.execution._replanned_model import fixture
 from shadowspill import apply_profiles, build_step, measure_program
 
 
