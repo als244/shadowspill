@@ -267,9 +267,28 @@ def check_loss_terms(result, options):
         assert np.isfinite(loss) and count > 0
         total += result.loss_params[f"{name}.weight"] * loss
     np.testing.assert_allclose(result.loss, total, rtol=2e-6, atol=2e-6)
-    np.testing.assert_allclose(
-        result.metrics["loss_sum"], total, rtol=2e-6, atol=2e-6
-    )
+    np.testing.assert_allclose(result.metrics["loss_sum"], total, rtol=2e-6, atol=2e-6)
+
+
+def check_rejected_training(training, records, controls):
+    """Globally masked inputs fail local validation and submission alike.
+
+    An empty input owner inside a participating distributed batch is different:
+    the split-update checks above exercise that supported case.
+    """
+    for operation in ("step", "forward_backward"):
+        for validate_only in (True, False):
+            try:
+                if validate_only:
+                    training.validate_batch(records, operation=operation).result(120)
+                else:
+                    getattr(training, operation)(records, loss_params=controls).result(
+                        120
+                    )
+            except ValueError as error:
+                assert "no loss participation" in str(error), error
+            else:
+                raise AssertionError(f"all-masked {operation} was accepted")
 
 
 def qualify(client, options, budget):
@@ -343,8 +362,7 @@ def qualify(client, options, budget):
         )
         for row in records
     ]
-    result = training.step(masked, loss_params=options["controls"]).result(120)
-    assert result.outcome == "skipped" and result.completed_updates == 1
+    check_rejected_training(training, masked, options["controls"])
     check(training, options, 1, budget)
     result = training.step(records, loss_params=options["controls"]).result(120)
     observations.append(result.record.to_dict())
@@ -414,8 +432,7 @@ def qualify(client, options, budget):
             assert result.completed_updates == 1
             check(fresh, fresh_options, 1, budget)
         saved = fresh.save_checkpoint(name="fresh-after-one").result(120)
-        skipped = fresh.step(masked, loss_params=fresh_options["controls"]).result(120)
-        assert skipped.outcome == "skipped" and skipped.completed_updates == 1
+        check_rejected_training(fresh, masked, fresh_options["controls"])
         check(fresh, fresh_options, 1, budget)
         fresh.step(records, loss_params=fresh_options["controls"]).result(120)
         expected = check(fresh, fresh_options, 2, budget)
@@ -437,6 +454,7 @@ def qualify(client, options, budget):
         "whole_split_equivalence": options.get("whole_split_equivalence", True),
         "independent_geometry_oracles": "oracles" in options,
         "evaluation_isolation": True,
+        "zero_participation_rejected": True,
         "adamw_resume": True,
         "separate_fp32_masters": options.get("separate_fp32_masters", True),
         "same_dtype_master_reuse": not options.get("separate_fp32_masters", True),
