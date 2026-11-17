@@ -66,10 +66,14 @@ def reconcile_local_plans(
         )
         payloads.update(original._archive_payloads())
     plans: dict[int, dict[str, Plan]] = {}
+    decoded: dict[int, Plan] = {}
     seen_communication: dict[str, CommunicationInfo] = {}
     for name, request in requests.items():
         key = request.use.template
-        plan = Plan.from_dict(plain(submitted.plans[name]), payloads=payloads)
+        value = submitted.plans[name]
+        if id(value) not in decoded:
+            decoded[id(value)] = Plan.from_dict(plain(value), payloads=payloads)
+        plan = decoded[id(value)]
         if plan.pool_memory is not None:
             raise ValueError("local Plans require the exported pool memory policy")
         if (

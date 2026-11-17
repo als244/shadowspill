@@ -28,7 +28,10 @@ class LocalPlans(Artifact):
     """
 
     artifact_kind: ClassVar[str] = "local_training_plans"
-    metadata_limit_bytes: ClassVar[int | None] = 256 << 20
+    shared_metadata: ClassVar[bool] = True
+    # The expanded family can be large even when shared tables are compact.
+    # Match the executable bundle's bound; proposals still carry no binaries.
+    metadata_limit_bytes: ClassVar[int | None] = 8 << 30
     payload_limit_bytes: ClassVar[int | None] = 0
     config: ResolvedTraining
     profiles: Mapping[str, Profiles]
@@ -63,7 +66,16 @@ class LocalPlans(Artifact):
                 }
             ),
         )
-        object.__setattr__(self, "plans", freeze(self.plans))
+        # Copy external values into owned immutable records once per shared
+        # Plan. Public to_dict() still returns independently editable values.
+        entries = tuple(self.plans.items())  # Retain inputs until copying finishes.
+        shared: dict[int, Any] = {}
+        for _, value in entries:
+            if id(value) not in shared:
+                shared[id(value)] = freeze(value)
+        object.__setattr__(
+            self, "plans", freeze({key: shared[id(v)] for key, v in entries})
+        )
         object.__setattr__(self, "rejected", freeze(self.rejected))
 
     def to_dict(self) -> dict[str, Any]:

@@ -251,7 +251,7 @@ def test_local_cpu_plans_roundtrip_and_reconcile_original_memory_without_binarie
     proposal = inputs.plan(config=config, profiles=profiles, communication=comm)
     ref = proposal.write(tmp_path / "local.ssp")
     with zipfile.ZipFile(tmp_path / "local.ssp") as archive:
-        assert set(archive.namelist()) == {"manifest.json", "artifact.json"}
+        assert set(archive.namelist()) == {"manifest.json", "artifact.bin"}
         assert not json.loads(archive.read("manifest.json"))["blobs"]
     assert ref.media_type == "application/vnd.shadowspill.local-plans+zip"
     restored = LocalPlans.load(tmp_path / "local.ssp")
@@ -275,6 +275,52 @@ def test_local_cpu_plans_roundtrip_and_reconcile_original_memory_without_binarie
         source.task_profiles["input"].duration_seconds == 1e-6
         for source in inputs.sources.values()
     )
+
+
+@pytest.mark.parametrize("measured", [(2, 16)], indirect=True)
+def test_local_shared_plans_decode_and_validate_once_without_sharing_mutable_values(
+    measured, tmp_path, monkeypatch
+):
+    from shadowspill.training.preparation import bundle_validation
+
+    root, _, inputs, target = measured
+    proposal = inputs.plan(config=target.layouts.setup.config)
+    assert len(proposal.plans) == 4
+    assert len({id(value) for value in proposal.plans.values()}) == 2
+    proposal.write(tmp_path / "shared.ssp")
+    restored = LocalPlans.load(tmp_path / "shared.ssp")
+    assert len({id(value) for value in restored.plans.values()}) == 2
+    bundle, edits = reconcile_local_plans(restored, root, target)
+    assert not edits
+    assert len({id(p) for ps in bundle.plans.values() for p in ps.values()}) == 2
+    validate = bundle_validation.validate_plan
+    checked = []
+
+    def check(*args):
+        checked.append(args[-1])
+        return validate(*args)
+
+    monkeypatch.setattr(bundle_validation, "validate_plan", check)
+    assert bundle.recheck(installed()).coverage
+    assert len(checked) == 2
+
+    # A caller can edit one proposed rank independently. A changed schedule must
+    # not acquire another rank's validation just because they once shared a Plan.
+    value = restored.to_dict()
+    name = next(iter(restored.plans))
+    duplicate = next(
+        key
+        for key, row in restored.plans.items()
+        if key != name and row is restored.plans[name]
+    )
+    changed = value["plans"][name]["profiled_program"]["program"]
+    original = value["plans"][duplicate]["profiled_program"]["program"]["name"]
+    changed["name"] = "changed rank-local computation"
+    assert value["plans"][duplicate]["profiled_program"]["program"]["name"] == original
+    assert restored.plans[name]["profiled_program"]["program"]["name"] == original
+    damaged, _ = reconcile_local_plans(LocalPlans.from_dict(value), root, target)
+    with pytest.raises(ValueError, match="source operation"):
+        damaged.recheck(installed())
 
 
 @pytest.mark.parametrize(

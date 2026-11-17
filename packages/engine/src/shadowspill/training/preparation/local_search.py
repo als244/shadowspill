@@ -14,6 +14,7 @@ from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.planner import SearchOptions
 from shadowspill.planning.plan import plan_program
 from shadowspill.profiling.apply import apply_profiles
+from shadowspill.serialization.sharing import writing_metadata
 from shadowspill_client.protocol.training import ResolvedTraining
 
 from .cost_evidence import communication_edits, profile_edits
@@ -35,13 +36,17 @@ class LocalSearch:
     rejected: Mapping[str, str]
 
     def proposal(self) -> LocalPlans:
-        return LocalPlans(
-            self.config,
-            self.profiles,
-            {key: value.to_dict() for key, value in self.plans.items()},
-            self.candidates,
-            self.rejected,
-        )
+        # Equivalent workers share a complete Plan, including its implementation.
+        # Keep that identity through the numeric proposal instead of expanding
+        # the same schedule once per worker before saving it.
+        with writing_metadata():
+            return LocalPlans(
+                self.config,
+                self.profiles,
+                {key: value.to_dict() for key, value in self.plans.items()},
+                self.candidates,
+                self.rejected,
+            )
 
 
 def search(
