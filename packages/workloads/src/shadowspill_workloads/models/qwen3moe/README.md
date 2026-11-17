@@ -48,8 +48,7 @@ Qwen convention: balanced top-8 routing gives an unweighted auxiliary near 8.
 from the decoder, mixers and experts in
 [shared/qwen_moe/](../shared/qwen_moe) that both Qwen mixture families use,
 with local experts by default or experts sharded over an expert-parallel group
-through the constructor arguments the
-[model catalog](../../MODELS.md#expert-parallelism) describes. There is no
+through the shared [expert factory](../../MODELS.md#expert-parallelism). There is no
 pure-PyTorch implementation.
 
 ## Checkpoint

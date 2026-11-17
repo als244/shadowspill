@@ -600,8 +600,8 @@ checkpoint, source Plans, logical state identity and conversion version. Convers
 preserves optimizer state and weight selection, and rejects incompatible state.
 Worker checkpoints also retain Python, NumPy and Torch default generator state.
 Fresh runs initialize those streams from `Execution.seed`; restores use the saved
-seed and state. Evaluation and fully masked read-only calls advance separate
-evaluation streams, leaving training randomness unchanged. Compatible conversion
+seed and state. Evaluation calls advance separate evaluation streams, leaving
+training randomness unchanged. Compatible conversion
 preserves each matching logical stream. New streams use versioned seed derivation
 from the saved seed, restore identity and logical stream, recorded in
 `manifest.info.conversion.randomness`. Physical GPU identity does not affect seeds.
@@ -682,8 +682,7 @@ remains available; `download_report` raises that error without replaying trainin
 Optional trace assembly or publication failures appear in
 `result.artifact_issues`; a confirmed update still succeeds and must not be
 repeated. Required execution or cleanup failures retain their ordinary failure
-semantics. A skipped optimizer with no Plan produces a trace issue explaining
-that no invocation ran. Tracing is opt-in and its overhead belongs to that call.
+semantics. Tracing is opt-in and its overhead belongs to that call.
 
 Configure Nsight at creation with
 `Execution(nsys={"start_step": 2, "steps": 2, "gpu_metrics": False})`.

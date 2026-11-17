@@ -96,69 +96,57 @@ common loader for controller and fresh-phase startup.
 
 ## Supplied definitions
 
-The small [external classifier fixture](../../../packages/engine/tests/engine_tests/fixtures/external_definition.py)
-shows the full interface. The supplied
+Every built-in family registers through the same `ModelDefinition` hooks. See
+[the catalog](../catalog.md) for selection and
+[workload organization](../../development/workloads.md) for the source pattern.
+Importing a definition's description requires no Torch import; construction and
+bounded initialization run in workers. The external classifier and the supplied
 [regression definition](../../../packages/workloads/src/shadowspill_workloads/models/regression/training.py)
-uses the same registry and its existing model. Importing either description
-requires no Torch import; model construction is explicit.
+use these same interfaces for non-text inputs.
 
-`llama3` supplies packed preparation, with BF16 compute and FP32
-gradients by default. Its `Model.precision` accepts `compute_dtype`, `grad_dtype` and `lora_dtype`
-(FP32 or BF16). All models also accept the generic
-[`parameter_dtypes` map](precision.md); optimizer masters are a separate setting. `config`
-selects a named `preset` (default `tiny`) and optional `architecture` overrides.
-LoRA uses the family's existing targets unless supplied explicitly; its current
-provider supports zero dropout. Initialization supports explicit random weights,
-pinned pretrained Hub weights and native training checkpoint resume.
+The Llama, Qwen, OLMoE and GLM families reuse packed decoder setup. `config` selects
+a `preset` and optional `architecture` overrides. LoRA uses family targets unless
+explicitly overridden and requires zero dropout. Model precision, optimizer
+precision and [parameter dtype overrides](precision.md) remain separate controls.
+An optimizer's declared gradient dtype reaches model/provider preparation;
+without that declaration, decoder settings default to FP32 gradients.
 
-The Llama batch declares `token_capacity`, `max_sequence_length` and
-`max_sequences`. An optional `typical={"sequence_length": ...}` affects timing
-samples only. The preset tries one, two and four maximum-length sequences' worth
-of tokens per input partition, capped by the per-partition global token capacity.
-It derives accumulation counts from those sizes; admission discards combinations
-exceeding the scheduled cap. Explicit candidate lists replace those choices.
+Packed batches declare `token_capacity`, `max_sequence_length` and `max_sequences`.
+The preparation preset tries one, two and four maximum-length sequences' worth
+of tokens per input partition, capped by that partition's token allowance.
+It derives accumulation counts from those sizes and rejects schedules exceeding
+the token cap, including padding. Explicit candidate lists replace the defaults.
+An optional `typical={"sequence_length": ...}` affects timing samples only.
+
 Per-microbatch sequence capacity defaults to eight times the number of full-length
-sequences fitting that buffer, capped by the global `max_sequences` limit.
-`build_candidates(max_sequences_per_microbatch=...)` overrides it. Physical
-metadata includes separate padding segments, preserving caller boundaries even
-with empty Datums. The declared maximum sequence length bounds attention kernels;
-actual lengths remain runtime tensors, including when the microbatch is larger.
-Every named output closure is packed and validated by the generic engine.
+sequences fitting the buffer, capped by global `max_sequences`.
+`build_candidates(max_sequences_per_microbatch=...)` overrides it. Separate padding
+segments preserve caller boundaries, and actual lengths remain runtime tensors.
+The sequence-length bound controls attention workspace independently of microbatch
+capacity. The engine packs and validates each requested output closure.
 
-`qwen3moe` and `qwen35moe` use the same packed
-preparation contract. They expose target logprobs and router statistics, so the
-caller explicitly chooses token-only training or a composed balancing objective.
-Settings select `preset`, architecture overrides, precision and optional LoRA;
-Qwen3.5 recurrent decay parameters retain FP32 storage with BF16 projections.
-Initialization accepts random, pinned pretrained or exported weights, and exact
-training checkpoint resume.
+Model capabilities determine compatible objectives. Qwen MoE and OLMoE expose
+router statistics for the shared balancing objective; token losses can be used
+alone or composed with it. To retain OLMoE's layer aggregation, use
+`layer_reduction="sum"` and `normalize_top_k=True`. Padding is excluded by default.
 
-BF16 MoE definitions request the existing provider preparation lifecycle and pin
-Quack, SonicMoE and Cutlass sources. The provider selects supported kernels during
-build and restores the saved choices during execution. Allocation contracts cover
-ordinary unquantized BF16 Sonic calls and their prepared activation wrapper.
-BF16 LoRA definitions also supply the provider's existing gradient-destination
-rules and allocation contracts. The compiler fuses eligible complete, contiguous
-gradients; unsupported crops or dtype transformations retain ordinary accumulation.
+EP uses generic parameter/input placement and shared provider resources. Its
+model-hook constraints are:
 
+| Families | EP training and initialization |
+| --- | --- |
+| OLMoE, Qwen3 MoE, Qwen3.5 MoE | BF16 full training with random initialization or a training checkpoint. |
+| GLM-5.3, GLM-5.3-Flash | LoRA with BF16 factors and rank divisible by 16; BF16 or native block-FP8 expert storage. |
 
-`olmoe` uses that same packed preparation, precision/LoRA settings
-and bounded random initializer. Its model exposes the same router-statistics
-capability; no OLMoE-specific loss is required. To retain OLMoE's layer aggregation,
-configure the shared balancing term with `layer_reduction="sum"` and
-`normalize_top_k=True`. Padding is excluded by default.
+Each physical token capacity has a communication resource; operations at the
+same capacity share it and retain common parameter state. Family pages describe
+checkpoint storage and architecture-specific precision. They introduce no
+separate service or training loop.
 
-The three MoE definitions also describe `implementation="mlops_ep"` for the
-existing Quack expert provider. Setup uses generic parameter/input placement,
-BF16 compute and bounded random initialization. Each prepared physical token
-size has a distinct communication resource; operations at the same size share
-it, and parameter state remains common across sizes. These definitions support
-BF16 full training with random initialization or checkpoint resume; EP LoRA and
-pretrained initialization are unsupported.
-
-Definition provenance hashes provider Python and installed extension binaries
-without importing their implementations in the controller. Each controller or
-worker treats that installed provider snapshot as immutable for its lifetime.
+Definitions pin their provider Python sources and installed extension binaries.
+Build selects supported kernels and records the preparation needed to restore
+those choices. Workers restore them for execution. Each controller or worker
+treats its installed provider snapshot as immutable for its lifetime.
 
 ## Text objectives
 
@@ -462,7 +450,8 @@ of the prediction mask: real prompt tokens still contribute routing statistics.
 The buffer's full allocated size still counts against the scheduled token cap.
 The balancing value is scaled by the supervised-token count; primary token
 weights do not scale balancing. The caller chooses its coefficient through
-`balance.weight`. All-masked prediction supervision still skips the update.
+`balance.weight`. Training calls with no prediction supervision are rejected;
+use an explicitly prepared `forward()` for evaluation without supervision.
 
 For a composed objective, `forward(..., outputs="metrics")` returns the weighted
 loss when every child returns a scalar loss. Its namespaced coefficients follow
@@ -566,9 +555,9 @@ capabilities, re-derive operation/count Programs from saved captures, replay sav
 schedules and recheck geometry, allocation coverage and shared admission. Saved
 allocation coverage binds the complete capture and every compiled form, including
 additive gradients, to static compiler geometry and exact opaque-call contracts.
-Measured traces still supply byte sizes and physical placement. Missing masked/optimizer or
-accumulation paths are errors. Loading does not capture, profile, search, select
-replacement candidates or initialize training state.
+Measured traces still supply byte sizes and physical placement. Missing requested
+operations or required optimizer/accumulation paths are errors. Loading does not
+capture, profile, search, select replacement candidates or initialize training state.
 
 `training.preparation.job.prepare_job(directory, packages=..., config=...)` runs
 resolved preparation through the existing fresh-process build, profile,
@@ -694,12 +683,12 @@ only when promotion to that dtype requires it. For example, BF16 master dtype
 adds no copies to a BF16 model, and its FP32 exceptions remain FP32. FP32 master
 dtype adds FP32 copies of BF16 parameters. Both rounding options can be set to
 `"stochastic"` when training with BF16 parameters and moments. Unsupported groups and precision
-options fail during description. For the existing FP32 regression recipe, specify
-`precision={"opt_state_dtype": "float32"}` to preserve its optimizer settings.
+options fail during description. For FP32 optimizer moments, specify
+`precision={"opt_state_dtype": "float32"}`.
 
 The supplied `regression` definition accepts explicit
 `Weights.random(seed=...)` initialization and compatible checkpoints. Seed zero
-reproduces the original regression recipe's initialization, independently of
+reproduces the regression benchmark's initialization, independently of
 worker ownership and loader chunk sizes. Its `predictions` output needs only
 `Datum.inputs["value"]` (16 FP32 values), and evaluation leaves the model's
 training counter unchanged. `weighted_squared_error` takes eight

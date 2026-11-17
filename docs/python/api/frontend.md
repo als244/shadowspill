@@ -307,7 +307,7 @@ may also reject unsupported differentiation or mutation boundaries.
 
 See the [architecture contract](../../architecture/partitioning.md),
 [standalone example](../../examples/custom-partitioning.md), and
-[GLM example](../../../packages/workloads/src/shadowspill_workloads/models/glm53_flash/README.md#partitioning).
+[model-scale example](../../examples/custom-partitioning.md#a-model-scale-example).
 
 
 ### IsolateOperations

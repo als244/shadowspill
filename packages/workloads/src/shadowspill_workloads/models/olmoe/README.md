@@ -41,9 +41,8 @@ training/qualification objectives can choose another value.
 numerical authority, with its own expert math;
 [implementations/mlops.py](implementations/mlops.py) is its
 state-dictionary-compatible twin on the operation library, with local experts
-by default or experts sharded over an expert-parallel group through the
-constructor arguments the
-[model catalog](../../MODELS.md#expert-parallelism) describes. Both expose
+by default or experts sharded over an expert-parallel group through the shared
+[expert factory](../../MODELS.md#expert-parallelism). Both expose
 `Model`.
 
 ## Checkpoint

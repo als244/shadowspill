@@ -23,7 +23,7 @@ shadowspill_workloads/
     shared/                  # Reusable layers, model math and weight mappings
     catalog/                 # Lookups derived from family declarations
   definitions/               # Shared registration, objective and setup helpers
-    decoder/                 # Reused by Llama, OLMoE and Qwen family hooks
+    decoder/                 # Shared packed decoder registration and setup hooks
   inputs/                    # Schemas, processors and input adapters
   objectives/                # Reusable objective computations
   initialization/            # Bounded weight loading and parameter generation
@@ -38,7 +38,10 @@ in the engine.
 
 Put application loops in `examples/training/` and benchmark drivers in
 `benchmarks/`. A model family supplies declarations and computation, not a
-training loop or its own service startup path.
+training loop or its own service startup path. This includes both GLM families;
+their hooks reuse decoder setup and supply their checkpoint storage, attention
+requirements and provider contracts. Family READMEs describe architecture details;
+client configuration and runtime commands stay in the shared guides.
 
 ## Add a built-in family
 
