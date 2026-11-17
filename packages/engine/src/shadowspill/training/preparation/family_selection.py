@@ -47,15 +47,19 @@ def joint_memory(
             for name in worker.members():
                 selected.setdefault(rank, {})[name] = plans[rank][name]
     memory = {}
+    shared: dict[tuple[tuple[str, int], ...], SharedMemory] = {}
     frozen: dict[int, Mapping[str, Plan]] = {}
     for rank, members in sorted(selected.items()):
         # Deterministic primary/alias ownership, independent of search completion.
         ordered = dict(sorted(members.items()))
         first = next(iter(ordered))
-        memory[rank] = shared_memory(
-            ordered[first],
-            {name: plan for name, plan in ordered.items() if name != first},
-        )
+        identity = tuple((name, id(plan)) for name, plan in ordered.items())
+        if identity not in shared:
+            shared[identity] = shared_memory(
+                ordered[first],
+                {name: plan for name, plan in ordered.items() if name != first},
+            )
+        memory[rank] = shared[identity]
         frozen[rank] = MappingProxyType(ordered)
     return frozen, memory
 

@@ -103,6 +103,44 @@ def test_different_computations_or_provider_choices_are_not_replaced(contract):
         combine(canonical, local)
 
 
+def test_equivalent_complete_templates_share_provider_and_inductor_choices():
+    def captured(tile, rank):
+        program = fixture(
+            tile,
+            rank=rank,
+            contract={"triton_choices": {"provider": f"tile-{tile}"}},
+        )
+        return replace(
+            program,
+            bindings={
+                **program.bindings,
+                "preparation_template": {
+                    "id": str(rank),
+                    "binding": {
+                        "logical_rank": rank,
+                        "buffer": rank,
+                        "contributes_loss": True,
+                    },
+                    "model_build": {"config": "same model and provider declarations"},
+                },
+                "parameter_ownership": [{"names": ["same logical weight"]}],
+            },
+        )
+
+    canonical, local = captured(256, 0), captured(128, 1)
+    shared = reuse_compiled_tasks(local, canonical)
+    assert shared.executables == canonical.executables
+    assert shared.task_definitions == canonical.task_definitions
+    assert shared.bindings["finalized_tasks"] == canonical.bindings["finalized_tasks"]
+    assert (
+        shared.bindings["preparation_template"]
+        == local.bindings["preparation_template"]
+    )
+    assert shared.bindings["training_operation"] == local.bindings["training_operation"]
+    combine(canonical, shared)
+    assert reuse_compiled_tasks(shared, canonical) is shared
+
+
 @pytest.mark.parametrize(
     "field", ["compiler_memory", "task_inputs", "operator_dependencies"]
 )

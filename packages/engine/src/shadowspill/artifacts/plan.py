@@ -8,6 +8,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from shadowspill.ir import MemorySchedule, ShadowSpillProgram, TaskAlternativeChoice
+from shadowspill.serialization.sharing import shared_writer
 from shadowspill.simulator import SimulationResult, TransferDirection
 
 from .archive import Artifact
@@ -214,6 +215,7 @@ class Plan(Artifact):
             else self.program.parallelism.world_size,
         }
 
+    @shared_writer
     def to_dict(self) -> dict[str, Any]:
         from shadowspill.planner.serialization.simulation_result import (
             simulation_result_value,

@@ -6,16 +6,44 @@ from typing import Any
 from shadowspill.artifacts._values import digest, plain
 from shadowspill.artifacts.program import Program, TaskDefinition
 
+from .shared_planning import computation_identity
+
 
 def reuse_compiled_tasks(program: Program, canonical: Program) -> Program:
     """Keep the old shared-binary behavior for equivalent per-rank captures.
 
     The compiler's task identity binds the graph, physical ABI, dependencies,
     toolchain and resources. Finalization adds selected kernels and provider
-    preparation. Only Inductor's tuning winner may differ for reuse; all other
-    facts must match. Profiling still measures each rank and requires identical
-    implementations and allocation contracts for communicating model tasks.
+    preparation. Equivalent full captures use one complete frozen implementation,
+    including provider tuning, with rank-local staging metadata. Otherwise only
+    tasks with identical provider/ABI contracts may reuse an Inductor winner.
+    Profiling still measures every physical worker.
     """
+    if (
+        {"id", "binding"} <= program.bindings.get("preparation_template", {}).keys()
+        and {"id", "binding"}
+        <= canonical.bindings.get("preparation_template", {}).keys()
+        and computation_identity(program) == computation_identity(canonical)
+    ):
+        if (
+            program.executables == canonical.executables
+            and program.operator_binaries == canonical.operator_binaries
+            and program.task_definitions == canonical.task_definitions
+        ):
+            return program
+        # The caller regenerates the allocation certificate for this exact
+        # binary/template pair before publication. Ownership is not executable.
+        return replace(
+            canonical,
+            bindings={
+                **canonical.bindings,
+                **{
+                    key: program.bindings[key]
+                    for key in ("preparation_template", "training_operation")
+                    if key in program.bindings
+                },
+            },
+        )
     if program.setup != canonical.setup or program.bindings.get(
         "compiled_device_index"
     ) != canonical.bindings.get("compiled_device_index"):

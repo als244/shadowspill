@@ -23,6 +23,7 @@ from .family_checks import _collectives, _orderings
 from .family_identity import candidate_identity, plan_identity, validate_profile
 from .family_records import PlannedCandidate, PlanRejection, PreparedPlans, WorkerPlans
 from .family_selection import select_family
+from .shared_planning import representative_sources, representative_use
 from .templates import (
     TemplateInventory,
     TemplateUse,
@@ -39,6 +40,8 @@ def plan_family(
     max_plan_attempts: int = 16384,
     max_family_attempts: int = 4096,
     prior_rejections: Sequence[PlanRejection] = (),
+    search_results: Mapping[str, Plan | PlanInfeasibleError | PlanSearchExhaustedError]
+    | None = None,
 ) -> PreparedPlans:
     """Admit all requested capabilities, preserving coverage after known failures.
 
@@ -61,16 +64,27 @@ def plan_family(
         raise ValueError("pool memory evidence must name every logical worker")
     for key in inventory.templates:
         validate_profile(inventory, key, profiled[key])
+    representatives = representative_sources(profiled, pool_memory, communication)
     candidates = [row for rows in inventory.families.values() for row in rows]
-    attempts = sum(
-        len(_orderings(c))
-        * sum(1 + (w.optimizer is not None) for w in c.workers.values())
-        for c in candidates
+    attempts = len(
+        {
+            plan_identity(representative_use(use, representatives), ordering)
+            for candidate in candidates
+            for ordering in _orderings(candidate)
+            for worker in candidate.workers.values()
+            for use in (worker.main, worker.optimizer)
+            if use is not None
+        }
     )
     if attempts > max_plan_attempts:
         raise ValueError(
             f"planning expansion exceeds configured limit {max_plan_attempts}"
         )
+    if search_results is not None:
+        from .planning_requests import planning_requests
+
+        if search_results.keys() != planning_requests(inventory)["requests"].keys():
+            raise ValueError("CPU search results must cover exactly the Plan requests")
     configuration = setup.config.preparation.planning
     assert configuration.search is not None and configuration.workers is not None
     search = replace(
@@ -90,7 +104,7 @@ def plan_family(
     )
     cached: dict[
         tuple[TemplateUse, str | None],
-        str | PlanInfeasibleError | PlanSearchExhaustedError,
+        Plan | PlanInfeasibleError | PlanSearchExhaustedError,
     ] = {}
 
     def materialize(
@@ -100,25 +114,40 @@ def plan_family(
         template = inventory.templates[use.template]
         if rank != template.binding.logical_rank:
             raise ValueError("template use belongs to another logical worker")
+        name = plan_identity(use, order)
+        use = representative_use(use, representatives)
+        template = inventory.templates[use.template]
         key = (use, None if order is None else order.label)
         if key in cached:
             found = cached[key]
             if isinstance(found, Exception):
                 raise found
-            event(f"Worker {rank} · Reuse {use.kind} Plan {found[:12]}")
-            return found
-        source = profiled[use.template]
-        program = instantiate_template(template, use, source.program)
+            plans[rank][name] = found
+            event(
+                f"Worker {rank} · Share {use.kind} Plan "
+                f"from worker {template.binding.logical_rank}"
+            )
+            return name
         try:
-            with phase(f"Worker {rank} · {use.kind} · {use.count} microbatches"):
-                result = plan_program(
-                    apply_profiles(program, source.profiles),
-                    memory_budgets=budgets,
-                    communication_info=communication[use.template],
-                    pool_memory=None if pool_memory is None else pool_memory[rank],
-                    search_options=search,
-                    ordering=order,
-                )
+            if search_results is not None:
+                searched = search_results[name]
+                if isinstance(searched, Exception):
+                    raise searched
+                result = searched
+            else:
+                source = profiled[use.template]
+                program = instantiate_template(template, use, source.program)
+                with phase(f"Worker {rank} · {use.kind} · {use.count} microbatches"):
+                    result = plan_program(
+                        apply_profiles(program, source.profiles),
+                        memory_budgets=budgets,
+                        communication_info=communication[use.template],
+                        pool_memory=None
+                        if pool_memory is None
+                        else pool_memory[template.binding.logical_rank],
+                        search_options=search,
+                        ordering=order,
+                    )
         except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
             cached[key] = error
             raise
@@ -127,9 +156,8 @@ def plan_family(
                 "prepared Plan lacks physical admission: "
                 + "; ".join(result.simulation_only_reasons)
             )
-        name = plan_identity(use, order)
         plans[rank][name] = result
-        cached[key] = name
+        cached[key] = result
         return name
 
     admitted, rejected = [], list(prior_rejections)

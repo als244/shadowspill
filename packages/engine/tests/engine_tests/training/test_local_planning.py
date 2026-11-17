@@ -56,9 +56,10 @@ from shadowspill_client import (
 @pytest.fixture
 def measured(tmp_path, monkeypatch, request):
     ranks = getattr(request, "param", 1)
+    ranks, capacity = (ranks, 4 * ranks) if isinstance(ranks, int) else ranks
     fields = inventory().layouts.setup.context.schema.fields
     inv = inventory(
-        batch=BatchConfig(limits={"max_examples": 4 * ranks}),
+        batch=BatchConfig(limits={"max_examples": capacity}),
         parallelism=Parallelism(
             ranks_per_replica=ranks,
             inputs=InputPlacement.independent(
@@ -133,6 +134,7 @@ def measured(tmp_path, monkeypatch, request):
             template,
             replace(
                 original,
+                tasks=tuple(replace(task, mutations=()) for task in original.tasks),
                 bindings=bindings,
                 parallelism=inv.layouts.setup.context.parallelism,
             ),

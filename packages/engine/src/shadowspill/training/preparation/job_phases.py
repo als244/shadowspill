@@ -189,6 +189,7 @@ def communicate(directory: str | Path) -> None:
 @logged_phase("Plan")
 def plan(directory: str | Path) -> None:
     from .family import plan_family
+    from .parallel_search import parallel_search
 
     root, _, original = load_job(directory)
     inventory, rejected = admitted_inventory(root, original)
@@ -202,8 +203,15 @@ def plan(directory: str | Path) -> None:
             for key in inventory.templates
         }
     with phase("Search layouts and orderings"):
+        searched = parallel_search(
+            root, inventory, sources=measured, communication=communication
+        )
         family = plan_family(
-            inventory, measured, communication, prior_rejections=rejected
+            inventory,
+            measured,
+            communication,
+            prior_rejections=rejected,
+            search_results=searched,
         )
     with phase("Assemble prepared Plan family"):
         bundle = TrainingBundle.from_prepared(family, measured)

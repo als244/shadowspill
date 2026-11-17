@@ -146,7 +146,7 @@ def test_bundle_reconstructs_shared_names_and_rejects_rank_local_renaming(monkey
     )
     restored = bundle.recheck(installed())
     assert restored.plans[0].keys() == restored.plans[1].keys()
-    assert len(checked) == sum(map(len, bundle.plans.values()))
+    assert len(checked) == len(bundle.plans[0])
     metadata = plain(bundle.metadata)
     metadata["candidates"][0]["workers"][1]["main"] = "renamed-local-plan"
     with pytest.raises(ValueError, match="Plan identities"):

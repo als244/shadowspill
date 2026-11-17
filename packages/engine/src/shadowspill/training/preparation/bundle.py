@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from functools import partial
 from types import MappingProxyType
 from typing import Any, ClassVar
 
@@ -11,6 +12,7 @@ from shadowspill.artifacts._values import digest, freeze, plain
 from shadowspill.artifacts.archive import Artifact
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.profiled_program import ProfiledProgram
+from shadowspill.serialization.sharing import share
 from shadowspill.training.definitions.registry import Registry
 from shadowspill_client._records import integer
 from shadowspill_client.protocol.training import ResolvedTraining
@@ -176,7 +178,12 @@ class TrainingBundle(Artifact):
             rank, key = integer(row["rank"], "logical rank"), _identity(row["id"])
             if key in plans.setdefault(rank, {}):
                 raise ValueError("duplicate bundle Plan")
-            plans[rank][key] = Plan.from_dict(row["value"], payloads=payloads)
+            value_row = row["value"]
+            plans[rank][key] = share(
+                Plan,
+                value_row,
+                partial(Plan.from_dict, value_row, payloads=payloads),
+            )
         return cls(
             ResolvedTraining.from_dict(value["config"]),
             sources,

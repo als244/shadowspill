@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from shadowspill.artifacts._values import plain
+from shadowspill.diagnostics.progress import event, phase
 from shadowspill.step.ordering import StepDataOrdering
 from shadowspill_client._records import integer, text
 from shadowspill_client.inputs.coverage import CoverageCertificate
@@ -18,6 +19,7 @@ from .family_checks import _collectives, _orderings
 from .family_identity import candidate_identity, execution_names, validate_profile
 from .family_records import PlannedCandidate, PlanRejection, PreparedPlans
 from .family_selection import certificate, joint_memory
+from .shared_planning import representative_sources, representative_use
 from .templates import TemplateCandidate, TemplateInventory
 
 if TYPE_CHECKING:
@@ -74,7 +76,23 @@ def recheck_bundle(
     result = bind_bundle(bundle, inventory)
     for source_key, source in bundle.sources.items():
         validate_profile(inventory, source_key, source)
-    checked = set()
+    pools = {
+        rank: next(iter(plans.values())).pool_memory
+        for rank, plans in bundle.plans.items()
+    }
+    communication = {
+        use.template: bundle.plans[rank][
+            getattr(row.workers[rank], role)
+        ].communication_info
+        for rows in result.families.values()
+        for row in rows
+        for rank, worker in row.source.workers.items()
+        for role in ("main", "optimizer")
+        for use in (getattr(worker, role),)
+        if use is not None
+    }
+    representatives = representative_sources(bundle.sources, pools, communication)
+    distinct = {}
     for rows in result.families.values():
         for row in rows:
             for rank, worker in row.source.workers.items():
@@ -83,15 +101,19 @@ def recheck_bundle(
                     if use is None:
                         continue
                     name = getattr(row.workers[rank], role)
-                    if (rank, name) not in checked:
-                        validate_plan(
-                            inventory,
-                            use,
-                            row.ordering,
-                            bundle.sources[use.template],
-                            bundle.plans[rank][name],
-                        )
-                        checked.add((rank, name))
+                    plan = bundle.plans[rank][name]
+                    use = representative_use(use, representatives)
+                    identity = (use, row.ordering if role == "main" else None, id(plan))
+                    distinct[identity] = (use, row.ordering, plan)
+    event(
+        f"Validate {len(distinct)} distinct Plans "
+        f"for {len(bundle.plans)} logical workers"
+    )
+    for index, (use, ordering, plan) in enumerate(distinct.values(), 1):
+        with phase(
+            f"Plan {index}/{len(distinct)} · {use.kind} · {use.count} microbatches"
+        ):
+            validate_plan(inventory, use, ordering, bundle.sources[use.template], plan)
     return result
 
 

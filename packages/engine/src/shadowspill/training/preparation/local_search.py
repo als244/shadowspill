@@ -19,6 +19,7 @@ from shadowspill_client.protocol.training import ResolvedTraining
 from .cost_evidence import communication_edits, profile_edits
 from .identity import without_initialization
 from .local_plans import LocalPlans
+from .shared_planning import representative_sources, representative_use
 from .templates import instantiate_program
 
 if TYPE_CHECKING:
@@ -86,6 +87,11 @@ def search(
     for key, source in inputs.sources.items():
         profile_edits(source.profiles, costs[key])
         communication_edits(inputs.communication[key], communication[key])
+    sources = {
+        key: apply_profiles(source.program, costs[key])
+        for key, source in inputs.sources.items()
+    }
+    representatives = representative_sources(sources, communication=communication)
     selected = tuple(inputs.candidates if candidates is None else candidates)
     if not set(selected) <= inputs.candidates.keys() or len(set(selected)) != len(
         selected
@@ -99,8 +105,19 @@ def search(
     )
     plans: dict[str, Plan] = {}
     rejected = {}
+    cached: dict[str, Plan | str] = {}
     for key in sorted(required):
-        request = inputs.requests[key]
+        request = replace(
+            inputs.requests[key],
+            use=representative_use(inputs.requests[key].use, representatives),
+        )
+        if request.id in cached:
+            found = cached[request.id]
+            if isinstance(found, str):
+                rejected[key] = found
+            else:
+                plans[key] = found
+            continue
         template = request.use.template
         program = instantiate_program(request.use, inputs.sources[template].program)
         try:
@@ -117,8 +134,10 @@ def search(
             if plan.simulation_only_reasons:
                 raise ValueError("local Plan lacks physical memory admission")
             plans[key] = plan
+            cached[request.id] = plan
         except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
             rejected[key] = str(error)
+            cached[request.id] = str(error)
     selected = tuple(
         key for key in selected if set(inputs.candidates[key]) <= plans.keys()
     )
