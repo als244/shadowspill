@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from shadowspill.training.logging import Wandb
+from reference.training.logger import Wandb
 from shadowspill.training.observations import MetricTable
 
 

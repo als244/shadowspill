@@ -7,7 +7,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
-from .observations import MetricTable
+from shadowspill.training.observations import MetricTable
 
 
 class Wandb:
