@@ -75,16 +75,33 @@ def validate_measurement(row: Mapping[str, Any]) -> None:
 def matching_measurements(
     info: CommunicationInfo, request: Mapping[str, Any]
 ) -> Iterator[Mapping[str, Any]]:
+    yield from info._measurement_index.get(measurement_key(request), ())
+
+
+def _key(value: Any) -> Any:
+    """Hashable JSON equality, treating frozen tuples like ordinary lists."""
+    if isinstance(value, Mapping):
+        return ("object", tuple((k, _key(v)) for k, v in sorted(value.items())))
+    if isinstance(value, (tuple, list)):
+        return ("array", tuple(_key(v) for v in value))
+    return value
+
+
+def measurement_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
     fields = ("operation", "ranks", "tensor_bytes", "dtype", "setup", "topology")
+    return (_inplace(row), *(_key(row[field]) for field in fields))
+
+
+def measurement_index(
+    info: CommunicationInfo,
+) -> dict[tuple[Any, ...], tuple[Mapping[str, Any], ...]]:
+    """Index immutable evidence once, preserving newest-first precedence."""
+    backend = plain(info.metadata.get("backend_setup", {}))
+    rows: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
     for row in reversed(info.measurements):
-        if plain(row.get("backend_setup", {})) != plain(
-            info.metadata.get("backend_setup", {})
-        ):
-            continue
-        if _inplace(row) == _inplace(request) and all(
-            plain(row[field]) == plain(request[field]) for field in fields
-        ):
-            yield row
+        if plain(row.get("backend_setup", {})) == backend:
+            rows.setdefault(measurement_key(row), []).append(row)
+    return {key: tuple(values) for key, values in rows.items()}
 
 
 def collective_cost(

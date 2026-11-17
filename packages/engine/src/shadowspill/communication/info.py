@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any, ClassVar
 
 from shadowspill.artifacts._values import freeze, plain, seconds
@@ -76,6 +77,14 @@ class CommunicationInfo(Artifact):
             for name in self.__dataclass_fields__
             if name != "artifact_kind"
         }
+
+    @cached_property
+    def _measurement_index(
+        self,
+    ) -> dict[tuple[Any, ...], tuple[Mapping[str, Any], ...]]:
+        from .collectives import measurement_index
+
+        return measurement_index(self)
 
     @classmethod
     def from_dict(
