@@ -7,8 +7,8 @@ import mlops
 import torch
 
 from shadowspill import Parallelism
-from shadowspill_workloads.initialization.glm import Initialize
-from shadowspill_workloads.policies.glm import GLMStages
+from shadowspill_workloads.models.shared.glm.initialization.loader import Initialize
+from shadowspill_workloads.models.shared.glm.partitioning import GLMStages
 from shadowspill_workloads.providers import operator_preparations
 from workload_tests.cases.precision import Precision
 

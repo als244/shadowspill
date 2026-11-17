@@ -2,8 +2,8 @@
 
 from functools import partial
 
-from shadowspill_workloads.initialization.glm_metadata import describe
 from shadowspill_workloads.models.registration import Family
+from shadowspill_workloads.models.shared.glm.initialization.metadata import describe
 
 FAMILY = Family(
     name="glm53_flash",

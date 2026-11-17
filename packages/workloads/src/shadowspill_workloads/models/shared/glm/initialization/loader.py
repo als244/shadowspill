@@ -5,8 +5,10 @@ import math
 import torch
 
 from shadowspill.checkpoint.initialization import fill_generated, validate_chunk
-from shadowspill_workloads.initialization.glm_roles import physical_state_roles
 from shadowspill_workloads.models.shared.glm.checkpoint import physical_state
+from shadowspill_workloads.models.shared.glm.initialization.roles import (
+    physical_state_roles,
+)
 
 
 class Initialize:

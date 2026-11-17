@@ -19,7 +19,9 @@ def describe(config, context):
 
         @contextmanager
         def open_experts(runtime):
-            from shadowspill_workloads.initialization.glm_experts import Initialize
+            from shadowspill_workloads.models.shared.glm.initialization.experts import (
+                Initialize,
+            )
 
             ranks = context.parallelism.ranks_per_replica
             with base.open(runtime) as loader:
@@ -33,7 +35,9 @@ def describe(config, context):
     def open_random(runtime):
         import torch
 
-        from shadowspill_workloads.initialization.glm import Initialize
+        from shadowspill_workloads.models.shared.glm.initialization.loader import (
+            Initialize,
+        )
 
         from .configuration import create
 
@@ -58,7 +62,9 @@ def describe(config, context):
     def open_pretrained(runtime):
         import torch
 
-        from shadowspill_workloads.initialization.glm import Initialize
+        from shadowspill_workloads.models.shared.glm.initialization.loader import (
+            Initialize,
+        )
 
         from .configuration import create
 

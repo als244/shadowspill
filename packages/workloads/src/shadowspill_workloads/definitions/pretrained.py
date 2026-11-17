@@ -150,7 +150,7 @@ def register(registry):
             "initialization/weight_files.py",
             "initialization/local_files.py",
             "initialization/headers.py",
-            "initialization/glm_metadata.py",
+            "models/shared/glm/initialization/metadata.py",
             "models/families.py",
             "models/registration.py",
             "definitions/text_metadata.py",

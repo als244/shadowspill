@@ -20,7 +20,8 @@ shadowspill_workloads/
       lora.py                # Architecture-specific adapter targets
       training.py            # Family settings/hooks, when needed
       README.md
-    shared/                  # Reusable layers, model math and weight mappings
+    shared/                  # Reusable layers and integration shared by families
+      glm/                   # Shared GLM computation, loading and setup hooks
     catalog/                 # Lookups derived from family declarations
   definitions/               # Shared registration, objective and setup helpers
     decoder/                 # Shared packed decoder registration and setup hooks
@@ -31,10 +32,12 @@ shadowspill_workloads/
   policies/                  # Chunking, retention and execution choices
 ```
 
-Large modules can use a package instead of a single file. Keep model-specific
-computation and checkpoint mappings beside the model. Shared setup and execution
-policies belong outside `models/shared/`; generic planning and execution belong
-in the engine.
+Large modules can use a package instead of a single file. Keep architecture-specific
+computation, checkpoint mappings, initialization and setup hooks beside the model.
+Code shared by related families belongs under `models/shared/<architecture>/`;
+both GLM families use `models/shared/glm/`. Common registration, input, loading
+and policy mechanisms stay in the top-level workload packages. Generic planning
+and execution belong in the engine.
 
 Put application loops in `examples/training/` and benchmark drivers in
 `tools/planning/`. A model family supplies declarations and computation, not a

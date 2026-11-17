@@ -13,7 +13,7 @@ the detailed [architecture catalog](MODELS.md).
 | Owner | Responsibility |
 | --- | --- |
 | [models/](models) | One package per family: architecture, configuration, checkpoint mapping, LoRA targets and registration |
-| [models/shared/](models/shared) | Reusable model layers, math and checkpoint mapping components |
+| [models/shared/](models/shared) | Reusable model components and architecture integration shared by related families |
 | [definitions/](definitions) | Shared public registration, preparation and objective hooks |
 | [inputs/](inputs) | Input schemas, processors and packing adapters |
 | [objectives/](objectives) | Reusable losses and metrics |

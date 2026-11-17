@@ -79,7 +79,7 @@ remain unchanged.
 
 ## A model-scale example
 
-[GLMStages](../../packages/workloads/src/shadowspill_workloads/policies/glm.py) implements this same
+[GLMStages](../../packages/workloads/src/shadowspill_workloads/models/shared/glm/partitioning.py) implements this same
 protocol using exported module paths. Pass an instance as `partition=` to
 `build_step`. The resulting Program can be measured and planned with different
 budgets and orderings without rebuilding its partition.

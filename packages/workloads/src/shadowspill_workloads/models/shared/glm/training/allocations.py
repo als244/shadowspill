@@ -31,8 +31,9 @@ All implementations and external providers are pinned by the model definition.
 """
 
 from shadowspill.preparation import OperatorPreparation
-
-from ..moe_provider import allocations as moe_allocations
+from shadowspill_workloads.definitions.moe_provider import (
+    allocations as moe_allocations,
+)
 
 SPARSE_FACTORY = "mlops.providers.builtin.sparse_latent_preparation:factory"
 CONTRACT = "shadowspill/glm-runtime-packed-allocation@1"
@@ -99,7 +100,7 @@ def contracts(config):
 
 
 def preparations(config):
-    from ..moe_provider import preparations as sonic
+    from shadowspill_workloads.definitions.moe_provider import preparations as sonic
 
     return (
         OperatorPreparation(factory=SPARSE_FACTORY),

@@ -10,7 +10,7 @@ from shadowspill_workloads.definitions import training_options
 from shadowspill_workloads.definitions.decoder.configuration import (
     Settings as DecoderSettings,
 )
-from shadowspill_workloads.initialization.glm_metadata import DTYPES
+from shadowspill_workloads.models.shared.glm.initialization.metadata import DTYPES
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ class Settings(DecoderSettings):
 
 
 def create(config):
-    from shadowspill_workloads.initialization.glm_storage import apply
+    from shadowspill_workloads.models.shared.glm.initialization.storage import apply
 
     family = f"shadowspill_workloads.models.{config.family}"
     module = import_module(family + ".implementations.mlops")

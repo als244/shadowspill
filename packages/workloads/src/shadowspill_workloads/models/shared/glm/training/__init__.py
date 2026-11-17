@@ -15,6 +15,6 @@ def register(registry, settings):
         initialization=describe,
         capture_context=capture_context,
         capabilities=("target_logprobs",),
-        sources=("definitions/glm",),
+        sources=("models/shared/glm/training",),
         providers=("tilelang", "cudnn", "flash_mla", "deep_gemm", "tile_kernels"),
     )
