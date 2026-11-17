@@ -108,7 +108,7 @@ result = pending.result()
 ```
 
 Use one input call per example declared in the Program. Each group has its own
-binding, such as `optimizer_group.1.lr`. Trainer schedules use those same names.
+binding, such as `optimizer_group.1.lr`. Per-call schedules use those same names.
 The original Python optimizer is not a live execution handle: mutating it
 after build does not change a saved Plan.
 
@@ -150,7 +150,8 @@ optimizer and restore persistent optimizer tensors in the execution worker.
 
 ## Observing parameters and gradients
 
-`Trainer(plan, parameter_norms_every=N)` enables optional eager norm observations.
+`Executor(plan, parameter_norms=True)` prepares optional eager norm observations.
+Pass `collect_parameter_norms=True` on each invocation to collect them.
 Weights are observed at an existing forward/backward read; final gradients are
 observed before their local optimizer update. The collector uses bounded,
 budgeted scratch and observes compute weights even when a master exists.
@@ -160,8 +161,8 @@ These diagnostics are not compiled tasks and do not affect simulated task
 durations. They contribute to measured training time only on calls where
 collection is enabled. Ordinary runs launch no norm kernels. Arbitrary compiled
 `parameter_metrics` callbacks are not part of the builder interface.
-Loss and model metrics can still be objective outputs; Trainer's host reducer
-aggregates completed observations. Logging policy stays in the workload.
+Loss and model metrics can still be objective outputs. Callers aggregate
+completed observations and choose their logging policy.
 
 ## Checkpoints
 
@@ -180,10 +181,10 @@ that extends beyond its owned region.
 An explicit `frozen_state_id` allows unchanged frozen parameters to be omitted.
 Trainable tensors, optimizer state, buffers and tensors mutated by an admitted
 Plan remain in the archive. Restore validates the frozen-base identity and uses
-the bounded loader for omitted contents. Trainer adds the update count,
-schedule and source progress and the default RNG states; custom generators and
-other application state remain the caller's. See [training
-composition](training.md).
+the bounded loader for omitted contents. The training service preserves session
+progress and worker RNG state. Low-level callers provide their own progress and
+RNG metadata; client dataset state and custom generators remain caller-owned.
+See [training composition](training.md).
 
 Previous: [Model tensors and initialization](state-import.md). Next: [The
 ShadowSpillProgram](program.md).

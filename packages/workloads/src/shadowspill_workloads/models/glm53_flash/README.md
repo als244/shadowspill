@@ -59,9 +59,9 @@ mHC bias/scale and KDA control tensors keep checkpoint FP32. mHC projections
 and coefficients compute in FP32, with BF16 residual streams. Random model
 construction has separate training dtype defaults.
 
-HF base loading and training checkpoints are separate. The recipe uses generic
+HF base loading and training checkpoints are separate. The service uses generic
 bounded checkpoint helpers and records an explicit frozen-base identity for
-adapter-only saves. See [Trainer and Executor](../../../../../../docs/python/api/training.md)
+adapter-only saves. See [checkpoint storage](../../../../../../docs/python/api/executor.md#checkpoint-storage)
 for initialization, export and restore.
 
 ## KDA projection boundary

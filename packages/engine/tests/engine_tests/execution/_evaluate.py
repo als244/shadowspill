@@ -20,14 +20,13 @@ forbid_preparation()
 from shadowspill import (  # noqa: E402
     Executor,
     Plan,
-    Trainer,
     load_checkpoint,
     save_checkpoint,
 )
 from shadowspill.planning.shared import shared_memory  # noqa: E402
 from shadowspill.runtime.occupancy import plan_slices  # noqa: E402
 
-directory, mode = Path(sys.argv[1]), sys.argv[2]
+directory = Path(sys.argv[1])
 plan, evaluation = (
     Plan.load(directory / f"{name}.ssp") for name in ("training", "evaluation")
 )
@@ -67,10 +66,7 @@ def check_output(actual, expected):
         torch.testing.assert_close(value, expected[name], **tolerance)
 
 
-trainer = Trainer(plan, evaluation_plan=evaluation) if mode == "trainer" else None
-executor = (
-    trainer.executor if trainer else Executor(plan, plans={"evaluation": evaluation})
-)
+executor = Executor(plan, plans={"evaluation": evaluation})
 executor.initialize(fill, chunk_bytes=40)
 joint = shared_memory(plan, {"evaluation": evaluation})
 assert executor.spill_capacity_bytes == min(
@@ -100,13 +96,8 @@ previous = None
 for index in range(4):
     before = snapshot(executor)
     inputs = dict(args=[(oracle["evaluation"],)], kwargs=[oracle["evaluation_kwargs"]])
-    if trainer:
-        actual = trainer.evaluate(**inputs)
-        assert trainer.step_count == index
-        assert all(t.device.type == "cpu" for t in actual.values())
-    else:
-        pending = executor.run(plan="evaluation", **inputs)
-        actual = pending.result()
+    pending = executor.run(plan="evaluation", **inputs)
+    actual = pending.result()
     check_output(actual, oracle["expected"][index])
     torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
     if previous is not None:
@@ -114,11 +105,7 @@ for index in range(4):
     previous = actual
     if index == 3:
         break
-    if trainer:
-        result = trainer.step(args=oracle["examples"])
-        assert result.step == index + 1
-    else:
-        result = executor.run(args=oracle["examples"]).result()
+    result = executor.run(args=oracle["examples"]).result()
     torch.testing.assert_close(
         torch.tensor([float(x) for x in result.losses]),
         torch.tensor(oracle["losses"][index]),
@@ -128,18 +115,11 @@ for index in range(4):
         atol=0.03,
     )
     if index == 0:
-        checkpoint = directory / f"{mode}-checkpoint.ssp"
-        if trainer:
-            trainer.save(checkpoint, chunk_bytes=40)
-        else:
-            save_checkpoint(executor, checkpoint, chunk_bytes=40)
+        checkpoint = directory / "checkpoint.ssp"
+        save_checkpoint(executor, checkpoint, chunk_bytes=40)
         saved = snapshot(executor)
         executor.initialize(lambda request, chunk: chunk.zero_(), restore=True)
-        if trainer:
-            trainer.load(checkpoint, chunk_bytes=28)
-            assert trainer.step_count == 1
-        else:
-            load_checkpoint(executor, checkpoint, chunk_bytes=28)
+        load_checkpoint(executor, checkpoint, chunk_bytes=28)
         torch.testing.assert_close(snapshot(executor), saved, rtol=0, atol=0)
 actual_state = snapshot(executor)
 for name, expected in oracle["final"].items():
@@ -147,12 +127,9 @@ for name, expected in oracle["final"].items():
 assert not any(name.startswith("plans.evaluation.weight") for name in actual_state)
 assert any(name.startswith("plans.evaluation.constant.") for name in actual_state)
 del actual, previous, result
-if trainer:
-    trainer.close()
-else:
-    del pending
-    executor.close()
+del pending
+executor.close()
 executor.close()
 with pytest.raises(RuntimeError, match="closed"):
     executor.run(plan="evaluation")
-print("Qualified shared evaluation " + mode, flush=True)
+print("Qualified shared evaluation", flush=True)

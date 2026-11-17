@@ -56,7 +56,7 @@ def evaluation(model, x):
 
 
 @pytest.mark.cuda
-def test_partial_trainer_preserves_masters_mutations_evaluation_and_resume(tmp_path):
+def test_partial_checkpoint_preserves_masters_mutations_evaluation_and_resume(tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     torch.save(Network().state_dict(), tmp_path / "initial.pt")
@@ -99,4 +99,4 @@ def test_partial_trainer_preserves_masters_mutations_evaluation_and_resume(tmp_p
             timeout=180,
         )
         assert worker.returncode == 0, worker.stdout + worker.stderr
-        assert f"Qualified partial Trainer {mode}" in worker.stdout
+        assert f"Qualified partial saved training {mode}" in worker.stdout

@@ -71,8 +71,8 @@ for module in ('launch.processes', 'launch.rank_device', 'launch.workers',
                'capture.nsys', 'capture.nsys_worker',
                'capture.files', 'capture.progress'):
     importlib.import_module('shadowspill.orchestration.' + module)
-for module in ('api', 'configuration', 'phases', 'candidates', 'reuse',
-               'plan', 'search', 'execute'):
+for module in ('configuration', 'phases', 'candidates', 'reuse',
+               'plan', 'search', 'job'):
     importlib.import_module('shadowspill.training.preparation.' + module)
 block.blocked = {'benchmarks', 'qualification'}
 for module in ('shadowspill_workloads.recipes',
@@ -80,7 +80,7 @@ for module in ('shadowspill_workloads.recipes',
                'shadowspill.training.preparation.build',
                'shadowspill.training.preparation.profile',
                'shadowspill.training.preparation.communicate',
-               'shadowspill.training.preparation.execute'):
+               'shadowspill.training.preparation.job'):
     importlib.import_module(module)
 """
     result = subprocess.run(

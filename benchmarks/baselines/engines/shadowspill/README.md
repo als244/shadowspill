@@ -3,7 +3,7 @@
 This engine uses the public build → profile → plan → execute pipeline with the
 same objective, precision settings, data and measurement clock as the other
 baseline engines. Each phase has its own process. Execution loads a saved Plan
-into `Trainer(plan)`; preparation never opens ShadowSpill pools.
+into `Executor(plan)`; preparation never opens ShadowSpill pools.
 
 Run from the repository root with the ShadowSpill environment and this checkout's
 native libraries:
@@ -101,7 +101,7 @@ stop the case. An infeasible budget is recorded as the sweep's memory boundary.
 
 ## Measurement and numerical checks
 
-Only `Trainer.step` and its loss/metric collection are inside measured updates.
+Only `Executor.run` and its loss/metric collection are inside measured updates.
 Warmup, model loading, compilation, task/communication profiling, CPU planning
 and admission are outside. Nsight's capture starts at the first measured update.
 

@@ -13,7 +13,7 @@ CachingAutotuner.autotune_to_one_config = forbidden
 
 # Executor's shared-plan admission uses static planning helpers. Import these
 # before blocking any re-entry to phase preparation during loading/execution.
-from shadowspill import Plan, Trainer  # noqa: E402
+from shadowspill import Executor, Plan  # noqa: E402
 
 forbid_preparation(
     "shadowspill.planning",
@@ -37,14 +37,16 @@ def fill(request, chunk):
     chunk.copy_(values[request.offset : request.offset + chunk.numel()])
 
 
-with Trainer(plan) as trainer:
-    trainer.initialize(fill, chunk_bytes=40)
+with Executor(plan) as executor:
+    executor.initialize(fill, chunk_bytes=40)
     for loss, expected in oracle["expected"]:
-        result = trainer.step(
+        result = executor.run(
             args=[args for args, _ in oracle["calls"]],
             kwargs=[kwargs for _, kwargs in oracle["calls"]],
-        )
-        torch.testing.assert_close(result.loss, loss, rtol=2e-5, atol=2e-6)
+        ).result()
+        actual_loss = sum(float(value) for value in result.losses)
+        del result
+        torch.testing.assert_close(actual_loss, loss, rtol=2e-5, atol=2e-6)
         actual = {}
 
         def collect(request, chunk, actual=actual):
@@ -59,12 +61,11 @@ with Trainer(plan) as trainer:
                 chunk
             )
 
-        trainer.executor.export_tensors(collect, chunk_bytes=40)
+        executor.export_tensors(collect, chunk_bytes=40)
         for name, value in expected.items():
             torch.testing.assert_close(
                 actual[name].reshape(value.shape), value, rtol=2e-4, atol=2e-5
             )
-    assert trainer.step_count == 2
     if provider:
         assert provider in sys.modules
-print("Qualified cold saved Trainer at", gib, "GiB", flush=True)
+print("Qualified cold saved Executor at", gib, "GiB", flush=True)

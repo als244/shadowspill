@@ -1,5 +1,1 @@
-"""Model-independent orchestration of saved training phases."""
-
-from .api import run
-
-__all__ = ["run"]
+"""Resolve definitions and prepare saved computation families for training."""

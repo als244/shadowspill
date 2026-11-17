@@ -49,7 +49,6 @@ def test_top_level_public_surface_is_explicit() -> None:
         "TensorChunk",
         "save_checkpoint",
         "load_checkpoint",
-        "Trainer",
         "Parallelism",
         "ParameterStorage",
         "Replicated",

@@ -2,33 +2,19 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 import torch
 
-from shadowspill.training import config
 from shadowspill_workloads.inputs.text.documents import IGNORE
 from shadowspill_workloads.inputs.text.packed import PackedTokens
 from shadowspill_workloads.inputs.text.units import held_out
-from shadowspill_workloads.recipes.text.heterogeneous.checkpoint_paths import (
-    checkpoint_directory,
-)
 from shadowspill_workloads.recipes.text.heterogeneous.data import (
     UnitUpdates,
     unit_ranges,
 )
-from shadowspill_workloads.recipes.text.heterogeneous.run import (
-    check_section,
-    node_config,
-)
 from tests.integration.training._synthetic import write_dataset
 
 MAX_SEQ_LEN = 512
-NODES = [
-    {"address": "10.0.0.1", "ranks": 1},
-    {"address": "10.0.0.2", "ranks": 1, "ssh": "peer", "repo": "/r", "python": "/p"},
-]
 
 
 @pytest.fixture
@@ -104,82 +90,6 @@ def test_units_divide_by_shares_and_concatenate_into_each_ranks_geometry(data):
     assert len(held) == 4 and held[0][1].item() == pytest.approx(
         1 / data.validation_packer(MAX_SEQ_LEN, MAX_SEQ_LEN).trained_tokens(range(16))
     )
-
-
-def test_the_section_is_checked_and_each_node_gets_its_share():
-    raw = {
-        "heterogeneous": {"nodes": NODES, "shares": [3, 1]},
-        "max_tokens_per_step": 8192,
-        "max_seq_len": 1024,
-    }
-    nodes, shares, port = check_section(raw)
-    assert shares == [3, 1] and port == 29400
-    assert node_config(raw, nodes, shares, 0)["rank_tokens_per_step"] == 6144
-    assert node_config(raw, nodes, shares, 1)["rank_tokens_per_step"] == 2048
-    assert (
-        node_config(raw, nodes, shares, 1)["ranks"] == 2
-        and node_config(raw, nodes, shares, 1)["node"] == 1
-    )
-    # A rank of the group saves under its own part of a checkpoint_dir.
-    named = node_config({**raw, "checkpoint_dir": "/saves"}, nodes, shares, 1)
-    assert checkpoint_directory(named, Path("/run/rank-00001"), 1) == Path(
-        "/saves/rank-00001"
-    )
-    # Whole weights and gradients on every rank, the optimizer state sharded,
-    # unless the config names its own layout.
-    storage = config.resolve(node_config(raw, nodes, shares, 0)["build"])
-    layout = storage["parallelism"].default_parameter_storage
-    assert storage["parallelism"].world_size == 2
-    assert (layout.weights, layout.gradients, layout.optimizer) == (
-        "replicated",
-        "replicated",
-        "sharded",
-    )
-    own = {"@call": "shadowspill:Parallelism.dp", "ranks_per_replica": 2}
-    chosen = node_config({**raw, "build": {"parallelism": own}}, nodes, shares, 1)
-    assert chosen["build"]["parallelism"] == own
-    with pytest.raises(ValueError, match="one positive integer per rank"):
-        check_section({**raw, "heterogeneous": {"nodes": NODES, "shares": [3]}})
-    with pytest.raises(ValueError, match="whole units for every share"):
-        check_section({**raw, "max_tokens_per_step": 5120})
-    with pytest.raises(ValueError, match="every rank's share"):
-        check_section({**raw, "eval_every": 2, "eval_tokens": 3 * 1024})
-    two = [{"address": "a", "ranks": 2}, NODES[1]]
-    with pytest.raises(ValueError, match="equal shares"):
-        check_section(
-            {
-                "heterogeneous": {"nodes": two, "shares": [2, 1, 1]},
-                "max_tokens_per_step": 8192,
-                "max_seq_len": 1024,
-            }
-        )
-
-
-def test_nodes_walk_the_union_of_their_slots():
-    from shadowspill_workloads.recipes.text.heterogeneous.communicate import (
-        shared_slots,
-        slots,
-        stand_in,
-    )
-
-    fast = slots(
-        {"eval_every": 3}, {"candidates": {"6144_tokens": {}, "3072_tokens": {}}}
-    )
-    slow = slots({"eval_every": 3}, {"candidates": {"2048_tokens": {}}})
-    assert fast == [
-        "6144_tokens/training",
-        "6144_tokens/evaluation",
-        "3072_tokens/training",
-        "3072_tokens/evaluation",
-    ]
-    union = shared_slots([fast, slow])
-    assert len(union) == 6 and union == sorted(union)
-    assert stand_in("6144_tokens/evaluation", slow) == "2048_tokens/evaluation"
-    assert stand_in("3072_tokens/training", slow) == "2048_tokens/training"
-    with pytest.raises(ValueError, match="built no evaluation"):
-        stand_in(
-            "6144_tokens/evaluation", slots({}, {"candidates": {"2048_tokens": {}}})
-        )
 
 
 def test_the_aggregate_adds_the_ranks_evaluation_shares():

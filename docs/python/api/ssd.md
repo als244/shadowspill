@@ -44,16 +44,16 @@ plan.save("training.ssp")
 In a **fresh execution worker**, reuse that configuration:
 
 ```python
-from shadowspill import Plan, Trainer
+from shadowspill import Executor, Plan
 from shadowspill.ssd import SSDPool
 
-with Trainer(Plan.load("training.ssp"),
-             spill=SSDPool(64 << 30, directory="/local-nvme")) as trainer:
-    trainer.initialize(fill_tensor)
-    result = trainer.step(args=examples)
+executor = Executor(Plan.load("training.ssp"),
+                    spill=SSDPool(64 << 30, directory="/local-nvme"))
+executor.initialize(fill_tensor)
+result = executor.run(args=examples).result()
 ```
 
-`Executor(plan, spill=...)` exposes the same setting. Capacity must equal the
+Spill capacity must equal the
 Plan's spill budget. Build and task profiling use ordinary allocation and do not
 open the SSD pool. Planning only reads CommunicationInfo; it needs neither the
 drive nor the SSD extension. Measurement creates a bounded scratch pool using the
@@ -100,9 +100,10 @@ and byte-range I/O. Master-weight initialization reads only the matching source
 chunk. Model controls and checkpoint export use this same path, preserving tensor
 dtypes, padding and local shard offsets without a full host model copy.
 
-Checkpoint files are independent of temporary spill storage. Use Trainer's
-checkpoint helpers or Executor's bounded tensor export. Never dereference an SSD
-pool address as a CPU tensor: addresses are opaque tokens meaningful to the pool.
+Checkpoint files are independent of temporary spill storage. Use
+`save_checkpoint(executor, path)` and `load_checkpoint(executor, path)` or
+Executor's bounded tensor export. Never dereference an SSD pool address as a CPU
+tensor: addresses are opaque tokens meaningful to the pool.
 
 ## Pipeline and lifetime
 

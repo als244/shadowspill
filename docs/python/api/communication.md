@@ -65,7 +65,7 @@ Calibration uses bounded native probes with its actual staging/completion paths
 and alignment overhead; it does not install the execution allocator. Use the same
 backend for execution. Default pinned-host execution capacity is the admitted
 peak plus 5%, capped by the planning budget. Explicit capacities must satisfy the
-[pool sizing rules](training.md#constructor-options). Every distributed worker
+[pool sizing rules](executor.md#sharing-state-across-plans). Every distributed worker
 owns its spill pool, including when workers share a remote server endpoint.
 
 Supplied transfer rates can support simulation without measurement. Concurrent

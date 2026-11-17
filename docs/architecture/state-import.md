@@ -17,7 +17,6 @@ finalization can require a representative GPU; this is separate from state loadi
 
 Create Executor in a fresh process from a saved Plan. It admits the physical
 layout, allocates persistent storage and accepts a bounded initializer.
-`Trainer.initialize` delegates to the same interface.
 
 ```python
 from shadowspill import Executor, Plan
@@ -167,7 +166,7 @@ master weight once and reconstructs its compute copy on load. Parameters without
 separate master are stored normally. `weights="compute"` instead saves the
 compute copy and casts it into the master on load, intentionally losing the
 master's additional precision. Optimizer state and buffers remain independent
-of this choice. `Trainer.save` accepts the same setting.
+of this choice.
 
 The selected representation is authoritative. Reconstruction uses captured
 optimizer ownership, registered storage aliases and the receiving rank's tensor
@@ -228,10 +227,11 @@ Restore validates the logical rank and the training state, not the Program: the
 name, geometry and owned region of every persistent tensor, the additional
 Plans' private tensors included. A rebuilt Program, other kernels or another
 microbatch geometry restore the same state, and a different inventory is refused
-with the differing tensors named. Trainer checkpoints also preserve loop
-progress, schedules, source position and RNG. An evaluation Plan shares current
-model storage; only its additional, nonshared tensors need separate checkpoint
-payloads.
+with the differing tensors named. Low-level callers store their progress,
+schedules, source position and RNG in checkpoint metadata. The training service
+preserves its session and worker RNG state; client-owned dataset progress remains
+with the client. An evaluation Plan shares current model storage; only its
+additional, nonshared tensors need separate checkpoint payloads.
 
 For partial checkpoints, `frozen_state_id` identifies the external frozen base.
 Only unchanged frozen parameters can be omitted. Trainable tensors, buffers,

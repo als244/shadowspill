@@ -111,7 +111,8 @@ def test_resolved_setup_roundtrip_packing_and_source_pinned_inventory(family):
         inputs, fields, controls = binding.arguments(adapted)
         assert inputs["tokens"].shape == (1, 8)
         assert inputs["sequence_lengths"].sum() == 8
-        assert sorted(inputs["sequence_lengths"].tolist()) == [0, 0, 2, 3, 3]
+        # Capacity: four records plus two padding entries, each at most length four.
+        assert sorted(inputs["sequence_lengths"].tolist()) == [0, 0, 0, 2, 3, 3]
         assert fields["router_mask"].flatten().tolist() == [True] * 5 + [False] * 3
         assert fields["loss_mask"].sum() == 4
         assert controls["balance.weight"].item() == pytest.approx(0.001)

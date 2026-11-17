@@ -36,7 +36,6 @@ _C_FUNCTION = re.compile(r"\b(shadowspill_[A-Za-z0-9_]+)\s*\(")
 
 _MEMORY_MODULE = ENGINE / "src" / "shadowspill" / "memory.py"
 _PYTORCH_MODULE = ENGINE / "src" / "shadowspill" / "pytorch" / "__init__.py"
-_TRAINING_MODULE = ENGINE / "src" / "shadowspill" / "training" / "__init__.py"
 _REPORTING_MODULE = ENGINE / "src" / "shadowspill" / "reporting" / "__init__.py"
 _CORE_PYTHON_MODULES = (
     ENGINE / "src" / "shadowspill" / "errors.py",
@@ -50,7 +49,6 @@ _PUBLIC_PYTHON_MODULES = (
     *_CORE_PYTHON_MODULES,
     _PYTORCH_MODULE,
     _REPORTING_MODULE,
-    _TRAINING_MODULE,
 )
 
 _PUBLIC_HEADERS = ENGINE / "csrc" / "include" / "shadowspill"
@@ -95,9 +93,6 @@ _REQUIRED_OPTIONS_TABLES = {
     "packages/engine/src/shadowspill/profiling/overlap.py:measure_overlap",
     "packages/engine/src/shadowspill/planning/plan.py:plan_program",
     "packages/engine/src/shadowspill/planning/sweep.py:sweep_programs",
-    "packages/engine/src/shadowspill/training/trainer.py:Trainer.__init__",
-    "packages/engine/src/shadowspill/training/trainer.py:Trainer.step",
-    "packages/engine/src/shadowspill/training/trainer.py:Trainer.fit",
 }
 
 
@@ -171,7 +166,6 @@ def _python_page_expectations() -> dict[Path, set[str]]:
         PYTHON_API / "runtime.md": set(_all_exports(_MEMORY_MODULE)),
         PYTHON_API / "frontend.md": set(),
         PYTHON_API / "artifacts.md": set(),
-        PYTHON_API / "training.md": set(_all_exports(_TRAINING_MODULE)),
         PYTHON_API / "diagnostics.md": set(_all_exports(_REPORTING_MODULE)),
         PYTHON_API / "neutral.md": set(),
     }

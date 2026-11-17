@@ -195,7 +195,7 @@ def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-c",
-        "import json, sys; from shadowspill.training.preparation import run; "
+        "import json, sys; from workload_tests._phase_runner import run; "
         "run('shadowspill_workloads.recipes.text.glm53_flash_lora.adapter', "
         "json.loads(sys.argv[1]), phase=sys.argv[2])",
     ]

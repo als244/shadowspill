@@ -1,7 +1,7 @@
 # Executor and shared plan state
 
 Execute an admitted saved Plan and own its persistent state. Use
-[Trainer](training.md) when you also want the training-loop interface.
+the [training client](../client.md) for batch submission and service-managed execution.
 
 ## Fresh worker and invocation
 

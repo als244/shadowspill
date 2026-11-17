@@ -11,6 +11,6 @@ forbid_preparation()
 # actual timing callback, including an explicitly configured benchmarker.
 Autotuner.do_bench = property(lambda self: forbidden)
 
-from shadowspill.training.preparation.execute import run  # noqa: E402
+from workload_tests._phase_execute import run  # noqa: E402
 
 run(sys.argv[1])

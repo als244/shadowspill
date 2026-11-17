@@ -71,9 +71,10 @@ forward task; a [custom partition policy](custom-partitioning.md) can define
 other boundaries.
 
 For evaluation during training, save a forward Plan with compatible parameter
-names/layouts and pass it as `evaluation_plan` to Trainer. Both plans share the
-current model tensors and one admitted execution workspace; see
-[shared evaluation](../python/api/training.md#evaluation).
+names/layouts and pass it to `Executor(training_plan, plans={"evaluation": evaluation_plan})`.
+Call `executor.run(plan="evaluation", ...)` to evaluate current model tensors
+using the shared execution workspace; see
+[shared Plans](../python/api/executor.md#sharing-state-across-plans).
 `run(..., profiler_annotations=True)` optionally adds semantic task/transfer
 ranges for an external profiler. See the
 [saved-Plan capture tool](../../benchmarks/quickstart.md#nsight-captures-of-saved-winners).

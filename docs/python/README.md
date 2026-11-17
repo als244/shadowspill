@@ -30,7 +30,6 @@ order of calls and a complete example.
 | Budgets, traversal, save/recompute search and candidate sweeps | [Planning](api/planning.md) |
 | Saved Programs, profiles and Plans | [Artifacts](api/artifacts.md) |
 | Global batches, complete/split updates, evaluation and checkpoints | [Training client](client.md#runtime-operations) |
-| Saved-Plan training loops | [Trainer](api/training.md) |
 | Asynchronous calls and shared state across Plans | [Executor](api/executor.md) |
 | Logical ownership, calibration and multi-worker execution | [Distributed training](api/distributed.md) |
 | Pool capacities, calibration and external storage | [Pool memory](api/pool-memory.md), [SSD](api/ssd.md) |

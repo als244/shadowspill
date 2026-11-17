@@ -87,7 +87,7 @@ permits are in [the program](program.md#what-it-holds).
 `Executor(training_plan, plans={"evaluation": forward_plan})` binds compatible
 model tensors once. Invocations use these admitted Plans sequentially. The
 executor owns persistent storage; returned outputs belong to the caller and
-remain valid across subsequent calls. See [execution](../python/api/training.md).
+remain valid across subsequent calls. See [execution](../python/api/executor.md).
 
 ## What it means for cleanup
 

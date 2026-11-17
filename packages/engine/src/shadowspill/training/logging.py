@@ -82,8 +82,8 @@ class Wandb:
 class DistributedLogger:
     """Keep per-rank W&B runs and asynchronously combine completed CPU records.
 
-    Pass as Trainer.fit's logger. Trainer retains per-rank console/JSONL output;
-    this helper adds aggregate console/JSONL output and optional grouped W&B runs.
+    Feed completed CPU records from the application loop. This helper adds
+    aggregate console/JSONL output and optional grouped W&B runs.
     All ranks construct/close it in matching order using their CPU control group.
     W&B rank telemetry follows device (the current CUDA device by default).
     The aggregate maps nodes/GPUs/ranks and monitors this host's participating GPUs.

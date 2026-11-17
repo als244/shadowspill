@@ -11,7 +11,7 @@ import torch
 
 
 class TokenUpdates:
-    """An update iterable and its microbatch splitter, usable with ``Trainer``.
+    """An update iterable and its microbatch splitter, for captured phase fixtures.
 
     Read ``train.bin`` or ``val.bin`` (uint32 token IDs) and ``meta.json`` from the text
     preparation recipe. Each update has exactly ``sequences_per_step`` windows
@@ -89,7 +89,7 @@ class TokenUpdates:
 
     @property
     def candidates(self):
-        """Every divisor of the local sequence count; Trainer searches orderings."""
+        """Every divisor of the local sequence count for candidate planning."""
         return {
             f"{size}_sequences": self.splitter(sequences_per_microbatch=size)
             for size in range(1, self.sequences_per_step + 1)
@@ -98,7 +98,7 @@ class TokenUpdates:
         }
 
     def splitter(self, *, sequences_per_microbatch):
-        """Fix a size and return the function Trainer applies to each update."""
+        """Fix a size and return a splitter for each update."""
         if (
             sequences_per_microbatch <= 0
             or self.sequences_per_step % sequences_per_microbatch

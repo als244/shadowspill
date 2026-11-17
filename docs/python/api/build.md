@@ -10,9 +10,9 @@ state, measure task performance or open execution/spill pools. See the
 
 | Function | Captured computation | Execute with |
 | --- | --- | --- |
-| `build_step` | Objective, backward and optimizer update | `Trainer` or `Executor` |
+| `build_step` | Objective, backward and optimizer update | `Executor` |
 | `build_forward_backward` | Objective and backward; gradients persist, no optimizer | `Executor`, with fresh/accumulating gradient modes |
-| `build_forward` | One forward call, optionally through `forward_fn` | `Executor`, or Trainer's `evaluation_plan` |
+| `build_forward` | One forward call, optionally through `forward_fn` | `Executor` with a named forward Plan |
 
 ```python
 from shadowspill import build_step

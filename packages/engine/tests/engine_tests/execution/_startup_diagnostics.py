@@ -9,7 +9,9 @@ import torch
 from engine_tests.execution._cold import forbid_preparation
 
 forbid_preparation()
-from shadowspill import Plan, Trainer  # noqa: E402
+from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
+from shadowspill.execution.diagnostics import diagnose  # noqa: E402
+from shadowspill.pytorch._rng import restore_rng, rng_state  # noqa: E402
 
 directory = Path(sys.argv[1])
 oracle = torch.load(directory / "oracle.pt", weights_only=True)
@@ -33,56 +35,55 @@ def snapshot(executor):
     return values
 
 
-with Trainer(Plan.load(directory / "plan.ssp")) as trainer:
-    trainer.initialize(fill)
-    trainer.save(directory / "initial.ssp")
-    initial = snapshot(trainer.executor)
+with Executor(Plan.load(directory / "plan.ssp")) as executor:
+    executor.initialize(fill)
+    save_checkpoint(executor, directory / "initial.ssp")
+    initial = snapshot(executor)
     counters = {
         n: v
         for n, v in initial.items()
         if n.startswith("optimizer.") and n.endswith(".step")
     }
     assert counters and all(value.dtype == torch.int64 for value in counters.values())
-    path = trainer.executor._paths[0]
+    path = executor._paths[0]
     assert all(path.controls.bindings[name]["object_id"] is None for name in counters)
     torch.manual_seed(1709)
-    trainer.step(args=[oracle["args"]])
-    first = snapshot(trainer.executor)
-    trainer.load(directory / "initial.ssp")
+    executor.run(args=[oracle["args"]]).result()
+    first = snapshot(executor)
+    load_checkpoint(executor, directory / "initial.ssp")
     torch.manual_seed(1709)
     cpu_rng, cuda_rng = torch.get_rng_state(), torch.cuda.get_rng_state()
-    summary = trainer.diagnose(
-        args=[oracle["args"]], directory=directory / "startup", warmup=2
+    summary = diagnose(
+        executor, args=[oracle["args"]], directory=directory / "startup", warmup=2
     )
     assert summary["buffer_snapshot_bytes"] == 8
-    assert trainer.step_count == 0
-    torch.testing.assert_close(initial, snapshot(trainer.executor), rtol=0, atol=0)
+    torch.testing.assert_close(initial, snapshot(executor), rtol=0, atol=0)
     assert torch.equal(cpu_rng, torch.get_rng_state())
     assert torch.equal(cuda_rng, torch.cuda.get_rng_state())
     assert (directory / "startup/timelines/traced.html").is_file()
     diagnostics = json.loads((directory / "startup/step.json").read_text())
     assert diagnostics["tasks"] and diagnostics["transfers"]["fetch"]
-    actual = trainer.step(args=[oracle["args"]])
-    torch.testing.assert_close(first, snapshot(trainer.executor), rtol=0, atol=0)
+    actual = executor.run(args=[oracle["args"]]).result()
+    torch.testing.assert_close(first, snapshot(executor), rtol=0, atol=0)
     for index, expected in enumerate(oracle["expected"]):
         if index:
-            actual = trainer.step(args=[oracle["args"]])
+            actual = executor.run(args=[oracle["args"]]).result()
         torch.testing.assert_close(
-            torch.tensor(actual.loss), torch.tensor(expected["loss"])
+            torch.tensor(sum(float(value) for value in actual.losses)),
+            torch.tensor(expected["loss"]),
         )
-        values = snapshot(trainer.executor)
+        values = snapshot(executor)
         for name, expected_value in expected["values"].items():
             torch.testing.assert_close(
                 values[name].reshape_as(expected_value),
                 expected_value,
                 check_dtype=not name.endswith(".step"),
             )
+    del actual
     # Diagnostics must also leave already-populated moments and step counters intact.
-    current = snapshot(trainer.executor)
-    step = trainer.step_count
-    trainer.diagnose(args=[oracle["args"]], directory=directory / "again", warmup=0)
-    torch.testing.assert_close(current, snapshot(trainer.executor), rtol=0, atol=0)
-    assert trainer.step_count == step
+    current = snapshot(executor)
+    diagnose(executor, args=[oracle["args"]], directory=directory / "again", warmup=0)
+    torch.testing.assert_close(current, snapshot(executor), rtol=0, atol=0)
     loads = 0
 
     def fail_second_input(index):
@@ -93,19 +94,23 @@ with Trainer(Plan.load(directory / "plan.ssp")) as trainer:
         return oracle["args"], {}
 
     try:
-        trainer.diagnose(
-            input_loader=fail_second_input, directory=directory / "failure", warmup=2
+        diagnose(
+            executor,
+            input_loader=fail_second_input,
+            directory=directory / "failure",
+            warmup=2,
         )
     except ValueError as error:
         assert "input loader failed" in str(error)
     else:
         raise AssertionError("input-loader failure was swallowed")
-    torch.testing.assert_close(current, snapshot(trainer.executor), rtol=0, atol=0)
-    assert trainer.step_count == step
-    trainer.save(directory / "populated.ssp")
-    trainer.step(args=[oracle["args"]])
-    updated = snapshot(trainer.executor)
-    trainer.load(directory / "populated.ssp")
-    trainer.step(args=[oracle["args"]])
-    torch.testing.assert_close(updated, snapshot(trainer.executor), rtol=0, atol=0)
+    torch.testing.assert_close(current, snapshot(executor), rtol=0, atol=0)
+    populated_rng = rng_state(executor.device)
+    save_checkpoint(executor, directory / "populated.ssp")
+    executor.run(args=[oracle["args"]]).result()
+    updated = snapshot(executor)
+    load_checkpoint(executor, directory / "populated.ssp")
+    restore_rng(populated_rng, executor.device)
+    executor.run(args=[oracle["args"]]).result()
+    torch.testing.assert_close(updated, snapshot(executor), rtol=0, atol=0)
 print("Qualified saved startup diagnostics")

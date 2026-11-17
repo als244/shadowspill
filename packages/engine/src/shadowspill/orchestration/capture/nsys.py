@@ -1,4 +1,4 @@
-"""CPU-only Nsight launch settings and the shared Trainer capture adapter."""
+"""CPU-only Nsight launch settings for execution workers."""
 
 import json
 import sys
@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from shutil import which
-from typing import Any, Self, cast
+from typing import Self, cast
 
 
 @dataclass(frozen=True)
@@ -116,7 +116,7 @@ class NsysCapture:
         Each rank writes ``output_dir/rank-NNNNN/{trace.nsys-rep,capture.json}``.
         The directory may be shared across nodes or collected from each node
         afterward. Global rank names do not collide between nodes. Capture
-        boundaries still belong to the worker's Trainer configuration.
+        boundaries still belong to the worker's update-capture configuration.
         """
         directory = self.output_dir if output_dir is None else output_dir
         if directory is None:
@@ -136,17 +136,3 @@ class NsysCapture:
             "--",
             *map(str, worker_command),
         ]
-
-
-def nsight_trainer[T: type[Any]](base: T) -> T:
-    """Add bounded capture to a Trainer subclass, preserving its other hooks."""
-    from ._nsys_trainer import NsightTrainerMixin
-
-    if issubclass(base, NsightTrainerMixin):
-        return base
-
-    # The caller selects the concrete class; its MRO is composed at runtime.
-    class NsightTrainer(NsightTrainerMixin, base):  # type: ignore[misc, valid-type]
-        pass
-
-    return cast(T, NsightTrainer)

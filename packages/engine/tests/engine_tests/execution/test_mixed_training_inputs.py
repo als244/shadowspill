@@ -134,4 +134,4 @@ def test_mixed_calls_keep_weights_metrics_and_group_controls(tmp_path, breadth):
         timeout=180,
     )
     assert child.returncode == 0, child.stdout + child.stderr
-    assert "Qualified mixed-input Trainer" in child.stdout
+    assert "Qualified mixed-input Executor" in child.stdout

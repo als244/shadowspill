@@ -1,7 +1,7 @@
 # Errors, failures, and cleanup
 
 Build, measurement, planning and execution have separate ownership and failure
-boundaries. See [Trainer and Executor](../api/training.md) for normal usage.
+boundaries. See the [training client](../client.md) for normal usage.
 
 ## Preparation failures
 
@@ -84,7 +84,7 @@ records its diagnostics and continues. CPU planning admits no runtime resources;
 Executor construction creates and admits them in a fresh worker and cleans up
 partial setup on failure. Memory the process acquires outside the pool beyond
 the planned headroom is reported on stderr and execution continues; with
-`reject_overbudget=True` on Executor or Trainer it is refused, as
+`reject_overbudget=True` on Executor it is refused, as
 `RuntimeInstallError` while the runtime is installed and `AdmissionError`
 afterwards. Pool bounds and device allocation failures are enforced either way.
 Distributed workers whose Programs disagree on what they exchange, or whose
@@ -206,11 +206,11 @@ run needs a new process.
 ## Normal close order
 
 Wait for the invocation, export any required checkpoint, release caller-owned GPU
-outputs and close Executor or Trainer. Closing copies no model tensors. The
+outputs and close Executor. Closing copies no model tensors. The
 runtime rejects shutdown while live outputs still own device storage; release
 them and retry close. Completed outputs remain valid until explicitly released.
 
 The allocator shim is process-global. After runtime teardown it stays closed,
 so further GPU work belongs in another fresh worker. See the
-[execution reference](../api/training.md), [allocator guide](allocator.md) and
+[execution reference](../api/executor.md), [allocator guide](allocator.md) and
 [memory runtime](../../architecture/memory-runtime.md#failure-and-teardown).

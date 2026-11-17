@@ -1,4 +1,4 @@
-"""Cold worker: a Trainer sees a Plan, inputs and tensor data, never a model."""
+"""Cold saved-Plan execution with caller-owned progress and checkpoint metadata."""
 
 import sys
 from pathlib import Path
@@ -8,28 +8,12 @@ import torch
 from engine_tests.execution._cold import forbid_preparation
 
 forbid_preparation()
-from shadowspill import Executor, Plan, Trainer  # noqa: E402
+from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
+from shadowspill.training.observations import StepObservations  # noqa: E402
 
 directory, mode = Path(sys.argv[1]), sys.argv[2]
 plan = Plan.load(directory / "plan.ssp")
 oracle = torch.load(directory / "oracle.pt", weights_only=True)
-
-
-class Source:
-    def __init__(self):
-        self.position = 0
-
-    def __iter__(self):
-        while self.position < len(oracle["examples"]):
-            examples = oracle["examples"][self.position]
-            self.position += 1
-            yield {"args": [v[0] for v in examples], "kwargs": [v[1] for v in examples]}
-
-    def state_dict(self):
-        return {"position": torch.tensor(self.position)}
-
-    def load_state_dict(self, values):
-        self.position = int(values["position"])
 
 
 def fill(request, chunk):
@@ -38,33 +22,38 @@ def fill(request, chunk):
     chunk.copy_(values[request.offset : request.offset + chunk.numel()])
 
 
-def check(trainer, result):
-    expected = oracle["losses"][result.step - 1]
-    torch.testing.assert_close(torch.tensor(result.losses), torch.tensor(expected))
-    assert all(item["mean"].device.type == "cpu" for item in result.metrics)
-
-
-borrowed = Executor(plan) if mode == "resume" else None
-with Trainer(
-    plan,
-    executor=borrowed,
-    schedules={"optimizer_group.0.lr": lambda step: oracle["rates"][step]},
-) as trainer:
+with Executor(plan) as executor:
+    position = 0
     if mode == "resume":
-        trainer.load(directory / "part.ssp", chunk_bytes=28)
-        assert trainer.step_count == 2
+        position = load_checkpoint(executor, directory / "part.ssp", chunk_bytes=28)[
+            "position"
+        ]
+        assert position == 2
     else:
-        trainer.initialize(fill, chunk_bytes=40)
-    source = Source()
-    trainer.fit(
-        source,
-        steps=2 if mode == "part" else 6,
-        callbacks=[check],
-        run_dir=directory / mode,
-    )
-    assert source.position == trainer.step_count
+        executor.initialize(fill, chunk_bytes=40)
+    target = 2 if mode == "part" else 6
+    while position < target:
+        examples = oracle["examples"][position]
+        raw = executor.run(
+            args=[value[0] for value in examples],
+            kwargs=[value[1] for value in examples],
+            hyperparams={"optimizer_group.0.lr": oracle["rates"][position]},
+        ).result()
+        result = StepObservations.collect(raw.losses, raw.metrics)
+        executor.synchronize()
+        del raw
+        torch.testing.assert_close(
+            torch.tensor(result.losses), torch.tensor(oracle["losses"][position])
+        )
+        assert all(item["mean"].device.type == "cpu" for item in result.metrics)
+        position += 1
     if mode == "part":
-        trainer.save(directory / "part.ssp", chunk_bytes=40)
+        save_checkpoint(
+            executor,
+            directory / "part.ssp",
+            chunk_bytes=40,
+            metadata={"position": position},
+        )
     else:
         values = {}
 
@@ -76,11 +65,8 @@ with Trainer(
                 chunk
             )
 
-        trainer.executor.export_tensors(collect, chunk_bytes=40)
+        executor.export_tensors(collect, chunk_bytes=40)
         assert values.keys() == oracle["final"].keys()
         for name, tensor in oracle["final"].items():
             torch.testing.assert_close(values[name].reshape(tensor.shape), tensor)
-if borrowed is not None:
-    borrowed.synchronize()  # The Trainer did not close caller-owned execution.
-    borrowed.close()
-print("Qualified Trainer " + mode, flush=True)
+print("Qualified saved training " + mode, flush=True)

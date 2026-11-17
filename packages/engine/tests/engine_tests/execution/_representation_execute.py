@@ -13,7 +13,7 @@ from engine_tests.execution._cold import forbid_preparation
 forbid_preparation(
     "engine_tests.pytorch.representation_fixtures", "shadowspill_workloads.models"
 )
-from shadowspill import Plan, Trainer  # noqa: E402
+from shadowspill import Executor, Plan, load_checkpoint, save_checkpoint  # noqa: E402
 
 
 def compilation_finished(**event):
@@ -54,12 +54,13 @@ def snapshot(executor):
     return values
 
 
-def check(trainer, index):
-    result = trainer.step(args=[(oracle["sample"],)])
-    assert abs(result.loss - oracle["losses"][index]) <= 1e-7 + abs(result.loss) * 2e-5
-    output = trainer.evaluate(args=[(oracle["sample"],)])
+def check(executor, index):
+    result = executor.run(args=[(oracle["sample"],)]).result()
+    loss = sum(float(value) for value in result.losses)
+    assert abs(loss - oracle["losses"][index]) <= 1e-7 + abs(loss) * 2e-5
+    output = executor.run(plan="evaluation", args=[(oracle["sample"],)]).result().cpu()
     torch.testing.assert_close(output, oracle["outputs"][index], rtol=2e-5, atol=1e-6)
-    actual = snapshot(trainer.executor)
+    actual = snapshot(executor)
     assert actual.keys() == oracle["states"][index].keys()
     for name, expected in oracle["states"][index].items():
         torch.testing.assert_close(
@@ -69,12 +70,12 @@ def check(trainer, index):
 
 
 checkpoint = root / "checkpoint.ssp"
-with Trainer(plan, evaluation_plan=evaluation) as trainer:
+with Executor(plan, plans={"evaluation": evaluation}) as executor:
     if mode == "train":
-        trainer.initialize(fill, chunk_bytes=40)
+        executor.initialize(fill, chunk_bytes=40)
         for index in range(3):
-            check(trainer, index)
-        trainer.save(checkpoint, chunk_bytes=40)
+            check(executor, index)
+        save_checkpoint(executor, checkpoint, chunk_bytes=40, metadata={"step": 3})
         with tarfile.open(checkpoint) as archive:
             manifest = json.loads(archive.extractfile("manifest.json").read())
             entries = manifest["tensors"]
@@ -83,13 +84,13 @@ with Trainer(plan, evaluation_plan=evaluation) as trainer:
         assert "weight" not in names
         assert not manifest["derived_tensors"]
         assert manifest["retained_weight_copies"]["weight"]
-        uninterrupted = check(trainer, 3)
+        uninterrupted = check(executor, 3)
         torch.save(uninterrupted, root / "uninterrupted.pt")
     else:
         # A fresh worker restores all physical leaves and the master without
         # an initializer, cached model, or import of the tensor wrapper type.
         uninterrupted = torch.load(root / "uninterrupted.pt", weights_only=True)
-    trainer.load(checkpoint, chunk_bytes=28)
-    assert trainer.step_count == 3
-    torch.testing.assert_close(check(trainer, 3), uninterrupted, rtol=0, atol=0)
+    metadata = load_checkpoint(executor, checkpoint, chunk_bytes=28)
+    assert metadata["step"] == 3
+    torch.testing.assert_close(check(executor, 3), uninterrupted, rtol=0, atol=0)
 print("Qualified quantized saved-Plan update, evaluation and exact resume", flush=True)

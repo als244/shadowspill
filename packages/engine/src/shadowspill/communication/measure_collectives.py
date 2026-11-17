@@ -47,7 +47,8 @@ def measure_collectives(
             ):
                 observation = _measure(request, device, options, bindings)
                 event(
-                    f"Measured duration: {observation['duration_seconds'] * 1e3:,.3f} ms"
+                    "Measured duration: "
+                    f"{observation['duration_seconds'] * 1e3:,.3f} ms"
                 )
         rows.append(
             {

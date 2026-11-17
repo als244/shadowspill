@@ -19,15 +19,13 @@ from shadowspill_workloads.models.shared.decoder import RotaryEmbedding
 from shadowspill_workloads.recipes.text.phases.candidates import batch_sizes
 
 
-def test_replanning_preserves_prior_profile_headroom(tmp_path, monkeypatch):
-    from shadowspill.training.preparation import api as runner
+def test_replanning_preserves_prior_profile_headroom(tmp_path):
+    from shadowspill.training.preparation.configuration import configure
 
-    calls = []
-    monkeypatch.setattr(runner, "run_phases", lambda *a, **k: calls.append((a, k)))
     data = tmp_path / "tokens"
     root = tmp_path / "run"
     recipe = "shadowspill_workloads.recipes.text.catalog"
-    runner.run(
+    configure(
         recipe,
         {
             "data": str(data),
@@ -40,11 +38,10 @@ def test_replanning_preserves_prior_profile_headroom(tmp_path, monkeypatch):
     path = root / "config.json"
     options = json.loads(path.read_text())
     assert options["external_headroom_mib"] == 768
-    runner.run(recipe, {"run_dir": str(root), "execution_gib": 4}, phase="plan")
+    configure(recipe, {"run_dir": str(root), "execution_gib": 4}, phase="plan")
     restored = json.loads(path.read_text())
     assert restored["external_headroom_mib"] == 768
     assert restored["execution_gib"] == 4
-    assert [call[0][2] for call in calls] == ["build", "plan"]
 
 
 def test_initializer_reconstructs_identical_shards_and_rotary_tables():
@@ -122,7 +119,7 @@ def test_qwen_recipe_builds_profiles_replans_and_executes_saved_plan(tmp_path, r
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
         "-c",
-        "import json, sys; from shadowspill.training.preparation import run; "
+        "import json, sys; from workload_tests._phase_runner import run; "
         "run('shadowspill_workloads.recipes.text.catalog', "
         "json.loads(sys.argv[1]), phase=sys.argv[2])",
     ]

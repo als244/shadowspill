@@ -47,8 +47,6 @@ batches to the installed service, which owns preparation and execution. Generic
 saved-phase preparation lives in `shadowspill.training.preparation`, and bounded
 initialization/copy helpers live in `shadowspill.checkpoint`. The catalog installs
 independently from `packages/workloads`; custom definitions need no catalog.
-The saved-Plan `shadowspill.training.Trainer` supports recipe loops built directly
-from phase artifacts; see its [API reference](../python/api/training.md).
 Saved recipe configurations record exact adapter module names. A renamed or
 changed adapter requires a fresh recipe directory; module identities are never
 silently rewritten when reusing artifacts.
@@ -110,7 +108,7 @@ packages/engine/src/shadowspill/
 │   └── observations/      optional bounded runtime norm collection
 ├── orchestration/         installed process launch, capture and phase diagnostics
 │   ├── launch/            process commands, rank/device isolation and host groups
-│   ├── capture/           external profiler launch and Trainer capture boundaries
+│   ├── capture/           external profiler launch and runtime capture boundaries
 │   └── monitoring/        worker phase journals
 ├── checkpoint/            streamed checkpoint format over Executor tensor access
 ├── parallelism/           logical groups, parameter storage and input placement
@@ -183,7 +181,7 @@ packages/engine/src/shadowspill/
 │   ├── plan/              worker bindings, admission, lifecycle and optional tracing
 │   │   └── layout/        certified offsets and completion dependencies
 │   └── timing.py          an instant recorded on a stream, and the time between two
-├── training/              saved-Plan training loops, schedules and checkpoints
+├── training/              service preparation, sessions and worker commands
 │   ├── definitions/       public model/objective functions and CPU schema resolution
 │   ├── inputs/            owned global input validation and packing
 │   ├── session/           confirmed operation boundaries and participation

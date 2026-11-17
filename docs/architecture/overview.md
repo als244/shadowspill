@@ -23,7 +23,7 @@ flowchart LR
     plan["plan_program<br/>sweep_programs"]
     executable["Plan"]
     report["write_report"]
-    executor["Fresh worker: Executor<br/>normally used through Trainer"]
+    executor["Fresh worker: Executor"]
 
     model --> build --> program
     program --> measure --> profiles
@@ -82,9 +82,9 @@ builds.
 
 `Executor.run()` returns a result handle; `.result()` waits and returns
 caller-owned outputs. One invocation is active at a time per Executor. The next
-`run()` waits for the previous one. Trainer handles the training loop using this
-same interface, optionally with a separately built evaluation Plan sharing model
-tensors. Build, measurement and planning remain outside Trainer and Executor.
+`run()` waits for the previous one. The training service binds prepared Plans to
+workers and submits commands through this interface. Forward, backward and
+optimizer Plans share model state. Preparation runs before worker execution.
 
 ## Source organization
 
@@ -102,7 +102,7 @@ PyTorch or install the execution allocator.
 | `communication/` | Communication costs, calibration and worker group binding. |
 | `planning/` | Public planning/sweeps, ordering, cost assembly and admission inputs. |
 | `execution/` | Saved-plan setup, storage, bounded initialization/export and dispatch. |
-| `training/`, `checkpoint/` | Trainer, schedules and checkpoint helpers above Executor. |
+| `training/`, `checkpoint/` | Service preparation, command/session handling, schedules and bounded checkpoints. |
 | `reporting/` | CPU reports from saved planning results. |
 | `pytorch/` | PyTorch capture, AOT graph pairs, storage contracts, kernel choices, saved-code restoration and runtime adapters. |
 | `ir/`, `planner/`, `simulator/`, `runtime/` | Framework-neutral IR and native-library interfaces. |

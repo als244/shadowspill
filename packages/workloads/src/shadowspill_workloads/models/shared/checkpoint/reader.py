@@ -111,7 +111,7 @@ class Checkpoint:
     def initialize(self, model: torch.nn.Module) -> dict[str, Any]:
         """Fill pool-owned base weights, derived buffers and fresh LoRA factors.
 
-        Suitable for ``Trainer.prepare(initialize=checkpoint.initialize)``.
+        Suitable for ``executor.initialize(checkpoint.initialize)``.
         Base tensors are loaded directly; no random full-model initialization
         or temporary copy of the model is needed. Adapter-only state is not
         looked up in the base checkpoint. The temporary file mappings are closed

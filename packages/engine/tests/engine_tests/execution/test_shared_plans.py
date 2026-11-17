@@ -196,23 +196,21 @@ def test_shared_evaluation_and_checkpoint_in_cold_workers(tmp_path):
         ),
         tmp_path / "oracle.pt",
     )
-    for mode in ("direct", "trainer"):
-        worker = subprocess.run(
-            [
-                sys.executable,
-                *(["-S"] if sys.flags.no_site else []),
-                str(Path(__file__).with_name("_evaluate.py")),
-                str(tmp_path),
-                mode,
-            ],
-            env={
-                **os.environ,
-                "TORCHINDUCTOR_CACHE_DIR": str(tmp_path / f"{mode}-inductor"),
-                "TRITON_CACHE_DIR": str(tmp_path / f"{mode}-triton"),
-            },
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-        assert worker.returncode == 0, worker.stdout + worker.stderr
-        assert "Qualified shared evaluation" in worker.stdout
+    worker = subprocess.run(
+        [
+            sys.executable,
+            *(["-S"] if sys.flags.no_site else []),
+            str(Path(__file__).with_name("_evaluate.py")),
+            str(tmp_path),
+        ],
+        env={
+            **os.environ,
+            "TORCHINDUCTOR_CACHE_DIR": str(tmp_path / "direct-inductor"),
+            "TRITON_CACHE_DIR": str(tmp_path / "direct-triton"),
+        },
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert worker.returncode == 0, worker.stdout + worker.stderr
+    assert "Qualified shared evaluation" in worker.stdout

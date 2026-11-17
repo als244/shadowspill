@@ -42,7 +42,6 @@ _PUBLIC = {
     "TensorChunk": "artifacts.tensors",
     "save_checkpoint": "checkpoint",
     "load_checkpoint": "checkpoint",
-    "Trainer": "training.trainer",
     "Parallelism": "parallelism",
     "ParameterStorage": "parallelism",
     "Replicated": "parallelism",

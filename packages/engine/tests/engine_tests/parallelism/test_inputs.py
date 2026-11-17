@@ -138,7 +138,9 @@ def test_invalid_missing_or_ambiguous_declarations_fail_before_routing():
 def test_input_placement_is_available_in_framework_free_planning_process():
     code = """
 import json, sys
-for name in ('torch', 'numpy', 'shadowspill_client', 'shadowspill_workloads', 'mlops'):
+for name in ('torch', 'numpy', 'shadowspill_workloads', 'mlops',
+             'shadowspill_client.service', 'shadowspill_client.training',
+             'shadowspill_client.transport'):
     sys.modules[name] = None
 from shadowspill.parallelism import InputPlacement, Parallelism
 p = Parallelism.dp(ranks_per_replica=4, inputs=InputPlacement.independent(4))

@@ -46,10 +46,5 @@ there is no automatic retry of updates. Optional `--wandb-project NAME` and
 `--wandb-mode offline` export the recorded scalar history after training. An
 export failure leaves the authoritative local/service results intact.
 
-This replaces the old per-worker regression Trainer recipe. Synthetic samples
-now use NumPy PCG64 instead of Torch's generator, so historical synthetic values
-are different. Initialization, FP32 precision, AdamW defaults and loss
-normalization are preserved. The old `--phase` and `--no-plots` CLI flags are
-removed. The existing public build/profile/plan/execute APIs and the
-[separate benchmark](../../../packages/workloads/src/shadowspill_workloads/recipes/regression/README.md)
-still support saved phase artifacts and CPU replanning.
+For saved phase artifacts and CPU replanning, see the
+[phase benchmark](../../../packages/workloads/src/shadowspill_workloads/recipes/regression/README.md).

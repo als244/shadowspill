@@ -2,7 +2,7 @@
 
 `Executor` normally constructs and owns these objects. Use this reference when
 integrating the allocator or building runtime tooling. Application training uses
-[Trainer](training.md) or [Executor](executor.md); preparation uses the
+[Executor](executor.md); preparation uses the
 [phase APIs](../phases.md).
 
 ## Memory pool configuration
@@ -295,4 +295,4 @@ later reads. `resolved` reports completion and `diagnostics` exposes the optiona
 runtime trace. An optional diagnostic assembly failure is raised when reading
 `diagnostics`, after successful invocation completion; `result()` still returns
 the completed outputs. Synchronization and required cleanup errors remain
-invocation failures. See [execution](training.md).
+invocation failures. See [execution](executor.md).

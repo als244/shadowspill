@@ -18,7 +18,7 @@ choose a training or measurement protocol, or interpret a saved recipe directory
 | `monitoring/lifecycle` | Append-only host phase journals, including context entry/cleanup and failures |
 | `candidates` | Record a local candidate's device exhaustion after releasing its traceback; other failures propagate |
 | `communication` | Union exact collective requests across compatible caller-selected Programs; measurement remains in the public phase APIs |
-| `capture/nsys` | CPU-only Nsight command configuration and a lazy Trainer adapter for shared capture boundaries |
+| `capture/nsys` | CPU-only Nsight command configuration and runtime capture boundaries |
 | `capture/nsys_worker` | Pre-CUDA per-rank GPU masking, collector launch and report validation; global rank paths support external multi-node launchers |
 
 These modules import no model, recipe, benchmark or qualification implementation.
@@ -30,9 +30,8 @@ parallelism, preserving collective sizes, dtypes, ordered ranks and aliasing.
 Recipes and quickstart measure this union once per phase invocation; each
 candidate still receives its own task/communication overlap measurement. This
 does not reuse calibration across machines or separate phase invocations.
-The private `capture/_nsys_trainer` worker module is imported only when capture is enabled;
-it uses cudaProfilerApi boundaries, rank barriers and the existing Executor NVTX
-annotation flag. It contains no model or recipe-specific logic.
+`capture/_nsys_runtime.UpdateCapture` controls cudaProfilerApi boundaries and rank barriers.
+Executor supplies task annotations; capture contains no model-specific logic.
 The collector keeps its session open after the single capture range so Nsight
 converts the report after worker exit, when training pools have been released.
 Worker coordination takes an explicit participant count and optional rank map,

@@ -4,7 +4,7 @@ import json
 
 import torch
 
-from shadowspill import Trainer
+from shadowspill.execution.diagnostics import diagnose
 
 
 def check(executor, calls, directory):
@@ -19,15 +19,14 @@ def check(executor, calls, directory):
 
     initial = snapshot()
     cpu_rng, cuda_rng = torch.get_rng_state(), torch.cuda.get_rng_state()
-    with Trainer(executor.plan, executor=executor) as trainer:
-        summary = trainer.diagnose(
-            args=[args for args, _ in calls],
-            kwargs=[kwargs for _, kwargs in calls],
-            directory=directory,
-            warmup=1,
-        )
-        assert trainer.step_count == 0
-        assert summary["buffer_snapshot_bytes"] == 8
+    summary = diagnose(
+        executor,
+        args=[args for args, _ in calls],
+        kwargs=[kwargs for _, kwargs in calls],
+        directory=directory,
+        warmup=1,
+    )
+    assert summary["buffer_snapshot_bytes"] == 8
     torch.testing.assert_close(initial, snapshot(), rtol=0, atol=0)
     assert torch.equal(cpu_rng, torch.get_rng_state())
     assert torch.equal(cuda_rng, torch.cuda.get_rng_state())

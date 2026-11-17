@@ -22,7 +22,7 @@ from shadowspill import (
 
 
 @pytest.mark.cuda
-def test_trainer_updates_and_cold_resume_match_independent_eager_loop(tmp_path):
+def test_saved_updates_and_cold_resume_match_independent_eager_loop(tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     torch.manual_seed(91)
@@ -100,4 +100,4 @@ def test_trainer_updates_and_cold_resume_match_independent_eager_loop(tmp_path):
             timeout=180,
         )
         assert worker.returncode == 0, worker.stdout + worker.stderr
-        assert "Qualified Trainer " + mode in worker.stdout
+        assert "Qualified saved training " + mode in worker.stdout

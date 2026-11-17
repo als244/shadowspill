@@ -8,7 +8,7 @@ measure_program → Profiles → apply_profiles → ProfiledProgram
 measure_communication → CommunicationInfo
 measure_overlap → Profiles overlay → enriched ProfiledProgram
 plan_program over build policies/geometries/orderings/budgets → Plans + simulated reports
-Trainer(Plan) → execution measurements
+Executor(Plan) → execution measurements
 ```
 
 Build and profiling use ordinary PyTorch allocation. Planning is CPU-only.
@@ -189,7 +189,7 @@ allowlist can instead be implemented by looping over
 `plan_program(ordering=StepDataOrdering(...))`; quickstart's Python `run` does
 not expose an ordering selector, and candidate fields do not accept one.
 Reordering reuses the built tasks and profiles. The selected Plan fixes the
-input geometry and traversal that Trainer executes.
+input geometry and traversal that Executor executes.
 See [step ordering](../docs/architecture/step.md).
 
 The launcher reads the factory's declarations before build to select its worker
