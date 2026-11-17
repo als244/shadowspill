@@ -311,6 +311,23 @@ def test_bundle_accepts_missing_optional_coverage_proof(saved_family):
     assert restored.families and not restored.coverage
 
 
+def test_worker_binding_reuses_controller_validation_of_the_exact_artifact(
+    saved_family,
+):
+    bundle, checked = saved_family
+    validated = bundle.recheck(installed())
+    count = len(checked)
+    assert count == sum(map(len, bundle.plans.values()))
+    bound = bundle_validation.bind_bundle(bundle, validated.inventory)
+    assert manifest(bound) == manifest(validated)
+    assert bound.plans == validated.plans
+    assert len(checked) == count
+    # A new service-boundary recheck still performs strict validation. There is
+    # no public skip-validation option or cache keyed only by a filename.
+    bundle.recheck(installed())
+    assert len(checked) == 2 * count
+
+
 def test_bundle_rechecks_source_scenarios_and_rejects_unreferenced_artifacts(
     saved_family,
 ):

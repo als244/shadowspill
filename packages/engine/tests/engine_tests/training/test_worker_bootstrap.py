@@ -65,8 +65,14 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
         events.append("integrity")
         return tmp_path / "bundle"
 
-    def recheck(registry):
-        assert registry == "registry"
+    bundle = SimpleNamespace(config="configuration")
+
+    def resolve(registry, *, config):
+        assert registry == "registry" and config == "configuration"
+        return "setup"
+
+    def bind(value, inventory):
+        assert value is bundle and inventory == "inventory"
         events.append("bundle")
         return "family"
 
@@ -111,9 +117,11 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
 
     monkeypatch.setattr(bootstrap, "load_registry", load)
     monkeypatch.setattr(bootstrap, "verify_file", verify)
-    monkeypatch.setattr(
-        bootstrap.TrainingBundle, "load", lambda _: SimpleNamespace(recheck=recheck)
-    )
+    monkeypatch.setattr(bootstrap.TrainingBundle, "load", lambda _: bundle)
+    monkeypatch.setattr(bootstrap, "resolve_training", resolve)
+    monkeypatch.setattr(bootstrap, "prepare_layouts", lambda setup: "layouts")
+    monkeypatch.setattr(bootstrap, "capture_inventory", lambda layouts: "inventory")
+    monkeypatch.setattr(bootstrap, "bind_bundle", bind)
     monkeypatch.setattr(bootstrap.PreparedWorker, "resolve", prepared)
     if issue:
         with pytest.raises((ValueError, ProtocolError)):

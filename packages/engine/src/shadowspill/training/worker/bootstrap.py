@@ -10,6 +10,10 @@ from shadowspill.orchestration.capture.progress import write_progress
 from shadowspill.orchestration.launch.file_grants import resolve_file, verify_file
 from shadowspill.training.definitions import InitializationRuntime, load_registry
 from shadowspill.training.preparation.bundle import TrainingBundle
+from shadowspill.training.preparation.bundle_validation import bind_bundle
+from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.setup import resolve_training
+from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client.protocol.codec import ProtocolError
 
 from .channel import read_message
@@ -33,8 +37,14 @@ def serve(
         raise ProtocolError("worker requires private launch configuration first")
     registry = load_registry(launch.packages)
     bundle = TrainingBundle.load(verify_file(files, launch.startup.bundle))
+    # Only the owning controller can send WorkerLaunch on this inherited socket.
+    # It has already rechecked this exact immutable artifact. Resolve local source
+    # identities and bindings, without re-deriving IR or simulating every schedule.
+    inventory = capture_inventory(
+        prepare_layouts(resolve_training(registry, config=bundle.config))
+    )
     prepared = PreparedWorker.resolve(
-        bundle.recheck(registry),
+        bind_bundle(bundle, inventory),
         launch.startup.scope,
         bundle=launch.startup.bundle,
         rank_map=dict(enumerate(launch.startup.logical_by_worker)),

@@ -13,7 +13,7 @@ import json
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shadowspill.ir import ShadowSpillProgram
 from shadowspill.schema import artifact_schema
@@ -111,6 +111,42 @@ class TaskAllocationStep:
                 f"{path}.reuses_allocation_ordinal",
             ),
         )
+
+
+class _AllocationSteps:
+    """Share repeated immutable allocator transitions within one decoded artifact.
+
+    Large models repeat the same temporary allocation/release trace for many
+    tasks. Decode and validate each distinct transition once, retaining a bounded
+    table only for this load. Include scalar types so ``True`` cannot reuse a
+    previously validated integer, and send malformed values to the strict parser.
+    """
+
+    def __init__(self) -> None:
+        self.values: dict[tuple[tuple[type, Any], ...], TaskAllocationStep] = {}
+
+    def read(self, value: object, path: str) -> TaskAllocationStep:
+        data = _mapping(value, path)
+        values = tuple(
+            data.get(name)
+            for name in (
+                "allocation_ordinal",
+                "kind",
+                "charged_bytes",
+                "output_alias_group_id",
+                "reuses_allocation_ordinal",
+            )
+        )
+        if any(type(item) not in (int, str, type(None)) for item in values):
+            return TaskAllocationStep.from_value(value, path)
+        key = tuple((type(item), item) for item in values)
+        previous = self.values.get(key)
+        if previous is not None:
+            return previous
+        result = TaskAllocationStep.from_value(value, path)
+        if len(self.values) < 16384:
+            self.values[key] = result
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,8 +325,11 @@ class TaskAdmissionSpec:
         }
 
     @classmethod
-    def from_value(cls, value: object, path: str) -> TaskAdmissionSpec:
+    def from_value(
+        cls, value: object, path: str, *, _steps: _AllocationSteps | None = None
+    ) -> TaskAdmissionSpec:
         data = _mapping(value, path)
+        read_step = TaskAllocationStep.from_value if _steps is None else _steps.read
         return cls(
             task_id=_string(data.get("task_id"), f"{path}.task_id"),
             workspace_extents=_integer_tuple(
@@ -311,7 +350,7 @@ class TaskAdmissionSpec:
                 )
             ),
             allocation_steps=tuple(
-                TaskAllocationStep.from_value(item, f"{path}.allocation_steps[{index}]")
+                read_step(item, f"{path}.allocation_steps[{index}]")
                 for index, item in enumerate(
                     _list(data.get("allocation_steps"), f"{path}.allocation_steps")
                 )
@@ -425,6 +464,7 @@ class AdmissionFacts:
         schema = _string(data.get("schema"), "admission.schema")
         if schema != _SCHEMA:
             raise ValueError(f"admission.schema: unsupported schema {schema!r}")
+        steps = _AllocationSteps()
         return cls(
             device_id=_string(data.get("device_id"), "admission.device_id"),
             pool_capacity_bytes=_integer(
@@ -438,7 +478,9 @@ class AdmissionFacts:
                 data.get("minimum_alignment"), "admission.minimum_alignment"
             ),
             tasks=tuple(
-                TaskAdmissionSpec.from_value(item, f"admission.tasks[{index}]")
+                TaskAdmissionSpec.from_value(
+                    item, f"admission.tasks[{index}]", _steps=steps
+                )
                 for index, item in enumerate(
                     _list(data.get("tasks"), "admission.tasks")
                 )

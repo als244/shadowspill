@@ -545,6 +545,25 @@ def test_admission_facts_use_only_the_current_physical_schema() -> None:
         AdmissionFacts.from_dict(payload)
 
 
+def test_decoding_shares_validated_transitions_without_accepting_changed_types():
+    facts = AdmissionFacts(
+        "cuda_0",
+        96,
+        96,
+        1,
+        tuple(_task_admission(f"task_{i}", workspace_extents=(4, 6)) for i in range(3)),
+    )
+    payload = facts.to_dict()
+    decoded = AdmissionFacts.from_dict(payload)
+    assert decoded == facts and decoded.digest == facts.digest
+    assert decoded.tasks[0].allocation_steps[0] is decoded.tasks[1].allocation_steps[0]
+    # A boolean compares equal to an integer in Python; it is still invalid IR.
+    payload["tasks"][1]["allocation_steps"][0]["allocation_ordinal"] = False
+    with pytest.raises(ValueError, match="integer"):
+        AdmissionFacts.from_dict(payload)
+    assert decoded == facts
+
+
 def test_search_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
     """Physical admission repairs one candidate without shrinking globally.
 

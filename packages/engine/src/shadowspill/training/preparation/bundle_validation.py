@@ -70,6 +70,39 @@ def _candidate(
 def recheck_bundle(
     bundle: TrainingBundle, inventory: TemplateInventory
 ) -> PreparedPlans:
+    """Validate uploaded/prepared artifacts before the controller admits them."""
+    result = bind_bundle(bundle, inventory)
+    for source_key, source in bundle.sources.items():
+        validate_profile(inventory, source_key, source)
+    checked = set()
+    for rows in result.families.values():
+        for row in rows:
+            for rank, worker in row.source.workers.items():
+                for role in ("main", "optimizer"):
+                    use = getattr(worker, role)
+                    if use is None:
+                        continue
+                    name = getattr(row.workers[rank], role)
+                    if (rank, name) not in checked:
+                        validate_plan(
+                            inventory,
+                            use,
+                            row.ordering,
+                            bundle.sources[use.template],
+                            bundle.plans[rank][name],
+                        )
+                        checked.add((rank, name))
+    return result
+
+
+def bind_bundle(bundle: TrainingBundle, inventory: TemplateInventory) -> PreparedPlans:
+    """Reconstruct a family whose exact artifact the controller already checked.
+
+    This is also the first part of strict validation. Worker bootstrap may use it
+    only after checking the controller's privately granted artifact checksum and
+    resolving the exact installed definition sources. It does not authorize an
+    uploaded bundle or replace ``TrainingBundle.recheck`` at the service boundary.
+    """
     if bundle.config != inventory.layouts.setup.config:
         raise ValueError("bundle and prepared setup differ")
     metadata = plain(bundle.metadata)
@@ -116,10 +149,7 @@ def recheck_bundle(
     }
     if bundle.sources.keys() != needed_sources:
         raise ValueError("bundle must contain exactly the referenced source profiles")
-    for source_key, source in bundle.sources.items():
-        validate_profile(inventory, source_key, source)
     needed_plans: dict[int, set[str]] = {}
-    checked = set()
     for row in rows:
         for rank, worker in row.source.workers.items():
             for role in ("main", "optimizer"):
@@ -128,15 +158,6 @@ def recheck_bundle(
                     continue
                 name = getattr(row.workers[rank], role)
                 needed_plans.setdefault(rank, set()).add(name)
-                if (rank, name) not in checked:
-                    validate_plan(
-                        inventory,
-                        use,
-                        row.ordering,
-                        bundle.sources[use.template],
-                        bundle.plans[rank][name],
-                    )
-                    checked.add((rank, name))
         _collectives(row.workers, bundle.plans)
     if {rank: set(plans) for rank, plans in bundle.plans.items()} != needed_plans:
         raise ValueError("bundle must contain exactly the referenced worker Plans")
