@@ -15,4 +15,5 @@ FAMILY = Family(
     implementations=("mlops",),
     mixture=True,
     factory="shadowspill_workloads.recipes.text.glm.quickstart:glm53",
+    checkpoint_types=("glm_moe_dsa",),
 )

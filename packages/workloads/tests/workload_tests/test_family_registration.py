@@ -70,3 +70,23 @@ def test_duplicate_pretrained_identifiers_fail_instead_of_selecting_a_family(
     )
     with pytest.raises(ValueError, match="registered twice"):
         families.checkpoint_families()
+
+
+@pytest.mark.parametrize(
+    "metadata, family",
+    [
+        ({"model_type": "glm_moe_dsa"}, "glm53"),
+        ({"model_type": "glm5_next_text"}, "glm53_flash"),
+        (
+            {
+                "model_type": "glm5_next",
+                "text_config": {"model_type": "glm5_next_text"},
+            },
+            "glm53_flash",
+        ),
+    ],
+)
+def test_glm_checkpoint_identification_uses_the_family_declaration(metadata, family):
+    from shadowspill_workloads.models.catalog.sources import checkpoint_family
+
+    assert checkpoint_family(metadata) == family

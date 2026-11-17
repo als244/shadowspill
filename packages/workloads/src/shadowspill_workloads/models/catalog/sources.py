@@ -1,4 +1,4 @@
-"""CPU-only checkpoint architecture identification for supplied recipes."""
+"""CPU-only checkpoint architecture identification from family declarations."""
 
 from shadowspill_workloads.models.families import checkpoint_families
 
