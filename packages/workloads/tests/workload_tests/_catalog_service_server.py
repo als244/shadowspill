@@ -17,7 +17,7 @@ class Block(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, *args):
         if fullname.split(".")[0] in {"torch", "triton", "pynvml"}:
             raise AssertionError("framework import in controller: " + fullname)
-        if fullname.startswith("shadowspill_workloads.recipes.") or (
+        if fullname.split(".")[0] in {"benchmarks", "reference", "qualification"} or (
             fullname.startswith("shadowspill_workloads.")
             and ".implementations." in fullname
         ):

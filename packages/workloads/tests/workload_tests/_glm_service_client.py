@@ -104,13 +104,15 @@ def qualify(client, options):
     original = state(initial, output / "initial")
     optim = {"lr": 0.001}
     first = training.step(records, optim=optim).result(120)
+    assert first.completed_updates == 1 and not first.accumulation.open
     snapshot(training, "whole")
     training.load_checkpoint(initial.id).result(120)
     parts = [
         training.forward_backward(part).result(120).loss
         for part in (records[:1], records[1:])
     ]
-    training.optim_step(optim=optim).result(120)
+    split = training.optim_step(optim=optim).result(120)
+    assert split.completed_updates == 1 and not split.accumulation.open
     snapshot(training, "split")
     training.load_checkpoint(initial.id).result(120)
     losses = []
