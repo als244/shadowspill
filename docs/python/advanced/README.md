@@ -24,7 +24,7 @@ These guides cover optional controls, custom definitions and detailed diagnostic
 | Compare memory budgets and hypothetical transfer speeds on a laptop | [Offline sweeps](offline-sweeps.md) |
 | Separate checkpoint regions from execution chunks | [Partitioning example](../../examples/custom-partitioning.md), [build policies](../api/frontend.md) |
 | Replan saved profiles across budgets and search choices | [Reusable planning](../../examples/reusable-planning.md), [planning API](../api/planning.md) |
-| Benchmark a model factory or a saved Plan | [preparation settings](../../../docs/python/advanced/service-client.md), [Plan runner](../../../tools/measure_plan/README.md) |
+| Measure an executable saved Plan | [Plan measurement](../../../tools/measure_plan/README.md) |
 
 ## Inspect artifacts and execution
 

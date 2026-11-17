@@ -95,8 +95,7 @@ variant does not force GPU residency.
 
 `sweep_programs` compares supplied ProfiledPrograms and budgets; it does not
 create or profile candidates. Public-client [preparation settings](advanced/service-client.md)
-and the benchmark [preparation settings](../../docs/python/advanced/service-client.md) expose microbatch,
-chunk and retention candidates. The generic phase APIs accept supported custom
+expose microbatch, chunk and retention candidates. The generic phase APIs accept supported custom
 models directly.
 
 For multi-worker runs, follow [distributed setup](api/distributed.md), including

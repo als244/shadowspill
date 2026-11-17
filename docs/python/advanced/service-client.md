@@ -19,13 +19,11 @@ setup controls, saved Plans, recovery, artifact transfers and diagnostics.
 Start the service on a machine with an assigned GPU allocation:
 
 ```python
-from shadowspill.server import Allocation, Server
+from shadowspill.server import Server
 
 # SHADOWSPILL_TOKEN supplies the same credential used by the client.
 server = Server(
-    allocation=Allocation.from_environment(),
-    service_root="/path/to/service-data",
-    workload_packages=["shadowspill", "shadowspill-workloads"],
+    service_root="/local-ssd/shadowspill",
 )
 server.serve(host="127.0.0.1", port=8000)
 ```
@@ -41,7 +39,7 @@ To reuse checkpoints already stored on the server:
 ```python
 server = Server(
     service_root="runs/service",
-    model_root="/home/shein/Documents/grad_school/research/models",
+    model_root="/path/to/models",
 )
 server.serve()
 ```
@@ -79,18 +77,26 @@ artifacts do not expire under this policy.
 from shadowspill_client import SSH, ServiceClient
 
 # Read the deployment credential from SHADOWSPILL_TOKEN, or pass token explicitly.
-with ServiceClient(ssh=SSH(host="training-host", server_port=8000)) as service:
-    preview = service.describe_training(**setup).result()
-    print(preview.summary())
-    config = preview.config
+from shadowspill_client import BatchConfig, Memory, Model, Objective, Optimizer, Weights
 
-    training = service.create_training_client(config=config).result()
-    pending = training.step(global_batch, optim={"lr": 0.001})
-    request_id = pending.request_id
-    pending.accepted().result()  # Complete server acceptance, beyond the input copy.
-    result = pending.result()
-    print(result.completed_updates, result.loss)
-    training.close().result()
+service = ServiceClient(ssh=SSH(host="training-host", server_port=8000))
+preview = service.describe_training(
+    model=Model("regression", initialize=Weights.random(seed=0)),
+    objective=Objective("weighted_squared_error"),
+    optimizer=Optimizer("adamw"),
+    batch=BatchConfig(limits={"max_examples": 8}),
+    memory=Memory(4, 1),
+).result()
+print(preview.summary())
+
+training = service.create_training_client(config=preview.config).result()
+pending = training.step(global_batch, optim={"lr": 0.001})
+request_id = pending.request_id
+pending.accepted().result()  # Server acceptance, beyond the client input copy.
+result = pending.result()
+print(result.completed_updates, result.loss)
+training.close().result()
+service.close()
 ```
 
 Use `pending.add_done_callback(callback)` to observe completion without waiting.
@@ -100,8 +106,8 @@ when the training loop consumes the result. `result.execution_seconds` measures
 server worker execution; client submission/completion timestamps also reflect
 upload, queueing and result delivery.
 
-`setup` contains `Model`, `Objective`, optional `Optimizer`, `BatchConfig`, `Memory`
-and optional execution/preparation/operation settings. Definitions must already
+The setup keywords are documented in the [client guide](../client.md#create-a-training-run).
+They describe the model, objective, optimizer, global batch limits and memory budget. Definitions must already
 be installed on the server. Omitted initialization remains omitted; a preview
 does not choose fresh weights. `config=` rechecks an exact earlier configuration
 and cannot be mixed with setup keywords. The preview reports physical geometry

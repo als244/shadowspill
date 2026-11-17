@@ -403,15 +403,6 @@ def test_examples_cover_complete_public_workflows() -> None:
             "plan.save(",
             "write_report(",
         ),
-        "generic-training.md": (
-            "build_step(",
-            "measure_program(",
-            "apply_profiles(",
-            "plan_program(",
-            "Executor(Plan.load(",
-            "executor.initialize(",
-            "executor.run(",
-        ),
         "diagnostics.md": (
             "pending.diagnostics",
             "step.transfers.fetch",

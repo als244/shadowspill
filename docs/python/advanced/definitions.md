@@ -104,31 +104,14 @@ bounded initialization run in workers. The external classifier and the supplied
 [regression definition](../../../packages/workloads/src/shadowspill_workloads/models/regression/training.py)
 use these same interfaces for non-text inputs.
 
-The Llama, Qwen, OLMoE and GLM families reuse packed decoder setup. `config` selects
-a `preset` and optional `architecture` overrides. LoRA uses family targets unless
-explicitly overridden and requires zero dropout. Model precision, optimizer
-precision and [parameter dtype overrides](precision.md) remain separate controls.
+The decoder families share setup and input adapters. Use the
+[catalog](../catalog.md) for presets, LoRA and objective selection, and the
+[preparation reference](service-client.md#preparation-and-local-planning) for
+microbatch sizes, sequence capacities, chunking and retention defaults.
 An optimizer's declared gradient dtype reaches model/provider preparation;
 without that declaration, decoder settings default to FP32 gradients.
-
-Packed batches declare `token_capacity`, `max_sequence_length` and `max_sequences`.
-The preparation preset tries one, two and four maximum-length sequences' worth
-of tokens per input partition, capped by that partition's token allowance.
-It derives accumulation counts from those sizes and rejects schedules exceeding
-the token cap, including padding. Explicit candidate lists replace the defaults.
-An optional `typical={"sequence_length": ...}` affects timing samples only.
-
-Per-microbatch sequence capacity defaults to eight times the number of full-length
-sequences fitting the buffer, capped by global `max_sequences`.
-`build_candidates(max_sequences_per_microbatch=...)` overrides it. Separate padding
-segments preserve caller boundaries, and actual lengths remain runtime tensors.
-The sequence-length bound controls attention workspace independently of microbatch
-capacity. The engine packs and validates each requested output closure.
-
-Model capabilities determine compatible objectives. Qwen MoE and OLMoE expose
-router statistics for the shared balancing objective; token losses can be used
-alone or composed with it. To retain OLMoE's layer aggregation, use
-`layer_reduction="sum"` and `normalize_top_k=True`. Padding is excluded by default.
+Model storage follows the family's defaults and
+[parameter dtype overrides](precision.md).
 
 EP uses generic parameter/input placement and shared provider resources. Its
 model-hook constraints are:

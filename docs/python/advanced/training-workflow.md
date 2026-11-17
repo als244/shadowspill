@@ -8,26 +8,10 @@ models. For a first training run, start with the [text example](../../examples/c
 
 ## Start the server
 
-Use the configured GPU environment on a training host, with the
-engine, workloads and their MLOps provider installed. Set `SHADOWSPILL_TOKEN` to the
-same credential on server and client. Start this once in the assigned allocation:
-
-```python
-from shadowspill.server import Allocation, Server
-
-server = Server(
-    allocation=Allocation.from_environment(),
-    service_root="/path/to/service-data",
-    workload_packages=["shadowspill", "shadowspill-workloads"],
-)
-server.serve(host="127.0.0.1", port=8000)
-```
-
-The server uses the existing build/profile/plan/execute engine. It discovers the
-assigned local devices and owns worker launch, initialization and cleanup. It
-does not request a scheduler allocation. This example uses the default local worker.
-The [connection reference](service-client.md#connection-and-setup) describes
-deployment settings.
+[Start the service](../../../README.md#start-the-service) on the training host.
+Use the same `SHADOWSPILL_TOKEN` on the server and client. The
+[connection reference](service-client.md#connection-and-setup) covers allocation
+and extension-package settings.
 
 ## Define client settings and inputs
 
@@ -47,29 +31,26 @@ from shadowspill_client import (
     Optimizer, PlanningOptions, Preparation, ServiceClient, Weights,
 )
 
-setup = dict(
-    model=Model("regression", initialize=Weights.random(seed=0)),
-    objective=Objective("weighted_squared_error"),
-    optimizer=Optimizer(
-        "adamw",
-        precision={"gradient_dtype": "float32", "opt_state_dtype": "float32"},
-    ),
-    batch=BatchConfig(limits={"max_examples": 8}),
-    memory=Memory(4, 1),  # Device and spill budgets in GiB per worker.
-    operations={
-        "step": ["metrics"],
-        "forward_backward": ["metrics"],
-        "forward": ["predictions"],
-    },
-    prepare=Preparation(
-        candidates=BuildCandidates(microbatch_sizes=[4, 8]),
-        planning=PlanningOptions(microbatch_counts=[1, 2]),
-    ),
-)
-
-
 def prepare_run(service):
-    preview = service.describe_training(**setup).result()
+    preview = service.describe_training(
+        model=Model("regression", initialize=Weights.random(seed=0)),
+        objective=Objective("weighted_squared_error"),
+        optimizer=Optimizer(
+            "adamw",
+            precision={"gradient_dtype": "float32", "opt_state_dtype": "float32"},
+        ),
+        batch=BatchConfig(limits={"max_examples": 8}),
+        memory=Memory(4, 1),  # Device and spill budgets in GiB per worker.
+        operations={
+            "step": ["metrics"],
+            "forward_backward": ["metrics"],
+            "forward": ["predictions"],
+        },
+        prepare=Preparation(
+            candidates=BuildCandidates(microbatch_sizes=[4, 8]),
+            planning=PlanningOptions(microbatch_counts=[1, 2]),
+        ),
+    ).result()
     print(preview.summary())
     return service.create_training_client(config=preview.config).result()
 
@@ -92,90 +73,48 @@ microbatches of 8 exceeds `max_examples=8` and is excluded; specifying counts do
 not relax the cap. Preparation measures supported candidates and selects fitting
 Plans. Omit `prepare` to use installed defaults instead.
 
-Server preparation searches independent variants concurrently. Set
-`PlanningOptions(workers=16)` to cap the total planning CPU budget; the default
-uses the CPUs available to the process. Equivalent distributed workers share
-one complete Plan for each variant. Different hardware or computation layouts
-remain separate searches. Input placement and state initialization stay specific
-to each worker; training calls still take one global batch.
-
-For the supplied packed text models, a CPU-only helper creates the build policies:
-
-```python
-from shadowspill_client.text import build_candidates
-
-prepare = Preparation(candidates=build_candidates(
-    microbatch_tokens=[8192, 16384, 32768],
-    projection_chunks=[0, 8192],
-))
-```
-
-Microbatch tokens are per input partition (per rank with data parallelism).
-Zero means unchunked. `moe_chunks` defaults to `[0]`, keeping expert computation
-at the full microbatch; supply its own size list to search expert chunks too.
-Accumulation counts are derived from the selected microbatch sizes and global
-token limit unless explicitly supplied. The helper keeps the ordinary retention,
-ordering and saved-head defaults; sequence attention boundaries remain intact.
-
-`BatchConfig.max_sequences` is the global step limit. Each text microbatch
-defaults to eight times `ceil(microbatch_tokens / max_sequence_length)` sequence
-entries, capped by that global limit. For example, a 64K buffer with a 4K sequence
-bound allows 128 sequences, leaving room for shorter packed examples. Override
-this with `build_candidates(..., max_sequences_per_microbatch=256)` when needed.
-Unused entries require kernel workspace, so avoid copying the global count into
-every microbatch. Padding has separate metadata entries, and all scheduled token
-buffers, including padding, count toward `token_capacity`.
-
-`training.validate_batch(batch)` checks whether the actual sequences fit a
-prepared layout. Staying below global limits alone does not guarantee a packing.
-The sequence-length bound controls attention separately from the microbatch
-token capacity; changing packed lengths remains a runtime input, without rebuild.
+For text packing, chunking and parallel planning choices, see the
+[preparation reference](service-client.md#preparation-and-local-planning).
+`training.validate_batch(batch)` checks actual packing against the prepared layouts.
 
 ## Submit updates and resume
 
 ```python
-with ServiceClient(ssh=SSH("training-host", 8000)) as service:
-    training = prepare_run(service)
-    try:
-        # First update: one complete call with a global batch.
-        first_batch = make_batch(0)
-        result = training.step(
-            first_batch, optim={"lr": 0.001}, grad_scale=1 / 8,
-        ).result()
-        print(result.completed_updates, result.loss)
+service = ServiceClient(ssh=SSH("training-host", 8000))
+training = prepare_run(service)
 
-        # Second update: unequal backward contributions, then one optimizer call.
-        second_batch = make_batch(1)
-        training.forward_backward(second_batch[:3]).result()
-        training.forward_backward(second_batch[3:]).result()
-        result = training.optim_step(optim={"lr": 0.001}, grad_scale=1 / 8).result()
-        print(result.completed_updates, result.loss)
+# First update: one complete call with a global batch.
+first_batch = make_batch(0)
+result = training.step(
+    first_batch, optim={"lr": 0.001}, grad_scale=1 / 8,
+).result()
+print(result.completed_updates, result.loss / 8)
 
-        evaluation = training.forward(
-            [Datum(inputs=row.inputs) for row in second_batch],
-            outputs="predictions",
-        ).result()
-        print(evaluation.outputs["prediction"].reference)
-        # Tensor downloads are explicit; metadata inspection does not fetch them.
+# Second update: unequal contributions, followed by one optimizer call.
+second_batch = make_batch(1)
+first = training.forward_backward(second_batch[:3])
+second = training.forward_backward(second_batch[3:])
+update = training.optim_step(optim={"lr": 0.001}, grad_scale=1 / 8)
+print(update.result().completed_updates, (first.result().loss + second.result().loss) / 8)
 
-        checkpoint = training.save_checkpoint(
-            name="after-two", metadata={"next_data_seed": 2},
-        ).result()
-        plans = training.plans
-    finally:
-        training.close().result()
+evaluation = training.forward(
+    [Datum(inputs=row.inputs) for row in second_batch], outputs="predictions",
+).result()
+print(evaluation.outputs["prediction"].reference)
+# Tensor downloads are explicit; metadata inspection does not fetch them.
 
-    # Reuse saved Plans and restore weights, optimizer state and update count.
-    resumed = service.create_training_client(
-        plans=plans, checkpoint=checkpoint,
-    ).result()
-    try:
-        result = resumed.step(
-            make_batch(2), optim={"lr": 0.001}, grad_scale=1 / 8,
-        ).result()
-        print(result.completed_updates)  # 3
-    finally:
-        resumed.close().result()
+checkpoint = training.save_checkpoint(
+    name="after-two", metadata={"next_data_seed": 2},
+).result()
+plans = training.plans
+training.close().result()
+
+# Reuse saved Plans and restore weights, optimizer state and update count.
+resumed = service.create_training_client(plans=plans, checkpoint=checkpoint).result()
+result = resumed.step(make_batch(2), optim={"lr": 0.001}, grad_scale=1 / 8).result()
+print(result.completed_updates)  # 3
+resumed.close().result()
+service.close()
 ```
 
 Input values can change within the admitted schema and limits. Every submission
