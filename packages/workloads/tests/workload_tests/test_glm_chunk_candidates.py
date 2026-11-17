@@ -62,7 +62,7 @@ def test_invalid_fused_geometry_is_refused_before_build(sizes, experts, sequence
 
 
 def test_glm_policy_keeps_both_variants_and_local_expert_state_bounded():
-    from shadowspill_workloads.recipes.text.glm53_flash_lora.policies import (
+    from shadowspill_workloads.policies.glm_chunks import (
         build_options,
     )
 
