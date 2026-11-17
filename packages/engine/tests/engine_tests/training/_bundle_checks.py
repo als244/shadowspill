@@ -16,8 +16,11 @@ for name in (
     sys.modules[name] = None
 
 from shadowspill.training.definitions import load_registry  # noqa: E402
-from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
-from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle  # noqa: E402
+from shadowspill.training.preparation.phases.job import (  # noqa: E402
+    JOB_NAME,
+    PreparationJob,
+)
 
 path = Path(sys.argv[1])
 registry = load_registry(PreparationJob.load(path.parent / JOB_NAME).packages)

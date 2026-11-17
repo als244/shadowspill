@@ -10,19 +10,19 @@ from engine_tests.training.test_preparation_templates import inventory
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
 from shadowspill.planning.shared import SharedMemory
-from shadowspill.training.preparation import family_selection
-from shadowspill.training.preparation.family import plan_family
-from shadowspill.training.preparation.family_checks import _collectives
-from shadowspill.training.preparation.family_identity import (
+from shadowspill.training.preparation.planning import selection as family_selection
+from shadowspill.training.preparation.planning.family import plan_family
+from shadowspill.training.preparation.planning.identity import (
     execution_names,
     plan_identity,
 )
-from shadowspill.training.preparation.family_records import (
+from shadowspill.training.preparation.planning.records import (
     PlannedCandidate,
     PlanRejection,
     WorkerPlans,
 )
-from shadowspill.training.preparation.family_selection import select_family
+from shadowspill.training.preparation.planning.selection import select_family
+from shadowspill.training.preparation.planning.validation import _collectives
 from shadowspill_client.protocol.operations import OperationKey
 
 
@@ -190,11 +190,11 @@ def test_family_planner_import_has_no_framework_or_catalog_dependency():
 import sys
 for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads'):
     sys.modules[name] = None
-from shadowspill.training.preparation.family import plan_family
+from shadowspill.training.preparation.planning.family import plan_family
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.layouts import prepare_layouts
-from shadowspill.training.preparation.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
+from shadowspill.training.preparation.capture.templates import capture_inventory
 setup = resolve_training(installed(), **arguments())
 inventory = capture_inventory(prepare_layouts(setup))
 try:

@@ -18,7 +18,7 @@ from shadowspill.parallelism import (
     Parallelism,
 )
 from shadowspill.training.inputs.adapters import InputAdapter
-from shadowspill.training.preparation.layouts import (
+from shadowspill.training.preparation.configuration.layouts import (
     LayoutCoverageError,
     prepare_layouts,
 )
@@ -269,7 +269,7 @@ for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads'):
     sys.modules[name] = None
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 resolved = resolve_training(installed(), **arguments(),
     operations={'forward_backward': ['metrics'], 'forward': ['predictions']})
 layouts = prepare_layouts(resolved)

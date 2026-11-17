@@ -14,7 +14,7 @@ from engine_tests.server.test_local_creation import configured as creation_servi
 from engine_tests.server.test_service_client import address
 from engine_tests.training.test_controller import configured
 from shadowspill.server.plan_summaries import _publish_pages
-from shadowspill.training.preparation.inspection import summary_rows
+from shadowspill.training.preparation.artifacts.inspection import summary_rows
 from shadowspill_client import ServiceClient, TrainingClient
 from shadowspill_client._async import ConnectionClosed
 from shadowspill_client.buffers import BufferBudget

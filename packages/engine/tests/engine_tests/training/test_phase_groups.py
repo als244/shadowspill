@@ -14,8 +14,8 @@ from shadowspill.parallelism import (
     OutputPlacement,
     Parallelism,
 )
-from shadowspill.training.preparation import phases
-from shadowspill.training.preparation.groups import capture_groups
+from shadowspill.training.preparation.capture.groups import capture_groups
+from shadowspill.training.preparation.phases import launcher as phases
 
 
 def test_capture_groups_deduplicate_counts_but_preserve_all_worker_ownership():

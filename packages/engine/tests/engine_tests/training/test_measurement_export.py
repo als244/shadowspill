@@ -10,8 +10,10 @@ import pytest
 
 from engine_tests.training.test_preparation_templates import inventory
 from engine_tests.training.test_setup_resolution import installed
-from shadowspill.training.preparation import job
-from shadowspill.training.preparation.measurement_export import export_measurements
+from shadowspill.training.preparation.artifacts.measurement_export import (
+    export_measurements,
+)
+from shadowspill.training.preparation.phases import job
 
 
 @pytest.fixture
@@ -102,8 +104,10 @@ import sys
 from pathlib import Path
 for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads'):
     sys.modules[name] = None
-from shadowspill.training.preparation import job
-from shadowspill.training.preparation.measurement_export import export_measurements
+from shadowspill.training.preparation.phases import job
+from shadowspill.training.preparation.artifacts.measurement_export import (
+    export_measurements,
+)
 from engine_tests.training.test_setup_resolution import installed
 job.load_registry = lambda packages: installed()
 export_measurements(

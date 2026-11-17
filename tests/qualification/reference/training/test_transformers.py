@@ -12,7 +12,11 @@ from safetensors.torch import save_file
 
 from qualification.reference.training.data.packed import PackedTokens
 from shadowspill_workloads.models import catalog
-from workload_tests.test_checkpoints import huggingface_state, materialized, metadata
+from workload_tests.initialization.test_checkpoints import (
+    huggingface_state,
+    materialized,
+    metadata,
+)
 
 EOS = 1
 LENGTHS = (20, 33, 17, 40, 25, 30)

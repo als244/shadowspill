@@ -20,10 +20,12 @@ from shadowspill.training.definitions import (
 )
 from shadowspill.training.inputs.adapters import InputBinding
 from shadowspill.training.inputs.materialize import buffer_size
-from shadowspill.training.preparation.layouts import prepare_layouts
-from shadowspill.training.preparation.representative import representative_inputs
+from shadowspill.training.preparation.capture.representative import (
+    representative_inputs,
+)
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client import (
     BatchConfig,
     BuildCandidates,

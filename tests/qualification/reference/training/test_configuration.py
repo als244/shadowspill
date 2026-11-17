@@ -18,7 +18,11 @@ from qualification.reference.training.run import run_config
 from qualification.reference.training.text.hyperparameters import (
     scheduled_arguments,
 )
-from workload_tests.test_checkpoints import huggingface_state, materialized, metadata
+from workload_tests.initialization.test_checkpoints import (
+    huggingface_state,
+    materialized,
+    metadata,
+)
 
 
 def test_an_unknown_key_is_refused_with_the_nearest_name(tmp_path):

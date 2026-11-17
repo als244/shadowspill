@@ -15,7 +15,7 @@ from shadowspill.training.definitions import (
     ObjectiveEvaluation,
     Registry,
 )
-from shadowspill.training.preparation.operations import OperationContract
+from shadowspill.training.preparation.configuration.operations import OperationContract
 from shadowspill_client import Objective
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.definitions import (

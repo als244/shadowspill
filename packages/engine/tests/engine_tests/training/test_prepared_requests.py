@@ -29,15 +29,15 @@ from shadowspill.training.inputs.staging import (
     StagingLimitError,
     combine_input_staging,
 )
-from shadowspill.training.preparation.family_records import (
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
+from shadowspill.training.preparation.configuration.scalars import control_values
+from shadowspill.training.preparation.planning.records import (
     PlannedCandidate,
     PreparedPlans,
     WorkerPlans,
 )
-from shadowspill.training.preparation.layouts import prepare_layouts
-from shadowspill.training.preparation.scalars import control_values
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill.training.session.dispatch import RequestDispatcher
 from shadowspill.training.session.inputs import RequestInputs
 from shadowspill.training.session.prepared import PreparedRequests

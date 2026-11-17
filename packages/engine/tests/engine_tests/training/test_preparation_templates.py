@@ -20,13 +20,13 @@ from shadowspill.training.definitions import (
     RepresentativePattern,
     RepresentativeSample,
 )
-from shadowspill.training.preparation.layouts import prepare_layouts
-from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import (
+from shadowspill.training.preparation.capture.templates import (
     TemplateUse,
     capture_inventory,
     instantiate_template,
 )
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
+from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client import (
     BatchConfig,
     BuildCandidates,
@@ -241,8 +241,8 @@ for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads'):
     sys.modules[name] = None
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.layouts import prepare_layouts
-from shadowspill.training.preparation.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
+from shadowspill.training.preparation.capture.templates import capture_inventory
 setup = resolve_training(installed(), **arguments())
 result = capture_inventory(prepare_layouts(setup))
 assert len(result.templates) == 3

@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock, RLock
 
 from shadowspill.orchestration.capture.nsys import NsysCapture
-from shadowspill.training.preparation.family_records import PreparedPlans
+from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.session.controller import RunController
 from shadowspill.training.session.prepared import PreparedRequests

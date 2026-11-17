@@ -19,18 +19,23 @@ from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Paralle
 from shadowspill.planning.shared import SharedMemory
 from shadowspill.step.ordering import StepDataOrdering
 from shadowspill.training.definitions import ModelReferenceDefinition
-from shadowspill.training.preparation import bundle_validation, family, family_selection
-from shadowspill.training.preparation.bundle import TrainingBundle
-from shadowspill.training.preparation.bundle_manifest import manifest
-from shadowspill.training.preparation.family_identity import (
+from shadowspill.training.preparation.artifacts import validation as bundle_validation
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
+from shadowspill.training.preparation.artifacts.manifest import manifest
+from shadowspill.training.preparation.planning import family
+from shadowspill.training.preparation.planning import selection as family_selection
+from shadowspill.training.preparation.planning.identity import (
     candidate_identity,
     execution_names,
 )
-from shadowspill.training.preparation.family_records import (
+from shadowspill.training.preparation.planning.records import (
     PlannedCandidate,
     PreparedPlans,
 )
-from shadowspill.training.preparation.family_selection import certificate, joint_memory
+from shadowspill.training.preparation.planning.selection import (
+    certificate,
+    joint_memory,
+)
 from shadowspill_client import (
     BatchConfig,
     BuildCandidates,
@@ -426,7 +431,7 @@ def test_bundle_raw_load_and_inventory_rejection_need_no_framework(
 import sys
 for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads'):
     sys.modules[name] = None
-from shadowspill.training.preparation.bundle import TrainingBundle
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from engine_tests.training.test_setup_resolution import installed
 bundle = TrainingBundle.load(sys.argv[1])
 try:

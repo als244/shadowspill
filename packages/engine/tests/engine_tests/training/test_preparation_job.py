@@ -9,7 +9,7 @@ import pytest
 
 from engine_tests.training.test_setup_resolution import installed
 from engine_tests.training.test_training_bundle import make_bundle
-from shadowspill.training.preparation import job
+from shadowspill.training.preparation.phases import job
 from shadowspill_client import Memory
 
 
@@ -27,9 +27,7 @@ def prepared(monkeypatch):
     return bundle, checked, launches
 
 
-def test_job_roundtrip_defers_full_recheck_to_execution_admission(
-    prepared, tmp_path
-):
+def test_job_roundtrip_defers_full_recheck_to_execution_admission(prepared, tmp_path):
     bundle, checked, launches = prepared
     root = tmp_path / "job"
     args = {"packages": ["external-classifier-fixture"], "config": bundle.config}
@@ -40,7 +38,7 @@ def test_job_roundtrip_defers_full_recheck_to_execution_admission(
     assert saved.packages == tuple(args["packages"])
     assert launches == [
         (
-            "shadowspill.training.preparation",
+            "shadowspill.training.preparation.phases",
             root,
             "all",
             {
@@ -156,8 +154,8 @@ def test_job_and_cpu_planning_entry_import_without_frameworks():
 import sys
 for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads'):
     sys.modules[name] = None
-from shadowspill.training.preparation import job, job_phases, plan
-assert job.PreparationJob and job_phases.plan and plan.run
+from shadowspill.training.preparation.phases import job, operations, plan
+assert job.PreparationJob and operations.plan and plan.run
 """
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=30

@@ -21,11 +21,13 @@ from shadowspill.orchestration.launch.host_arena import HostArena
 from shadowspill.orchestration.launch.node_capacity import discover_capacity
 from shadowspill.orchestration.launch.phases import NodePhases
 from shadowspill.training.definitions import InitializationRuntime, load_registry
-from shadowspill.training.preparation import job
-from shadowspill.training.preparation.layouts import prepare_layouts
-from shadowspill.training.preparation.operation_build import build_operation
+from shadowspill.training.preparation.capture.operation_build import (
+    build_operation,
+)
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
+from shadowspill.training.preparation.phases import job
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill.training.worker.initialization import prepare_initialization
 from shadowspill_client import (
     BuildCandidates,

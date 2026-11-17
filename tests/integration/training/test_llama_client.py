@@ -14,7 +14,7 @@ from examples.training.application.setup import read_resume, start
 from examples.training.llama3.settings import APPLICATION, Settings
 from examples.training.text_data import TokenBatches
 from shadowspill.training.definitions import load_registry
-from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client.protocol.requests import ArtifactRef
 

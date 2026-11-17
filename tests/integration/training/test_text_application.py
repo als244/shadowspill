@@ -8,7 +8,7 @@ from examples.training.text.preparation import resolve
 from examples.training.text.settings import TextSettings
 from shadowspill.parallelism import Parallelism
 from shadowspill.training.definitions import load_registry
-from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client import Model, Objective
 from shadowspill_client.parallelism import data_parallel, expert_parallel

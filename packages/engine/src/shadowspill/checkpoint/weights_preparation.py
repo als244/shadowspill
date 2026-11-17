@@ -4,7 +4,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
-from shadowspill.training.preparation.bundle import TrainingBundle
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.worker.checkpoint_records import RankSave
 from shadowspill.training.worker.conversion_records import (
     ConversionPrepared,

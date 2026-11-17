@@ -9,7 +9,7 @@ import pytest
 from engine_tests.fixtures.definition_operations import records
 from engine_tests.server.test_training_client import runtime
 from engine_tests.training.test_prepared_requests import family, variable_inventory
-from shadowspill.training.preparation.inspection import summary_rows
+from shadowspill.training.preparation.artifacts.inspection import summary_rows
 from shadowspill.training.session.prepared import PreparedRequests
 from shadowspill_client import BatchConfig, Datum
 from shadowspill_client.batch_validation import BatchValidator

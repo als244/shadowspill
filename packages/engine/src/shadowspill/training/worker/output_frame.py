@@ -12,8 +12,8 @@ from shadowspill.training.inputs.frames import (
     BufferWriter,
     InputFrame,
 )
-from shadowspill.training.preparation.binding import OperationBinding
-from shadowspill.training.preparation.family_records import PreparedPlans
+from shadowspill.training.preparation.capture.binding import OperationBinding
+from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef
 

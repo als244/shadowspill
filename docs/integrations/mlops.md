@@ -152,7 +152,7 @@ it never reruns policy factories or mapping callbacks.
 
 ## Validation
 
-CPU capture/metadata checks live in `packages/workloads/tests/workload_tests/test_mlops_integration.py`
+CPU capture/metadata checks live in `packages/workloads/tests/workload_tests/providers/test_mlops_integration.py`
 and the gradient-destination tests. Real destination epilogues have separate
 supported-GPU coverage, including pointer reuse, empty experts, dtypes and
 unconsumed outputs. Hardware-ineligible cases skip; that is not model qualification.
@@ -161,9 +161,9 @@ For prepared-kernel changes, run the maintained saved-training regression on
 supported Sonic hardware with the pinned provider dependencies:
 
 ```bash
-python -m pytest -m slow packages/workloads/tests/workload_tests/test_prepared_sonic.py
+python -m pytest -m slow packages/workloads/tests/workload_tests/providers/test_prepared_sonic.py
 ```
 
-Its [test guide](../../packages/workloads/tests/workload_tests/prepared_sonic/README.md) defines the exact
+Its [test guide](../../packages/workloads/tests/workload_tests/providers/prepared_sonic/README.md) defines the exact
 scope. It covers cold saved phases and restore separately from distributed and
 full-model qualification; no operation-level check substitutes for those runs.

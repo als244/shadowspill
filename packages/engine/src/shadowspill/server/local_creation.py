@@ -31,18 +31,26 @@ from shadowspill.orchestration.launch.log_files import LogFiles
 from shadowspill.orchestration.launch.phases import NodePhases
 from shadowspill.orchestration.launch.processes import worker_command
 from shadowspill.training.definitions import load_registry
-from shadowspill.training.preparation.bundle import TrainingBundle
-from shadowspill.training.preparation.family_records import PreparedPlans
-from shadowspill.training.preparation.job import BUNDLE_NAME, measure_job, prepare_job
-from shadowspill.training.preparation.layouts import prepare_layouts
-from shadowspill.training.preparation.local_plans import (
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
+from shadowspill.training.preparation.artifacts.measurement_export import (
+    export_measurements,
+)
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
+from shadowspill.training.preparation.offline.plans import (
     LOCAL_PLANS_MEDIA_TYPE,
     LocalPlans,
 )
-from shadowspill.training.preparation.local_reconciliation import reconcile_local_plans
-from shadowspill.training.preparation.measurement_export import export_measurements
+from shadowspill.training.preparation.offline.reconciliation import (
+    reconcile_local_plans,
+)
+from shadowspill.training.preparation.phases.job import (
+    BUNDLE_NAME,
+    measure_job,
+    prepare_job,
+)
+from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill.training.preparation.setup import ResolvedSetup, resolve_training
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.worker.checkpoint_records import RankRestore, RankWeights
 from shadowspill.training.worker.initialization import (

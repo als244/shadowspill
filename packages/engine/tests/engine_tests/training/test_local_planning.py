@@ -31,18 +31,22 @@ from shadowspill.task.storage import (
     TaskStorageContract,
 )
 from shadowspill.training.definitions import ModelReferenceDefinition
-from shadowspill.training.preparation import job
-from shadowspill.training.preparation.cost_evidence import (
+from shadowspill.training.preparation.artifacts.cost_evidence import (
     communication_edits,
     profile_edits,
 )
-from shadowspill.training.preparation.layouts import prepare_layouts
-from shadowspill.training.preparation.local_planning import PlanningInputs
-from shadowspill.training.preparation.local_plans import LocalPlans
-from shadowspill.training.preparation.local_reconciliation import reconcile_local_plans
-from shadowspill.training.preparation.measurement_export import export_measurements
+from shadowspill.training.preparation.artifacts.measurement_export import (
+    export_measurements,
+)
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
+from shadowspill.training.preparation.offline.inputs import PlanningInputs
+from shadowspill.training.preparation.offline.plans import LocalPlans
+from shadowspill.training.preparation.offline.reconciliation import (
+    reconcile_local_plans,
+)
+from shadowspill.training.preparation.phases import job
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client import (
     BatchConfig,
     BuildCandidates,
@@ -281,7 +285,9 @@ def test_local_cpu_plans_roundtrip_and_reconcile_original_memory_without_binarie
 def test_local_shared_plans_decode_and_validate_once_without_sharing_mutable_values(
     measured, tmp_path, monkeypatch
 ):
-    from shadowspill.training.preparation import bundle_validation
+    from shadowspill.training.preparation.artifacts import (
+        validation as bundle_validation,
+    )
 
     root, _, inputs, target = measured
     proposal = inputs.plan(config=target.layouts.setup.config)
@@ -382,7 +388,7 @@ def test_cpu_planning_needs_no_framework_catalog_or_definition_factory(
 import json, sys
 for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads'):
     sys.modules[name] = None
-from shadowspill.training.preparation.local_planning import PlanningInputs
+from shadowspill.training.preparation.offline.inputs import PlanningInputs
 from shadowspill_client.protocol.training import ResolvedTraining
 inputs = PlanningInputs.load(sys.argv[1])
 config = ResolvedTraining.from_dict(json.load(open(sys.argv[2])))

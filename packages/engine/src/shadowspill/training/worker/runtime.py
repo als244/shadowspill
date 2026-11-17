@@ -16,7 +16,7 @@ from shadowspill.orchestration.launch.workers import workers
 from shadowspill.planning.spill import spill_configuration
 from shadowspill.training.definitions.initialization import InitializationRuntime
 from shadowspill.training.inputs.staging import StagingLimitError
-from shadowspill.training.preparation.family_records import PreparedPlans
+from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.captures import NsightWindow
 from shadowspill_client.protocol.frozen import FrozenBase

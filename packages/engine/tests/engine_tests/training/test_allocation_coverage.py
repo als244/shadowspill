@@ -14,7 +14,7 @@ from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.program import TaskDefinition
 from shadowspill.training.definitions import ModelBuild
 from shadowspill.training.definitions.allocations import allocation_invariants
-from shadowspill.training.preparation.allocation_coverage import (
+from shadowspill.training.preparation.capture.allocation_coverage import (
     allocation_coverage,
     validate_allocation_coverage,
 )

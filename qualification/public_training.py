@@ -135,9 +135,11 @@ def write_json(path, value):
 def preflight(data, output, requested, *, cache_root=None):
     from shadowspill.checkpoint.file_digest import checksum_cache
     from shadowspill.training.definitions import load_registry
-    from shadowspill.training.preparation.layouts import prepare_layouts
+    from shadowspill.training.preparation.capture.templates import (
+        capture_inventory,
+    )
+    from shadowspill.training.preparation.configuration.layouts import prepare_layouts
     from shadowspill.training.preparation.setup import resolve_training
-    from shadowspill.training.preparation.templates import capture_inventory
 
     batch = data[0]
     limits = requested["batch"].limits

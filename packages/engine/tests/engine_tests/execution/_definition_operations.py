@@ -34,8 +34,11 @@ from shadowspill.training.definitions import (  # noqa: E402
     load_registry,
 )
 from shadowspill.training.observations import to_host  # noqa: E402
-from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
-from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle  # noqa: E402
+from shadowspill.training.preparation.phases.job import (  # noqa: E402
+    JOB_NAME,
+    PreparationJob,
+)
 from shadowspill.training.session.dispatch import RequestDispatcher  # noqa: E402
 from shadowspill.training.session.inputs import RequestInputs  # noqa: E402
 from shadowspill.training.session.prepared import PreparedRequests  # noqa: E402

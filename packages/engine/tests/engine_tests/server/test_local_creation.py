@@ -33,7 +33,11 @@ from shadowspill.server.creation_records import CreationRecord
 from shadowspill.server.jobs import RunJobs
 from shadowspill.server.local_creation import LocalCreationFactory, LocalCreationLimits
 from shadowspill.server.storage import ServiceStorage
-from shadowspill.training.preparation.job import BUNDLE_NAME, JOB_NAME, PreparationJob
+from shadowspill.training.preparation.phases.job import (
+    BUNDLE_NAME,
+    JOB_NAME,
+    PreparationJob,
+)
 from shadowspill.training.worker import launch as launch_module
 from shadowspill.training.worker.resources import WorkerHost
 from shadowspill_client import BatchConfig, Weights
@@ -70,7 +74,7 @@ def configured(
                 ranks_per_replica=ranks,
                 num_replicas=1,
                 inputs=InputPlacement.independent(ranks, fields=fields),
-            )
+            ),
         )
     family = prepared_worker(inv).bindings.prepared
     config = change(family.inventory.layouts.setup.config)

@@ -13,7 +13,7 @@ from .write import _page, _table
 from .write import write_report as plan_report
 
 if TYPE_CHECKING:
-    from shadowspill.training.preparation.local_sweep import PlanningSweep
+    from shadowspill.training.preparation.offline.sweep import PlanningSweep
 
 
 def write_report(result: PlanningSweep, path: str | Path) -> Path:

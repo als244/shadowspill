@@ -10,16 +10,18 @@ import pytest
 
 from engine_tests.training.test_measurement_export import measured as measured
 from engine_tests.training.test_setup_resolution import installed
-from shadowspill.training.preparation import job
-from shadowspill.training.preparation.layouts import prepare_layouts
-from shadowspill.training.preparation.measurement_export import export_measurements
-from shadowspill.training.preparation.measurement_reuse import (
+from shadowspill.training.preparation.artifacts.measurement_export import (
+    export_measurements,
+)
+from shadowspill.training.preparation.artifacts.measurement_reuse import (
     REUSE_NAME,
     require_staged_reuse,
     stage_measurements,
 )
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
+from shadowspill.training.preparation.phases import job
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client import Memory
 from shadowspill_client.protocol.preparation import PREPARATION_MEDIA_TYPE
 from shadowspill_client.protocol.requests import ArtifactRef

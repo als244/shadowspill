@@ -4,8 +4,13 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from shadowspill.training.preparation.job import JOB_NAME, PreparationJob
-from shadowspill.training.preparation.measurement_reuse import stage_measurements
+from shadowspill.training.preparation.artifacts.measurement_reuse import (
+    stage_measurements,
+)
+from shadowspill.training.preparation.phases.job import (
+    JOB_NAME,
+    PreparationJob,
+)
 from shadowspill_client.protocol.training import ResolvedTraining
 
 from .artifacts import ArtifactStore

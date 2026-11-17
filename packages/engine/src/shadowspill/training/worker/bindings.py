@@ -6,8 +6,8 @@ from pathlib import Path
 from types import MappingProxyType
 
 from shadowspill.training.inputs.spool import SpooledFrame
-from shadowspill.training.preparation.binding import OperationBinding
-from shadowspill.training.preparation.family_records import PreparedPlans
+from shadowspill.training.preparation.capture.binding import OperationBinding
+from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill.training.session.controls import (
     CallControls,
     call_controls,

@@ -7,7 +7,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Self
 
 from shadowspill.training.inputs.spool import SpooledFrame
-from shadowspill.training.preparation.binding import OperationBinding, control_tensors
+from shadowspill.training.preparation.capture.binding import (
+    OperationBinding,
+    control_tensors,
+)
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.controls import Scalar
 from shadowspill_client.protocol.payload import BatchSnapshot

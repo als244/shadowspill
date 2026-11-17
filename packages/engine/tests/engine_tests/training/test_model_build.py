@@ -12,9 +12,9 @@ from shadowspill.operator_preparation import OperatorPreparation
 from shadowspill.parallelism import GroupRef
 from shadowspill.resources import Resource
 from shadowspill.training.definitions import ComponentLayout, ModelBuild
-from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client import BuildCandidates, PlanningOptions, Preparation
 
 

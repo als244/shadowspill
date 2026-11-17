@@ -15,7 +15,7 @@ from shadowspill.training.definitions.initialization import (
     ModelInitialization,
     TensorInitializer,
 )
-from shadowspill.training.preparation.family_records import PreparedPlans
+from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill.training.preparation.setup import ResolvedSetup
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.definitions import DefinitionSource

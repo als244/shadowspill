@@ -10,9 +10,11 @@ import torch
 from engine_tests.fixtures.definition_operations import definitions, example, records
 from shadowspill.parallelism import GroupRef, InputFieldPlacement, InputPlacement
 from shadowspill.pytorch.capture.objective import capture_training_objective
-from shadowspill.training.preparation.binding import control_tensors
-from shadowspill.training.preparation.operation_build import build_operation
-from shadowspill.training.preparation.operations import (
+from shadowspill.training.preparation.capture.binding import control_tensors
+from shadowspill.training.preparation.capture.operation_build import (
+    build_operation,
+)
+from shadowspill.training.preparation.configuration.operations import (
     OperationContract,
     resolve_operations,
 )
@@ -215,8 +217,8 @@ import sys
 for name in ('torch', 'triton', 'shadowspill_workloads'):
     sys.modules[name] = None
 from engine_tests.fixtures.definition_operations import definitions
-from shadowspill.training.preparation.operations import resolve_operations
-from shadowspill.training.preparation.operation_build import build_operation
+from shadowspill.training.preparation.configuration.operations import resolve_operations
+from shadowspill.training.preparation.capture.operation_build import build_operation
 model, objective, optimizer = definitions()
 assert resolve_operations(objective, None, optimizer=True)[0].outputs == 'metrics'
 """

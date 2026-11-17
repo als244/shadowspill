@@ -20,9 +20,9 @@ from shadowspill.pytorch.guards import capture_input_signature
 from shadowspill.training.inputs.adapters import InputAdapter
 from shadowspill.training.inputs.materialize import materialize_buffer
 from shadowspill.training.inputs.routing import route_buffer
-from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill.training.session.prepared import PreparedRequests
 from shadowspill.training.session.worker_inputs import ReadyInputLoader
 from shadowspill_client.buffers import BufferBudget

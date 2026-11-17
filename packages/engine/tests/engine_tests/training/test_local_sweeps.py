@@ -12,7 +12,7 @@ import pytest
 from engine_tests.training.test_local_planning import measured as measured
 from shadowspill import MemoryBudgets
 from shadowspill.artifacts._values import plain
-from shadowspill.training.preparation import local_search
+from shadowspill.training.preparation.offline import search as local_search
 from shadowspill_client import Memory
 
 

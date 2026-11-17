@@ -10,7 +10,7 @@ import torch
 
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.plan import Plan
-from shadowspill.training.preparation.bundle import TrainingBundle
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.worker.checkpoint_reader import rank_randomness
 from shadowspill.training.worker.checkpoint_records import (
     RankRestore,

@@ -19,9 +19,9 @@ from engine_tests.training.test_prepared_requests import queue, upload
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.server.results import ResultPublisher
 from shadowspill.training.inputs.frames import InputFrame
-from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill.training.result_frames import ResultFrames
 from shadowspill_client import ServiceClient
 from shadowspill_client.buffers import BufferBudget

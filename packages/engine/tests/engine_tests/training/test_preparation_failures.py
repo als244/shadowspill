@@ -4,7 +4,7 @@ import pytest
 
 from engine_tests.training.test_preparation_templates import inventory
 from shadowspill.errors import PlanInfeasibleError
-from shadowspill.training.preparation.failures import (
+from shadowspill.training.preparation.capture.failures import (
     PreparationFailure,
     prune_failed_templates,
 )

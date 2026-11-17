@@ -7,7 +7,7 @@ import pytest
 from engine_tests.training.test_preparation_templates import inventory
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
 from shadowspill.step.ordering import StepDataOrdering
-from shadowspill.training.preparation.family_identity import execution_names
+from shadowspill.training.preparation.planning.identity import execution_names
 from shadowspill_client.protocol.operations import OperationKey
 
 

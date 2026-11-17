@@ -23,8 +23,10 @@ from shadowspill.training.definitions import (
 )
 from shadowspill.training.definitions.preparation import ResolvedPreparationDefinition
 from shadowspill.training.definitions.stacked import STACKED_PRESET
-from shadowspill.training.preparation.expansion import expand_schedules
-from shadowspill.training.preparation.resolution import resolve_preparation
+from shadowspill.training.preparation.configuration.expansion import expand_schedules
+from shadowspill.training.preparation.configuration.resolution import (
+    resolve_preparation,
+)
 from shadowspill_client import (
     BatchConfig,
     BuildCandidates,
@@ -341,8 +343,10 @@ for name in ('torch', 'triton', 'shadowspill_workloads'):
     sys.modules[name] = None
 from engine_tests.training.test_preparation_resolution import stacked_context
 from shadowspill.training.definitions import Registry
-from shadowspill.training.preparation.resolution import resolve_preparation
-from shadowspill.training.preparation.expansion import expand_schedules
+from shadowspill.training.preparation.configuration.resolution import (
+    resolve_preparation,
+)
+from shadowspill.training.preparation.configuration.expansion import expand_schedules
 context = stacked_context()
 definition = Registry().resolve_preparation('shadowspill/stacked@1')
 resolved = resolve_preparation(definition, context)

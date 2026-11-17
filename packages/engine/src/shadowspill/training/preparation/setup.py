@@ -20,6 +20,21 @@ from shadowspill.training.definitions.registry import (
 )
 from shadowspill.training.definitions.stacked import STACKED_PRESET
 from shadowspill.training.inputs.staging import input_envelope
+from shadowspill.training.preparation.configuration.expansion import (
+    ExpandedPreparation,
+    expand_schedules,
+)
+from shadowspill.training.preparation.configuration.operations import (
+    OperationContract,
+    resolve_operations,
+)
+from shadowspill.training.preparation.configuration.policies import (
+    resolve_build_policies,
+)
+from shadowspill.training.preparation.configuration.resolution import (
+    _search,
+    resolve_preparation,
+)
 from shadowspill_client import (
     BatchConfig,
     Execution,
@@ -40,11 +55,7 @@ from shadowspill_client.protocol.preview import PreparationEstimate, TrainingPre
 from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.protocol.training import Origin, ResolvedTraining
 
-from .expansion import ExpandedPreparation, expand_schedules
 from .identity import setup_sources
-from .operations import OperationContract, resolve_operations
-from .policies import resolve_build_policies
-from .resolution import _search, resolve_preparation
 
 
 @dataclass(frozen=True)

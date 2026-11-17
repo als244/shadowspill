@@ -9,11 +9,13 @@ import pytest
 from engine_tests.fixtures.external_definition import SOURCE
 from engine_tests.training.test_preparation_resolution import preset, stacked_context
 from shadowspill.training.definitions import PolicyDefinition, Registry
-from shadowspill.training.preparation.policies import (
+from shadowspill.training.preparation.configuration.policies import (
     materialize_build_options,
     resolve_build_policies,
 )
-from shadowspill.training.preparation.resolution import resolve_preparation
+from shadowspill.training.preparation.configuration.resolution import (
+    resolve_preparation,
+)
 from shadowspill_client import BuildCandidates, BuildOptions, Policy, Preparation
 
 
@@ -144,8 +146,12 @@ from engine_tests.training.test_policy_definitions import (
     definition, settings, stacked_context, preset, SOURCE,
 )
 from shadowspill.training.definitions import Registry
-from shadowspill.training.preparation.resolution import resolve_preparation
-from shadowspill.training.preparation.policies import resolve_build_policies
+from shadowspill.training.preparation.configuration.resolution import (
+    resolve_preparation,
+)
+from shadowspill.training.preparation.configuration.policies import (
+    resolve_build_policies,
+)
 registry = Registry()
 registry.add_policy(definition(), source=SOURCE)
 resolved = resolve_preparation(preset(settings()), stacked_context())

@@ -5,7 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from shadowspill.build.forward import _validate_distributed_mutations
-from shadowspill.training.preparation.capture_checks import _validate_mutations
+from shadowspill.training.preparation.capture.validation import (
+    _validate_mutations,
+)
 
 
 def program(target="buffer_view"):

@@ -7,9 +7,9 @@ import torch
 
 from engine_tests.training.test_preparation_templates import inventory
 from shadowspill.diagnostics.progress import Progress
-from shadowspill.training.preparation.failures import PreparationFailure
-from shadowspill.training.preparation.job_artifacts import attempt
-from shadowspill.training.preparation.progress import (
+from shadowspill.training.preparation.capture.failures import PreparationFailure
+from shadowspill.training.preparation.phases.artifacts import attempt
+from shadowspill.training.preparation.phases.progress import (
     candidate_title,
     describe_candidate,
 )

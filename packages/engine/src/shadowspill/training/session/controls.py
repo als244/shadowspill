@@ -4,8 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from shadowspill.training.preparation.operations import OperationContract
-from shadowspill.training.preparation.scalars import control_values
+from shadowspill.training.preparation.configuration.operations import OperationContract
+from shadowspill.training.preparation.configuration.scalars import control_values
 from shadowspill.training.preparation.setup import ResolvedSetup
 from shadowspill_client.protocol.controls import ControlSchema, Scalar, ScalarControl
 from shadowspill_client.protocol.operations import OperationKey

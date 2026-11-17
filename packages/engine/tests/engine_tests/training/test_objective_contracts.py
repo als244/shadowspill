@@ -15,7 +15,7 @@ from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.pytorch.capture.objective import capture_training_objective
 from shadowspill.pytorch.contracts import ObjectiveResult
 from shadowspill.training.definitions import Registry
-from shadowspill.training.preparation.operations import OperationContract
+from shadowspill.training.preparation.configuration.operations import OperationContract
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client.protocol.codec import decode, encode
 from shadowspill_client.protocol.controls import ControlSchema

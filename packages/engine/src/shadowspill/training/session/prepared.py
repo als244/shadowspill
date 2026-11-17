@@ -8,7 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from shadowspill.training.inputs.spool import InputSpool
-from shadowspill.training.preparation.family_records import (
+from shadowspill.training.preparation.planning.records import (
     PlannedCandidate,
     PreparedPlans,
 )

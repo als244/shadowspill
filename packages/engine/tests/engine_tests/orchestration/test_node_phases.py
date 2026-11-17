@@ -20,7 +20,7 @@ from shadowspill.orchestration.launch.admission import (
 )
 from shadowspill.orchestration.launch.host_arena import HostArena
 from shadowspill.orchestration.launch.phases import NodePhases, PhaseInvocation
-from shadowspill.training.preparation.phases import run_phases
+from shadowspill.training.preparation.phases.launcher import run_phases
 from shadowspill_client.buffers import BufferBudget
 
 
@@ -358,7 +358,7 @@ def test_failed_termination_retains_the_whole_lease_until_explicit_retry(
 def test_existing_phase_driver_uses_owned_launches_and_stops_after_failure(
     tmp_path, monkeypatch
 ):
-    from shadowspill.training.preparation import phases
+    from shadowspill.training.preparation.phases import launcher as phases
 
     node, disk = resources(), BufferBudget(1 << 20, 10)
     commands = []

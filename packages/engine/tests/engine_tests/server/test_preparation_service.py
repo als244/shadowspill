@@ -18,7 +18,7 @@ from engine_tests.training.test_setup_resolution import installed
 from shadowspill.orchestration.launch.phases import PhaseInvocation
 from shadowspill.server import local_creation as module
 from shadowspill.server.records.requests import RunIdentity
-from shadowspill.training.preparation import job
+from shadowspill.training.preparation.phases import job
 from shadowspill_client import ServiceClient
 from shadowspill_client._async import ConnectionClosed
 from shadowspill_client.creation import CreationError

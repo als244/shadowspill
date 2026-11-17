@@ -18,11 +18,11 @@ from examples.training.qwen.setup import resolve
 from examples.training.text_data import TokenBatches
 from shadowspill.parallelism import Parallelism
 from shadowspill.training.definitions import load_registry
-from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_workloads.definitions.expert_parallel import ownership
-from workload_tests.test_local_pretrained import checkpoint
+from workload_tests.initialization.test_local_pretrained import checkpoint
 
 
 def future(value):

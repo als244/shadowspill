@@ -44,8 +44,11 @@ from shadowspill.server.records.requests import RunIdentity  # noqa: E402
 from shadowspill.server.results import ResultPublisher  # noqa: E402
 from shadowspill.server.storage import ServiceStorage  # noqa: E402
 from shadowspill.training.definitions import load_registry  # noqa: E402
-from shadowspill.training.preparation.bundle import TrainingBundle  # noqa: E402
-from shadowspill.training.preparation.job import JOB_NAME, PreparationJob  # noqa: E402
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle  # noqa: E402
+from shadowspill.training.preparation.phases.job import (  # noqa: E402
+    JOB_NAME,
+    PreparationJob,
+)
 from shadowspill.training.session.controller import RunController  # noqa: E402
 from shadowspill.training.session.prepared import PreparedRequests  # noqa: E402
 from shadowspill.training.session.state import OperationState  # noqa: E402

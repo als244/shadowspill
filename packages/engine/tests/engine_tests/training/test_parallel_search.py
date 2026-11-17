@@ -7,14 +7,15 @@ import pytest
 from engine_tests.training.test_local_planning import measured  # noqa: F401
 from engine_tests.training.test_setup_resolution import installed
 from shadowspill.errors import PlanInfeasibleError
-from shadowspill.training.preparation import bundle_validation, family
-from shadowspill.training.preparation.bundle import TrainingBundle
-from shadowspill.training.preparation.family import plan_family
-from shadowspill.training.preparation.layouts import prepare_layouts
-from shadowspill.training.preparation.parallel_search import parallel_search
+from shadowspill.training.preparation.artifacts import validation as bundle_validation
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
+from shadowspill.training.preparation.planning import family
+from shadowspill.training.preparation.planning.family import plan_family
+from shadowspill.training.preparation.planning.parallel import parallel_search
+from shadowspill.training.preparation.planning.sharing import representative_sources
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.shared_planning import representative_sources
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client import Memory
 
 

@@ -175,7 +175,13 @@ packages/engine/src/shadowspill/
 │   ├── inputs/            owned global input validation and packing
 │   ├── session/           confirmed operation boundaries and participation
 │   ├── worker/            bounded commands and fixed prepared worker bindings
-│   └── preparation/       service preparation and saved phase reuse
+│   └── preparation/       resolve setup and compose the existing phase APIs
+│       ├── configuration/ schemas, limits, policies and layout candidates
+│       ├── capture/       build bindings, templates and allocation checks
+│       ├── phases/        build/profile/communication/plan process jobs
+│       ├── planning/      concurrent searches and compatible Plan families
+│       ├── artifacts/     saved bundles, measurements and validation
+│       └── offline/       local sweeps and submitted schedule reconciliation
 └── pytorch/
     ├── capture/           Export/AOT capture and semantic storage contracts
     │   ├── artifacts/     graph records, geometry, identity and output schemas

@@ -11,8 +11,11 @@ from shadowspill import Profiles, TaskProfile
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.program import Program
 from shadowspill.profiling.distributed import combine_profiles
-from shadowspill.training.preparation import capture, job_phases
-from shadowspill.training.preparation.compiled_reuse import reuse_compiled_tasks
+from shadowspill.training.preparation.capture import build as capture
+from shadowspill.training.preparation.capture.compiled_reuse import (
+    reuse_compiled_tasks,
+)
+from shadowspill.training.preparation.phases import operations as job_phases
 
 
 def fixture(tile, *, rank=0, contract=None):

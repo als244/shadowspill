@@ -49,7 +49,7 @@ from shadowspill.pytorch._rng import preserve_rng
 from shadowspill.server import checkpoint_conversion as module
 from shadowspill.server.checkpoint_restore import CheckpointResolver
 from shadowspill.server.checkpoints import publish_checkpoint
-from shadowspill.training.preparation.bundle import TrainingBundle
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.worker.checkpoint_records import RankSave
 from shadowspill.training.worker.conversion_records import ConversionCommand
 from shadowspill.training.worker.randomness import WorkerRandomness

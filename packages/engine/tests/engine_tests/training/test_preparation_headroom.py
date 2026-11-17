@@ -8,8 +8,8 @@ import pytest
 from engine_tests.training.test_allocation_coverage import certify, compiler_fixture
 from engine_tests.training.test_preparation_templates import inventory
 from engine_tests.training.test_training_bundle import make_bundle
-from shadowspill.training.preparation import profile
-from shadowspill.training.preparation.family_identity import validate_profile
+from shadowspill.training.preparation.phases import profile
+from shadowspill.training.preparation.planning.identity import validate_profile
 from shadowspill_client import Preparation
 
 

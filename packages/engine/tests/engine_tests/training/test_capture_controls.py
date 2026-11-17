@@ -7,7 +7,9 @@ import pytest
 from engine_tests.fixtures.definition_operations import definitions
 from shadowspill.build.lowering.catalog import CompiledTasks
 from shadowspill.build.lowering.collectives import declare_collective
-from shadowspill.training.preparation.capture_checks import validate_optimizer_program
+from shadowspill.training.preparation.capture.validation import (
+    validate_optimizer_program,
+)
 
 
 def capture(operation):

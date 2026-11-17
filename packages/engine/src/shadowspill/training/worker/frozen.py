@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 from shadowspill.checkpoint.frozen import omitted_from_programs
-from shadowspill.training.preparation.family_records import PreparedPlans
+from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.training import ResolvedTraining

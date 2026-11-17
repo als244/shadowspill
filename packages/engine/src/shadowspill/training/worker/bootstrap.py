@@ -11,11 +11,11 @@ from shadowspill.diagnostics.progress import Progress, phase
 from shadowspill.orchestration.capture.progress import write_progress
 from shadowspill.orchestration.launch.file_grants import resolve_file, verify_file
 from shadowspill.training.definitions import InitializationRuntime, load_registry
-from shadowspill.training.preparation.bundle import TrainingBundle
-from shadowspill.training.preparation.bundle_validation import bind_bundle
-from shadowspill.training.preparation.layouts import prepare_layouts
+from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
+from shadowspill.training.preparation.artifacts.validation import bind_bundle
+from shadowspill.training.preparation.capture.templates import capture_inventory
+from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
-from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client.protocol.codec import ProtocolError
 
 from .channel import read_message

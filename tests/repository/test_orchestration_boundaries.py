@@ -25,9 +25,7 @@ def test_repository_clients_have_one_way_dependencies():
             "reference",
             "tools",
         ),
-        "tools/measure_plan/api.py": (
-            "shadowspill_workloads",
-        ),
+        "tools/measure_plan/api.py": ("shadowspill_workloads",),
         "tools": (
             "benchmarks",
             "shadowspill_workloads.recipes",
@@ -76,14 +74,14 @@ for module in ('launch.processes', 'launch.rank_device', 'launch.workers',
                'capture.nsys', 'capture.nsys_worker',
                'capture.files', 'capture.progress'):
     importlib.import_module('shadowspill.orchestration.' + module)
-for module in ('phases', 'plan', 'parallel_search', 'job'):
+for module in ('phases.launcher', 'phases.plan', 'planning.parallel', 'phases.job'):
     importlib.import_module('shadowspill.training.preparation.' + module)
 block.blocked = {'benchmarks', 'qualification'}
-for module in ('shadowspill.training.preparation.phases',
-               'shadowspill.training.preparation.build',
-               'shadowspill.training.preparation.profile',
-               'shadowspill.training.preparation.communicate',
-               'shadowspill.training.preparation.job'):
+for module in ('shadowspill.training.preparation.phases.launcher',
+               'shadowspill.training.preparation.phases.build',
+               'shadowspill.training.preparation.phases.profile',
+               'shadowspill.training.preparation.phases.communicate',
+               'shadowspill.training.preparation.phases.job'):
     importlib.import_module(module)
 """
     result = subprocess.run(

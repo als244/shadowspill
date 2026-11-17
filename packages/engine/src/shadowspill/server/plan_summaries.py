@@ -7,8 +7,8 @@ from dataclasses import replace
 
 from shadowspill.diagnostics.occupancy.page import script_json
 from shadowspill.reporting.occupancy import occupancy_data
-from shadowspill.training.preparation.family_records import PreparedPlans
-from shadowspill.training.preparation.inspection import summary_rows
+from shadowspill.training.preparation.artifacts.inspection import summary_rows
+from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill_client._records import Value, mapping
 from shadowspill_client.protocol.codec import ProtocolError, digest, encode
 from shadowspill_client.protocol.plans import (
