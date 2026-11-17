@@ -56,6 +56,7 @@ def planning_requests(inventory: TemplateInventory) -> dict[str, Any]:
     """Describe alternatives without building models or selecting a winner."""
     requests: dict[str, Any] = {}
     candidates = {}
+    descriptions = {}
     for rows in inventory.families.values():
         for candidate in rows:
             for ordering in _orderings(candidate):
@@ -78,5 +79,20 @@ def planning_requests(inventory: TemplateInventory) -> dict[str, Any]:
                             raise ValueError("planning request identity collision")
                         requests[request.id] = request.to_dict()
                         members.append(request.id)
-                candidates[candidate_identity(candidate, ordering)] = members
-    return {"requests": requests, "candidates": candidates}
+                identity = candidate_identity(candidate, ordering)
+                candidates[identity] = members
+                shape = candidate.layout.candidate
+                setup = inventory.layouts.setup
+                descriptions[identity] = {
+                    "operation": candidate.layout.operation.to_dict(),
+                    "batch": setup.config.batches[shape.batch].to_dict(),
+                    "capacities": dict(shape.schedule.capacities(setup.context.schema)),
+                    "build": setup.config.preparation.cases[shape.case].to_dict(),
+                    "microbatch_count": shape.count,
+                    "ordering": None if ordering is None else ordering.to_dict(),
+                }
+    return {
+        "requests": requests,
+        "candidates": candidates,
+        "descriptions": descriptions,
+    }

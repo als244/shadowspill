@@ -258,12 +258,22 @@ the ordinary phases. The new run records its source and copied file checksums;
 phase workers recheck target/toolchain compatibility before planning. Reuse requires
 a completed preparation owned by the authenticated caller.
 
+For memory and bandwidth comparisons without starting training, use
+[offline sweeps](offline-sweeps.md):
+
+```python
+from shadowspill import PlanningInputs
+
+inputs = PlanningInputs.load("measured-inputs.zip")
+inputs.sweep(device_gib=[12, 16, 24]).write_report("memory.html")
+```
+
 With the optional CPU planner installed, load the export and submit selected
 schedules through the ordinary artifact and creation methods:
 
 ```python
 from dataclasses import replace
-from shadowspill.training.preparation.local_planning import PlanningInputs
+from shadowspill import PlanningInputs
 
 # Keep the measured shapes/counts; choose initialization and budgets in setup.
 setup["prepare"] = replace(setup["prepare"], reuse=prepared.reuse)

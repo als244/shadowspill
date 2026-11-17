@@ -42,6 +42,7 @@ def test_top_level_public_surface_is_explicit() -> None:
         "measure_overlap",
         "plan_program",
         "sweep_programs",
+        "PlanningInputs",
         "write_report",
         "Executor",
         "TrainingResult",

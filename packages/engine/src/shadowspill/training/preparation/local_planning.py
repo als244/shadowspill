@@ -6,9 +6,9 @@ import hashlib
 import json
 import zipfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import BinaryIO, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeVar, cast
 
 from shadowspill.artifacts.archive import Artifact
 from shadowspill.artifacts.profiled_program import ProfiledProgram
@@ -20,6 +20,9 @@ from .local_plans import LocalPlans
 from .planning_requests import PlanningRequest
 
 T = TypeVar("T", bound=Artifact)
+
+if TYPE_CHECKING:
+    from .local_sweep import PlanningSweep
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,7 @@ class PlanningInputs:
     communication: Mapping[str, CommunicationInfo]
     requests: Mapping[str, PlanningRequest]
     candidates: Mapping[str, tuple[str, ...]]
+    descriptions: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: str | Path) -> PlanningInputs:
@@ -99,7 +103,31 @@ class PlanningInputs:
                     key: tuple(value)
                     for key, value in manifest["planning"]["candidates"].items()
                 },
+                manifest["planning"].get("descriptions", {}),
             )
+
+    def sweep(
+        self,
+        *,
+        device_gib: float | Sequence[float] | None = None,
+        spill_gib: float | Sequence[float] | None = None,
+        transfer_scale: float | Sequence[float] = 1.0,
+    ) -> PlanningSweep:
+        """Replan a budget/bandwidth grid using the exported measurements.
+
+        Omitted budgets inherit their measured setup. Transfer scale multiplies
+        fetch/evict bandwidths, including concurrent rates; compute, latency and
+        collective costs stay unchanged. All results are predictions. Empty
+        feasible sets remain inspectable, and no training run is started.
+        """
+        from .local_sweep import sweep
+
+        return sweep(
+            self,
+            device_gib=device_gib,
+            spill_gib=spill_gib,
+            transfer_scale=transfer_scale,
+        )
 
     def plan(
         self,

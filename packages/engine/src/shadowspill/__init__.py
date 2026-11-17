@@ -35,6 +35,7 @@ _PUBLIC = {
     "backward_program": "planning.training.backward",
     "instantiate_examples": "planning.training.examples",
     "sweep_programs": "planning.sweep",
+    "PlanningInputs": "training.preparation.local_planning",
     "write_report": "reporting",
     "Executor": "execution",
     "TrainingResult": "execution",
