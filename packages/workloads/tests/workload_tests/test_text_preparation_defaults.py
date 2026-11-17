@@ -1,5 +1,6 @@
 """Default text shapes stay separate from logical capacity and execution policy."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -9,7 +10,8 @@ from shadowspill.training.preparation.family_checks import _orderings
 from shadowspill.training.preparation.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.preparation.templates import capture_inventory
-from shadowspill_client import BatchConfig, Memory, Objective, Optimizer
+from shadowspill_client import BatchConfig, Memory, Objective, Optimizer, Preparation
+from shadowspill_client.text import build_candidates
 from shadowspill_workloads.inputs.text.preparation import defaults
 
 from .test_llama_definition import settings
@@ -29,6 +31,7 @@ def test_default_shapes_follow_sequence_bound_and_logical_input_partitions(
     cap, length, partitions, sizes, counts
 ):
     context = SimpleNamespace(
+        requested=Preparation(),
         model=SimpleNamespace(config={"architecture": {"max_seq_len": length}}),
         batches=[
             BatchConfig(
@@ -79,8 +82,8 @@ def test_resolved_default_compares_full_steps_and_every_depth_breadth_ordering()
         for row in expanded.candidates
     )
     inventory = capture_inventory(prepare_layouts(setup))
-    # Counts and traversals reuse three shape captures plus their masked forms.
-    assert len(inventory.templates) == 6
+    # Counts and traversals reuse the three requested training captures.
+    assert len(inventory.templates) == 3
     for family in inventory.families.values():
         for row in family:
             count = row.layout.candidate.count
@@ -89,3 +92,64 @@ def test_resolved_default_compares_full_steps_and_every_depth_breadth_ordering()
                 for depth in range(1, count + 1)
                 if count % depth == 0
             ]
+
+
+@pytest.mark.parametrize("maximum,expected", [(None, 128), (16, 16), (256, 256)])
+def test_sequence_capacity_is_per_microbatch_and_kernel_bound_is_per_sequence(
+    maximum, expected
+):
+    setup = resolve_training(
+        load_registry(["shadowspill", "shadowspill-workloads"]),
+        model=settings(capacity=131072),
+        objective=Objective("cross_entropy"),
+        optimizer=Optimizer("adamw"),
+        batch=BatchConfig(
+            limits={
+                "token_capacity": 2097152,
+                "max_sequence_length": 4096,
+                "max_sequences": 8192,
+            }
+        ),
+        memory=Memory(24, 128),
+        prepare=Preparation(
+            candidates=build_candidates(
+                microbatch_tokens=[65536],
+                max_sequences_per_microbatch=maximum,
+            )
+        ),
+    )
+    inventory = capture_inventory(prepare_layouts(setup))
+    for template in inventory.templates.values():
+        inputs = template.binding.inputs
+        assert inputs.layout.buffer.max_datums == expected
+        assert inputs.layout.limits["max_sequence_length"] == 4096
+        assert template.model_build.config["sequence_length_bound"] == 4096
+        assert template.model_build.config["architecture"]["max_seq_len"] == 131072
+        assert inputs.shapes["inputs", "sequence_lengths"] == (expected + 16,)
+
+
+def test_distinct_sequence_bounds_do_not_reuse_the_same_capture():
+    batch = BatchConfig(
+        limits={
+            "token_capacity": 16,
+            "max_sequence_length": 4,
+            "max_sequences": 8,
+        }
+    )
+    setup = resolve_training(
+        load_registry(["shadowspill", "shadowspill-workloads"]),
+        model=settings(capacity=16),
+        objective=Objective("cross_entropy"),
+        optimizer=Optimizer("adamw"),
+        memory=Memory(1, 1),
+        batch=[
+            batch,
+            replace(batch, limits={**batch.limits, "max_sequence_length": 8}),
+        ],
+        prepare=Preparation(candidates=build_candidates(microbatch_tokens=[16])),
+    )
+    inventory = capture_inventory(prepare_layouts(setup))
+    assert {
+        t.model_build.config["sequence_length_bound"]
+        for t in inventory.templates.values()
+    } == {4, 8}

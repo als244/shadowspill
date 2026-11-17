@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from shadowspill.parallelism import Parallelism
-from shadowspill_client import BatchConfig, Preparation
+from shadowspill_client import BatchConfig, BuildCase, Preparation
 from shadowspill_client.protocol.definitions import DefinitionSource
 from shadowspill_client.protocol.inputs import InputSchema
 
@@ -47,14 +47,14 @@ class PreparationDefinition:
     """Only descriptions/geometry; functions never construct models or reserve GPUs.
 
     ``buffers`` returns one physical template per logical input partition for a
-    requested microbatch size. Variable units and coupled-field geometry belong
+    requested build case. Variable units and coupled-field geometry belong
     to the installed definition, not to a model-name branch in the engine.
     """
 
     id: str
     defaults: Callable[[PreparationContext], Preparation]
     buffers: Callable[
-        [PreparationContext, int, Sequence[Path], int], Sequence[BufferShape]
+        [PreparationContext, int, Sequence[Path], BuildCase], Sequence[BufferShape]
     ]
     representative: (
         Callable[[PreparationContext, int, BufferShape], RepresentativePattern] | None

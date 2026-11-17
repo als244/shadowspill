@@ -98,6 +98,7 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
             layout.logical_rank,
             layout.buffer.max_datums,
             tuple(sorted(layout.buffer.fields.items())),
+            tuple(sorted(layout.limits.items())),
         )
 
     unique_layouts = {

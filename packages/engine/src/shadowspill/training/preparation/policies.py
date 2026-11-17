@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from shadowspill.training.definitions.policies import PolicyKind
 from shadowspill.training.definitions.registry import Registry
-from shadowspill_client import BuildCase, BuildOptions, Policy
+from shadowspill_client import BuildOptions, Policy
 from shadowspill_client.protocol.definitions import DefinitionSource
 from shadowspill_client.protocol.preparation import ResolvedPreparation
 
@@ -42,7 +42,7 @@ def resolve_build_policies(
                 raise ValueError("policy defaults changed from the saved configuration")
             used[policy.definition] = resolved.source
             values[name] = Policy(policy.definition, resolved.config).to_dict()
-        cases.append(BuildCase(case.microbatch_size, BuildOptions.from_dict(values)))
+        cases.append(replace(case, build=BuildOptions.from_dict(values)))
     if sources is not None and sources.keys() != used.keys():
         raise ValueError("saved preparation contains unreferenced policy sources")
     return replace(preparation, cases=cases), MappingProxyType(used)

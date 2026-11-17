@@ -401,12 +401,15 @@ def variable_inventory(batches, *, groups=None):
         padding_safe=True,
     )
 
-    def buffers(context, batch, paths, size):
+    def buffers(context, batch, paths, case):
         limits = context.batches[batch].limits
         return [
             BufferShape(
                 int(limits["records"]),
-                {path: (int(limits[path[-1]]) // size,) for path in paths},
+                {
+                    path: (int(limits[path[-1]]) // case.microbatch_size,)
+                    for path in paths
+                },
             )
         ]
 

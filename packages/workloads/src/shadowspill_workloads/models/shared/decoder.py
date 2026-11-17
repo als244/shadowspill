@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .sequence_geometry import bounded_sequence_length
+
 SequenceLengths = Sequence[int] | torch.Tensor | None
 
 
@@ -195,6 +197,7 @@ def packed_metadata(
     none exceeds ``capacity``.
     """
 
+    capacity = bounded_sequence_length(capacity)
     if not isinstance(sequence_lengths, torch.Tensor):
         positions, lengths = attention_metadata(
             tokens, sequence_lengths, capacity=capacity

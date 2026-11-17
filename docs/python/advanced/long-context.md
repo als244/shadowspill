@@ -81,6 +81,10 @@ and `moe_chunks` divide work inside the captured model while keeping the same
 logical sequence. The bounded output head, retention policy and ordering keep
 their normal defaults. The batch limits also allow shorter independent sequences
 to pack into the same 32K capacity; this corpus reader chooses fixed long windows.
+With this sequence bound, the default allows eight sequences per microbatch;
+`max_sequences` remains a separate global batch limit. Use
+`max_sequences_per_microbatch` in `build_candidates` for more packing headroom,
+and `validate_batch()` to check a batch against the prepared layouts.
 
 Open `plan.html` before training to inspect predicted time and GPU/spill memory.
 The last step's `runtime.html` shows measured execution alongside its prediction.

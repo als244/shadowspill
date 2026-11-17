@@ -10,6 +10,7 @@ from ..config.preparation import BuildCandidates, BuildCase, BuildOptions, Polic
 def build_candidates(
     *,
     microbatch_tokens: Sequence[int],
+    max_sequences_per_microbatch: int | None = None,
     projection_chunks: Sequence[int] = (0,),
     moe_chunks: Sequence[int] = (0,),
     retention: Sequence[str] = ("cost-input",),
@@ -21,9 +22,18 @@ def build_candidates(
     boundaries. Retention defaults to cost-input, with chunk-local scratch
     regenerated inside its region. Ordering and the bounded head keep their
     defaults. The result uses portable policies and requires no server or Torch.
+
+    max_sequences_per_microbatch bounds the number of records packed into each
+    input buffer. By default the text preset reserves eight times the number of
+    maximum-length sequences needed to fill that buffer, capped by the global
+    max_sequences limit. max_sequence_length is declared in BatchConfig and
+    bounds attention kernels independently of microbatch_tokens. Padding has its
+    own reserved metadata entries; it does not consume the record allowance.
     """
     sizes = BuildCandidates(microbatch_sizes=microbatch_tokens).microbatch_sizes
     assert sizes is not None
+    if max_sequences_per_microbatch is not None:
+        integer(max_sequences_per_microbatch, "max_sequences_per_microbatch", minimum=1)
     for label, choices in (
         ("projection_chunks", projection_chunks),
         ("moe_chunks", moe_chunks),
@@ -65,6 +75,7 @@ def build_candidates(
                         {"name": choice, "chunked": projection != 0 or expert != 0},
                     ),
                 ),
+                max_datums=max_sequences_per_microbatch,
             )
             for tokens, projection, expert, choice in product(
                 sizes, projection_chunks, moe_chunks, retention

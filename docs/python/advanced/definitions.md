@@ -113,10 +113,16 @@ pinned pretrained Hub weights and native training checkpoint resume.
 
 The Llama batch declares `token_capacity`, `max_sequence_length` and
 `max_sequences`. An optional `typical={"sequence_length": ...}` affects timing
-samples only. The preset requests half-capacity and full-capacity buffers with
-counts one and two; admission discards combinations exceeding the scheduled cap.
-Explicit candidate lists replace those choices. Physical sequence slots include
-separate padding segments, preserving caller boundaries even with empty Datums.
+samples only. The preset tries one, two and four maximum-length sequences' worth
+of tokens per input partition, capped by the per-partition global token capacity.
+It derives accumulation counts from those sizes; admission discards combinations
+exceeding the scheduled cap. Explicit candidate lists replace those choices.
+Per-microbatch sequence capacity defaults to eight times the number of full-length
+sequences fitting that buffer, capped by the global `max_sequences` limit.
+`build_candidates(max_sequences_per_microbatch=...)` overrides it. Physical
+metadata includes separate padding segments, preserving caller boundaries even
+with empty Datums. The declared maximum sequence length bounds attention kernels;
+actual lengths remain runtime tensors, including when the microbatch is larger.
 Every named output closure is packed and validated by the generic engine.
 
 `qwen3moe` and `qwen35moe` use the same packed

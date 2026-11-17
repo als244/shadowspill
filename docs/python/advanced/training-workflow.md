@@ -110,6 +110,20 @@ Accumulation counts are derived from the selected microbatch sizes and global
 token limit unless explicitly supplied. The helper keeps the ordinary retention,
 ordering and saved-head defaults; sequence attention boundaries remain intact.
 
+`BatchConfig.max_sequences` is the global step limit. Each text microbatch
+defaults to eight times `ceil(microbatch_tokens / max_sequence_length)` sequence
+entries, capped by that global limit. For example, a 64K buffer with a 4K sequence
+bound allows 128 sequences, leaving room for shorter packed examples. Override
+this with `build_candidates(..., max_sequences_per_microbatch=256)` when needed.
+Unused entries require kernel workspace, so avoid copying the global count into
+every microbatch. Padding has separate metadata entries, and all scheduled token
+buffers, including padding, count toward `token_capacity`.
+
+`training.validate_batch(batch)` checks whether the actual sequences fit a
+prepared layout. Staying below global limits alone does not guarantee a packing.
+The sequence-length bound controls attention separately from the microbatch
+token capacity; changing packed lengths remains a runtime input, without rebuild.
+
 ## Submit updates and resume
 
 ```python

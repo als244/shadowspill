@@ -29,7 +29,10 @@ def describe_candidate(inventory: TemplateInventory, template: CaptureTemplate) 
     }
     buffer = template.binding.inputs.layout.buffer
     event("Microbatch size: " + ", ".join(f"{size:,}" for size in sorted(sizes)))
-    event(f"Sequence/item slots: {buffer.max_datums:,}")
+    event(f"Maximum sequences/items per microbatch: {buffer.max_datums:,}")
+    limits = template.binding.inputs.layout.limits
+    if "max_sequence_length" in limits:
+        event(f"Maximum sequence length: {limits['max_sequence_length']:,}")
     fields: dict[tuple[int, ...], list[str]] = defaultdict(list)
     for path, shape in buffer.fields.items():
         fields[tuple(shape)].append(".".join(path))

@@ -41,7 +41,9 @@ def adapter(config, layout):
     (size,) = layout.buffer.fields[TOKENS]
     if any(layout.local_shape(p) != s for p, s in layout.buffer.fields.items()):
         raise ValueError("packed attention requires complete sequences per worker")
-    capacity = config.architecture["max_seq_len"]
+    capacity = int(
+        layout.limits.get("max_sequence_length", config.architecture["max_seq_len"])
+    )
     slots = layout.buffer.max_datums + ceil(size / capacity)
 
     def fill(context, arrays):
@@ -139,13 +141,20 @@ def defaults(context, *, preset):
     )
 
 
-def buffers(context, batch, paths, size):
+def buffers(context, batch, paths, case):
     partitions = _check(context)
+    size = case.microbatch_size
     if not 0 < size < 2**31:
         raise ValueError("packed microbatch size must fit int32 offsets")
-    shape = BufferShape(
-        context.batches[batch].limits["max_sequences"], {p: (size,) for p in paths}
-    )
+    limits = context.batches[batch].limits
+    # Reserve packing headroom per microbatch, not the entire global batch's
+    # sequence allowance. Empty sequence slots also cost kernel workspace.
+    count = case.max_datums
+    if count is None:
+        count = min(
+            limits["max_sequences"], 8 * ceil(size / limits["max_sequence_length"])
+        )
+    shape = BufferShape(count, {p: (size,) for p in paths})
     return (shape,) * partitions
 
 

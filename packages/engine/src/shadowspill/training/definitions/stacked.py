@@ -8,7 +8,7 @@ from importlib.resources import files
 from math import ceil, floor
 from pathlib import Path
 
-from shadowspill_client import BuildCandidates, PlanningOptions, Preparation
+from shadowspill_client import BuildCandidates, BuildCase, PlanningOptions, Preparation
 from shadowspill_client.inputs.coverage_bounds import input_bounds
 from shadowspill_client.inputs.shapes import BufferShape
 from shadowspill_client.inputs.validation import Path as FieldPath
@@ -57,9 +57,12 @@ def defaults(context: PreparationContext) -> Preparation:
 
 
 def buffers(
-    context: PreparationContext, batch: int, paths: Sequence[FieldPath], size: int
+    context: PreparationContext, batch: int, paths: Sequence[FieldPath], case: BuildCase
 ) -> tuple[BufferShape, ...]:
     partitions = _check(context)
+    size = case.microbatch_size
+    if case.max_datums is not None and case.max_datums != size:
+        raise ValueError("stacked microbatch size already specifies its record count")
     fields = {tuple(field.path): field for field in context.schema.fields}
     shape = BufferShape(
         size, {path: (size, *(int(n) for n in fields[path].shape)) for path in paths}

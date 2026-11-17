@@ -24,6 +24,7 @@ from shadowspill.training.preparation.templates import capture_inventory
 from shadowspill_client import (
     BatchConfig,
     BuildCandidates,
+    BuildCase,
     Datum,
     LoRA,
     Memory,
@@ -88,7 +89,16 @@ def test_trainable_settings_select_head_and_optional_adapters_after_construction
     assert not model.embed.weight.requires_grad
 
 
-def prepared(*, cap=8, length=4, count=4, sizes=(8,), counts=(1,), lora=None):
+def prepared(
+    *,
+    cap=8,
+    length=4,
+    count=4,
+    sizes=(8,),
+    counts=(1,),
+    lora=None,
+    max_per_microbatch=None,
+):
     registry = load_registry(["shadowspill-workloads"])
     setup = resolve_training(
         registry,
@@ -107,7 +117,9 @@ def prepared(*, cap=8, length=4, count=4, sizes=(8,), counts=(1,), lora=None):
             "forward": ["logprobs"],
         },
         prepare=Preparation(
-            candidates=BuildCandidates(microbatch_sizes=sizes),
+            candidates=BuildCandidates(
+                cases=[BuildCase(size, max_datums=max_per_microbatch) for size in sizes]
+            ),
             planning=PlanningOptions(microbatch_counts=counts),
         ),
     )
@@ -258,6 +270,7 @@ def test_q25_count_three_is_ineligible_and_larger_shape_covers_awkward_lengths(l
         count=64,
         sizes=(64 * 1024, 128 * 1024),
         counts=(1, 2, 3),
+        max_per_microbatch=64,
     )
     key = OperationKey("forward", "logprobs", "evaluation")
     for candidate in layouts.families[key]:

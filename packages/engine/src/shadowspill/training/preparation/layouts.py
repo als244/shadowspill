@@ -96,10 +96,16 @@ def _candidate(
         for rank in placement.partitions.groups[partition]:
             # Adapters depend on exactly this immutable CPU layout, not on the
             # operation name, count or candidate traversal order.
-            key = (physical.max_datums, tuple(sorted(physical.fields.items())), rank)
+            limits = setup.config.batches[candidate.batch].limits
+            key = (
+                physical.max_datums,
+                tuple(sorted(physical.fields.items())),
+                rank,
+                tuple(sorted(limits.items())),
+            )
             if key not in adapters:
                 adapters[key] = setup.model.bind_inputs(
-                    InputLayout(schema, physical, placement, rank)
+                    InputLayout(schema, physical, placement, rank, limits)
                 )
             inputs[buffer, rank] = adapters[key]
             bindings[buffer, rank] = OperationBinding(

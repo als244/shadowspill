@@ -30,6 +30,7 @@ class Settings:
     lora: dict | None = None
     lora_seed: int | None = None
     expert_options: dict | None = None
+    sequence_length_bound: int | None = None
 
     def __post_init__(self):
         if self.preset not in self.catalog.PRESETS:
@@ -86,6 +87,11 @@ class Settings:
         if self.implementation not in implementations:
             raise ValueError(f"{self.family} requires {' or '.join(implementations)}")
         training_options.validate(self, label=self.family)
+        if self.sequence_length_bound is not None and (
+            type(self.sequence_length_bound) is not int
+            or not 1 <= self.sequence_length_bound <= config.max_seq_len
+        ):
+            raise ValueError("sequence_length_bound must fit the architecture capacity")
         object.__setattr__(self, "architecture", asdict(config))
         if self.moe:
             expert_parallel.validate(self)

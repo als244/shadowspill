@@ -238,6 +238,16 @@ chunks; it defaults to the full microbatch. Advanced searches can add
 chunking never changes sequence attention boundaries. See the complete
 [long-context example](long-context.md).
 
+`max_sequences` limits the global batch, not each physical microbatch. The text
+preset defaults to 8× `ceil(microbatch_tokens / max_sequence_length)` sequences
+per microbatch, capped by the global limit. An explicit
+`max_sequences_per_microbatch=128` overrides that choice in `build_candidates`.
+For generic definitions the corresponding field is `BuildCase.max_datums`.
+Padding gets separate entries. The supplied text adapters use
+`BatchConfig.limits["max_sequence_length"]` as the kernel length bound and keep
+actual sequence lengths as input tensors. Call `validate_batch()` to check actual
+packing against the prepared layouts before submission.
+
 For measured inputs without starting a training run, use the same setup with
 `service.prepare_training(**setup).result()`. Initialization can be omitted.
 This runs the existing build, profiling and communication phases, and releases

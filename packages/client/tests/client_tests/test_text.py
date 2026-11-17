@@ -35,6 +35,8 @@ def test_default_fields_remain_schema_defaults_and_explicit_datum_is_unshifted()
     [
         ("microbatch_tokens", []),
         ("microbatch_tokens", [0]),
+        ("max_sequences_per_microbatch", 0),
+        ("max_sequences_per_microbatch", True),
         ("projection_chunks", []),
         ("projection_chunks", [-1]),
         ("moe_chunks", [True]),
@@ -50,6 +52,18 @@ def test_invalid_build_candidates_fail_on_the_client(field, values):
     options = {"microbatch_tokens": [8192], field: values}
     with pytest.raises(ValueError):
         build_candidates(**options)
+
+
+def test_per_microbatch_sequence_capacity_survives_portable_roundtrip():
+    from shadowspill_client import BuildCandidates
+    from shadowspill_client.text import build_candidates
+
+    candidates = build_candidates(
+        microbatch_tokens=[32768, 65536], max_sequences_per_microbatch=128
+    )
+    restored = BuildCandidates.from_dict(candidates.to_dict())
+    assert restored == candidates
+    assert [case.max_datums for case in restored.cases] == [128, 128]
 
 
 @pytest.mark.parametrize(

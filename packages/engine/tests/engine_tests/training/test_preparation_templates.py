@@ -132,11 +132,11 @@ def test_same_geometry_with_distinct_timing_scenarios_keeps_distinct_templates()
             candidates=BuildCandidates(microbatch_sizes=[4]),
             planning=PlanningOptions(microbatch_counts=[1]),
         ),
-        lambda context, batch, paths, size: [
+        lambda context, batch, paths, case: [
             BufferShape(
-                size,
+                case.microbatch_size,
                 {
-                    tuple(f.path): (size, *f.shape)
+                    tuple(f.path): (case.microbatch_size, *f.shape)
                     for f in context.schema.fields
                     if tuple(f.path) in paths
                 },

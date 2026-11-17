@@ -26,7 +26,8 @@ def test_candidate_descriptions_distinguish_training_and_explicit_forward():
         assert f"Candidate {index}/6" in title
         assert ("Forward" in title) == (template.kind == "forward")
         assert "Microbatch size: " in text
-        assert "Sequence/item slots: " in text and "inputs.pixels" in text
+        assert "Maximum sequences/items per microbatch: " in text
+        assert "inputs.pixels" in text
         assert "Execution chunking: Disabled" in text
         assert "Retention: Cost-input (default)" in text
         assert ("paired by default" in text) == (template.kind != "forward")

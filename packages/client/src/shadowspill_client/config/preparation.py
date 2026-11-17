@@ -76,11 +76,16 @@ def positive_choices(value: Sequence[int] | None, name: str) -> tuple[int, ...] 
 
 @dataclass(frozen=True)
 class BuildCase(Record):
+    """One physical input size and policies, with an optional per-buffer item cap."""
+
     microbatch_size: int
     build: BuildOptions = field(default_factory=BuildOptions)
+    max_datums: int | None = None
 
     def __post_init__(self) -> None:
         integer(self.microbatch_size, "microbatch_size", minimum=1)
+        if self.max_datums is not None:
+            integer(self.max_datums, "max_datums", minimum=1)
         object.__setattr__(self, "build", record(BuildOptions, self.build, "build"))
 
 

@@ -12,6 +12,7 @@ from torch.export.graph_signature import InputKind
 
 from shadowspill.pytorch.capture.export import capture_forward
 from shadowspill_workloads.models.shared.decoder import packed_metadata
+from shadowspill_workloads.models.shared.sequence_geometry import sequence_length_bound
 
 GEOMETRIES = ((65, 0, 64, 0), (1, 127, 1, 0), (129, 0, 0, 0), (0, 65, 0, 64))
 
@@ -65,6 +66,27 @@ def test_export_keeps_lengths_as_a_user_tensor_and_recomputes_all_metadata():
         )
     assert not torch.equal(expected(GEOMETRIES[0])[0], expected(GEOMETRIES[1])[0])
     assert not torch.equal(expected(GEOMETRIES[0])[3], expected(GEOMETRIES[1])[3])
+
+
+def test_declared_kernel_bound_is_static_but_sequence_values_remain_runtime_inputs():
+    class Bounded(torch.nn.Module):
+        def forward(self, tokens, lengths):
+            metadata = packed_metadata(tokens, lengths, capacity=1024)
+            return metadata.positions, metadata.cu_seqlens, metadata.max_seqlen
+
+    with sequence_length_bound(65):
+        captured = capture_forward(Bounded(), arguments(GEOMETRIES[0]))
+    exported = captured.exported_program
+    assert not exported.constants
+    assert all(
+        s.kind == InputKind.USER_INPUT for s in exported.graph_signature.input_specs
+    )
+    for lengths in (GEOMETRIES[0], GEOMETRIES[3]):
+        positions, offsets, bound = exported.module()(*arguments(lengths))
+        assert bound == 65
+        torch.testing.assert_close(positions, expected(lengths)[0])
+        torch.testing.assert_close(offsets, expected(lengths)[1])
+    assert packed_metadata(*arguments(GEOMETRIES[0]), capacity=1024).max_seqlen == 129
 
 
 @pytest.mark.cuda

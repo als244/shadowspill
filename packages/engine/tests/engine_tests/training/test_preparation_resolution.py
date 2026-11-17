@@ -85,8 +85,8 @@ def token_context(placement=None):
     )
 
 
-def token_buffers(context, batch, paths, size):
-    capacity = size * int(context.batches[batch].limits["length"])
+def token_buffers(context, batch, paths, case):
+    capacity = case.microbatch_size * int(context.batches[batch].limits["length"])
     return [
         BufferShape(3, {path: (capacity,) for path in paths})
     ] * context.parallelism.inputs.partition_count

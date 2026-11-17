@@ -57,7 +57,11 @@ def adapt(model, config):
 
 
 def for_build(config, context):
-    """One optimizer precision choice also controls provider gradient production."""
+    """Carry declared input bounds and optimizer precision into capture."""
+    config = replace(
+        config,
+        sequence_length_bound=context.layout.limits.get("max_sequence_length"),
+    )
     if context.gradient_dtype is None:
         return config
     return replace(
@@ -75,5 +79,12 @@ def capture_context(config):
     import torch
     from mlops.dispatch import weight_gradients_at
 
-    with weight_gradients_at(getattr(torch, config.grad_dtype)):
+    from shadowspill_workloads.models.shared.sequence_geometry import (
+        sequence_length_bound,
+    )
+
+    with (
+        weight_gradients_at(getattr(torch, config.grad_dtype)),
+        sequence_length_bound(config.sequence_length_bound),
+    ):
         yield

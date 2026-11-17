@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from math import prod
 from types import MappingProxyType
 from typing import Any, Self
@@ -12,6 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from shadowspill.parallelism import InputPlacement
+from shadowspill_client._records import Value
 from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.inputs.shapes import BufferShape
 from shadowspill_client.inputs.validation import Path
@@ -65,6 +67,10 @@ class InputLayout:
     buffer: BufferShape
     placement: InputPlacement
     logical_rank: int
+    limits: Mapping[str, Value] = dataclass_field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "limits", MappingProxyType(dict(self.limits)))
 
     def local_shape(self, path: Path) -> tuple[int, ...]:
         shape = self.buffer.fields[path]

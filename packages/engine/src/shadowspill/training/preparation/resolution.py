@@ -97,9 +97,7 @@ def resolve_preparation(
             merged = {**fixed, **case.build.to_dict()}
             if requested_cases is None:
                 merged.update(supplied.build.to_dict())
-            cases.append(
-                BuildCase(case.microbatch_size, BuildOptions.from_dict(merged))
-            )
+            cases.append(replace(case, build=BuildOptions.from_dict(merged)))
             for name in defaults:
                 origins[f"cases.{index}.{name}"] = (
                     "explicit"

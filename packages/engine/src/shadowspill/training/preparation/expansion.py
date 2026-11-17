@@ -109,7 +109,7 @@ def expand_schedules(
                     context,
                     batch_index,
                     tuple(required_paths),
-                    case.microbatch_size,
+                    case,
                 )
             )
             if len(buffers) != placement.partition_count or any(
