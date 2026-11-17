@@ -6,6 +6,7 @@ import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import wraps
 from threading import RLock
@@ -15,6 +16,13 @@ from typing import ParamSpec, TypeVar
 P = ParamSpec("P")
 T = TypeVar("T")
 _current: ContextVar[Progress | None] = ContextVar("preparation_progress", default=None)
+
+
+@dataclass
+class PhaseOutcome:
+    """A recoverably rejected candidate completed its attempt, not its work."""
+
+    rejected: bool = False
 
 
 class Progress:
@@ -52,7 +60,7 @@ class Progress:
                 self._disabled = True
 
     @contextmanager
-    def phase(self, name: str) -> Iterator[None]:
+    def phase(self, name: str) -> Iterator[PhaseOutcome]:
         started = monotonic()
         with self._lock:
             if len(self._stack) >= 64:
@@ -61,13 +69,16 @@ class Progress:
             self._stack.append((name, started))
             self.event(f"→ {name}", depth=depth)
         outcome = "✓"
+        result = PhaseOutcome()
         try:
-            yield
+            yield result
         except BaseException as error:
             outcome = f"✗ {type(error).__name__}:"
             raise
         finally:
             with self._lock:
+                if result.rejected and outcome == "✓":
+                    outcome = "⊘ Rejected:"
                 self.event(
                     f"{outcome} {name} — {monotonic() - started:.2f}s", depth=depth
                 )
@@ -83,13 +94,13 @@ class Progress:
 
 
 @contextmanager
-def phase(name: str) -> Iterator[None]:
+def phase(name: str) -> Iterator[PhaseOutcome]:
     reporter = _current.get()
     if reporter is None:
-        yield
+        yield PhaseOutcome()
     else:
-        with reporter.phase(name):
-            yield
+        with reporter.phase(name) as result:
+            yield result
 
 
 def event(message: str) -> None:

@@ -23,11 +23,11 @@ def attempt(
     phase: Literal["build", "profile"],
     operation: Callable[[], None],
     group: Workers,
-) -> None:
+) -> bool:
     """A collective failure aborts its workers; only independent OOMs are pruned."""
     if group.count > 1:
         operation()
-        return
+        return True
     from shadowspill.orchestration.candidates import attempt as try_candidate
 
     entry: dict[str, Any] = {"name": key}
@@ -38,6 +38,7 @@ def attempt(
         )
     else:
         (root / "failures" / f"{key}.ssp").unlink(missing_ok=True)
+    return "failure" not in entry
 
 
 def reused[T](path: Path, group: Workers, load: Callable[[], T]) -> T | None:

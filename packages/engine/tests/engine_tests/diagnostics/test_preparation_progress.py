@@ -61,3 +61,16 @@ def test_nested_reporter_restores_outer_scope():
         event("Back")
     assert len(outer) == 3 and len(inner) == 2
     assert outer[1].endswith("  Back")
+
+
+def test_recoverably_rejected_candidate_is_not_logged_as_successful():
+    lines = []
+    with Progress(lines.append).activate():
+        with phase("Candidate 1/3") as outcome:
+            outcome.rejected = True
+        with phase("Candidate 2/3"):
+            pass
+    assert "⊘ Rejected: Candidate 1/3" in lines[1]
+    assert "✓ Candidate 2/3" in lines[3]
+    with phase("Silent") as outcome:
+        outcome.rejected = True

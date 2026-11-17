@@ -26,6 +26,7 @@ from .job_artifacts import (
     reused,
 )
 from .measurement_reuse import REUSE_NAME
+from .progress import candidate_title, describe_candidate
 
 
 @logged_phase("Build")
@@ -74,15 +75,9 @@ def build(directory: str | Path) -> None:
                         ).save(path)
 
             template = inventory.templates[key]
-            geometry = dict(template.binding.inputs.layout.buffer.fields)
-            with phase(
-                f"Candidate {index}/{len(groups)} · {template.kind} · {key[:12]}"
-            ):
-                event(
-                    f"Input shapes: {geometry}; "
-                    f"build options: {template.build.to_dict()}"
-                )
-                attempt(root, key, "build", capture, group)
+            with phase(candidate_title(template, index, len(groups))) as result:
+                describe_candidate(inventory, template)
+                result.rejected = not attempt(root, key, "build", capture, group)
     admitted_inventory(root, inventory)
 
 
@@ -111,8 +106,10 @@ def profile(directory: str | Path) -> None:
                         inventory, key, program, rank_map=group.rank_map, cache=cache
                     ).save(path)
 
-            with phase(f"Candidate {index}/{len(groups)} · {key[:12]}"):
-                attempt(root, key, "profile", measure, group)
+            template = inventory.templates[key]
+            with phase(candidate_title(template, index, len(groups))) as result:
+                describe_candidate(inventory, template)
+                result.rejected = not attempt(root, key, "profile", measure, group)
     admitted_inventory(root, original)
 
 
