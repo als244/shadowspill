@@ -3,7 +3,6 @@
 from dataclasses import replace
 from typing import Literal
 
-from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.program import Program
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import MemoryLocation, ResidencySpec
@@ -74,7 +73,7 @@ def bind_training(
         initial_residency=tuple(initial.values()),
         task_alternative_groups=tuple(sequence.groups),
         bindings={
-            **plain(program.bindings),
+            **program.bindings,
             "entrypoints": sequence.entrypoints,
             "task_names": task_names,
             "transient_outputs": sequence.transient_outputs,

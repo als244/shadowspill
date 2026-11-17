@@ -68,7 +68,9 @@ def instantiate_examples(program: Program, template_indices: Sequence[int]) -> P
     storage = clone_storage(
         program, shared, [example_aliases[index] - shared for index in indices]
     )
-    bindings = plain(saved)
+    # Only the replaced lists below are edited. Keep the other immutable nested
+    # bindings intact until Program validates and freezes the assembled result.
+    bindings = dict(saved)
     bindings.update(
         num_examples=len(indices),
         training_templates=[],

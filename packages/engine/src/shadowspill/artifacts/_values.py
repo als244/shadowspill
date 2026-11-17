@@ -11,6 +11,13 @@ from typing import Any
 
 
 def freeze(value: Any) -> Any:
+    # Artifact metadata contains millions of scalar leaves. Avoid Mapping's
+    # abstract-class checks for ordinary JSON values; keep the general path for
+    # subclasses and custom mappings, including their existing validation.
+    if value is None or type(value) in (str, bool, int):
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("metadata keys must be strings")
@@ -25,6 +32,8 @@ def freeze(value: Any) -> Any:
 
 
 def plain(value: Any) -> Any:
+    if value is None or type(value) in (str, bool, int, float):
+        return value
     if isinstance(value, Mapping):
         return {key: plain(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -34,8 +43,21 @@ def plain(value: Any) -> Any:
 
 def encoded(value: Any) -> bytes:
     return json.dumps(
-        plain(value), sort_keys=True, separators=(",", ":"), allow_nan=False
+        value,
+        default=_json_mapping,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
     ).encode()
+
+
+def _json_mapping(value: Any) -> dict[Any, Any]:
+    # The JSON encoder already handles scalar leaves, dicts, lists and tuples.
+    # Only immutable/custom mappings need conversion. Avoid making another full
+    # Python copy of a large Program before every integrity hash.
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def digest(value: Any) -> str:
