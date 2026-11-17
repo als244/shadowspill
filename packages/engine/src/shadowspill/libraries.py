@@ -30,7 +30,7 @@ def library_candidates(
     *,
     package_root: Path = _PACKAGE_ROOT,
 ) -> tuple[Path, ...]:
-    """Return explicit, installed and editable locations with native suffixes."""
+    """Return explicit, installed and editable locations with library suffixes."""
 
     if sys.platform == "darwin" and filename.endswith(".so"):
         filename = filename.removesuffix(".so") + ".dylib"
@@ -74,7 +74,7 @@ def _editable_project_root(package_root: Path) -> Path | None:
 
 @cache
 def load_shadowspill_library() -> ctypes.CDLL:
-    """Load the native core library once and check its ABI version."""
+    """Load the C library once and check its ABI version."""
 
     path = resolve_library(_LIBRARY)
     if path is None:

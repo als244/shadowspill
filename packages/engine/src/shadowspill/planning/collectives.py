@@ -19,7 +19,7 @@ COMMUNICATION_PHASES = ("gradient_communication", "weight_communication")
 
 
 def collective_sequence(plan: Plan) -> tuple[tuple[str, str, str], ...]:
-    """Collective-bearing calls in the native runtime's host submission order.
+    """Collective-bearing calls in the runtime's dispatch submission order.
 
     A task issues its explicit collectives before its boundary actions. Within
     that boundary, collective write-backs precede collective fetches, retaining
