@@ -12,6 +12,7 @@ from typing import Any
 
 import torch
 from torch._inductor.codegen import wrapper
+from torch._inductor.codegen.common import WorkspaceArg
 from torch._inductor.utils import LineContext
 
 _SCOPE = (
@@ -24,7 +25,12 @@ def wrapper_allocation_behavior(
 ) -> dict[str, Any]:
     """Inspect compiler instructions, leaving every unknown behavior unresolved."""
     unknown, opaque = set(geometry_gaps), set()
+    workspaces = set()
     for line in lines:
+        if isinstance(line, wrapper.AllocateLine) and isinstance(
+            line.node, WorkspaceArg
+        ):
+            workspaces.add(line.node.get_name())
         if isinstance(
             line,
             (
@@ -69,7 +75,7 @@ def wrapper_allocation_behavior(
             # Allocation extents were checked by the compiler memory reader.
             # CUDA context/retained stream state is separately measured at startup.
             pass
-        elif isinstance(line, str) and _static_statement(line):
+        elif isinstance(line, str) and _static_statement(line, workspaces):
             pass
         else:
             unknown.add(f"wrapper behavior: {type(line).__name__}")
@@ -102,7 +108,7 @@ def _fixed_integer_scatter(node: Any) -> bool:
     )
 
 
-def _static_statement(source: str) -> bool:
+def _static_statement(source: str, workspaces: set[str]) -> bool:
     try:
         statements = ast.parse(source.strip()).body
     except SyntaxError:
@@ -110,6 +116,17 @@ def _static_statement(source: str) -> bool:
     for statement in statements:
         if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
             call = statement.value
+            if (
+                isinstance(call.func, ast.Attribute)
+                and call.func.attr == "zero_"
+                and isinstance(call.func.value, ast.Name)
+                and call.func.value.id in workspaces
+                and not call.args
+                and not call.keywords
+            ):
+                # Inductor initializes scan/reduction scratch after its fixed
+                # WorkspaceArg allocation. Zeroing never changes that geometry.
+                continue
             if (
                 isinstance(call.func, ast.Name)
                 and call.func.id == "assert_alignment"

@@ -55,6 +55,65 @@ def test_unknown_wrapper_behavior_remains_unresolved(line):
     assert wrapper_allocation_behavior([line])["unresolved"]
 
 
+def test_only_declared_workspaces_can_be_zeroed_without_unknown_behavior():
+    from torch._inductor.codegen.common import WorkspaceArg, WorkspaceZeroMode
+    from torch._inductor.virtualized import V
+
+    node = object()
+    graph = SimpleNamespace(scheduler=SimpleNamespace(current_node=node, nodes=[node]))
+    with V.set_graph_handler(graph):
+        allocation = wrapper.AllocateLine(
+            None,
+            WorkspaceArg(
+                count=128,
+                zero_mode=WorkspaceZeroMode.ZERO_ON_CALL,
+                device=torch.device("cuda"),
+                outer_name="ws",
+            ),
+        )
+    assert not wrapper_allocation_behavior([allocation, "ws.zero_()"])["unresolved"]
+    for lines in (
+        ["ws.zero_()"],
+        [allocation, "other.zero_()"],
+        [allocation, "ws.zero_(arg0)"],
+        [allocation, "ws.zero_(value=0)"],
+        [allocation, "ws.resize_(arg0.item())"],
+    ):
+        assert wrapper_allocation_behavior(lines)["unresolved"]
+    assert wrapper_allocation_behavior(
+        [allocation, "ws.zero_()"], geometry_gaps=["allocation extent: ws"]
+    )["unresolved"]
+
+
+@pytest.mark.cuda
+def test_compiled_large_packed_offsets_keep_runtime_lengths_and_fixed_workspace():
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    from torch.fx.experimental.proxy_tensor import make_fx
+
+    from shadowspill.build.compilation import compile_task
+    from shadowspill.pytorch.capture.artifacts import GraphArtifact
+    from shadowspill.pytorch.executable import restore_executable
+
+    def function(lengths):
+        return (lengths.cumsum(0),)
+
+    lengths = torch.zeros(8193, device="cuda", dtype=torch.int64)
+    artifact = GraphArtifact.capture(
+        kind="forward",
+        graph_module=make_fx(function)(lengths),
+        example_inputs=(lengths,),
+    )
+    compiled = compile_task(artifact)
+    assert compiled.memory["allocation_behavior"]["unresolved"] == []
+    execute = restore_executable(compiled.payload)
+    for divisor in (1, 7, 129):
+        lengths.copy_(torch.arange(8193, device="cuda") % divisor)
+        (actual,) = execute(lengths)
+        torch.testing.assert_close(actual, lengths.cumsum(0))
+        assert actual.untyped_storage().nbytes() == lengths.untyped_storage().nbytes()
+
+
 def test_opaque_calls_are_requirements_not_a_static_allocation_guarantee():
     node = SimpleNamespace(get_kernel_name=lambda: "provider.kernel")
     record = wrapper_allocation_behavior(
