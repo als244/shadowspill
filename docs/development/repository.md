@@ -104,6 +104,7 @@ packages/engine/src/shadowspill/
 │   └── binding/           resolve logical groups into calibration participants
 ├── integrations/          explicit adapters from optional libraries to generic build APIs
 ├── execution/             saved-plan workers, initialization and bounded tensor export
+│   ├── diagnostics/       no-update startup calls, state preservation and reports
 │   ├── recording/         opt-in task/transfer recording for Executor
 │   ├── distributed/       collective and shard-storage execution bindings
 │   └── observations/      optional bounded runtime norm collection
@@ -129,7 +130,6 @@ packages/engine/src/shadowspill/
 │   └── ordering.py        StepDataOrdering: the walk through the microbatches
 ├── diagnostics/           what one traced step turned out to cost, as
 │   │                      immutable evidence, and the reading of it
-│   ├── startup/           no-update startup calls, state preservation and reports
 │   ├── step.py            the summary, the two timelines, and the clock each
 │   │                      is read against
 │   ├── timing.py          what one invocation measures about itself: the
