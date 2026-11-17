@@ -61,8 +61,8 @@ workers reconstruct setup independently. Closures returned *by* that factory
 are fine; no callback pickle or model object is sent between workers.
 
 For full-checkpoint text training with evaluation and checkpointing, start with
-the [commented GLM LoRA script](../examples/glm53_flash_lora.py)
-and its [recipe guide](../packages/workloads/src/shadowspill_workloads/recipes/text/glm53_flash_lora/README.md).
+the [public-client demos](../examples/demos/README.md)
+and the [model catalog](../docs/python/catalog.md).
 
 ## Spill storage
 

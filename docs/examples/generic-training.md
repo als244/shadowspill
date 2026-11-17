@@ -4,7 +4,7 @@ This example trains the repository's Llama-3.2-1B decoder from random weights on
 next-token prediction. It uses real tokenized text, a summed cross-entropy loss
 normalized over the update, and AdamW with FP32 gradients/master weights.
 For an end-to-end call that also searches candidates, use the
-[commented Python runner](../../examples/train_text.py). The separate
+[training client](../python/client.md). The separate
 phases below show where a custom model, objective and data source enter.
 
 Prepare a corpus with the model's tokenizer using the [data guide](../../packages/workloads/src/shadowspill_workloads/inputs/text/README.md).
@@ -95,7 +95,8 @@ configuration and data settings saved during preparation:
 import json
 from pathlib import Path
 
-from shadowspill import Plan, Trainer
+from shadowspill import Executor, Plan
+from shadowspill.checkpoint import save_checkpoint
 from shadowspill_workloads.inputs.text.calls import Inputs
 from shadowspill_workloads.initialization.decoder import from_catalog
 
@@ -105,19 +106,26 @@ fill_tensor = from_catalog(
     settings["model"], seed=0, max_seq_len=settings["sequence_length"],
 )
 
-with Trainer(Plan.load("training.ssp")) as trainer:
-    trainer.initialize(fill_tensor)
-    trainer.fit(source, steps=100, run_dir="runs/llama")
-    trainer.save("runs/llama/checkpoint.ssp")
+executor = Executor(Plan.load("training.ssp"))
+executor.initialize(fill_tensor)
+for step in range(100):
+    result = executor.run(**next(source)).result()
+    print(step + 1, sum(float(loss) for loss in result.losses))
+    del result
+save_checkpoint(
+    executor, "runs/llama/checkpoint.ssp",
+    metadata={"completed_updates": 100, "data": source.state_dict()},
+)
+executor.close()
 ```
 
-Construct Trainer before initializing another device allocator. To resume,
-replace `initialize` with `load("runs/llama/checkpoint.ssp")` and increase the total
-`steps` target. The checkpoint restores model/optimizer state, progress and the
-input source's position. For a custom loop, use `trainer.step(**next(source))`.
+Construct Executor before initializing another device allocator. For continuation,
+`load_checkpoint(executor, path)` restores training state and returns the metadata;
+restore the data cursor and update count from that record before continuing.
 
-Build and plan `build_forward` separately for validation, then pass its Plan as
-`evaluation_plan` to share current model weights. See [Trainer](../python/api/training.md)
-for schedules, evaluation and checkpoints, [distributed setup](../python/api/distributed.md)
-for multiple workers, and [custom-model integration](../python/custom-models.md) for
-replacing the supplied model and data helpers.
+Build and plan `build_forward` separately for validation, then admit its Plan as
+`Executor(training_plan, plans={"evaluation": evaluation_plan})` to share current
+model state. See [Executor](../python/api/executor.md) for state and checkpoint
+controls, [distributed setup](../python/api/distributed.md) for multiple workers,
+and [custom-model integration](../python/advanced/custom-definitions.md) for replacing the
+supplied model and data helpers.

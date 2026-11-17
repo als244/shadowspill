@@ -413,7 +413,7 @@ provider, repeated-replica layout or arbitrary model-owned communication path.
 The baseline controller has also passed full-training and LoRA checks
 on two H100s.
 
-The [Qwen3 recipe](../../../packages/workloads/src/shadowspill_workloads/recipes/text/qwen3/README.md#eight-h100-budget-sweep)
+The [Qwen3 recipe](../../../examples/training/qwen3.md)
 has completed seven full-model updates on eight H100s at each of 20, 40 and
 77 GiB per GPU, with both sharded DP and EP8. Those throughput runs use real
 tokenized text, random host initialization and a 96 GiB spill limit per rank;

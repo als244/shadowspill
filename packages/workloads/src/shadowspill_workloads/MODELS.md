@@ -162,7 +162,7 @@ python -m examples.training.train examples/training/configs/llama3_1b.json \
 
 For stock `torch.optim.AdamW`, FP32 moments with FP16 compute weights require
 FP32 masters. MLOps AdamW supports independently selected moment storage. See
-[training precision](../../../../examples/training/README.md#precision-and-initialization).
+[training precision](../../../../docs/python/advanced/precision.md).
 
 FP8 is an [expert-compute setting](#expert-parallelism), not a value for
 `precision.model_dtype`. Selecting FP8 experts does not convert attention, router,
@@ -392,7 +392,7 @@ This is the model portion of a request. Complete runnable examples are
 [Llama](../../../../examples/training/configs/llama3_1b.json),
 [dense Qwen](../../../../examples/training/configs/qwen35_1b.json), and
 [OLMoE](../../../../examples/training/configs/olmoe_1b.json). The
-[training guide](../../../../examples/training/README.md) explains data preparation, overrides,
+[training guide](../../../../docs/examples/README.md) explains data preparation, overrides,
 optimizer schedules, evaluation, W&B, and checkpoints.
 
 For a benchmark using a supplied throughput preset and saved resolution plans:

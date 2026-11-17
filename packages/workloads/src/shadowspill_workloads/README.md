@@ -20,7 +20,6 @@ the detailed [architecture catalog](MODELS.md).
 | [initialization/](initialization) | Bounded checkpoint loading and parameter initialization |
 | [lora/](lora) | Shared adapter selection and application |
 | [policies/](policies) | Execution chunking and retention choices |
-| [recipes/](recipes) | Application composition and experiment settings |
 
 Each family declares its presets, checkpoint reader, pretrained identifiers and
 training hook in `models/<family>/registration.py`. The catalog derives its
@@ -35,7 +34,7 @@ they do not add another trainer. Shared process infrastructure lives in
 
 ## Examples and extension
 
-- [Training examples](../../../../examples/training/README.md)
+- [Training examples](../../../../docs/examples/README.md)
 - [Custom definitions](../../../../docs/python/advanced/definitions.md)
 - [Non-text training](../../../../docs/examples/generic-training.md)
 - [Benchmark quickstart](../../../../benchmarks/quickstart.md)

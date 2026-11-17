@@ -25,7 +25,6 @@ from tests.repository.files import repository_files
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = ROOT / "packages/workloads/src/shadowspill_workloads"
-PREPARATION = ROOT / "packages/engine/src/shadowspill/training/preparation"
 
 
 def _declared_flags(tree: ast.AST) -> set[str]:
@@ -102,13 +101,9 @@ def _readers(path: Path) -> list[Path]:
     """
 
     recipe_packages = {
+        ROOT / "examples/demos/_options.py": (ROOT / "examples/demos",),
         ROOT / "examples/train_llama3.py": (ROOT / "examples/training/llama3",),
         ROOT / "examples/training/qwen/cli.py": (ROOT / "examples/training/qwen",),
-        CATALOG / "recipes/text/glm53_flash_lora/arguments.py": (
-            ".",
-            "../phases",
-            PREPARATION,
-        ),
         ROOT / "examples/regression_training.py": (
             ROOT / "examples/training/regression",
         ),

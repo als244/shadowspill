@@ -414,9 +414,9 @@ def test_examples_cover_complete_public_workflows() -> None:
             "measure_program(",
             "apply_profiles(",
             "plan_program(",
-            "Trainer(Plan.load(",
-            "trainer.initialize(",
-            "trainer.step(",
+            "Executor(Plan.load(",
+            "executor.initialize(",
+            "executor.run(",
         ),
         "diagnostics.md": (
             "pending.diagnostics",

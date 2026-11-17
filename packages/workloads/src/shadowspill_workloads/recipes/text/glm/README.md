@@ -10,5 +10,5 @@ Model definitions and checkpoint tensor mappings live in
 - `data.py`: real-text batches, objectives and the fixed-batch learning check.
 - [GLM partition policy](../../../policies/glm.py): optional per-layer partitioning.
 
-The [Flash LoRA training recipe](../glm53_flash_lora/README.md) uses these helpers
-for checkpoint-backed training. No model implementation imports this package.
+Use the public [model catalog](../../../../../../../docs/python/catalog.md) for
+training through the service. These factories serve direct phase benchmarks.

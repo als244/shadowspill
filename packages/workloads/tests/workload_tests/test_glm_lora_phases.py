@@ -20,10 +20,8 @@ from qualification.numerical.tolerances import (
     LOSS_RELATIVE_TOLERANCE,
     meets_tensor_tolerance,
 )
-from shadowspill.training.preparation.cli import arguments
 from shadowspill.training.preparation.configuration import configure as configure_shared
 from shadowspill_workloads.inputs.text.tokenizer import tokenizer_identity
-from shadowspill_workloads.recipes.text.glm53_flash_lora.arguments import parser
 from shadowspill_workloads.recipes.text.glm53_flash_lora.inputs import Inputs
 from shadowspill_workloads.recipes.text.glm53_flash_lora.model import (
     checkpoint,
@@ -32,8 +30,7 @@ from shadowspill_workloads.recipes.text.glm53_flash_lora.model import (
 from workload_tests.test_glm53_checkpoint import _write
 
 
-def configure(argv):
-    phase, values = arguments(parser(), argv)
+def configure(values, phase="all"):
     return configure_shared(
         "shadowspill_workloads.recipes.text.glm53_flash_lora.adapter", values, phase
     )
@@ -59,41 +56,26 @@ def recipe(tmp_path):
             }
         )
     )
-    cli = [
-        "--data",
-        str(data),
-        "--checkpoint",
-        str(base),
-        "--frozen-state-id",
-        "tiny-glm-base",
-        "--run-dir",
-        str(run),
-        "--sequence-length",
-        "16",
-        "--sequences-per-step",
-        "2",
-        "--steps",
-        "4",
-        "--schedule-steps",
-        "4",
-        "--repeat-training-batch",
-        "--execution-gib",
-        "6",
-        "--spill-gib",
-        "0.5",
-        "--checkpoint-every",
-        "1",
-        "--search-workers",
-        "1",
-        "--external-headroom-mib",
-        "768",
-        "--warmup-seconds",
-        "0.001",
-        "--measure-seconds",
-        "0.002",
-        "--no-plots",
-    ]
-    return run, cli
+    options = dict(
+        data=str(data),
+        checkpoint=str(base),
+        frozen_state_id="tiny-glm-base",
+        run_dir=str(run),
+        sequence_length=16,
+        sequences_per_step=2,
+        steps=4,
+        schedule_steps=4,
+        repeat_training_batch=True,
+        execution_gib=6,
+        spill_gib=0.5,
+        checkpoint_every=1,
+        search_workers=1,
+        external_headroom_mib=768,
+        warmup_seconds=0.001,
+        measure_seconds=0.002,
+        plots=False,
+    )
+    return run, options
 
 
 def test_rank_local_calls_preserve_global_normalization_and_resume(recipe):
@@ -135,25 +117,14 @@ def test_checkpoint_metadata_rejects_changed_tokenizer(recipe):
             describe(options, model, source)
 
 
-def test_cli_replan_preserves_preparation_settings_and_capture_validation(recipe):
+def test_phase_replan_preserves_preparation_settings_and_capture_validation(recipe):
     root, options = configure(recipe[1])
-    _, replanned = configure(
-        [
-            "--run-dir",
-            str(root),
-            "--phase",
-            "plan",
-            "--execution-gib",
-            "5",
-        ]
-    )
+    _, replanned = configure({"run_dir": root, "execution_gib": 5}, "plan")
     assert replanned == {**options, "execution_gib": 5}
     with pytest.raises(ValueError, match="changed budgets"):
-        configure(
-            ["--run-dir", str(root), "--phase", "execute", "--execution-gib", "7"]
-        )
+        configure({"run_dir": root, "execution_gib": 7}, "execute")
     with pytest.raises(ValueError, match="cadence"):
-        configure(["--run-dir", str(root), "--phase", "execute", "--nsys-steps", "3"])
+        configure({"run_dir": root, "nsys_steps": 3}, "execute")
     assert json.loads((root / "config.json").read_text()) == replanned
 
 
@@ -218,19 +189,21 @@ def compare_replay(reference, actual, *, learning_rate, steps):
 def test_glm_checkpoint_training_evaluation_and_cold_resume(recipe, tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    root, cli = recipe
+    root, options = recipe
     cache = tmp_path / "preparation-cache"
     entrypoint = [
         sys.executable,
         *(["-S"] if sys.flags.no_site else []),
-        "-m",
-        "examples.train_glm53_flash_lora",
+        "-c",
+        "import json, sys; from shadowspill.training.preparation import run; "
+        "run('shadowspill_workloads.recipes.text.glm53_flash_lora.adapter', "
+        "json.loads(sys.argv[1]), phase=sys.argv[2])",
     ]
     for phase in ("build", "profile", "plan", "execute"):
-        arguments = cli if phase == "build" else ["--run-dir", str(root)]
+        values = options if phase == "build" else {"run_dir": str(root)}
         at = cache / phase
         child = subprocess.run(
-            [*entrypoint, *arguments, "--phase", phase],
+            [*entrypoint, json.dumps(values), phase],
             env={
                 **os.environ,
                 "TRITON_CACHE_DIR": str(at / "triton"),

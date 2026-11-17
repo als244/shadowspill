@@ -1,11 +1,11 @@
 # Build, profile, plan and execute
 
 For a supported model's complete training workflow, use the
-[shared Python `train` runner](../../packages/workloads/src/shadowspill_workloads/recipes/README.md). This guide is
+[training client](client.md). This guide is
 for callers who need separate phases or their own model/data integration.
 
 ShadowSpill separates preparing a workload from running it. The phase functions
-are available from `shadowspill`; `Trainer` runs the selected Plan. Start with the
+are available from `shadowspill`; `Executor` runs the selected Plan. Start with the
 [complete Python example](../examples/generic-training.md), which defines the
 model, objective, initializer and input loop.
 
@@ -15,7 +15,7 @@ model, objective, initializer and input loop.
 | Profile tasks | `measure_program` → `apply_profiles` | `Profiles` → `ProfiledProgram`: measured tasks and memory | Measurement does; applying profiles is CPU-only |
 | Measure communication | `measure_communication`, optionally `measure_overlap` | `CommunicationInfo` and overlap profiles | Yes, with the required participants |
 | Plan | `plan_program` or `sweep_programs` | `Plan`: selected variants, schedule and memory layout | No |
-| Execute | `Trainer` or `Executor` | Results and optional checkpoints | Yes, in a fresh worker |
+| Execute | `Executor` | Results and optional checkpoints | Yes, in a fresh worker |
 
 Each artifact can be saved and loaded independently. A Plan includes task code
 and planning evidence; model values come from initialization or a checkpoint.
@@ -61,14 +61,19 @@ Execute in a **fresh process**, before another device allocator initializes:
 ```python
 import shadowspill as ss
 
-with ss.Trainer(ss.Plan.load("training.ssp")) as trainer:
-    trainer.initialize(fill_tensor)  # Or trainer.load("checkpoint.ssp") to resume.
-    trainer.fit(training_batches(), steps=100)
+executor = ss.Executor(ss.Plan.load("training.ssp"))
+executor.initialize(fill_tensor)
+for batch in training_batches():
+    result = executor.run(**batch).result()
+    print([float(loss) for loss in result.losses])
+    del result  # Release output views before the next invocation or shutdown.
+executor.close()
 ```
 
 `fill_tensor` fills bounded CPU views. Each item yielded by `training_batches()`
-supplies one update's inputs, matching the Plan's fixed calls. `steps=100` is the total target
-count, including restored updates. Trainer never builds, profiles or searches.
+supplies one update's inputs, matching the Plan's fixed calls. The caller owns
+its iteration count, schedule and data cursor. The [Executor reference](api/executor.md)
+explains state loading, bounded checkpoints and sharing training/evaluation state.
 Its default pinned-host pool uses the required spill peak plus 5%, capped by the
 planned budget.
 
@@ -82,18 +87,17 @@ planned budget.
 | Timing windows, sample caps or external-memory headroom | [Profiling options](api/profiling.md) | Measure with the requested settings, apply profiles, then plan |
 | Transfer backend, collective layout or communication costs | [Communication measurement](api/communication.md) | Obtain compatible measurements, then plan; changed ownership can also require build |
 | Device/spill budget, microbatch traversal, save-tail choices or search effort | [Planning options](api/planning.md) | Replan existing compatible profiles on CPU |
-| Input values, captured learning-rate controls, logging or checkpoints | [Trainer options](api/training.md) | Execute the chosen Plan |
+| Input values, captured learning-rate controls, logging or checkpoints | [Executor controls](api/executor.md) | Execute the chosen Plan |
 
 Changing a retention policy changes **what each graph saves**. Planning separately
 chooses **which graph runs** and **where saved values live**. Selecting a save
 variant does not force GPU residency.
 
 `sweep_programs` compares supplied ProfiledPrograms and budgets; it does not
-create or profile candidates. The source-tree [recipe runner](../../packages/workloads/src/shadowspill_workloads/recipes/README.md)
-and [quickstart](../../benchmarks/quickstart.md) can construct candidate
-microbatch sizes, chunk sizes and retention policies, then search their Plans.
-The generic phase APIs accept arbitrary supported models; recipes provide
-application-specific model/data setup around them.
+create or profile candidates. Public-client [preparation settings](advanced/service-client.md)
+and the benchmark [quickstart](../../benchmarks/quickstart.md) expose microbatch,
+chunk and retention candidates. The generic phase APIs accept supported custom
+models directly.
 
 For multi-worker runs, follow [distributed setup](api/distributed.md), including
 communication and overlap calibration. Check `plan.simulation_only_reasons`

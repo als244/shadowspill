@@ -432,7 +432,7 @@ protected regardless of user movement choices.
 
 Provider adapters may supply these contracts while leaving rule/selector choices
 to the caller. For example, the `shadowspill.integrations.mlops.fla_execution_lifetimes` factory
-certifies specific FLA value operands; the [text workload preset](../../../packages/workloads/src/shadowspill_workloads/recipes/README.md)
+certifies specific FLA value operands; the [training client](../client.md)
 uses them for movement and internal-view compaction without extra primal replay.
 The core `ChunkRegions` default remains `lifetimes=None`; it infers no provider
 semantics from a model name or operator name.

@@ -2,7 +2,8 @@
 
 Use `ServiceClient` to connect and prepare a run, then use `TrainingClient` to
 submit batches. Model construction and worker setup happen on the server before
-the training loop starts.
+the training loop starts. One service endpoint owns the run and coordinates all
+of its workers; the client submits one global batch.
 
 The client needs Python 3.12+ and NumPy. Start with the
 [complete text-training example](../examples/client-training.md), which includes

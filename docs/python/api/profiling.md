@@ -37,7 +37,7 @@ shortcuts with `options`; conflicting specifications are rejected.
 - [Bounds and defaults](#bounds-and-defaults)
 - [What actually runs](#what-actually-runs)
 - [Cache reuse and artifacts](#cache-reuse-and-artifacts)
-- [Training runner and quickstart](#training-runner-and-quickstart)
+- [Service preparation and quickstart](#service-preparation-and-quickstart)
 - [Task warmup versus sustained GPU operation](#task-warmup-versus-sustained-gpu-operation)
 - [Task measurement](#task-measurement)
 - [Profile overrides](#profile-overrides)
@@ -174,33 +174,27 @@ certifies that profiling matches sustained training conditions.
 See [measurement artifacts and cache modes](artifacts.md#profiles-and-taskprofile)
 for refresh/require behavior and physical memory admission.
 
-## Training runner and quickstart
+## Service preparation and quickstart
 
-The shared Python training API accepts the same policy as `config["profiling"]`:
+The public client exposes the same policy through `Preparation(profiling=...)`:
 
 ```python
-from shadowspill import ProfilingOptions
-from shadowspill_workloads.recipes import train
+from shadowspill_client import Preparation, ProfilingOptions
 
-config = {
-    "run_dir": "runs/experiment",
-    # Model, data and search choices belong in the rest of this configuration.
-    "profiling": ProfilingOptions(
-        conditioning_max_samples=32,
-        maximum_samples=64,
-    ),
-}
-train(model, config)
+preparation = Preparation(profiling=ProfilingOptions(
+    conditioning_max_samples=32,
+    maximum_samples=64,
+))
 ```
 
-The runner also accepts a JSON object of policy fields, filling omitted fields
-from the same defaults. It serializes Python policies into the run configuration.
-Changing profiling controls is allowed in `phase="profile"`; completed profiles
-with a different effective policy are remeasured, and new planning must use the
-new profiled artifacts. `refresh_profiles=True` also requests fresh measurements.
-The generic `benchmarks.quickstart.run(..., profiling=timing)` exposes the
-same policy. The two duration shortcuts remain mutually exclusive with an
-explicit policy throughout these paths.
+Pass this as `preparation=preparation` when creating a training client. The
+server records the effective policy with the measurements. See the
+[client preparation reference](../advanced/service-client.md) for candidate and
+measurement reuse controls.
+
+The direct `benchmarks.quickstart.run(..., profiling=timing)` API accepts
+`shadowspill.ProfilingOptions`. Its two duration shortcuts are mutually exclusive
+with an explicit policy.
 
 ## Task warmup versus sustained GPU operation
 

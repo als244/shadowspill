@@ -10,10 +10,8 @@ from engine_tests.offline._example import communication, profiled
 from shadowspill import Plan, TaskProfile, apply_profiles
 from shadowspill.artifacts import TaskDefinition
 from shadowspill.errors import PlanInfeasibleError
-from shadowspill.training.preparation import api
 from shadowspill.training.preparation.phases import run_phases
 from shadowspill.training.preparation.plan import run
-from shadowspill_workloads.recipes import LoRA, Model, train
 from tests.benchmarks._profiled import measured
 
 
@@ -219,39 +217,45 @@ def test_all_failed_preparations_remain_diagnostic_rows(tmp_path):
     assert not (tmp_path / "selected.json").exists()
 
 
-@pytest.mark.parametrize("family", ["catalog", "qwen3_5_moe", "glm5_next"])
-def test_public_worker_controls_are_independent_and_change_without_rebuild(
-    tmp_path, monkeypatch, family
+@pytest.mark.parametrize(
+    "adapter,model_type",
+    [
+        ("catalog", None),
+        ("qwen35_lora.adapter", "qwen3_5_moe"),
+        ("glm53_flash_lora.adapter", "glm5_next"),
+    ],
+)
+def test_saved_phase_worker_controls_change_without_rebuild(
+    tmp_path, adapter, model_type
 ):
-    monkeypatch.setattr(api, "run_phases", lambda *args, **kwargs: None)
-    if family == "catalog":
-        model = Model.from_config("qwen3moe-tiny")
+    from shadowspill.training.preparation.configuration import configure
+
+    requested = dict(
+        run_dir=tmp_path / "run", data=tmp_path / "data", initialization="random"
+    )
+    if model_type is None:
+        requested["model"] = "qwen3moe-tiny"
     else:
         checkpoint = tmp_path / "checkpoint"
         checkpoint.mkdir()
-        (checkpoint / "config.json").write_text(json.dumps({"model_type": family}))
-        model = Model.from_checkpoint(checkpoint, lora=LoRA())
-    root = train(
-        model,
-        {
-            "run_dir": tmp_path / "run",
-            "data": tmp_path / "data",
-            "initialization": "random",
-        },
-        phase="build",
-    )
-    initial = json.loads((root / "config.json").read_text())
+        (checkpoint / "config.json").write_text(json.dumps({"model_type": model_type}))
+        requested["checkpoint"] = checkpoint
+    recipe = "shadowspill_workloads.recipes.text." + adapter
+    root, initial = configure(recipe, requested, "build")
     assert initial["program_workers"] == initial["search_workers"] == 8
-    train(
-        model,
-        {"run_dir": root, "program_workers": 8, "search_workers": 16},
-        phase="plan",
+    _, options = configure(
+        recipe,
+        {
+            "run_dir": root,
+            "program_workers": 8,
+            "search_workers": 16,
+        },
+        "plan",
     )
-    options = json.loads((root / "config.json").read_text())
     assert options["program_workers"] == 8 and options["search_workers"] == 16
     assert options["candidates"] == initial["candidates"]
     for value in (0, -1, True):
         with pytest.raises(
             ValueError, match="program_workers must be a positive integer"
         ):
-            train(model, {"run_dir": root, "program_workers": value}, phase="plan")
+            configure(recipe, {"run_dir": root, "program_workers": value}, "plan")

@@ -22,7 +22,7 @@ as bf16). Both FP8 forms compute the experts' GEMMs in FP8 on SM90.
 
 ## Checkpoints and execution
 
-Use the [checkpoint LoRA recipe](../../recipes/text/glm53_flash_lora/README.md)
+Use the [model catalog](../../../../../../docs/python/catalog.md)
 or the [generic quickstart](../../../../../../benchmarks/quickstart.md). Both use the
 public build → profile → plan → fresh-worker execution pipeline. SSD spill is an
 Executor setting; it does not require a model-specific converter or runner.

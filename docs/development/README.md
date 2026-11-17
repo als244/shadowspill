@@ -26,7 +26,7 @@ internal documentation tree, `docs/internal/`.
 Keep one authoritative reference per subject and link it from examples and
 guides. Entry pages should help readers choose a task, not enumerate every
 implementation detail. Keep the supported training guide in
-`packages/workloads/src/shadowspill_workloads/recipes/README.md`, the custom-model and phase guides under
+`docs/python/client.md`, the custom-model and phase guides under
 `docs/python/`, and specialized guides under `docs/python/advanced/`.
 Put signatures and constraints under `docs/python/api/`, design invariants under
 `docs/architecture/`, and library-specific adapters under `docs/integrations/`.
