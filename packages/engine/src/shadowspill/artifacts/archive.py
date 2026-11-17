@@ -53,9 +53,11 @@ class Artifact:
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         if self.shared_metadata:
+            from shadowspill.serialization.sharing import writing_metadata
             from shadowspill.serialization.tables import encode as encode_tables
 
-            data = encode_tables(self._archive_value())
+            with writing_metadata():
+                data = encode_tables(self._archive_value())
             metadata_name, version = "artifact.bin", 2
         else:
             data = encoded(self._archive_value())

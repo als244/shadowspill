@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from functools import cached_property
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -11,6 +12,7 @@ from shadowspill.communication.memory import collective_memory
 from shadowspill.communication.task_costs import task_collective_cost, task_collectives
 from shadowspill.ir import ShadowSpillProgram, TaskResourcePhase
 from shadowspill.ir import TaskProfile as CostedTaskProfile
+from shadowspill.serialization.sharing import shared_writer
 
 from ._values import digest, freeze, nonnegative_int, plain
 from .archive import Artifact
@@ -77,7 +79,7 @@ class ProfiledProgram(Artifact):
             metadata=plain(self.metadata),
         )
 
-    @property
+    @cached_property
     def digest(self) -> str:
         return digest(self.to_dict())
 
@@ -180,8 +182,21 @@ class ProfiledProgram(Artifact):
             profiles=(*profiles, *derived.values()),
         )
 
+    @shared_writer
     def to_dict(self) -> dict[str, Any]:
-        return {"program": self.program.to_dict(), "profiles": self.profiles.to_dict()}
+        # Preserve the immutable metadata's sharing. Building an editable Profiles
+        # copy here would thaw, freeze and thaw every shared allocator trace.
+        return {
+            "program": self.program.to_dict(),
+            "profiles": {
+                "setup": plain(self.setup),
+                "tasks": {
+                    key: record.to_dict() for key, record in self.task_profiles.items()
+                },
+                "fixed_device_bytes": self.fixed_device_bytes,
+                "metadata": plain(self.metadata),
+            },
+        }
 
     def _archive_payloads(self) -> Mapping[str, bytes]:
         return self.program._archive_payloads()

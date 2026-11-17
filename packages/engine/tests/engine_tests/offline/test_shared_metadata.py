@@ -3,6 +3,7 @@
 import json
 import math
 import struct
+from collections import UserDict
 from enum import StrEnum
 
 import numpy as np
@@ -10,9 +11,13 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from shadowspill.artifacts._values import encoded, freeze
+from shadowspill.artifacts._values import encoded, freeze, plain
 from shadowspill.ir import ObjectSpec
-from shadowspill.serialization.sharing import read_record, shared_metadata
+from shadowspill.serialization.sharing import (
+    read_record,
+    shared_metadata,
+    writing_metadata,
+)
 from shadowspill.serialization.tables import (
     HEADER,
     MAGIC,
@@ -87,6 +92,52 @@ def test_shared_values_decode_once_and_records_do_not_share_mutable_metadata():
     assert frozen["values"] == (1, 2)
     # No identity cache outlives its owned decode, even for the same input object.
     assert read_record(ObjectSpec.from_value, first, "again") is not one
+
+
+def test_shared_containers_are_visited_once_and_keep_canonical_bytes():
+    class Counted(UserDict):
+        reads = 0
+
+        def items(self):
+            self.reads += 1
+            return super().items()
+
+    item = Counted({"data": [1, "value", None]})
+    value = {"rows": [item] * 32}
+    data = encode(value)
+    assert item.reads == 1
+    assert data == encode({"rows": [dict(item) for _ in range(32)]})
+
+
+def test_deeply_shared_values_do_not_expand_during_encoding():
+    value = [0]
+    for _ in range(50):
+        value = [value, value]
+    data = encode({"value": value})
+    assert len(data) < 4096
+    with pytest.raises(ValueError, match="expanded"):
+        decode(data, expanded_limit=4096)
+
+
+def test_reusing_a_subtree_at_greater_depth_still_checks_the_full_depth():
+    shared = {"leaf": [1]}
+    nested = shared
+    for _ in range(127):
+        nested = [nested]
+    with pytest.raises(ValueError, match="nesting"):
+        encode({"first": shared, "second": nested})
+
+
+def test_archive_write_sharing_is_scoped_and_public_copies_remain_independent():
+    value = freeze({"rows": [1, 2]})
+    with writing_metadata():
+        first = plain(value)
+        assert first is plain(value)
+    second = plain(value)
+    second["rows"].append(3)
+    assert first == {"rows": [1, 2]}
+    with writing_metadata():
+        assert plain(value) is not first
 
 
 @pytest.mark.parametrize("cut", [0, 7, HEADER.size - 1, -1])

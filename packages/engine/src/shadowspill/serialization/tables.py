@@ -35,19 +35,42 @@ _U32 = (1 << 32) - 1
 
 
 def encode(value: dict[str, Any]) -> bytes:
-    """Intern values by content; numeric types and float bit patterns stay exact."""
+    """Visit shared containers once, then intern equal values by content.
+
+    Numeric types and float bit patterns stay exact. Input references are retained
+    until encoding completes; no persistent cache or Python addresses are saved.
+    """
     rows: list[tuple[int, int, int, int, int]] = []
     edges = array("I")
     strings = bytearray()
     seen: dict[Any, int] = {}
+    identities: dict[int, tuple[Any, int]] = {}
+    active: set[int] = set()
+    heights: list[int] = []
 
     def visit(item: Any, depth: int = 0) -> int:
         if depth > 128:
             raise ValueError("metadata nesting exceeds 128")
         kind = type(item)
+        mapping = kind is dict or (
+            kind not in (list, tuple, str, int, float, bool, type(None))
+            and isinstance(item, Mapping)
+        )
+        container = mapping or kind in (list, tuple)
+        identity = id(item)
+        if container:
+            cached = identities.get(identity)
+            if cached is not None:
+                index = cached[1]
+                if depth + heights[index] > 128:
+                    raise ValueError("metadata nesting exceeds 128")
+                return index
+            if identity in active:
+                raise ValueError("metadata nesting is cyclic")
+            active.add(identity)
         refs: tuple[int, ...] = ()
         key: tuple[int, Any]
-        if kind is dict:
+        if mapping:
             if any(not isinstance(key, str) for key in item):
                 raise TypeError("metadata object keys must be strings")
             refs = tuple(
@@ -75,14 +98,18 @@ def encode(value: dict[str, Any]) -> bytes:
             return visit(int.__int__(item), depth)
         elif isinstance(item, float) and kind is not float:
             return visit(float.__float__(item), depth)
-        elif isinstance(item, Mapping):
-            return visit(dict(item), depth)
         else:
             raise TypeError("metadata requires finite JSON values")
         found = seen.get(key)
         if found is not None:
+            if container:
+                identities[identity] = item, found
+                active.remove(identity)
             return found
         tag = key[0]
+        height = 1 + max(heights[ref] for ref in refs) if refs else 0
+        if depth + height > 128:
+            raise ValueError("metadata nesting exceeds 128")
         length = offset = 0
         if tag in (ARRAY, OBJECT):
             length, offset = len(refs), len(edges)
@@ -97,7 +124,11 @@ def encode(value: dict[str, Any]) -> bytes:
             raise ValueError("metadata table exceeds its index range")
         index = len(rows)
         rows.append((tag, 0, 0, length, offset))
+        heights.append(height)
         seen[key] = index
+        if container:
+            identities[identity] = item, index
+            active.remove(identity)
         return index
 
     root = visit(value)

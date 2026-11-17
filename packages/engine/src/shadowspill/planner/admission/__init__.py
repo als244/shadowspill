@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from shadowspill.ir import ShadowSpillProgram
 from shadowspill.schema import artifact_schema
-from shadowspill.serialization.sharing import read_record, reading_shared
+from shadowspill.serialization.sharing import read_record, reading_shared, shared_writer
 
 from ..strict import (
     _integer,
@@ -81,6 +81,7 @@ class TaskAllocationStep:
         ):
             raise ValueError("task release carries allocation-only fields")
 
+    @shared_writer
     def to_dict(self) -> dict[str, object]:
         return {
             "allocation_ordinal": self.allocation_ordinal,
@@ -165,6 +166,7 @@ class StorageHandoff:
         if self.source_alias_group_id == self.destination_alias_group_id:
             raise ValueError("storage-handoff source and destination must differ")
 
+    @shared_writer
     def to_dict(self) -> dict[str, str]:
         return {
             "destination_alias_group_id": self.destination_alias_group_id,
@@ -317,6 +319,7 @@ class TaskAdmissionSpec:
 
         return sum(self.workspace_extents)
 
+    @shared_writer
     def to_dict(self) -> dict[str, object]:
         return {
             "fresh_output_aliases": list(self.fresh_output_aliases),
@@ -448,6 +451,7 @@ class AdmissionFacts:
         shared[:] = [(self.tasks, columns, digest)]
         return columns, digest
 
+    @shared_writer
     def to_dict(self) -> dict[str, object]:
         return {
             "device_id": self.device_id,

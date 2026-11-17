@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.schema import artifact_schema
+from shadowspill.serialization.sharing import shared_writer
 
 from ..serialization import (
     JsonValue,
@@ -45,6 +46,7 @@ class DeviceSpec:
         require_identifier(self.kind, "device.kind")
         require_non_negative(self.index, "device.index")
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "device_id": self.device_id,
@@ -79,6 +81,7 @@ class ResourceSpec:
         require(isinstance(self.kind, ResourceKind), "resource.kind", "invalid kind")
         require_non_negative(self.lane, "resource.lane")
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {"device_id": self.device_id, "kind": self.kind.value, "lane": self.lane}
 
@@ -137,6 +140,7 @@ class AliasGroupSpec:
             self.size_bytes if self.transfer is None else self.transfer.spill_size_bytes
         )
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "alias_group_id": self.alias_group_id,
@@ -212,6 +216,7 @@ class ObjectSpec:
             "invalid persistence",
         )
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "alias_group_id": self.alias_group_id,
@@ -274,6 +279,7 @@ class TaskProfile:
         require_identifier(self.compatibility_digest, "profile.compatibility_digest")
         validate_task_timing(self.runtime_ns, self.resource_phases, self.overlap_costs)
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "compatibility_digest": self.compatibility_digest,
@@ -327,6 +333,7 @@ class MutationSpec:
         require_identifier(self.object_id, "mutation.object_id")
         require_positive(self.version_delta, "mutation.version_delta")
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {"object_id": self.object_id, "version_delta": self.version_delta}
 
@@ -379,6 +386,7 @@ class TaskSpec:
             "must be a boolean",
         )
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "dependencies": string_list(self.dependencies),

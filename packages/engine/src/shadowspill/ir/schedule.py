@@ -7,6 +7,7 @@ from dataclasses import field as dataclass_field
 from enum import StrEnum
 
 from shadowspill.schema import artifact_schema
+from shadowspill.serialization.sharing import shared_writer
 
 from .program import (
     AliasGroupSpec,
@@ -70,6 +71,7 @@ class ResidencySpec:
             "invalid location",
         )
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "alias_group_id": self.alias_group_id,
@@ -122,6 +124,7 @@ class MemoryAction:
         object.__setattr__(action, "kind", kind)
         return action
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "alias_group_id": self.alias_group_id,
@@ -180,6 +183,7 @@ class MemorySchedule:
             self._digest_cache.append(digest_json(self.to_dict()))
         return self._digest_cache[0]
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "actions": [action.to_dict() for action in self.actions],

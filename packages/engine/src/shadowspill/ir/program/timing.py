@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from shadowspill.serialization.sharing import shared_writer
+
 from ..serialization import JsonValue
 from ..validation import (
     expect_integer,
@@ -38,6 +40,7 @@ class TaskResourcePhase:
         if self.resource is not None:
             require_identifier(self.resource, "task_phase.resource")
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {"duration_ns": self.duration_ns, "resource": self.resource}
 
@@ -79,6 +82,7 @@ class TaskOverlapCost:
                 "expected a finite progress rate in (0, 1]",
             )
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "timing_class": self.timing_class,

@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
-from shadowspill.serialization.sharing import share
+from shadowspill.serialization.sharing import share, write_shared
 
 
 def freeze(value: Any) -> Any:
@@ -40,6 +40,10 @@ def _freeze(value: Any) -> Any:
 def plain(value: Any) -> Any:
     if value is None or type(value) in (str, bool, int, float):
         return value
+    return write_shared(plain, value, lambda: _plain(value))
+
+
+def _plain(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {key: plain(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):

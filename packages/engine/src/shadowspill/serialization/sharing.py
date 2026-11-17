@@ -1,8 +1,9 @@
-"""Reuse immutable records only within one owned shared-metadata load."""
+"""Reuse records and metadata only within one owned archive read or write."""
 
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
+from functools import wraps
 from typing import Any, cast
 
 
@@ -15,6 +16,44 @@ class _Scope:
 
 
 _current: ContextVar[_Scope | None] = ContextVar("artifact_read_scope", default=None)
+_writing: ContextVar[dict[tuple[object, int], tuple[Any, Any]] | None] = ContextVar(
+    "artifact_write_scope", default=None
+)
+
+
+@contextmanager
+def writing_metadata() -> Iterator[None]:
+    """Keep shared inputs alive and convert them once during this archive write."""
+    token = _writing.set({})
+    try:
+        yield
+    finally:
+        _writing.reset(token)
+
+
+def write_shared[T](namespace: object, value: Any, build: Callable[[], T]) -> T:
+    """Preserve sharing while writing; ordinary ``to_dict`` owns fresh values."""
+    scope = _writing.get()
+    if scope is None:
+        return build()
+    key = namespace, id(value)
+    found = scope.get(key)
+    if found is None:
+        result = build()
+        # Retaining the input prevents object-ID reuse by temporary records.
+        scope[key] = value, result
+        return result
+    return cast(T, found[1])
+
+
+def shared_writer[T, R](writer: Callable[[T], R]) -> Callable[[T], R]:
+    """Convert an immutable record once per archive, with no cross-call cache."""
+
+    @wraps(writer)
+    def write(value: T) -> R:
+        return write_shared(writer, value, lambda: writer(value))
+
+    return write
 
 
 @contextmanager

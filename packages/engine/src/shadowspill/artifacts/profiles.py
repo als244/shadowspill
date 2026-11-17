@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
 
 from shadowspill.ir import TaskOverlapCost, TaskResourcePhase
+from shadowspill.serialization.sharing import shared_writer
 
 from ._values import freeze, nonnegative_int, plain, seconds
 from .archive import Artifact
@@ -52,6 +53,7 @@ class TaskProfile:
             ):
                 raise ValueError(f"{key} must be measured, estimated or static")
 
+    @shared_writer
     def to_dict(self) -> dict[str, Any]:
         return {
             "duration_seconds": self.duration_seconds,

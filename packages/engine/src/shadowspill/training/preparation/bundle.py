@@ -207,5 +207,5 @@ def _entry(row: Mapping[str, Any], keys: set[str], *, checksums: bool) -> None:
 
 
 def _saved(artifact: Artifact, *, checksums: bool) -> dict[str, Any]:
-    value = plain(artifact.to_dict())
+    value = plain(artifact.to_dict()) if checksums else artifact.to_dict()
     return {"digest": digest(value), "value": value} if checksums else {"value": value}

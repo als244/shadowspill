@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.schema import artifact_schema
+from shadowspill.serialization.sharing import shared_writer
 
 from ..serialization import (
     JsonValue,
@@ -43,6 +44,7 @@ class TaskAlternativeOption:
             "task_alternative_option.retained_alias_group_ids",
         )
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "active_task_ids": string_list(self.active_task_ids),
@@ -91,6 +93,7 @@ class TaskAlternativeGroup:
             "task_alternative_group.options",
         )
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "group_id": self.group_id,
@@ -119,6 +122,7 @@ class TaskAlternativeChoice:
         require_identifier(self.group_id, "selection.group_id")
         require_identifier(self.option_id, "selection.option_id")
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {"group_id": self.group_id, "option_id": self.option_id}
 

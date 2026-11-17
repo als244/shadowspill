@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 
 from shadowspill.schema import artifact_schema
-from shadowspill.serialization.sharing import read_record
+from shadowspill.serialization.sharing import read_record, shared_writer
 
 from ..serialization import (
     JsonValue,
@@ -96,6 +96,7 @@ class ShadowSpillProgram:
             self._digest_cache.append(digest_json(self.to_dict()))
         return self._digest_cache[0]
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "alias_groups": [group.to_dict() for group in self.alias_groups],

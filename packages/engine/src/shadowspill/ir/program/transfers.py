@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from shadowspill.serialization.sharing import shared_writer
+
 from ..serialization import JsonValue
 from ..validation import (
     expect_boolean,
@@ -63,6 +65,7 @@ class TransferPhase:
             assert self.resource is not None
             require_identifier(self.resource, "transfer.resource")
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "kind": self.kind,
@@ -114,6 +117,7 @@ class TransferSpec:
                 "one ordered collective phase per transfer",
             )
 
+    @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "spill_size_bytes": self.spill_size_bytes,
