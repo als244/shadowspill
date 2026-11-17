@@ -1,9 +1,11 @@
 """Submit global batches to a ready client and retain completed update records."""
 
 import json
+from time import monotonic
 
 from examples.training.application.loop import update
 from examples.training.application.records import save_checkpoint
+from shadowspill_client.display import CommandTable
 
 from .settings import APPLICATION
 
@@ -11,20 +13,25 @@ from .settings import APPLICATION
 def train(training, settings, source, directory, *, cursor=0):
     checkpoint_dir = directory / "checkpoints"
     checkpoint_dir.mkdir()
+    table = CommandTable()
     with (directory / "metrics.jsonl").open("x", buffering=1) as metrics:
         for index in range(cursor, settings.steps):
+            started = monotonic()
             batch = source[index]
-            result, loss = update(training, batch, pieces=settings.backward_pieces)
+            result, loss, seconds = update(
+                training, batch, pieces=settings.backward_pieces, table=table
+            )
             if result.outcome != "completed" or result.completed_updates != index + 1:
                 raise RuntimeError("training did not complete the expected update")
             record = {
                 "step": result.completed_updates,
                 "loss": loss,
                 "samples": len(batch),
+                "execution_seconds": seconds,
+                "client_elapsed_seconds": monotonic() - started,
                 "request_id": result.request_id,
             }
             metrics.write(json.dumps(record) + "\n")
-            print(record, flush=True)
             if settings.checkpoint_every and (
                 result.completed_updates % settings.checkpoint_every == 0
                 or result.completed_updates == settings.steps

@@ -34,7 +34,7 @@ def test_shared_update_matches_a_weighted_linear_oracle(pieces, grad_scale, opti
             residual = theta * x - y
             gradient += weight * residual * x
             loss += 0.5 * weight * residual**2
-        return future(SimpleNamespace(loss=loss))
+        return future(SimpleNamespace(loss=loss, execution_seconds=2.0))
 
     def optimize(**controls):
         nonlocal theta, updates
@@ -45,18 +45,19 @@ def test_shared_update_matches_a_weighted_linear_oracle(pieces, grad_scale, opti
             * controls.get("grad_scale", 1)
         )
         updates += 1
-        return future(SimpleNamespace(weight=theta))
+        return future(SimpleNamespace(weight=theta, execution_seconds=0.5))
 
     def step(rows, **controls):
         loss = backward(rows).result().loss
         result = optimize(**controls).result()
         result.loss = loss
+        result.execution_seconds = 2.5
         return future(result)
 
     training = SimpleNamespace(
         step=step, forward_backward=backward, optim_step=optimize
     )
-    result, loss = update(
+    result, loss, seconds = update(
         training, batch, pieces=pieces, optim=optim, grad_scale=grad_scale
     )
     scale = 1 if grad_scale is None else grad_scale
@@ -66,6 +67,7 @@ def test_shared_update_matches_a_weighted_linear_oracle(pieces, grad_scale, opti
     assert result.weight == pytest.approx(0.5 - rate * expected_gradient * scale)
     assert loss == pytest.approx(0.5 * np.dot(weights, residuals**2) * scale)
     assert updates == 1
+    assert seconds == (2.5 if pieces == 1 else 2 * pieces + 0.5)
     expected_controls = {}
     if optim is not None:
         expected_controls["optim"] = optim

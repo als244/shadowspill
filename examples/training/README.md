@@ -50,6 +50,14 @@ The default loop submits `step()`. `--backward-pieces 2` instead submits two
 `forward_backward()` contributions and one `optim_step()`, preserving global
 loss normalization. MoE balancing still depends on each physical microbatch.
 
+Each submitted `step()`, `forward_backward()`, `optim_step()` or `forward()`
+appears in the [command table](../../docs/python/advanced/command-table.md).
+Its time column uses server execution time. Text rows include token counts,
+sequence statistics and the selected Plan's prediction. Per-command losses keep
+the objective's reduction; `metrics.jsonl` records the normalized update loss.
+`execution_seconds` sums server compute durations across a split update;
+`client_elapsed_seconds` separately includes data preparation, uploads and waits.
+
 The run directory records connection IDs, resolved setup, metrics, an HTML report
 and checkpoint references. Resume with the same command and a fresh output
 directory:

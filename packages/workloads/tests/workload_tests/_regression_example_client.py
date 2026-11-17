@@ -155,6 +155,8 @@ def qualify(options):
         ]
         assert [row["step"] for row in metrics] == [1, 2, 3]
         assert [row["step"] for row in continuation] == [2, 3]
+        for row in metrics + continuation:
+            assert 0 < row["execution_seconds"] <= row["client_elapsed_seconds"]
         assert [row["loss"] for row in metrics[1:]] == [
             row["loss"] for row in continuation
         ]

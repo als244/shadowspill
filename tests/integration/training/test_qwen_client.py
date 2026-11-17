@@ -209,12 +209,16 @@ def test_complete_composed_objective_is_normalized_once(tmp_path, pieces):
         positions = sum(len(row.inputs["tokens"]) for row in batch)
         loss = 2 * weights + 3 * positions
         accumulated += loss
-        return future(SimpleNamespace(loss=loss))
+        return future(SimpleNamespace(loss=loss, execution_seconds=None))
 
     def optimize(*, optim, grad_scale):
         scales.append(grad_scale)
         assert optim == {"lr": 0.25}
-        return future(SimpleNamespace(delta=-optim["lr"] * accumulated * grad_scale))
+        return future(
+            SimpleNamespace(
+                delta=-optim["lr"] * accumulated * grad_scale, execution_seconds=None
+            )
+        )
 
     def step(batch, **options):
         loss = backward(batch).result().loss
@@ -225,9 +229,10 @@ def test_complete_composed_objective_is_normalized_once(tmp_path, pieces):
     training = SimpleNamespace(
         step=step, forward_backward=backward, optim_step=optimize
     )
-    result, loss = update(
+    result, loss, seconds = update(
         training, source[0], pieces=pieces, optim={"lr": 0.25}, grad_scale=1 / 12
     )
+    assert seconds is None
     assert loss == 5 and result.delta == -1.25
     assert scales == [1 / 12]
 
