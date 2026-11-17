@@ -33,7 +33,9 @@ class TrainingBundle(Artifact):
     """
 
     artifact_kind: ClassVar[str] = "training_bundle"
-    metadata_limit_bytes: ClassVar[int | None] = 256 << 20
+    # A family retains complete schedules for multiple geometries/orderings.
+    # Allow large real-model families; this is a corruption guard, not a budget.
+    metadata_limit_bytes: ClassVar[int | None] = 8 << 30
     payload_limit_bytes: ClassVar[int | None] = 8 << 30
     config: ResolvedTraining
     sources: Mapping[str, ProfiledProgram]
