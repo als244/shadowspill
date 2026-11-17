@@ -9,21 +9,17 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from shadowspill.errors import CaptureError
-from shadowspill.planner.strict import (
-    _integer as strict_integer,
-)
-from shadowspill.planner.strict import (
+from shadowspill.planning.memory_search.strict import _integer as strict_integer
+from shadowspill.planning.memory_search.strict import (
     _integer_tuple as strict_integer_tuple,
 )
-from shadowspill.planner.strict import (
+from shadowspill.planning.memory_search.strict import (
     _optional_integer as strict_optional_integer,
 )
-from shadowspill.planner.strict import (
+from shadowspill.planning.memory_search.strict import (
     _optional_string as strict_optional_string,
 )
-from shadowspill.planner.strict import (
-    _string as strict_string,
-)
+from shadowspill.planning.memory_search.strict import _string as strict_string
 from shadowspill.schema import artifact_schema
 
 

@@ -11,7 +11,7 @@ from shadowspill.ir import (
     TaskAlternativeChoice,
     TaskSpec,
 )
-from shadowspill.planner.result import PlanInfeasibleError
+from shadowspill.planning.memory_search.result import PlanInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
 

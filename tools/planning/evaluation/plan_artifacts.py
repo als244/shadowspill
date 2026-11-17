@@ -6,9 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from shadowspill.artifacts.profiled_program import ProfiledProgram
-from shadowspill.planner.program import (
-    AnnotatedProgramPlan,
-)
+from shadowspill.planning.memory_search.program import AnnotatedProgramPlan
 from shadowspill.schema import artifact_schema
 from tools._serialization import (
     canonical_text_digest,

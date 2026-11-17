@@ -164,7 +164,7 @@ request instead of silently omitting the recording.
 | `minimum_object_bytes_evict_eligible` | `1 << 20` | Objects below this stay resident from first to last access |
 
 The shipped search's own options are `PressureFitOptions`, from
-`shadowspill.planner.search.algorithms.pressurefit`; its defaults are on
+`shadowspill.planning.memory_search.algorithms.pressurefit`; its defaults are on
 [its page](pressurefit.md).
 
 ## Your options record
@@ -201,7 +201,7 @@ simulator:
 from dataclasses import dataclass
 from typing import ClassVar
 
-from shadowspill.planner import (
+from shadowspill.planning.memory_search import (
     GenericPlanningOptions,
     OptionRecord,
     SearchAlgorithm,
@@ -253,7 +253,7 @@ plan = plan_program(
 
 `preflight` is left out, so the inherited one runs and says nothing.
 Nothing in that file imports from inside
-`shadowspill.planner.search.algorithms.pressurefit`, and nothing is
+`shadowspill.planning.memory_search.algorithms.pressurefit`, and nothing is
 registered. The planner keys the answer under `"first_fit"`, records
 `FirstFitOptions` beside it, and holds the result to any incumbent exactly
 as it would PressureFit's.

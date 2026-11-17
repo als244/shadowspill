@@ -4,7 +4,7 @@ import json
 
 from shadowspill import MemoryBudgets, plan_program
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
-from shadowspill.planner import GenericPlanningOptions, SearchOptions
+from shadowspill.planning.memory_search import GenericPlanningOptions, SearchOptions
 
 
 def gradient_spill_evidence(plan):

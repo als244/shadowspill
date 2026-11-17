@@ -1,6 +1,9 @@
 """Project allocation events to physical placement lifetimes."""
 
-from shadowspill.planner.admission import TaskAllocationStep, TaskAllocationStepKind
+from shadowspill.planning.memory_search.admission import (
+    TaskAllocationStep,
+    TaskAllocationStepKind,
+)
 from shadowspill.task.allocations.events import (
     TaskAllocationEvent,
     TaskAllocationOperation,

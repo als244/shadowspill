@@ -18,7 +18,7 @@ from .costs import simulation_inputs
 from .training.bind import bind_training
 
 if TYPE_CHECKING:
-    from shadowspill.planner.search import SearchOptions
+    from shadowspill.planning.memory_search.algorithm import SearchOptions
     from shadowspill.step.ordering import StepDataOrdering
 
 
@@ -37,7 +37,7 @@ def plan_program(
     The existing search raises diagnostic PlanInfeasibleError or
     PlanSearchExhaustedError. No cache directory or allocator is created.
     """
-    from shadowspill.planner.search import SearchOptions
+    from shadowspill.planning.memory_search.algorithm import SearchOptions
 
     if not isinstance(program, ProfiledProgram):
         raise TypeError(
@@ -122,7 +122,7 @@ def _plan_bound(
     layout = None
     timeline = result.simulation
     if facts is not None:
-        from shadowspill.planner.admission.layout import (
+        from shadowspill.planning.memory_search.admission.layout import (
             FixedLayoutInfeasibleError,
             build_fixed_layout_admission,
         )

@@ -24,12 +24,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from shadowspill.ir import MemoryActionKind, MemorySchedule
-from shadowspill.planner.admission.admission_replay import (
+from shadowspill.planning.memory_search.admission.admission_replay import (
     AdmissionReplayPurpose,
 )
-from shadowspill.planner.admission.layout.model import LeaseLifetime
-from shadowspill.planner.admission.operations import AdmissionOperations
-from shadowspill.planner.admission.setup import AdmissionSetup
+from shadowspill.planning.memory_search.admission.layout.model import LeaseLifetime
+from shadowspill.planning.memory_search.admission.operations import AdmissionOperations
+from shadowspill.planning.memory_search.admission.setup import AdmissionSetup
 from shadowspill.simulator import SimulationResult, TaskInterval, TransferInterval
 
 #: Compiled purpose codes, in the order `ShadowSpillAdmissionPurpose` declares.

@@ -5,7 +5,7 @@ from contextlib import ExitStack
 import torch
 
 from shadowspill.artifacts.plan import Plan
-from shadowspill.preparation.lifecycle import LoadedPreparations
+from shadowspill.operator_preparation.lifecycle import LoadedPreparations
 from shadowspill.resources.lifecycle import ResourceBindings
 
 

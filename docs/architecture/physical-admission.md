@@ -604,14 +604,14 @@ the supported contract.
 
 | Module | Responsibility |
 |---|---|
-| `shadowspill.planner.admission` | Immutable framework-neutral task and pool facts. |
-| `shadowspill.planner.admission.setup` | Compile the schedule-invariant half of one resolved program. |
-| `shadowspill.planner.admission.admission_replay` | Build the timing-free causal step script and ownership transitions. |
-| `shadowspill.planner.admission.layout.lifetimes` | Combine causal operations with selected task/transfer intervals. |
-| `shadowspill.planner.admission.placement` | Deterministic aligned interval placement. |
-| `shadowspill.planner.admission.layout.dependencies` | Prove shared-range reuse and project the simulator edges that cross between compute and transfer. |
-| `shadowspill.planner.admission.layout.build` | Measure a layout, certify it, or both. |
-| `shadowspill.planner.admission.refinement` | Certify the fixed layout of the plan the search placed. |
+| `shadowspill.planning.memory_search.admission` | Immutable framework-neutral task and pool facts. |
+| `shadowspill.planning.memory_search.admission.setup` | Compile the schedule-invariant half of one resolved program. |
+| `shadowspill.planning.memory_search.admission.admission_replay` | Build the timing-free causal step script and ownership transitions. |
+| `shadowspill.planning.memory_search.admission.layout.lifetimes` | Combine causal operations with selected task/transfer intervals. |
+| `shadowspill.planning.memory_search.admission.placement` | Deterministic aligned interval placement. |
+| `shadowspill.planning.memory_search.admission.layout.dependencies` | Prove shared-range reuse and project the simulator edges that cross between compute and transfer. |
+| `shadowspill.planning.memory_search.admission.layout.build` | Measure a layout, certify it, or both. |
+| `shadowspill.planning.memory_search.admission.refinement` | Certify the fixed layout of the plan the search placed. |
 | `shadowspill.runtime.plan.layout` | Translate semantic placements to indexed runtime identities. |
 | `csrc/src/planner/admission/` | Operations, lifetimes, placement, and the pool replay, over a `ShadowSpillScheduleContext`. |
 | `csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |

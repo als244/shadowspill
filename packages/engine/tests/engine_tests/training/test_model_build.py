@@ -8,8 +8,8 @@ import pytest
 
 from engine_tests.fixtures.definition_operations import definitions
 from engine_tests.training.test_setup_resolution import arguments, installed
+from shadowspill.operator_preparation import OperatorPreparation
 from shadowspill.parallelism import GroupRef
-from shadowspill.preparation import OperatorPreparation
 from shadowspill.resources import Resource
 from shadowspill.training.definitions import ComponentLayout, ModelBuild
 from shadowspill.training.preparation.layouts import prepare_layouts

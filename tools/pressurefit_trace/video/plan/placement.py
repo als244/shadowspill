@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from shadowspill.planner.admission.placement import place_lifetimes
+from shadowspill.planning.memory_search.admission.placement import place_lifetimes
 
 
 def aligned(value, alignment):

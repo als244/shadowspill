@@ -4,7 +4,9 @@ import random
 from dataclasses import dataclass
 
 from qualification.reference.python.admission import place_lifetimes as place_reference
-from shadowspill.planner.admission.placement import place_lifetimes as place
+from shadowspill.planning.memory_search.admission.placement import (
+    place_lifetimes as place,
+)
 
 
 @dataclass(frozen=True, slots=True)

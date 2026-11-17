@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from engine_tests.planner._examples import (
+from engine_tests.planning.memory_search._examples import (
     training_chain_config,
     training_chain_initial,
     training_chain_program,
@@ -10,7 +10,7 @@ from engine_tests.planner._examples import (
 from qualification.reference.python.pressurefit import (
     pressurefit as pressurefit_reference,
 )
-from shadowspill.planner import GenericPlanningOptions, pressurefit
+from shadowspill.planning.memory_search import GenericPlanningOptions, pressurefit
 
 
 def test_compiled_pressurefit_matches_readable_reference() -> None:

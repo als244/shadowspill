@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from engine_tests.planner._examples import COMPUTE, DEVICE
+from engine_tests.planning.memory_search._examples import COMPUTE, DEVICE
 from qualification.reference.python.admission import replay_admission
 from shadowspill.ir import (
     AliasGroupSpec,
@@ -20,14 +20,14 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import (
+from shadowspill.planning.memory_search import (
     AdmissionFacts,
     StorageHandoff,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
 )
-from shadowspill.planner.admission.admission_replay import (
+from shadowspill.planning.memory_search.admission.admission_replay import (
     AdmissionReplayPurpose,
     OwnershipTransitionKind,
 )

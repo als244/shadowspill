@@ -13,7 +13,7 @@ from shadowspill.ir import (
     ResourceSpec,
     TaskSpec,
 )
-from shadowspill.planner import GenericPlanningOptions, SearchOptions
+from shadowspill.planning.memory_search import GenericPlanningOptions, SearchOptions
 
 
 def program(*, workspace=None, overhead=None):

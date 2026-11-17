@@ -35,7 +35,7 @@ logs are ignored by git; the source and this guide are tracked.
 
 ## Inputs and first render
 
-Save `shadowspill.planner.plan_program(...).to_json()` to obtain an annotated
+Save `shadowspill.planning.memory_search.plan_program(...).to_json()` to obtain an annotated
 plan, or use the `program_XXXX.plan.json` produced by
 [`tools.pressurefit_trace plan`](../../README.md). A cut trace
 alone does not contain physical allocations or transfer intervals.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-from shadowspill.planner.serialization import _simulation_result_from_value
+from shadowspill.planning.serialization import _simulation_result_from_value
 from shadowspill.simulator.indexing import (
     IntervalArrays,
     index_simulation_template,

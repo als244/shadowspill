@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from engine_tests.planner._examples import (
+from engine_tests.planning.memory_search._examples import (
     config,
     exact_capacity_program,
     exact_capacity_residency,
@@ -22,7 +22,7 @@ from qualification.reference.python.pressurefit.residency import (
     reduce_pressure,
     seed_residency,
 )
-from shadowspill.planner import GenericPlanningOptions, pressurefit
+from shadowspill.planning.memory_search import GenericPlanningOptions, pressurefit
 
 
 @pytest.mark.parametrize("workers", [1, 2, 0])

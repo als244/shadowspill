@@ -22,8 +22,8 @@ a planning problem (one saved with its `to_json()`, for example):
 ```python
 from pathlib import Path
 
-from shadowspill.planner import GenericPlanningOptions, SearchOptions, plan_program
-from shadowspill.planner.program_inputs import ShadowSpillPlanningProblem
+from shadowspill.planning.memory_search import GenericPlanningOptions, SearchOptions, plan_program
+from shadowspill.planning.memory_search.program_inputs import ShadowSpillPlanningProblem
 
 problem = ShadowSpillPlanningProblem.from_json(Path("problem.json").read_text())
 plan = plan_program(

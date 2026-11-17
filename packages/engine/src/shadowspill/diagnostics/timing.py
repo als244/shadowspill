@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from shadowspill.ir import MemoryAction
-from shadowspill.planner.diagnostics.mapping import FrozenMapping
+from shadowspill.planning.memory_search.diagnostics.mapping import FrozenMapping
 from shadowspill.runtime.abi import AdapterStatistics
 from shadowspill.runtime.timing import Marker
 from shadowspill.simulator import SimulationResult

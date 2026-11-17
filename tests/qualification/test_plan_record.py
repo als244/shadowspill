@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from engine_tests.planner._examples import (
+from engine_tests.planning.memory_search._examples import (
     config,
     exact_capacity_program,
     exact_capacity_residency,
@@ -14,12 +14,9 @@ from qualification.plan_record import (
     plan_record,
     write_plan_record,
 )
-from shadowspill.planner import (
-    GenericPlanningOptions,
-    ProgramPlanResult,
-)
-from shadowspill.planner.search.algorithms.pressurefit import PressureFit
-from shadowspill.planner.search.algorithms.pressurefit.options import (
+from shadowspill.planning.memory_search import GenericPlanningOptions, ProgramPlanResult
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
 from shadowspill.schema import artifact_schema

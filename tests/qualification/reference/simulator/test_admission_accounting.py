@@ -19,8 +19,10 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import AdmissionFacts, TaskAdmissionSpec
-from shadowspill.planner.admission.simulation import simulation_admission_from_replay
+from shadowspill.planning.memory_search import AdmissionFacts, TaskAdmissionSpec
+from shadowspill.planning.memory_search.admission.simulation import (
+    simulation_admission_from_replay,
+)
 from shadowspill.simulator import (
     ActionPhysicalDelta,
     MemoryReuseDependency,

@@ -6,7 +6,7 @@ from typing import Any
 from shadowspill.artifacts.plan import Plan
 from shadowspill.diagnostics.occupancy import attribute
 from shadowspill.diagnostics.occupancy.page import page_data
-from shadowspill.planner.serialization.simulation_result import simulation_result_value
+from shadowspill.planning.serialization.simulation_result import simulation_result_value
 
 
 def occupancy_data(

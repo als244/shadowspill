@@ -13,7 +13,7 @@ clamped eviction and fetch delays. Transfer strategies omit `E`. See the
 
 ```python
 from shadowspill import CommunicationInfo, MemoryBudgets, ProfiledProgram, plan_program
-from shadowspill.planner import GenericPlanningOptions, SearchOptions
+from shadowspill.planning.memory_search import GenericPlanningOptions, SearchOptions
 
 answer = plan_program(
     ProfiledProgram.load("measured.ssp"),

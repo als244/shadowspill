@@ -12,9 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from shadowspill.ir import MemoryActionKind
-from shadowspill.planner.program import (
-    AnnotatedProgramPlan,
-)
+from shadowspill.planning.memory_search.program import AnnotatedProgramPlan
 from shadowspill.simulator import TransferDirection
 from tools.planning.corpus.corpus import SavedProgramCase
 

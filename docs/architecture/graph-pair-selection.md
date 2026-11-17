@@ -9,7 +9,7 @@ active**, while the search decides **where the resulting objects reside and
 when they move**.
 
 The mechanism is search-agnostic and lives in
-`shadowspill.planner.search.toolkit`, which any search may call. Which of the
+`shadowspill.planning.memory_search.toolkit`, which any search may call. Which of the
 selections to plan, and in what order, is then the search's own judgement --
 [PressureFit](pressurefit.md) plans them most-recomputed first.
 
@@ -74,7 +74,7 @@ compute a selection spends above the cheapest option of every group.
 
 A graph pair is a forward graph and its backward graph, so this whole family
 is training vocabulary. The neutral tree does not use it. `shadowspill.ir`,
-`shadowspill.planner`, `shadowspill.simulator` and `shadowspill.runtime` plan
+`shadowspill.planning.memory_search`, `shadowspill.simulator` and `shadowspill.runtime` plan
 any **resolved program** — a program with every alternative fixed, leaving one
 concrete task set — and an inference program resolves a forward partition with
 no pair in sight. So the IR names the general case: a `TaskAlternativeGroup`
@@ -140,7 +140,7 @@ groups to recompute, one selection per fraction. They are an option of the
 search rather than of the program, reaching it in the `SearchOptions` a
 planning call carries — `PressureFitOptions.resolution_options` for the search
 that ships, whose default is `DEFAULT_RESOLUTION_OPTIONS` in
-`shadowspill.planner.search.toolkit`, every quarter. A program carries none of
+`shadowspill.planning.memory_search.toolkit`, every quarter. A program carries none of
 this, because a program is a statement of work and how to search it is the
 caller's. What follows is the mechanism that turns the options into
 selections. The two cases that ignore them — no groups, and inventories small

@@ -27,13 +27,13 @@ from shadowspill.ir import (
     TaskAlternativeChoice,
     TaskSpec,
 )
-from shadowspill.planner import (
+from shadowspill.planning.memory_search import (
     AdmissionFacts,
     StorageHandoff,
     TaskAdmissionSpec,
     TaskAllocationStepKind,
 )
-from shadowspill.planner.admission.admission_replay import (
+from shadowspill.planning.memory_search.admission.admission_replay import (
     AdmissionReplay,
     AdmissionReplayPurpose,
     AdmissionReplayStep,

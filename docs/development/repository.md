@@ -106,8 +106,18 @@ packages/engine/src/shadowspill/
 ├── resources/             portable provider descriptions, setup and cleanup
 ├── planning/              CPU-only profile binding, scheduling and physical layout
 │   ├── admission/         resolve saved memory evidence without a live pool
-│   └── training/          bind example/update orderings and gradient completion
-├── preparation/           provider-owned binary capture and saved task binding
+│   ├── training/          bind example/update orderings and gradient completion
+│   ├── memory_search/     search schedules and device/spill residency
+│   │   ├── admission/     prove physical placement and reuse dependencies
+│   │   │   └── layout/    fixed offsets, lease lifetimes and certificates
+│   │   ├── diagnostics/   search evidence, counters and summaries
+│   │   ├── algorithms/    concrete memory search implementations
+│   │   │   └── pressurefit/
+│   │   │       └── candidates/  native problem records and decoded results
+│   │   └── toolkit/       shared search traversals and graph-pair resolution
+│   ├── plan_store/        request identity, validated cache I/O and search reuse
+│   └── serialization/     neutral planning artifact encode/decode
+├── operator_preparation/  provider binary capture and saved task binding
 ├── reporting/             CPU-only reports and timeline/summary output
 ├── server/                service storage and transport boundaries
 │   ├── records/           durable bounded journal and committed-prefix recovery
@@ -141,18 +151,6 @@ packages/engine/src/shadowspill/
 │   │                      reading and writing them
 │   ├── artifacts.py       the store itself
 │   └── policy.py          StoreMode and the four gates it implies
-├── planner/               the planning question and its C bindings
-│   ├── plan_store/        request identity, validated cache I/O and search reuse
-│   ├── admission/         neutral physical admission, after a search answers
-│   │   ├── placement.py   native byte/alignment/lifetime placement
-│   │   └── layout/        leases to fixed offsets, and the certificate
-│   ├── diagnostics/       search evidence, counters and plan summaries
-│   ├── search/            the search seam
-│   │   ├── toolkit/       what any search may call
-│   │   └── algorithms/
-│   │       └── pressurefit/   the search that ships
-│   │           └── candidates/  the records the search returns, decoded
-│   └── serialization/     neutral artifact encode/decode
 ├── serialization/         compact typed binary records for saved artifacts
 ├── simulator/             the simulator and diagnostic timeline
 │   └── indexing/          the template, one schedule bound onto it, the result
@@ -199,6 +197,11 @@ packages/engine/src/shadowspill/
     │                      that rebind a plan's leases onto storages
     └── representations.py physical components of wrapped tensors
 ```
+
+`planning` implements the public Plan and sweep phases. Its `memory_search`
+subpackage solves the lower-level schedule and memory residency problem.
+`operator_preparation` saves finalized provider kernels for later execution; it
+is separate from the training preparation workflow.
 
 High-level modules expose small orchestration functions. Detailed algorithms
 live in domain-named submodules; generic `utils`, `helpers`, and `common`

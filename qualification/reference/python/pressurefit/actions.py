@@ -12,7 +12,7 @@ from shadowspill.ir import (
     MemorySchedule,
     ResidencySpec,
 )
-from shadowspill.planner.result import PlanInfeasibleError
+from shadowspill.planning.memory_search.result import PlanInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
 from .facts import PlanningFacts

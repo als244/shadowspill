@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from engine_tests.planner._examples import (
+from engine_tests.planning.memory_search._examples import (
     COMPUTE,
     DEVICE,
     config,
@@ -18,20 +18,20 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import (
+from shadowspill.planning.admission.facts import (
+    TaskOutputBinding,
+    build_admission_facts,
+)
+from shadowspill.planning.memory_search import (
     AdmissionFacts,
     GenericPlanningOptions,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
 )
-from shadowspill.planner.search.algorithms.pressurefit import PressureFit
-from shadowspill.planner.search.algorithms.pressurefit.options import (
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
     PressureFitOptions,
-)
-from shadowspill.planning.admission.facts import (
-    TaskOutputBinding,
-    build_admission_facts,
 )
 from shadowspill.runtime.budget import (
     _runtime_record_reserve,

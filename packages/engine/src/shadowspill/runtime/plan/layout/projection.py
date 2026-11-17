@@ -12,7 +12,7 @@ from shadowspill.ir import (
 )
 from shadowspill.ir.program import canonical_index
 from shadowspill.ir.schedule import first_use_initial_order
-from shadowspill.planner.admission.layout.model import (
+from shadowspill.planning.memory_search.admission.layout.model import (
     FixedLayoutPlacements,
     FixedPhysicalLayout,
     LeaseLifetime,

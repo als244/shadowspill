@@ -12,7 +12,7 @@ simulated, and admitted with no model and no device present.
 - [shadowspill.step](#shadowspillstep)
 - [shadowspill.task](#shadowspilltask)
 - [shadowspill.store](#shadowspillstore)
-- [shadowspill.planner](#shadowspillplanner)
+- [shadowspill.planning.memory_search](#shadowspillplanningmemory_search)
 - [shadowspill.simulator](#shadowspillsimulator)
 - [shadowspill.runtime](#shadowspillruntime)
 
@@ -246,7 +246,7 @@ use the same protocol.
 [The artifact store](../advanced/artifact-store.md) has the layout and what each digest
 covers.
 
-## `shadowspill.planner`
+## `shadowspill.planning.memory_search`
 
 ### Two layers
 
@@ -281,7 +281,7 @@ requested budgets and `TransferBandwidths`, without capture, compilation or
 profiling. It is model- and runtime-independent, so it may be repeated across a
 budget/bandwidth frontier from one built program.
 
-<!-- source-signature: packages/engine/src/shadowspill/planner/plan.py:plan_program -->
+<!-- source-signature: packages/engine/src/shadowspill/planning/memory_search/plan.py:plan_program -->
 ```text
 plan_program(
     problem,
@@ -340,7 +340,7 @@ Nothing but that summary is read, so a caller that compares many plans and
 runs one reads kilobytes per question and fetches a whole plan, through
 `plan_program()`, only for the one it will run.
 
-<!-- source-signature: packages/engine/src/shadowspill/planner/plan.py:summarize_plan -->
+<!-- source-signature: packages/engine/src/shadowspill/planning/memory_search/plan.py:summarize_plan -->
 ```text
 summarize_plan(
     problem,
@@ -356,7 +356,7 @@ summarize_plan(
 ```
 
 The arguments mean what they mean for `plan_program()`. It returns a
-`PlanSummaryLookup` (from `shadowspill.planner.plan_store.records`): the `key` the
+`PlanSummaryLookup` (from `shadowspill.planning.plan_store.records`): the `key` the
 plan is filed under, its `makespan_ns` as the certificate re-simulated it, its
 `summary` as a `PlanSummary`, the `graph_pair_outcomes` of every graph-pair
 selection the search evaluated, and `answered_with_incumbent`, whether the
@@ -411,7 +411,7 @@ communication reservations from the total GPU budget, then checks task
 allocations and transfer lifetimes through the planner's native admission and
 placement code. `Plan.memory_layout` contains the resulting fixed offsets. See [physical admission](../../architecture/physical-admission.md).
 
-For lower-level tools, `shadowspill.planner.admission.placement.place_lifetimes`
+For lower-level tools, `shadowspill.planning.memory_search.admission.placement.place_lifetimes`
 places explicit byte/alignment/lifetime records. The runtime's
 `run_admission_replay(capacity_bytes, operations, *, lease_count,
 dependency_count, minimum_alignment=256, large_request_threshold_bytes=0)`
@@ -481,19 +481,19 @@ difference as `recomputation_overhead_seconds`, the rest of the makespan as
 bytes its best plan fetched and evicted, and how long each lane was busy in it
 (`fetch_busy_ns`, `evict_busy_ns`), or `None` when the result holds no
 simulation of that plan.
-`shadowspill.planner.diagnostics.graph_pair_outcomes(result)` derives one per
+`shadowspill.planning.memory_search.diagnostics.graph_pair_outcomes(result)` derives one per
 resolved program of a `ProgramPlanResult`, ordered by how many groups
 recompute, from the program's task profiles and the search's own record --
 nothing is simulated. `AlternativeCosts`, beside it, is the cost table both it
 and `PlanSummary` read: every option's compute by group, each group's
 cheapest, and the compute no option can avoid.
 
-### `shadowspill.planner.search`
+### `shadowspill.planning.memory_search.algorithm`
 
 The search is a replaceable part: the planner states the protocol, the shipped
 search implements it, and a caller's own search is no less a first-class one.
 `SearchAlgorithm`, `SearchOptions` and `answer_no_worse_than()` are also
-available flat from `shadowspill.planner`.
+available flat from `shadowspill.planning.memory_search`.
 
 #### `SearchAlgorithm`
 
@@ -573,12 +573,12 @@ scales or low-rank factors) can therefore reserve significant capacity; lower th
 threshold or set it to zero to let their leases use the ordinary reusable layout.
 
 ```python
-from shadowspill.planner import (
+from shadowspill.planning.memory_search import (
     GenericPlanningOptions,
     SearchOptions,
     plan_program,
 )
-from shadowspill.planner.search.algorithms.pressurefit import (
+from shadowspill.planning.memory_search.algorithms.pressurefit import (
     PressureFit,
     PressureFitOptions,
 )
@@ -611,8 +611,8 @@ store its own options without the planner knowing the type.
 What a search may call into, and need not write itself. Everything here is
 search-agnostic: it takes a program, a machine, or a plan, and says something
 true about it whichever search asked. A search uses what it wants and ignores
-the rest. Reached as `shadowspill.planner.toolkit`, and every name below except
-`ShareValue` is also available flat from `shadowspill.planner`.
+the rest. Reached as `shadowspill.planning.memory_search.toolkit`, and every name below except
+`ShareValue` is also available flat from `shadowspill.planning.memory_search`.
 
 | name | signature | what it does |
 |---|---|---|
@@ -628,7 +628,7 @@ the rest. Reached as `shadowspill.planner.toolkit`, and every name below except
 
 Two more toolkits sit outside this package because they are phases rather
 than helpers: `shadowspill.simulator` prices a schedule, and
-`shadowspill.planner.admission` proves one fits real memory. A search calls
+`shadowspill.planning.memory_search.admission` proves one fits real memory. A search calls
 those the same way.
 
 `answer_no_worse_than(result, *, incumbent, config, placement)` is the
@@ -644,7 +644,7 @@ is settled inside it: a candidate measures its own plan against the pool
 is nothing to retry at this level. It takes no store: nothing it does is
 written down.
 
-<!-- source-signature: packages/engine/src/shadowspill/planner/search/algorithms/pressurefit/__init__.py:PressureFit.__call__ -->
+<!-- source-signature: packages/engine/src/shadowspill/planning/memory_search/algorithms/pressurefit/__init__.py:PressureFit.__call__ -->
 ```text
 pressurefit(
     program,
@@ -685,8 +685,8 @@ analytically infeasible at this capacity or no candidate fits,
 budget, and `ValueError` when the incumbent is a plan for a different program.
 
 `PressureFitOptions` is this search's own record, and lives with it under
-`shadowspill.planner.search.algorithms.pressurefit` rather than on
-`shadowspill.planner`, because the planner never reads it.
+`shadowspill.planning.memory_search.algorithms.pressurefit` rather than on
+`shadowspill.planning.memory_search`, because the planner never reads it.
 
 | field | type | default | meaning |
 |---|---|---|---|

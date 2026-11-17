@@ -10,18 +10,20 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import (
+from shadowspill.planning.memory_search import (
     AdmissionFacts,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
 )
-from shadowspill.planner.admission.indexing import (
+from shadowspill.planning.memory_search.admission.indexing import (
     encode_schedule,
     evaluate_schedule_admission,
     index_admission_facts,
 )
-from shadowspill.planner.admission.layout import build_fixed_layout_admission
+from shadowspill.planning.memory_search.admission.layout import (
+    build_fixed_layout_admission,
+)
 from shadowspill.runtime.admission_capi import NO_ID
 from shadowspill.runtime.fixed_layout import RuntimePlacementKind
 from shadowspill.runtime.plan.layout import project_runtime_fixed_layout

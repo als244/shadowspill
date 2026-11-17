@@ -40,7 +40,7 @@ _REPORTING_MODULE = ENGINE / "src" / "shadowspill" / "reporting" / "__init__.py"
 _CORE_PYTHON_MODULES = (
     ENGINE / "src" / "shadowspill" / "errors.py",
     ENGINE / "src" / "shadowspill" / "ir" / "__init__.py",
-    ENGINE / "src" / "shadowspill" / "planner" / "__init__.py",
+    ENGINE / "src" / "shadowspill" / "planning" / "memory_search" / "__init__.py",
     ENGINE / "src" / "shadowspill" / "simulator" / "__init__.py",
     ENGINE / "src" / "shadowspill" / "runtime" / "__init__.py",
 )
@@ -79,9 +79,9 @@ _PUBLIC_C_REFERENCES = {
 _REQUIRED_SIGNATURES = {
     "packages/engine/src/shadowspill/pytorch/chunking/policy.py:ChunkPolicy.configure_stage",
     "packages/engine/src/shadowspill/ssd.py:ssd",
-    "packages/engine/src/shadowspill/planner/plan.py:plan_program",
-    "packages/engine/src/shadowspill/planner/plan.py:summarize_plan",
-    "packages/engine/src/shadowspill/planner/search/algorithms/pressurefit/__init__.py:PressureFit.__call__",
+    "packages/engine/src/shadowspill/planning/memory_search/plan.py:plan_program",
+    "packages/engine/src/shadowspill/planning/memory_search/plan.py:summarize_plan",
+    "packages/engine/src/shadowspill/planning/memory_search/algorithms/pressurefit/__init__.py:PressureFit.__call__",
     "packages/engine/src/shadowspill/pytorch/runtime.py:Runtime.__init__",
     "packages/engine/src/shadowspill/runtime/core.py:Runtime.__init__",
 }
@@ -901,11 +901,11 @@ def test_step_diagnostics_names_instants_and_durations_apart() -> None:
 def test_search_diagnostic_fields_are_described_in_the_reference() -> None:
     """Document the inspectable search records used by the current Plan."""
     modules = (
-        "packages/engine/src/shadowspill/planner/diagnostics/plan_summary.py",
-        "packages/engine/src/shadowspill/planner/diagnostics/summary.py",
-        "packages/engine/src/shadowspill/planner/diagnostics/resolved_programs.py",
-        "packages/engine/src/shadowspill/planner/diagnostics/candidates.py",
-        "packages/engine/src/shadowspill/planner/diagnostics/counters.py",
+        "packages/engine/src/shadowspill/planning/memory_search/diagnostics/plan_summary.py",
+        "packages/engine/src/shadowspill/planning/memory_search/diagnostics/summary.py",
+        "packages/engine/src/shadowspill/planning/memory_search/diagnostics/resolved_programs.py",
+        "packages/engine/src/shadowspill/planning/memory_search/diagnostics/candidates.py",
+        "packages/engine/src/shadowspill/planning/memory_search/diagnostics/counters.py",
     )
     reference = (ROOT / "docs/python/advanced/plan-report-fields.md").read_text()
     undocumented: dict[str, list[str]] = {}

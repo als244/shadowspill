@@ -17,7 +17,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from shadowspill.planner import ProgramPlanResult
+from shadowspill.planning.memory_search import ProgramPlanResult
 from shadowspill.schema import artifact_schema
 
 

@@ -11,7 +11,7 @@ from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.profiles import Profiles
 from shadowspill.communication.info import CommunicationInfo
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
-from shadowspill.planner import SearchOptions
+from shadowspill.planning.memory_search import SearchOptions
 from shadowspill.planning.plan import plan_program
 from shadowspill.profiling.apply import apply_profiles
 from shadowspill.serialization.sharing import writing_metadata

@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from engine_tests.planner._examples import COMPUTE, DEVICE
+from engine_tests.planning.memory_search._examples import COMPUTE, DEVICE
 from shadowspill.ir import (
     AliasGroupSpec,
     MemoryAction,
@@ -17,7 +17,7 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import (
+from shadowspill.planning.memory_search import (
     AdmissionFacts,
     CandidateDiagnostic,
     GenericPlanningOptions,
@@ -29,8 +29,10 @@ from shadowspill.planner import (
     TaskAllocationStep,
     TaskAllocationStepKind,
 )
-from shadowspill.planner.admission.layout import build_fixed_layout_admission
-from shadowspill.planner.search import SearchOptions
+from shadowspill.planning.memory_search.admission.layout import (
+    build_fixed_layout_admission,
+)
+from shadowspill.planning.memory_search.algorithm import SearchOptions
 from shadowspill.runtime.fixed_layout import RuntimePlacementKind
 from shadowspill.runtime.plan.layout import (
     DynamicTaskAllocationPolicy,

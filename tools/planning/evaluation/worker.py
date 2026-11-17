@@ -7,18 +7,16 @@ import time
 from pathlib import Path
 
 from shadowspill.artifacts.profiled_program import ProfiledProgram
-from shadowspill.planner import (
+from shadowspill.planning.memory_search import (
     GenericPlanningOptions,
     SearchOptions,
     plan_program,
 )
-from shadowspill.planner.program import (
-    ShadowSpillPlanningProblem,
-)
-from shadowspill.planner.search.algorithms.pressurefit import PressureFit
-from shadowspill.planner.search.algorithms.pressurefit.options import (
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
+from shadowspill.planning.memory_search.program import ShadowSpillPlanningProblem
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationInfeasibleError
 from tools._serialization import atomic_json

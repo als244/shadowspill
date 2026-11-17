@@ -2,7 +2,7 @@
 
 import argparse
 
-from shadowspill.planner.program_inputs import TransferBandwidths
+from shadowspill.planning.memory_search.program_inputs import TransferBandwidths
 
 
 def execution_budget(dump, *, execution_gib=None, physical_gib=None):

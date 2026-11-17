@@ -22,13 +22,13 @@ NEUTRAL_MODULES = (
     "shadowspill.diagnostics",
     "shadowspill.errors",
     "shadowspill.ir",
-    "shadowspill.planner",
-    "shadowspill.planner.admission",
-    "shadowspill.planner.plan_store",
-    "shadowspill.planner.program",
-    "shadowspill.planner.selection",
+    "shadowspill.planning.memory_search",
+    "shadowspill.planning.memory_search.admission",
+    "shadowspill.planning.plan_store",
+    "shadowspill.planning.memory_search.program",
+    "shadowspill.planning.memory_search.selection",
     "shadowspill.profiling",
-    "shadowspill.preparation",
+    "shadowspill.operator_preparation",
     "shadowspill.resources",
     "shadowspill.frontend",
     "shadowspill.runtime",
@@ -91,6 +91,9 @@ def test_planning_a_saved_program_needs_no_frontend() -> None:
     to read costs that were measured months ago.
     """
 
-    for module in ("shadowspill.planner", "tools.planning.evaluation.worker"):
+    for module in (
+        "shadowspill.planning.memory_search",
+        "tools.planning.evaluation.worker",
+    ):
         clean, detail = _imports_without_torch(module)
         assert clean, f"{module} pulled a framework in: {detail}"

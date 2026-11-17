@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+import importlib
+
+import pytest
+
+from engine_tests.planning.memory_search._examples import (
+    training_chain_config,
+    training_chain_initial,
+    training_chain_program,
+)
+from shadowspill.libraries import shadowspill_library_path
+from shadowspill.planning.memory_search import GenericPlanningOptions, pressurefit
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
+
+pytestmark = pytest.mark.skipif(
+    shadowspill_library_path() is None,
+    reason="the library is not installed",
+)
+
+
+def test_pressurefit_fails_closed_without_the_library(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    implementation = importlib.import_module(
+        "shadowspill.planning.memory_search.algorithms.pressurefit"
+    )
+
+    def missing_library() -> None:
+        raise RuntimeError("the search library unavailable")
+
+    monkeypatch.setattr(implementation, "pressurefit_api", missing_library)
+    with pytest.raises(RuntimeError, match="the search library unavailable"):
+        pressurefit(
+            training_chain_program(1),
+            initial_residency=training_chain_initial(1),
+            config=training_chain_config(224),
+            generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+            workers=1,
+        )
+
+
+@pytest.mark.parametrize(
+    ("layers", "capacity"),
+    ((1, 224), (2, 224), (5, 800), (10, 500)),
+)
+def test_candidate_evaluation_is_deterministic(
+    layers: int,
+    capacity: int,
+) -> None:
+    program = training_chain_program(layers)
+    initial = training_chain_initial(layers)
+    config = training_chain_config(capacity)
+    options = GenericPlanningOptions(minimum_object_bytes_evict_eligible=0)
+    options_search = PressureFitOptions()
+
+    indexed = PressureFit(options_search)(
+        program,
+        initial_residency=initial,
+        config=config,
+        generic=options,
+    )
+
+    repeated = PressureFit(options_search)(
+        program,
+        initial_residency=initial,
+        config=config,
+        generic=options,
+    )
+
+    assert indexed.schedule == repeated.schedule
+    assert indexed.selections == repeated.selections
+    assert indexed.simulation == repeated.simulation
+    assert indexed.diagnostics.selected_candidate_id == (
+        repeated.diagnostics.selected_candidate_id
+    )
+    assert indexed.diagnostics.selected_selection_id == (
+        repeated.diagnostics.selected_selection_id
+    )
+    assert indexed.diagnostics.selected_makespan_ns == (
+        repeated.diagnostics.selected_makespan_ns
+    )
+    assert tuple(
+        candidate.candidate_id
+        for problem in indexed.diagnostics.resolved_programs
+        for candidate in problem.candidate_evaluations
+    ) == tuple(
+        candidate.candidate_id
+        for problem in repeated.diagnostics.resolved_programs
+        for candidate in problem.candidate_evaluations
+    )

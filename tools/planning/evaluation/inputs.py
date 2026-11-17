@@ -5,9 +5,9 @@ from dataclasses import replace
 from shadowspill.artifacts.budgets import MemoryBudgets
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication.info import CommunicationInfo
-from shadowspill.planner.program_inputs import ShadowSpillPlanningProblem
 from shadowspill.planning.admission.program import program_admission
 from shadowspill.planning.costs import simulation_inputs
+from shadowspill.planning.memory_search.program_inputs import ShadowSpillPlanningProblem
 from shadowspill.planning.training.bind import bind_training
 
 from .config import FrontierConfig

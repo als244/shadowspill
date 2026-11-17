@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from engine_tests.planner._examples import (
+from engine_tests.planning.memory_search._examples import (
     training_chain_config,
     training_chain_initial,
     training_chain_program,
@@ -25,7 +25,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.libraries import shadowspill_library_path
-from shadowspill.planner import (
+from shadowspill.planning.memory_search import (
     AdmissionFacts,
     GenericPlanningOptions,
     TaskAdmissionSpec,
@@ -33,14 +33,16 @@ from shadowspill.planner import (
     TaskAllocationStepKind,
     pressurefit,
 )
-from shadowspill.planner.admission.indexing import (
+from shadowspill.planning.memory_search.admission.indexing import (
     encode_schedule,
     evaluate_schedule_admission,
     index_admission_facts,
 )
-from shadowspill.planner.admission.simulation import simulation_admission_from_replay
-from shadowspill.planner.search.algorithms.pressurefit import PressureFit
-from shadowspill.planner.search.algorithms.pressurefit.options import (
+from shadowspill.planning.memory_search.admission.simulation import (
+    simulation_admission_from_replay,
+)
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
 from shadowspill.schema import artifact_schema

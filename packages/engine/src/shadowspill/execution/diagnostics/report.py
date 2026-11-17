@@ -9,8 +9,8 @@ from shadowspill.artifacts.plan import Plan
 from shadowspill.diagnostics.occupancy import attribute, write_pages
 from shadowspill.diagnostics.step import StepDiagnostics
 from shadowspill.diagnostics.step_file import write_step_diagnostics
-from shadowspill.planner.serialization.simulation_result import simulation_result_value
 from shadowspill.planning.costs import simulation_inputs
+from shadowspill.planning.serialization.simulation_result import simulation_result_value
 
 
 def write(

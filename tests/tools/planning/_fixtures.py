@@ -16,13 +16,8 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import (
-    AdmissionFacts,
-    TaskAdmissionSpec,
-)
-from shadowspill.planner.program import (
-    ShadowSpillPlanningProblem,
-)
+from shadowspill.planning.memory_search import AdmissionFacts, TaskAdmissionSpec
+from shadowspill.planning.memory_search.program import ShadowSpillPlanningProblem
 from shadowspill.simulator import SimulationConfig
 from tests.tools.planning._profiled import measured
 

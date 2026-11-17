@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from shadowspill.planner.program import (
+from shadowspill.planning.memory_search.program import (
     ShadowSpillPlanningProblem,
     TransferBandwidths,
 )

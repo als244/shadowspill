@@ -8,7 +8,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from engine_tests.planner._examples import (
+from engine_tests.planning.memory_search._examples import (
     training_chain_config,
     training_chain_initial,
     training_chain_program,
@@ -21,10 +21,14 @@ from shadowspill.ir import (
     Persistence,
     ResidencySpec,
 )
-from shadowspill.planner import GenericPlanningOptions, SearchOptions
-from shadowspill.planner.search.algorithms.pressurefit import PressureFit
-from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
-from shadowspill.planner.search.algorithms.pressurefit.tracing import record_plan_trace
+from shadowspill.planning.memory_search import GenericPlanningOptions, SearchOptions
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
+from shadowspill.planning.memory_search.algorithms.pressurefit.tracing import (
+    record_plan_trace,
+)
 from tools.pressurefit_trace.collect.budgets import execution_budget
 from tools.pressurefit_trace.data import (
     Trajectory,

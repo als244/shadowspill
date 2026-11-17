@@ -8,7 +8,7 @@ from itertools import product
 from math import prod
 from typing import Any, Literal
 
-from shadowspill.planner.search import SearchOptions
+from shadowspill.planning.memory_search.algorithm import SearchOptions
 from shadowspill.training.definitions.preparation import (
     PreparationContext,
     ResolvedPreparationDefinition,

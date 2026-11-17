@@ -20,7 +20,7 @@ from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.communication.info import CommunicationInfo
 from shadowspill.communication.overlap import OverlapRoute, overlap_routes
 from shadowspill.communication.requests import collective_requests
-from shadowspill.preparation.lifecycle import LoadedPreparations
+from shadowspill.operator_preparation.lifecycle import LoadedPreparations
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.toolchain import build_setup

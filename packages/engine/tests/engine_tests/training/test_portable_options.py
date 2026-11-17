@@ -2,7 +2,7 @@
 
 from shadowspill.artifacts._values import encoded
 from shadowspill.parallelism import Parallelism
-from shadowspill.planner import SearchOptions
+from shadowspill.planning.memory_search import SearchOptions
 from shadowspill.task.profiling import ProfilingOptions
 from shadowspill_client import PlanningOptions
 from shadowspill_client import ProfilingOptions as PortableProfilingOptions

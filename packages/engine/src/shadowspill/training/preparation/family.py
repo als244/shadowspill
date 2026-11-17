@@ -13,7 +13,7 @@ from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication.info import CommunicationInfo
 from shadowspill.diagnostics.progress import event, phase
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
-from shadowspill.planner.search import SearchOptions
+from shadowspill.planning.memory_search.algorithm import SearchOptions
 from shadowspill.planning.plan import plan_program
 from shadowspill.profiling.apply import apply_profiles
 from shadowspill.step.ordering import StepDataOrdering

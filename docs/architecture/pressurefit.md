@@ -682,4 +682,4 @@ Paths below are relative to `csrc/src/planner/search/algorithms/pressurefit/`:
 | Per-candidate jobs and per-problem winner | `candidates/workers.c` |
 
 Python resolution expansion and final materialization live in
-`packages/engine/src/shadowspill/planner/search/algorithms/pressurefit/search.py`.
+`packages/engine/src/shadowspill/planning/memory_search/algorithms/pressurefit/search.py`.

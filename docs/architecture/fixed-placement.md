@@ -206,7 +206,7 @@ into a range someone still holds.
 Four numbers describe a layout, each held where the information exists:
 
 - `slack_bytes` on the fixed layout (`FixedPhysicalLayout.slack_bytes`,
-  `packages/engine/src/shadowspill/planner/admission/layout/model.py`) is the pool capacity
+  `packages/engine/src/shadowspill/planning/memory_search/admission/layout/model.py`) is the pool capacity
   minus the bytes the assignment requires: how much of the pool the layout
   leaves untouched.
 - `predicted_fragmentation_bytes` in the execution plan's admission block is

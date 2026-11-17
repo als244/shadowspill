@@ -1,0 +1,280 @@
+"""Serialization for simulator results and timelines."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import fields, is_dataclass
+from operator import attrgetter
+from typing import Any
+
+from shadowspill.ir import MemoryActionKind, ResourceKind
+from shadowspill.planning.serialization.common import (
+    _integer,
+    _integer_pairs,
+    _list,
+    _mapping,
+    _optional_string,
+    _string,
+    _string_tuple,
+)
+from shadowspill.simulator import (
+    CapacityViolation,
+    DeviceMemoryPeak,
+    MemorySnapshot,
+    SimulationResult,
+    TaskInterval,
+    TransferDirection,
+    TransferInterval,
+)
+
+
+def _interval_kind(item: Mapping[str, object], path: str) -> MemoryActionKind:
+    """The action behind a copy. A record naming none carries fetches and
+    evictions only, so the direction gives the kind."""
+
+    value = item.get("kind")
+    if value is None:
+        direction = TransferDirection(
+            _string(item.get("direction"), f"{path}.direction")
+        )
+        if direction is TransferDirection.FETCH:
+            return MemoryActionKind.FETCH
+        return MemoryActionKind.EVICT
+    return MemoryActionKind(_string(value, f"{path}.kind"))
+
+
+def _simulation_result_from_value(value: object, path: str) -> SimulationResult:
+    """Restore one simulation result from its stored record.
+
+    One decoder reads one record. It is long because the record is wide,
+    not because it does several things: every line is one key, read in the
+    order the writer emits it. Splitting it would scatter one schema across
+    several files and leave no part easier to check against the writer.
+    """
+
+    data = _mapping(value, path)
+    tasks = _list(data.get("task_intervals"), f"{path}.task_intervals")
+    transfers = _list(data.get("transfer_intervals"), f"{path}.transfer_intervals")
+    peaks = _list(data.get("device_peaks"), f"{path}.device_peaks")
+    timeline = _list(data.get("memory_timeline"), f"{path}.memory_timeline")
+    violations = _list(
+        data.get("capacity_violations", ()), f"{path}.capacity_violations"
+    )
+    return SimulationResult(
+        makespan_ns=_integer(data.get("makespan_ns"), f"{path}.makespan_ns"),
+        task_intervals=tuple(
+            TaskInterval(
+                task_id=_string(
+                    item.get("task_id"), f"{path}.task_intervals[{index}].task_id"
+                ),
+                device_id=_string(
+                    item.get("device_id"), f"{path}.task_intervals[{index}].device_id"
+                ),
+                resource_kind=ResourceKind(
+                    _string(
+                        item.get("resource_kind"),
+                        f"{path}.task_intervals[{index}].resource_kind",
+                    )
+                ),
+                resource_lane=_integer(
+                    item.get("resource_lane"),
+                    f"{path}.task_intervals[{index}].resource_lane",
+                ),
+                ready_ns=_integer(
+                    item.get("ready_ns"), f"{path}.task_intervals[{index}].ready_ns"
+                ),
+                start_ns=_integer(
+                    item.get("start_ns"), f"{path}.task_intervals[{index}].start_ns"
+                ),
+                end_ns=_integer(
+                    item.get("end_ns"), f"{path}.task_intervals[{index}].end_ns"
+                ),
+                workspace_bytes=_integer(
+                    item.get("workspace_bytes"),
+                    f"{path}.task_intervals[{index}].workspace_bytes",
+                ),
+                stall_reasons=_string_tuple(
+                    item.get("stall_reasons"),
+                    f"{path}.task_intervals[{index}].stall_reasons",
+                ),
+            )
+            for index, raw in enumerate(tasks)
+            for item in (_mapping(raw, f"{path}.task_intervals[{index}]"),)
+        ),
+        transfer_intervals=tuple(
+            TransferInterval(
+                alias_group_id=_string(
+                    item.get("alias_group_id"),
+                    f"{path}.transfer_intervals[{index}].alias_group_id",
+                ),
+                trigger_task_id=_string(
+                    item.get("trigger_task_id"),
+                    f"{path}.transfer_intervals[{index}].trigger_task_id",
+                ),
+                device_id=_string(
+                    item.get("device_id"),
+                    f"{path}.transfer_intervals[{index}].device_id",
+                ),
+                direction=TransferDirection(
+                    _string(
+                        item.get("direction"),
+                        f"{path}.transfer_intervals[{index}].direction",
+                    )
+                ),
+                kind=_interval_kind(item, f"{path}.transfer_intervals[{index}]"),
+                sequence=_integer(
+                    item.get("sequence"),
+                    f"{path}.transfer_intervals[{index}].sequence",
+                ),
+                ready_ns=_integer(
+                    item.get("ready_ns"),
+                    f"{path}.transfer_intervals[{index}].ready_ns",
+                ),
+                start_ns=_integer(
+                    item.get("start_ns"),
+                    f"{path}.transfer_intervals[{index}].start_ns",
+                ),
+                end_ns=_integer(
+                    item.get("end_ns"),
+                    f"{path}.transfer_intervals[{index}].end_ns",
+                ),
+                bytes=_integer(
+                    item.get("bytes"), f"{path}.transfer_intervals[{index}].bytes"
+                ),
+                stall_reasons=_string_tuple(
+                    item.get("stall_reasons"),
+                    f"{path}.transfer_intervals[{index}].stall_reasons",
+                ),
+            )
+            for index, raw in enumerate(transfers)
+            for item in (_mapping(raw, f"{path}.transfer_intervals[{index}]"),)
+        ),
+        device_peaks=tuple(
+            DeviceMemoryPeak(
+                device_id=_string(
+                    item.get("device_id"), f"{path}.device_peaks[{index}].device_id"
+                ),
+                object_bytes=_integer(
+                    item.get("object_bytes"),
+                    f"{path}.device_peaks[{index}].object_bytes",
+                ),
+                workspace_bytes=_integer(
+                    item.get("workspace_bytes"),
+                    f"{path}.device_peaks[{index}].workspace_bytes",
+                ),
+                total_bytes=_integer(
+                    item.get("total_bytes"), f"{path}.device_peaks[{index}].total_bytes"
+                ),
+            )
+            for index, raw in enumerate(peaks)
+            for item in (_mapping(raw, f"{path}.device_peaks[{index}]"),)
+        ),
+        spill_peak_bytes=_integer(
+            data.get("spill_peak_bytes"), f"{path}.spill_peak_bytes"
+        ),
+        memory_timeline=tuple(
+            MemorySnapshot(
+                time_ns=_integer(
+                    item.get("time_ns"), f"{path}.memory_timeline[{index}].time_ns"
+                ),
+                device_object_bytes=_integer_pairs(
+                    item.get("device_object_bytes"),
+                    f"{path}.memory_timeline[{index}].device_object_bytes",
+                ),
+                device_workspace_bytes=_integer_pairs(
+                    item.get("device_workspace_bytes"),
+                    f"{path}.memory_timeline[{index}].device_workspace_bytes",
+                ),
+                spill_bytes=_integer(
+                    item.get("spill_bytes"),
+                    f"{path}.memory_timeline[{index}].spill_bytes",
+                ),
+                device_physical_bytes=_integer_pairs(
+                    item.get("device_physical_bytes"),
+                    f"{path}.memory_timeline[{index}].device_physical_bytes",
+                ),
+            )
+            for index, raw in enumerate(timeline)
+            for item in (_mapping(raw, f"{path}.memory_timeline[{index}]"),)
+        ),
+        capacity_violations=tuple(
+            CapacityViolation(
+                reason=_string(item.get("reason"), f"{where}.reason"),
+                location=_string(item.get("location"), f"{where}.location"),
+                time_ns=_integer(item.get("time_ns"), f"{where}.time_ns"),
+                capacity_bytes=_integer(
+                    item.get("capacity_bytes"), f"{where}.capacity_bytes"
+                ),
+                used_bytes=_integer(item.get("used_bytes"), f"{where}.used_bytes"),
+                requested_bytes=_integer(
+                    item.get("requested_bytes"), f"{where}.requested_bytes"
+                ),
+                device_id=_string(item.get("device_id"), f"{where}.device_id"),
+                task_id=_optional_string(item.get("task_id"), f"{where}.task_id"),
+                alias_group_id=_optional_string(
+                    item.get("alias_group_id"), f"{where}.alias_group_id"
+                ),
+            )
+            for index, raw in enumerate(violations)
+            for where in (f"{path}.capacity_violations[{index}]",)
+            for item in (_mapping(raw, where),)
+        ),
+        capacity_violation_count=_integer(
+            data.get("capacity_violation_count", 0), f"{path}.capacity_violation_count"
+        ),
+    )
+
+
+def plain_value(value: Any) -> Any:
+    """`dataclasses.asdict` for the immutable records a plan is made of.
+
+    The same mapping, without the generic walk's per-leaf deep copy: these
+    records hold only scalars, enumerations, nested records and tuples, none
+    of which a copy could change.
+    """
+
+    names = _field_names(type(value))
+    if names is not None:
+        return {name: plain_value(getattr(value, name)) for name in names}
+    if isinstance(value, (tuple, list)):
+        return type(value)(plain_value(item) for item in value)
+    if isinstance(value, dict):
+        return {plain_value(key): plain_value(item) for key, item in value.items()}
+    return value
+
+
+def _field_names(kind: type) -> tuple[str, ...] | None:
+    names = _FIELD_NAMES.get(kind)
+    if names is None and is_dataclass(kind):
+        names = _FIELD_NAMES[kind] = tuple(item.name for item in fields(kind))
+    return names
+
+
+_FIELD_NAMES: dict[type, tuple[str, ...]] = {}
+
+
+def flat_records(records: tuple[Any, ...]) -> list[dict[str, Any]]:
+    """`plain_value` for a long tuple of records of one flat type, whose
+    fields hold scalars, enumerations or tuples of strings: each record read
+    with one getter rather than walked."""
+
+    if not records:
+        return []
+    names = _field_names(type(records[0]))
+    assert names is not None
+    read = attrgetter(*names)
+    return [dict(zip(names, read(item), strict=True)) for item in records]
+
+
+def simulation_result_value(result: SimulationResult) -> dict[str, Any]:
+    """A simulation result as `asdict` gives it, with its interval tuples,
+    which run to hundreds of thousands of records, read flat."""
+
+    value = {
+        name: plain_value(getattr(result, name))
+        for name in _field_names(SimulationResult) or ()
+        if name not in ("task_intervals", "transfer_intervals")
+    }
+    value["task_intervals"] = flat_records(result.task_intervals)
+    value["transfer_intervals"] = flat_records(result.transfer_intervals)
+    return value

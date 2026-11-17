@@ -17,8 +17,13 @@ from shadowspill.ir import (
     TaskAlternativeChoice,
 )
 from shadowspill.ir.validation import ValidationError
-from shadowspill.planner.admission import AdmissionFacts
-from shadowspill.planner.diagnostics import (
+from shadowspill.planning.memory_search.admission import AdmissionFacts
+from shadowspill.planning.memory_search.algorithm import SearchOptions
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
+from shadowspill.planning.memory_search.diagnostics import (
     CandidateDiagnostic,
     PlanningDiagnostics,
     PlanningRepairDiagnostics,
@@ -27,12 +32,9 @@ from shadowspill.planner.diagnostics import (
     ResolvedProgramDiagnostics,
     TaskAlternativeChoiceDiagnostic,
 )
-from shadowspill.planner.request import GenericPlanningOptions
-from shadowspill.planner.result import ProgramPlanResult
-from shadowspill.planner.search import SearchOptions
-from shadowspill.planner.search.algorithms.pressurefit import PressureFit
-from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
-from shadowspill.planner.search.toolkit.resolution import resolutions
+from shadowspill.planning.memory_search.request import GenericPlanningOptions
+from shadowspill.planning.memory_search.result import ProgramPlanResult
+from shadowspill.planning.memory_search.toolkit.resolution import resolutions
 from shadowspill.simulator import (
     SimulationConfig,
     SimulationInfeasibleError,

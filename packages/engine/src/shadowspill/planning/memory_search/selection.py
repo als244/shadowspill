@@ -1,0 +1,127 @@
+"""Search and physical admission for one saved planning problem."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from dataclasses import replace
+
+# The admission package also re-exports the binding half, which reaches
+# lowering and the live allocator. Selecting a program needs neither.
+from shadowspill.planning.memory_search.admission.refinement import (
+    placement_facts,
+    resolve_fixed_layout_selection,
+)
+from shadowspill.planning.memory_search.algorithm import SearchOptions
+from shadowspill.planning.memory_search.program import (
+    AnnotatedProgramPlan,
+    MemoryBudgets,
+    ShadowSpillPlanningProblem,
+    TransferBandwidths,
+)
+from shadowspill.planning.memory_search.result import (
+    ProgramPlanResult,
+    certified_result,
+)
+from shadowspill.planning.plan_store.integration import open_plan_store, resolve_plan
+from shadowspill.store import ArtifactStore
+
+
+def select_program(
+    program: ShadowSpillPlanningProblem,
+    *,
+    execution_budget_bytes: int | None,
+    spill_budget_bytes: int | None,
+    transfer_bandwidths: TransferBandwidths | None,
+    artifact_store: ArtifactStore,
+    verbose: bool,
+    search_options: SearchOptions | None = None,
+    incumbent: ProgramPlanResult | None = None,
+    keep_resolutions: bool = False,
+) -> AnnotatedProgramPlan:
+    """Select and physically admit one reusable problem.
+
+    `search_options` says which search runs and what it is told; it reaches
+    the plan key and is not read here. `incumbent` is the plan to beat, a
+    result for the same program the answer is held to. `keep_resolutions`
+    files every resolution's best plan beside the answer, certified.
+    """
+
+    started = time.perf_counter_ns()
+    config, facts = program.machine_inputs(
+        execution_budget_bytes=execution_budget_bytes,
+        spill_budget_bytes=spill_budget_bytes,
+        transfer_bandwidths=transfer_bandwidths,
+    )
+    # Policy is the caller's, never the artifact's: a problem says what
+    # question it is, not how to search it, so an option added later cannot
+    # change what a saved problem means.
+    plans = open_plan_store(artifact_store)
+    progress = _progress_printer() if verbose else None
+    selection = resolve_fixed_layout_selection(
+        config,
+        facts,
+        lambda candidate_config: resolve_plan(
+            artifact_store,
+            plans,
+            program.program,
+            initial_residency=program.initial_residency,
+            final_residency=program.final_residency,
+            config=candidate_config,
+            search_options=search_options,
+            incumbent=incumbent,
+            keep_resolutions=keep_resolutions,
+            # The pool topology, so the search can measure whether a plan
+            # has a layout that fits. Not passed as `admission`: that
+            # switches on the dynamic-pool replay, and the fixed-layout
+            # builder below is the placement authority for this strategy.
+            placement=placement_facts(
+                facts,
+                scratch_reserve_bytes=program.dynamic_scratch_reserve_bytes,
+            ),
+            progress=progress,
+        ),
+        scratch_reserve_bytes=program.dynamic_scratch_reserve_bytes,
+        progress=progress,
+        certify=plans.certify,
+        certify_resolution=plans.certify_resolution if keep_resolutions else None,
+    )
+    physical_result = replace(
+        certified_result(selection.result, selection.admission),
+        admission_facts=selection.facts,
+    )
+    selected_transfer = transfer_bandwidths or program.transfer_bandwidths
+    return AnnotatedProgramPlan(
+        program=program,
+        memory_budgets=MemoryBudgets(
+            execution_bytes=(
+                program.source_execution_budget_bytes
+                if execution_budget_bytes is None
+                else execution_budget_bytes
+            ),
+            spill_bytes=(
+                program.simulation_config.spill_capacity_bytes
+                if spill_budget_bytes is None
+                else spill_budget_bytes
+            ),
+        ),
+        transfer_bandwidths=selected_transfer,
+        result=physical_result,
+        effective_facts=selection.facts,
+        fixed_layout=selection.admission.layout,
+        simulation_admission=selection.admission.simulator_input,
+        simulation=selection.admission.simulation,
+        attempts=selection.attempts,
+        plan_from_store=selection.from_store,
+        wall_time_ns=time.perf_counter_ns() - started,
+    )
+
+
+def _progress_printer() -> Callable[[str], None]:
+    def progress(message: str) -> None:
+        print(f"search: {message}", flush=True)
+
+    return progress
+
+
+__all__ = ["select_program"]

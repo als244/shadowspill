@@ -7,7 +7,7 @@ from shadowspill.diagnostics.step import (
     TransferRecords,
 )
 from shadowspill.diagnostics.timing import ArmedExecutionTiming
-from shadowspill.planner.diagnostics.mapping import FrozenMapping
+from shadowspill.planning.memory_search.diagnostics.mapping import FrozenMapping
 from shadowspill.runtime.plan.bridge import RuntimeBridge
 
 from .compute import compute_record, selected_intervals, stream_task

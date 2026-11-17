@@ -53,7 +53,7 @@ from shadowspill import (CommunicationInfo, Plan, Profiles, TaskProfile,
                          Parallelism, ParameterStorage, Sharded,
                          apply_profiles, plan_program, write_report)
 from shadowspill.parallelism.resolve import ParameterGeometry, resolve_parameters
-from shadowspill.planner import GenericPlanningOptions, SearchOptions
+from shadowspill.planning.memory_search import GenericPlanningOptions, SearchOptions
 from shadowspill.planning.shared import shared_memory
 plan = Plan.load('input.ssp')
 parallelism = Parallelism.dp(ranks_per_replica=8, num_replicas=2)

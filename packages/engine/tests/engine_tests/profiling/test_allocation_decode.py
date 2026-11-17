@@ -91,11 +91,13 @@ def test_only_last_generation_publishes_output():
 
 
 def test_repeated_temporary_fits_one_fixed_slot():
-    from engine_tests.planner._examples import COMPUTE, DEVICE
+    from engine_tests.planning.memory_search._examples import COMPUTE, DEVICE
     from shadowspill.ir import ShadowSpillProgram, TaskProfile, TaskSpec
-    from shadowspill.planner import SearchOptions
-    from shadowspill.planner.admission.layout import build_fixed_layout_admission
     from shadowspill.planning.admission.facts import build_admission_facts
+    from shadowspill.planning.memory_search import SearchOptions
+    from shadowspill.planning.memory_search.admission.layout import (
+        build_fixed_layout_admission,
+    )
     from shadowspill.simulator import SimulationConfig
 
     observed = decode_allocations(

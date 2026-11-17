@@ -162,8 +162,8 @@ across those microbatches. `depth * breadth` must equal the captured call count.
 RNG effects can restrict legal reordering.
 
 ```python
-from shadowspill.planner import SearchOptions
-from shadowspill.planner.search.algorithms.pressurefit import PressureFit, PressureFitOptions
+from shadowspill.planning.memory_search import SearchOptions
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit, PressureFitOptions
 from shadowspill.step import StepDataOrdering
 
 search = SearchOptions(

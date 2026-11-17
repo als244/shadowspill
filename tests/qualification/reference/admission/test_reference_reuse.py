@@ -13,7 +13,7 @@ from qualification.reference.python.admission.reuse import (
     Reuse,
     recover_layout_reuse,
 )
-from shadowspill.planner.capi import (
+from shadowspill.planning.memory_search.capi import (
     CAdmissionOperations,
     CIndexedSchedule,
     CLayoutReuseProblem,

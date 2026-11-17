@@ -5,11 +5,11 @@ from dataclasses import replace
 from shadowspill.artifacts.budgets import MemoryBudgets
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.profiled_program import ProfiledProgram
-from shadowspill.planner.admission.layout.dependencies import (
-    simulator_reuse_dependencies,
-)
 from shadowspill.planning.admission.program import program_admission
 from shadowspill.planning.costs import simulation_inputs
+from shadowspill.planning.memory_search.admission.layout.dependencies import (
+    simulator_reuse_dependencies,
+)
 from shadowspill.planning.training.bind import bind_training
 from shadowspill.profiling.apply import apply_profiles
 from shadowspill.simulator import SimulationAdmission, simulate

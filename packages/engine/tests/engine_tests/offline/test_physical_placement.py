@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from engine_tests.planner._examples import COMPUTE, DEVICE
+from engine_tests.planning.memory_search._examples import COMPUTE, DEVICE
 from shadowspill import MemoryBudgets, apply_profiles, plan_program
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import (

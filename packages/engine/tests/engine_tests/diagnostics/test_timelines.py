@@ -13,7 +13,7 @@ from shadowspill.diagnostics.collection.transfers import (
 )
 from shadowspill.diagnostics.step import TransferRecord
 from shadowspill.ir import MemoryActionKind
-from shadowspill.planner.diagnostics.mapping import FrozenMapping
+from shadowspill.planning.memory_search.diagnostics.mapping import FrozenMapping
 from shadowspill.runtime.trace import (
     RuntimeTraceEvent,
     RuntimeTraceEventKind,

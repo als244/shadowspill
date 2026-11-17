@@ -22,7 +22,7 @@ typedef struct ShadowSpillAdmissionAnnotation {
 /* Why a lease exists. The boundary above says where an operation sits in the
  * step; this says what it is for, which is what lifetime construction and the
  * fixed/dynamic split need. Declaration order matches `_PURPOSES` in
- * `shadowspill.planner.admission.layout.lifetimes`, which decodes these codes
+ * `shadowspill.planning.memory_search.admission.layout.lifetimes`, which decodes these codes
  * into `AdmissionReplayPurpose`. */
 typedef enum ShadowSpillAdmissionPurpose {
     SHADOWSPILL_ADMISSION_PURPOSE_INITIAL_OBJECT = 0,

@@ -191,7 +191,7 @@ import torch
 
 from shadowspill.libraries import resolve_library
 from shadowspill.libraries import shadowspill_library_path
-from shadowspill.planner.capi import planner_api
+from shadowspill.planning.memory_search.capi import planner_api
 from shadowspill.pytorch.frontend import REQUIRED_STORAGE_OPERATIONS
 from shadowspill.simulator.capi import simulator_api
 

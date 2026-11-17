@@ -19,9 +19,9 @@ from .program import Program
 if TYPE_CHECKING:
     from shadowspill.artifacts.budgets import MemoryBudgets
     from shadowspill.communication import CommunicationInfo
-    from shadowspill.planner.admission import AdmissionFacts
-    from shadowspill.planner.admission.layout import FixedPhysicalLayout
-    from shadowspill.planner.diagnostics import PlanningDiagnostics
+    from shadowspill.planning.memory_search.admission import AdmissionFacts
+    from shadowspill.planning.memory_search.admission.layout import FixedPhysicalLayout
+    from shadowspill.planning.memory_search.diagnostics import PlanningDiagnostics
 
 
 @dataclass(frozen=True)
@@ -217,7 +217,7 @@ class Plan(Artifact):
 
     @shared_writer
     def to_dict(self) -> dict[str, Any]:
-        from shadowspill.planner.serialization.simulation_result import (
+        from shadowspill.planning.serialization.simulation_result import (
             simulation_result_value,
         )
 
@@ -256,10 +256,10 @@ class Plan(Artifact):
     ) -> Plan:
         from shadowspill.artifacts.budgets import MemoryBudgets
         from shadowspill.communication import CommunicationInfo
-        from shadowspill.planner.admission import AdmissionFacts
-        from shadowspill.planner.diagnostics import PlanningDiagnostics
-        from shadowspill.planner.serialization import _simulation_result_from_value
-        from shadowspill.planner.serialization.physical_layout import (
+        from shadowspill.planning.memory_search.admission import AdmissionFacts
+        from shadowspill.planning.memory_search.diagnostics import PlanningDiagnostics
+        from shadowspill.planning.serialization import _simulation_result_from_value
+        from shadowspill.planning.serialization.physical_layout import (
             _fixed_layout_from_value,
         )
 

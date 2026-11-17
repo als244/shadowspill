@@ -14,7 +14,7 @@ from shadowspill.parallelism import (
     InputPlacement,
     Parallelism,
 )
-from shadowspill.planner.search import SearchOptions
+from shadowspill.planning.memory_search.algorithm import SearchOptions
 from shadowspill.training.definitions import (
     ModelDefinition,
     PreparationContext,

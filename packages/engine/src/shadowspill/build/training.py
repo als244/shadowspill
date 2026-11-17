@@ -10,9 +10,9 @@ from torch import nn
 
 from shadowspill.artifacts.program import Program
 from shadowspill.build.lowering.training.program import lower_training
+from shadowspill.operator_preparation import OperatorPreparation
+from shadowspill.operator_preparation.lifecycle import BuildPreparations
 from shadowspill.parallelism import Parallelism
-from shadowspill.preparation import OperatorPreparation
-from shadowspill.preparation.lifecycle import BuildPreparations
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.capture.gradients.destinations import (
     GradientDestinationRule,

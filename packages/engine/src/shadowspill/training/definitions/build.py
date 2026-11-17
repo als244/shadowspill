@@ -6,8 +6,8 @@ from types import MappingProxyType
 from typing import Any
 
 from shadowspill.artifacts.component_layouts import ComponentLayout, declared_layouts
+from shadowspill.operator_preparation import OperatorPreparation
 from shadowspill.parallelism import Parallelism
-from shadowspill.preparation import OperatorPreparation
 from shadowspill.resources import Resource
 from shadowspill.training.inputs.adapters import InputLayout
 from shadowspill_client._records import Value, mapping, plain

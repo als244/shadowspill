@@ -8,8 +8,8 @@ from shadowspill.artifacts.examples import output_groups
 from shadowspill.artifacts.plan import Plan
 from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.communication.contracts import collective_measurement
+from shadowspill.operator_preparation.lifecycle import LoadedPreparations
 from shadowspill.planning.admission.outputs import output_bindings_for_entrypoints
-from shadowspill.preparation.lifecycle import LoadedPreparations
 from shadowspill.profiling.records import measured_task
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.numerics import program_numerical_contracts

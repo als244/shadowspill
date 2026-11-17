@@ -15,9 +15,11 @@ from pathlib import Path
 
 from shadowspill import CommunicationInfo, MemoryBudgets, ProfiledProgram, plan_program
 from shadowspill.orchestration.launch.processes import worker_command
-from shadowspill.planner import SearchOptions
-from shadowspill.planner.search.algorithms.pressurefit import PressureFit
-from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
+from shadowspill.planning.memory_search import SearchOptions
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
 from shadowspill.step import StepDataOrdering
 
 

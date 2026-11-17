@@ -13,7 +13,10 @@ import torch
 from shadowspill import OperatorPreparation, Program
 from shadowspill.artifacts._values import plain
 from shadowspill.ir import DeviceSpec
-from shadowspill.preparation.lifecycle import BuildPreparations, LoadedPreparations
+from shadowspill.operator_preparation.lifecycle import (
+    BuildPreparations,
+    LoadedPreparations,
+)
 
 _events = []
 _captured = ContextVar("test_prepared_capture", default=None)

@@ -31,7 +31,7 @@ from shadowspill import (  # noqa: E402
     plan_program,
     write_report,
 )
-from shadowspill.planner import SearchOptions  # noqa: E402
+from shadowspill.planning.memory_search import SearchOptions  # noqa: E402
 
 root = Path(sys.argv[1])
 with zipfile.ZipFile(root / "measurements.zip") as archive:

@@ -131,7 +131,7 @@ memory budget, retaining successful Plans and failure diagnostics. Both APIs are
 CPU-only: they neither build nor measure tasks. They take `memory_budgets` and
 `communication_info` separately from the profiled computation. Neither keeps a
 plan store or hands one budget's plan to the next: the plan key, stored answers
-and incumbent replay above belong to `shadowspill.planner.plan_program`, which
+and incumbent replay above belong to `shadowspill.planning.memory_search.plan_program`, which
 plans a `ShadowSpillPlanningProblem` against an artifact store and takes the
 plan to beat as `incumbent`. See the [phase API guide](../python/phases.md) for
 the complete workflow.

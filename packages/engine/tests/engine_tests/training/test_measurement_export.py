@@ -44,7 +44,7 @@ def test_export_retains_every_case_and_original_phase_file(measured, tmp_path):
     assert first.read_bytes() == second.read_bytes()
     with zipfile.ZipFile(first) as archive:
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["format"] == "shadowspill.preparation-export"
+        assert manifest["format"] == "shadowspill.operator_preparation-export"
         assert manifest["configuration"] == prepared.layouts.setup.config.to_dict()
         assert manifest["captures"].keys() == prepared.templates.keys()
         assert all(row["required"] for row in manifest["captures"].values())

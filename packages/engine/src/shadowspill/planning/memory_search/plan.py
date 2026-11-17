@@ -1,0 +1,203 @@
+"""Search and admit a costed memory-planning problem.
+
+`plan_program` is what a caller reaches for. It fixes the machine from a
+budget, keys the answer in the planning store, hands the question to a
+search, holds that search to any plan it was given, and admits the winner
+physically. `summarize_plan` asks the store the same question and reads
+only what it keeps beside the plan, for a caller comparing many plans that
+will run one.
+
+Which search runs is the caller's choice and this module's ignorance:
+`search_options.algorithm` is any
+:class:`~shadowspill.planning.memory_search.SearchAlgorithm`, carrying its options
+into the plan key and read by nothing here. PressureFit is the search that ships.
+
+This module is framework-neutral: it needs a program, a budget and a
+machine, and nothing that belongs to a frontend.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import TYPE_CHECKING
+
+from shadowspill.ir import ResidencySpec, ShadowSpillProgram
+from shadowspill.planning.memory_search.admission import AdmissionFacts
+from shadowspill.planning.memory_search.algorithm import SearchOptions
+from shadowspill.planning.memory_search.program import (
+    AnnotatedProgramPlan,
+    ShadowSpillPlanningProblem,
+    TransferBandwidths,
+)
+from shadowspill.simulator import SimulationConfig
+from shadowspill.store import ArtifactStore, StoreMode
+
+if TYPE_CHECKING:
+    from shadowspill.planning.plan_store.records import PlanSummaryLookup
+
+
+def validate_schedule_feasibility(
+    program: ShadowSpillProgram,
+    *,
+    initial_residency: tuple[ResidencySpec, ...],
+    final_residency: tuple[ResidencySpec, ...] = (),
+    config: SimulationConfig,
+    admission: AdmissionFacts | None = None,
+    search_options: SearchOptions | None = None,
+) -> None:
+    """Reject an irreducible capacity failure before a search is paid for.
+
+    The check is the search's own -- only it knows what it could reach --
+    so this asks the one that will run. What passes here is what that
+    search can reach; it is not a promise that a plan exists.
+    """
+
+    chosen = search_options if search_options is not None else SearchOptions()
+    chosen.resolved_algorithm.preflight(
+        program,
+        initial_residency=initial_residency,
+        final_residency=final_residency,
+        config=config,
+        admission=admission,
+        generic=chosen.generic,
+    )
+
+
+__all__ = ["plan_program", "summarize_plan", "validate_schedule_feasibility"]
+
+
+def plan_program(
+    problem: ShadowSpillPlanningProblem,
+    *,
+    execution_budget: int | None = None,
+    spill_budget: int | None = None,
+    transfer_bandwidths: TransferBandwidths | None = None,
+    search_options: SearchOptions | None = None,
+    incumbent: AnnotatedProgramPlan | None = None,
+    artifact_store: str | os.PathLike[str] | None = None,
+    plan_store: str | os.PathLike[str] | None = None,
+    verbose: bool = True,
+    plan_store_mode: StoreMode = "contribute",
+    export_bypass_key: str | None = None,
+    keep_resolutions: bool = False,
+) -> AnnotatedProgramPlan:
+    """Plan one problem: search, simulate, and physically admit the winner.
+
+    ``problem`` is a constructed or reloaded
+    :class:`ShadowSpillPlanningProblem`. It
+    carries the program, where it must start and end, and what the machine
+    is; it carries no policy, so this call is model- and runtime-independent
+    and may be repeated for a budget/bandwidth frontier without capture,
+    compilation, or profiling.
+
+    ``execution_budget``, ``spill_budget`` and ``transfer_bandwidths``
+    override what the problem was captured under, which is how one problem
+    serves a whole frontier.
+
+    ``search_options`` is the whole of what this call is told about
+    searching: ``generic``, which any search understands, and
+    ``algorithm``, which is the search itself carrying its own options.
+    Both reach the plan key; ``search_options.workers`` does not, because
+    it says how much machine to spend rather than what to decide. Leaving
+    ``algorithm`` unset runs the search that ships; a caller with a search of
+    their own subclasses :class:`~shadowspill.planning.memory_search.SearchAlgorithm`
+    and passes an instance.
+
+    ``incumbent`` is the plan to beat: a plan for this same program found
+    under another budget. It reaches the search as a bound, and the answer
+    is held to it here -- a plan that fits in less memory fits in more, so a
+    sweep that plans budgets ascending hands each one the best plan below it
+    and never plans worse with more, whichever search is running.
+
+    ``plan_store`` keeps this call's request, selection and plan manifest
+    apart from the artifact store, so one store can serve many runs that
+    each own their plans; ``None`` keeps them in the store.
+
+    ``keep_resolutions`` files every resolved program's best plan beside
+    the answer, certified like it, when the search runs: what each way of
+    fixing the alternatives found, for reading against the answer. Off by
+    default, since each is as large as the answer. A resolution the search
+    stopped measuring, because a plan already placed bounded it, has no
+    plan to keep; ``deterministic`` search options make every resolution
+    report the plan it found.
+    """
+
+    from shadowspill.planning.memory_search.selection import select_program
+
+    if search_options is not None and not isinstance(search_options, SearchOptions):
+        raise TypeError("search_options must be SearchOptions or None")
+    cache = ArtifactStore.resolve(
+        artifact_store,
+        plan_store=plan_store,
+        plan_store_mode=plan_store_mode,
+        export_bypass_key=export_bypass_key,
+    )
+    cache.initialize()
+    return select_program(
+        problem,
+        execution_budget_bytes=execution_budget,
+        spill_budget_bytes=spill_budget,
+        transfer_bandwidths=transfer_bandwidths,
+        search_options=search_options,
+        incumbent=None if incumbent is None else incumbent.result,
+        artifact_store=cache,
+        verbose=verbose,
+        keep_resolutions=keep_resolutions,
+    )
+
+
+def summarize_plan(
+    problem: ShadowSpillPlanningProblem,
+    *,
+    execution_budget: int | None = None,
+    spill_budget: int | None = None,
+    transfer_bandwidths: TransferBandwidths | None = None,
+    search_options: SearchOptions | None = None,
+    artifact_store: str | os.PathLike[str] | None = None,
+    plan_store: str | os.PathLike[str] | None = None,
+    plan_store_mode: StoreMode = "contribute",
+) -> PlanSummaryLookup | None:
+    """What the planning store already holds for one problem, without its plan.
+
+    The question is the one :func:`plan_program` would ask -- the same key --
+    and the answer is the summary the store keeps beside a certified plan:
+    its makespan, its ``PlanSummary``, the outcome of every graph-pair
+    selection the search evaluated, and whether the search answered with the
+    plan it was handed. Nothing but that summary is read, so a caller that
+    compares many plans and runs one reads kilobytes per question and fetches
+    a whole plan, through :func:`plan_program`, only for the one it will run.
+    A store written before summaries were kept answers from the plan once and
+    keeps the summary it built, when the mode allows writing.
+
+    ``None`` when the store has no answer, or one nobody has certified yet:
+    the caller plans, and :func:`plan_program` applies the store's mode to
+    the miss. A refusal the store recorded is raised as :func:`plan_program`
+    would raise it. A plan to beat is not taken here, because a plan in hand
+    that claims to be faster than the stored one is a question only a search
+    settles: hand it to :func:`plan_program`.
+    """
+
+    from shadowspill.planning.memory_search.admission.refinement import placement_facts
+    from shadowspill.planning.plan_store.integration import open_plan_store
+
+    if search_options is not None and not isinstance(search_options, SearchOptions):
+        raise TypeError("search_options must be SearchOptions or None")
+    cache = ArtifactStore.resolve(
+        artifact_store, plan_store=plan_store, plan_store_mode=plan_store_mode
+    )
+    cache.initialize()
+    config, facts = problem.machine_inputs(
+        execution_budget_bytes=execution_budget,
+        spill_budget_bytes=spill_budget,
+        transfer_bandwidths=transfer_bandwidths,
+    )
+    return open_plan_store(cache).summary(
+        problem.program,
+        initial_residency=problem.initial_residency,
+        final_residency=problem.final_residency,
+        config=config,
+        search_options=search_options,
+        placement=placement_facts(
+            facts, scratch_reserve_bytes=problem.dynamic_scratch_reserve_bytes
+        ),
+    )

@@ -46,8 +46,11 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner.admission.layout.model import PURPOSES, FixedLayoutPlacements
-from shadowspill.planner.serialization.simulation_result import simulation_result_value
+from shadowspill.planning.memory_search.admission.layout.model import (
+    PURPOSES,
+    FixedLayoutPlacements,
+)
+from shadowspill.planning.serialization.simulation_result import simulation_result_value
 from shadowspill.planning.training.order import traversal
 from shadowspill.schema import ARTIFACT_VERSION, artifact_schema
 from shadowspill.simulator import SimulationConfig, simulate

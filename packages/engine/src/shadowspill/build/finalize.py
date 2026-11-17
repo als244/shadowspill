@@ -13,7 +13,7 @@ from shadowspill.artifacts.program import Program
 from shadowspill.artifacts.tasks import stage_jobs
 from shadowspill.diagnostics.progress import phase, timed
 from shadowspill.errors import CompilationError
-from shadowspill.preparation.lifecycle import BuildPreparations
+from shadowspill.operator_preparation.lifecycle import BuildPreparations
 from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.numerics import (

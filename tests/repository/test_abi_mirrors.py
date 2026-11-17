@@ -17,8 +17,10 @@ from pathlib import Path
 import pytest
 
 from shadowspill.libraries import shadowspill_library_path
-from shadowspill.planner.capi import CScheduleAdmissionResult
-from shadowspill.planner.search.algorithms.pressurefit.capi import CPressureFitOptions
+from shadowspill.planning.memory_search.algorithms.pressurefit.capi import (
+    CPressureFitOptions,
+)
+from shadowspill.planning.memory_search.capi import CScheduleAdmissionResult
 from shadowspill.runtime import abi
 from shadowspill.schema import ARTIFACT_VERSION
 from shadowspill.simulator.capi import CDevice, CProgram

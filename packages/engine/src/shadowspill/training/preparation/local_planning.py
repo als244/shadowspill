@@ -56,7 +56,7 @@ class PlanningInputs:
                 raise ValueError("invalid measurement export framing")
             manifest = json.loads(archive.read("manifest.json"))
             if (
-                manifest.get("format") != "shadowspill.preparation-export"
+                manifest.get("format") != "shadowspill.operator_preparation-export"
                 or type(manifest.get("version")) is not int
                 or manifest["version"] != 1
                 or set(files) != {"manifest.json", *manifest["files"]}

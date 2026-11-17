@@ -6,7 +6,7 @@ from pathlib import Path
 
 from shadowspill import CommunicationInfo, MemoryBudgets, ProfiledProgram, plan_program
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
-from shadowspill.planner import GenericPlanningOptions, SearchOptions
+from shadowspill.planning.memory_search import GenericPlanningOptions, SearchOptions
 from shadowspill.step import StepDataOrdering
 
 

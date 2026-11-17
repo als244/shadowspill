@@ -16,7 +16,7 @@ for consumed products; their GEMM uses split_k=1 with dynamic scheduling disable
 Unselected products retain the ordinary fixed shapes. This excludes FP8 and EP.
 """
 
-from shadowspill.preparation import OperatorPreparation
+from shadowspill.operator_preparation import OperatorPreparation
 
 from .moe_allocations import CONTRACTS
 

@@ -19,7 +19,7 @@ Each one round-trips through `to_json()` and `from_json()`:
 ```python
 from pathlib import Path
 
-from shadowspill.planner.program import AnnotatedProgramPlan
+from shadowspill.planning.memory_search.program import AnnotatedProgramPlan
 Path("annotated-plan.json").write_text(annotated.to_json(), encoding="utf-8")
 loaded_plan = AnnotatedProgramPlan.from_json(
     Path("annotated-plan.json").read_text(encoding="utf-8")

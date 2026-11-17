@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 
 from shadowspill.ir import ShadowSpillProgram, shared_residency_footprint
-from shadowspill.planner.admission import (
+from shadowspill.planning.memory_search.admission import (
     AdmissionFacts,
     StorageHandoff,
     TaskAdmissionSpec,

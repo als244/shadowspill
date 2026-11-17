@@ -10,7 +10,7 @@ import torch
 
 from shadowspill.artifacts.device import require_compiled_device
 from shadowspill.artifacts.plan import Plan
-from shadowspill.preparation.lifecycle import LoadedPreparations
+from shadowspill.operator_preparation.lifecycle import LoadedPreparations
 from shadowspill.pytorch.numerics import (
     program_numerical_contracts,
     validate_numerical_settings,

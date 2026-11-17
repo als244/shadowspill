@@ -20,7 +20,7 @@ from shadowspill.diagnostics.occupancy import (
     attribute,
     placement_rows,
 )
-from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
+from shadowspill.planning.memory_search.annotated_plan import AnnotatedProgramPlan
 from tools.pressurefit_trace.data import annotate_recompute, short_task
 
 from .waits import TaskWaits

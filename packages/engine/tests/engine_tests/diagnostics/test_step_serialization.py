@@ -16,7 +16,7 @@ from shadowspill.diagnostics.step import (
     TransferQueue,
     TransferRecords,
 )
-from shadowspill.planner.diagnostics.mapping import FrozenMapping
+from shadowspill.planning.memory_search.diagnostics.mapping import FrozenMapping
 from shadowspill.schema import artifact_schema
 
 

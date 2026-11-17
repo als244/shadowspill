@@ -4,8 +4,12 @@ import json
 import time
 from typing import Any
 
-from shadowspill.planner import GenericPlanningOptions, SearchOptions, plan_program
-from shadowspill.planner.program_inputs import ShadowSpillPlanningProblem
+from shadowspill.planning.memory_search import (
+    GenericPlanningOptions,
+    SearchOptions,
+    plan_program,
+)
+from shadowspill.planning.memory_search.program_inputs import ShadowSpillPlanningProblem
 
 from .budgets import execution_budget
 from .io import write

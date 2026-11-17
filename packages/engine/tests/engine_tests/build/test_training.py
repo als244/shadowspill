@@ -189,7 +189,8 @@ def _check_cpu_planning(directory, filename="training.ssp"):
         from shadowspill import (Program, Profiles, TaskProfile, MemoryBudgets,
             CommunicationInfo, apply_profiles, plan_program, write_report, Plan)
         from shadowspill.step.ordering import StepDataOrdering
-        from shadowspill.planner import GenericPlanningOptions, SearchOptions
+        from shadowspill.planning.memory_search import (
+            GenericPlanningOptions, SearchOptions)
         p = Program.load(sys.argv[1])
         profiles = Profiles(setup=dict(p.setup), fixed_device_bytes=0, tasks={
             d.profile_key: TaskProfile(duration_seconds=0.001, workspace_bytes=max(

@@ -7,8 +7,8 @@ import torch
 from torch import nn
 
 from shadowspill.artifacts.program import Program
+from shadowspill.operator_preparation import OperatorPreparation
 from shadowspill.parallelism import Parallelism
-from shadowspill.preparation import OperatorPreparation
 from shadowspill.pytorch.capture.gradients import GradientDestinationRule
 from shadowspill.pytorch.chunking import ChunkPolicy, ChunkRegions
 from shadowspill.pytorch.graph_pairs.policy import GraphPairPolicy

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.ir import MemoryLocation
-from shadowspill.planner.result import PlanInfeasibleError
+from shadowspill.planning.memory_search.result import PlanInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
 from .facts import PlanningFacts

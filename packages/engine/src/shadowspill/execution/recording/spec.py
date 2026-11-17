@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from shadowspill.ir import MemoryAction, ShadowSpillProgram, TaskSpec
-from shadowspill.planner.diagnostics.mapping import FrozenMapping
+from shadowspill.planning.memory_search.diagnostics.mapping import FrozenMapping
 from shadowspill.simulator import SimulationResult
 from shadowspill.task.entrypoints import TaskEntrypoint
 

@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from engine_tests.planner.test_annotated_plan import _pressurefit_program
+from engine_tests.planning.memory_search.test_annotated_plan import _pressurefit_program
 from shadowspill.diagnostics.pressurefit_trace import read_manifest
 from shadowspill.ir import MutationSpec
-from shadowspill.planner import plan_program
+from shadowspill.planning.memory_search import plan_program
 from tools.pressurefit_trace.__main__ import main
 from tools.pressurefit_trace.collect.budgets import transfer_bandwidths
 

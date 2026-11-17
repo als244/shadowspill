@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from engine_tests.planner._examples import (
+from engine_tests.planning.memory_search._examples import (
     COMPUTE,
     training_chain_config,
     training_chain_initial,
     training_chain_program,
 )
-from engine_tests.planner.test_annotated_plan import _pressurefit_program
+from engine_tests.planning.memory_search.test_annotated_plan import _pressurefit_program
 from qualification.reference.python.pressurefit.facts import build_facts
 from qualification.reference.python.pressurefit.residency import (
     ResidencyPlan,
@@ -30,14 +30,22 @@ from shadowspill.diagnostics.pressurefit_trace import (
     stage_timings,
 )
 from shadowspill.ir import AliasGroupSpec, ObjectSpec, TaskSpec
-from shadowspill.planner import GenericPlanningOptions, SearchOptions, plan_program
-from shadowspill.planner.search.algorithms.pressurefit import PressureFit
-from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
-from shadowspill.planner.search.algorithms.pressurefit.search import (
+from shadowspill.planning.memory_search import (
+    GenericPlanningOptions,
+    SearchOptions,
+    plan_program,
+)
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
+from shadowspill.planning.memory_search.algorithms.pressurefit.search import (
     build_problems,
     run_problems,
 )
-from shadowspill.planner.search.algorithms.pressurefit.tracing import record_plan_trace
+from shadowspill.planning.memory_search.algorithms.pressurefit.tracing import (
+    record_plan_trace,
+)
 
 
 def _record(
@@ -178,7 +186,9 @@ def test_normal_api_traces_cached_winner_without_changing_key(tmp_path):
 
 
 def test_tail_selection_replays_with_its_serialized_search_options(tmp_path):
-    from engine_tests.planner.search.toolkit.test_resolution import _repeated_passes
+    from engine_tests.planning.memory_search.toolkit.test_resolution import (
+        _repeated_passes,
+    )
 
     options = SearchOptions(
         generic=GenericPlanningOptions(deterministic=True),

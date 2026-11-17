@@ -15,7 +15,7 @@ from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from .plan import plan_program
 
 if TYPE_CHECKING:
-    from shadowspill.planner.search import SearchOptions
+    from shadowspill.planning.memory_search.algorithm import SearchOptions
 
 
 def sweep_programs(

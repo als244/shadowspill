@@ -5,7 +5,7 @@ from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.communication.contracts import collective_measurement
 from shadowspill.communication.info import CommunicationInfo
 from shadowspill.ir import ObjectRole, ShadowSpillProgram
-from shadowspill.planner.admission import AdmissionFacts
+from shadowspill.planning.memory_search.admission import AdmissionFacts
 from shadowspill.profiling.records import measured_task
 
 from .facts import build_admission_facts

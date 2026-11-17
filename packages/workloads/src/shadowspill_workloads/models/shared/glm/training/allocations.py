@@ -30,7 +30,7 @@ qualification. The ordinary compiler/profiler and resource admission still apply
 All implementations and external providers are pinned by the model definition.
 """
 
-from shadowspill.preparation import OperatorPreparation
+from shadowspill.operator_preparation import OperatorPreparation
 from shadowspill_workloads.definitions.moe_provider import (
     allocations as moe_allocations,
 )

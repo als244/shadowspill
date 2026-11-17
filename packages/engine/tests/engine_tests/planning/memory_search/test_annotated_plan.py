@@ -1,0 +1,233 @@
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from shadowspill.ir import (
+    AliasGroupSpec,
+    DeviceSpec,
+    MemoryLocation,
+    ObjectSpec,
+    ResidencySpec,
+    ResourceKind,
+    ResourceSpec,
+    ShadowSpillProgram,
+    TaskProfile,
+    TaskSpec,
+)
+from shadowspill.planning.memory_search import (
+    AdmissionFacts,
+    TaskAdmissionSpec,
+    plan_program,
+)
+from shadowspill.planning.memory_search.program import (
+    AnnotatedProgramPlan,
+    MemoryBudgets,
+    ShadowSpillPlanningProblem,
+    TransferBandwidths,
+)
+from shadowspill.simulator import SimulationConfig
+from tests.tools.planning._fixtures import _fixture
+from tools.planning.corpus.artifacts import (
+    load_program,
+    save_profiled_program,
+)
+from tools.planning.corpus.corpus import (
+    ProgramCaseIdentity,
+)
+from tools.planning.evaluation.plan_artifacts import (
+    load_annotated_plan,
+    save_annotated_plan,
+)
+
+
+def _pressurefit_program() -> ShadowSpillPlanningProblem:
+    program = ShadowSpillProgram(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=(AliasGroupSpec("state", "cuda_0", 64, retain_spill_copy=True),),
+        objects=(ObjectSpec("state_object", "state", 0, 64),),
+        profiles=(TaskProfile("profile", 10, 0, "abi"),),
+        tasks=(
+            TaskSpec(
+                "task",
+                ResourceSpec("cuda_0", ResourceKind.COMPUTE),
+                "profile",
+                inputs=("state_object",),
+            ),
+        ),
+    )
+    return ShadowSpillPlanningProblem(
+        role="step",
+        program=program,
+        initial_residency=(ResidencySpec("state", MemoryLocation.DEVICE),),
+        final_residency=(ResidencySpec("state", MemoryLocation.SPILL),),
+        simulation_config=SimulationConfig.single_device(
+            "cuda_0",
+            device_capacity_bytes=96,
+            spill_capacity_bytes=1_024,
+            fetch_solo_bandwidth_bytes_per_second=1_000_000,
+            fetch_concurrent_bandwidth_bytes_per_second=(1_000_000),
+            evict_solo_bandwidth_bytes_per_second=2_000_000,
+            evict_concurrent_bandwidth_bytes_per_second=(2_000_000),
+        ),
+        admission_facts=AdmissionFacts(
+            "cuda_0",
+            192,
+            96,
+            1,
+            (TaskAdmissionSpec("task"),),
+        ),
+        source_execution_budget_bytes=224,
+        maximum_execution_budget_bytes=512,
+        maximum_spill_budget_bytes=2_048,
+        fixed_execution_bytes=32,
+        object_reserve_bytes=96,
+        dynamic_scratch_reserve_bytes=0,
+    )
+
+
+def test_annotated_program_plan_separates_budgets_and_bandwidths(
+    tmp_path: Path,
+) -> None:
+    source = _pressurefit_program()
+    restored = ShadowSpillPlanningProblem.from_json(source.to_json())
+    assert restored.digest == source.digest
+    transfer_bandwidths = TransferBandwidths(
+        1_000_000,
+        1_000_000,
+        2_000_000,
+        2_000_000,
+        provenance="test calibration",
+    )
+
+    selected = plan_program(
+        source,
+        transfer_bandwidths=transfer_bandwidths,
+        artifact_store=tmp_path,
+        verbose=False,
+    )
+    cached = plan_program(
+        _pressurefit_program(),
+        transfer_bandwidths=transfer_bandwidths,
+        artifact_store=tmp_path,
+        verbose=False,
+    )
+    encoded = json.loads(selected.to_json())
+    restored = AnnotatedProgramPlan.from_json(selected.to_json())
+
+    assert "benchmark_point" not in encoded
+    assert encoded["memory_budgets"] == {
+        "execution_bytes": 224,
+        "spill_bytes": 1_024,
+    }
+    assert encoded["transfer_bandwidths"] == transfer_bandwidths.to_dict()
+    assert restored.memory_budgets == MemoryBudgets(224, 1_024)
+    assert restored.transfer_bandwidths == transfer_bandwidths
+    assert restored.result.diagnostics == selected.result.diagnostics
+    assert tuple(item.search_diagnostics for item in restored.attempts) == tuple(
+        item.search_diagnostics for item in selected.attempts
+    )
+    assert restored.digest == selected.digest
+    assert selected.search_wall_time_ns > 0
+    assert selected.physical_admission_wall_time_ns > 0
+    assert (
+        selected.search_wall_time_ns
+        + selected.physical_admission_wall_time_ns
+        + selected.orchestration_wall_time_ns
+        == selected.wall_time_ns
+    )
+    assert restored.search_wall_time_ns == selected.search_wall_time_ns
+    assert (
+        restored.physical_admission_wall_time_ns
+        == selected.physical_admission_wall_time_ns
+    )
+    assert encoded["timing"]["total_wall_time_ns"] == selected.wall_time_ns
+    assert len(encoded["timing"]["refinement_attempts"]) == len(selected.attempts)
+    assert not selected.plan_from_store
+    assert cached.plan_from_store
+    assert cached.digest == selected.digest
+
+    old_timing = dict(encoded)
+    old_timing["timing"] = {
+        "pressurefit_and_admission_wall_time_ns": selected.wall_time_ns
+    }
+    with pytest.raises(ValueError, match="refinement_attempts"):
+        AnnotatedProgramPlan.from_dict(old_timing)
+
+    old_schema = dict(encoded)
+    old_schema["schema"] = "shadowspill.annotated_program_plan/v0"
+    with pytest.raises(ValueError, match="unsupported schema"):
+        AnnotatedProgramPlan.from_dict(old_schema)
+
+
+def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
+    pressurefit_input = _pressurefit_program()
+    source = _fixture()
+    identity = ProgramCaseIdentity("llama3", "mlops", 4_096, 1_024, 2)
+    saved = save_profiled_program(
+        tmp_path / "corpus",
+        identity=identity,
+        program=source,
+        metadata={"purpose": "smoke"},
+    )
+    assert (
+        save_profiled_program(
+            tmp_path / "corpus",
+            identity=identity,
+            program=source,
+            metadata={"purpose": "smoke"},
+        )
+        == saved
+    )
+    with pytest.raises(FileExistsError, match="different evidence"):
+        save_profiled_program(
+            tmp_path / "corpus",
+            identity=identity,
+            program=source,
+            metadata={"purpose": "changed"},
+        )
+    loaded_case, loaded_program = load_program(saved.directory)
+    selected = plan_program(
+        pressurefit_input,
+        transfer_bandwidths=TransferBandwidths(
+            1_000_000, 1_000_000, 2_000_000, 2_000_000
+        ),
+        artifact_store=tmp_path / "store",
+        verbose=False,
+    )
+    selection_directory = save_annotated_plan(
+        loaded_case,
+        selected,
+        output_root=tmp_path / "evaluations",
+    )
+    restored = load_annotated_plan(selection_directory)
+    external_directory = save_annotated_plan(
+        loaded_case,
+        selected,
+        source_program=loaded_program,
+        output_root=tmp_path / "external-evaluations",
+    )
+    external = load_annotated_plan(external_directory)
+    repeated_directory = save_annotated_plan(
+        loaded_case,
+        replace(selected, wall_time_ns=selected.wall_time_ns + 1),
+        source_program=loaded_program,
+        output_root=tmp_path / "evaluations",
+    )
+    repeated = load_annotated_plan(repeated_directory)
+
+    assert loaded_program.digest == source.digest
+    assert restored.digest == selected.digest
+    assert external.digest == selected.digest
+    assert tmp_path / "external-evaluations" in external_directory.parents
+    assert repeated.digest == selected.digest
+    assert repeated.wall_time_ns == selected.wall_time_ns + 1
+    assert repeated_directory != selection_directory
+    assert selection_directory.parent == repeated_directory.parent
+    assert "execution-224_spill-1024" in str(selection_directory)
+    assert (
+        "fetch-1000000_fetch-concurrent-1000000_evict-2000000_evict-concurrent-2000000"
+    ) in str(selection_directory)

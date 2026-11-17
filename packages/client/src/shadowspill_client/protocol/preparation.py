@@ -9,7 +9,7 @@ from .._records import Record, Value, integer, mapping, record, text
 from ..config.preparation import BuildCase, PlanningOptions, ProfilingOptions
 from .definitions import DefinitionSource
 
-PREPARATION_MEDIA_TYPE = "application/vnd.shadowspill.preparation+zip"
+PREPARATION_MEDIA_TYPE = "application/vnd.shadowspill.operator_preparation+zip"
 
 
 @dataclass(frozen=True)

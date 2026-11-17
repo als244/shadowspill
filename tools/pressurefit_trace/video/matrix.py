@@ -11,14 +11,21 @@ from dataclasses import replace
 from pathlib import Path
 
 from shadowspill.ir import MemoryLocation
-from shadowspill.planner import plan_program
-from shadowspill.planner.admission.layout.build import build_fixed_layout_admission
-from shadowspill.planner.admission.refinement import FixedLayoutAttempt, placement_facts
-from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
-from shadowspill.planner.program_inputs import ShadowSpillPlanningProblem
-from shadowspill.planner.result import certified_result
-from shadowspill.planner.search.algorithms.pressurefit.tracing import record_plan_trace
-from shadowspill.planner.search.toolkit.resolution import recompute_share
+from shadowspill.planning.memory_search import plan_program
+from shadowspill.planning.memory_search.admission.layout.build import (
+    build_fixed_layout_admission,
+)
+from shadowspill.planning.memory_search.admission.refinement import (
+    FixedLayoutAttempt,
+    placement_facts,
+)
+from shadowspill.planning.memory_search.algorithms.pressurefit.tracing import (
+    record_plan_trace,
+)
+from shadowspill.planning.memory_search.annotated_plan import AnnotatedProgramPlan
+from shadowspill.planning.memory_search.program_inputs import ShadowSpillPlanningProblem
+from shadowspill.planning.memory_search.result import certified_result
+from shadowspill.planning.memory_search.toolkit.resolution import recompute_share
 
 from ..data import Trajectory
 

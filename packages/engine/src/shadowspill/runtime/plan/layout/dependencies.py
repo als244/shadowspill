@@ -4,8 +4,10 @@ from dataclasses import dataclass
 
 from shadowspill.ir import ShadowSpillProgram
 from shadowspill.ir.program import canonical_index
-from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
-from shadowspill.planner.admission.layout.model import (
+from shadowspill.planning.memory_search.admission.admission_replay import (
+    AdmissionReplayPurpose,
+)
+from shadowspill.planning.memory_search.admission.layout.model import (
     NONE,
     PURPOSES,
     FixedPhysicalLayout,

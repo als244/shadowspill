@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from engine_tests.planner._examples import COMPUTE, DEVICE, config
+from engine_tests.planning.memory_search._examples import COMPUTE, DEVICE, config
 from qualification.reference.python.pressurefit import (
     pressurefit as reference_pressurefit,
 )
@@ -20,9 +20,11 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import GenericPlanningOptions
-from shadowspill.planner.search.algorithms.pressurefit import PressureFit
-from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
+from shadowspill.planning.memory_search import GenericPlanningOptions
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
 from shadowspill.simulator import simulate
 
 

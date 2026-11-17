@@ -12,9 +12,9 @@ from torch import nn
 
 from shadowspill.artifacts.program import Program
 from shadowspill.build.lowering.forward.program import lower_forward
+from shadowspill.operator_preparation import OperatorPreparation
+from shadowspill.operator_preparation.lifecycle import BuildPreparations
 from shadowspill.parallelism import Parallelism
-from shadowspill.preparation import OperatorPreparation
-from shadowspill.preparation.lifecycle import BuildPreparations
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.chunking import ChunkPolicy, ChunkRegions
 from shadowspill.pytorch.partition import PartitionSpec

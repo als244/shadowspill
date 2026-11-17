@@ -16,7 +16,7 @@ from shadowspill.artifacts.program import Program
 from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.diagnostics.progress import event, phase
 from shadowspill.errors import ProfilingError
-from shadowspill.preparation.lifecycle import LoadedPreparations
+from shadowspill.operator_preparation.lifecycle import LoadedPreparations
 from shadowspill.pytorch.control_inputs import ControlInputs
 from shadowspill.pytorch.executable import restore_executable
 from shadowspill.pytorch.numerics import (

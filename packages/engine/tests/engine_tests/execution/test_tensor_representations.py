@@ -54,7 +54,7 @@ def test_quantized_training_evaluation_and_cold_checkpoint(
         )
 
     monkeypatch.setattr(
-        "shadowspill.planner.search.algorithms.pressurefit.resolutions", choices
+        "shadowspill.planning.memory_search.algorithms.pressurefit.resolutions", choices
     )
     sample = torch.arange(24, dtype=torch.float32).reshape(3, 8) / 24
     with torch.device("meta"):

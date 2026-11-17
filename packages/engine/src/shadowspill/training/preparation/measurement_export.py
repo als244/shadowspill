@@ -101,7 +101,7 @@ def export_measurements(
             raise ValueError("preparation export is missing a required measured case")
     manifest = encoded(
         {
-            "format": "shadowspill.preparation-export",
+            "format": "shadowspill.operator_preparation-export",
             "version": 1,
             "context": {} if context is None else dict(context),
             "configuration": original.layouts.setup.config.to_dict(),

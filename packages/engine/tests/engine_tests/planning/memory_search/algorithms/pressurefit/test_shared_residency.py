@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+import pytest
+
+from shadowspill.ir import (
+    AliasGroupSpec,
+    DeviceSpec,
+    MemoryLocation,
+    ObjectSpec,
+    ResidencySpec,
+    ResourceKind,
+    ResourceSpec,
+    ShadowSpillProgram,
+    SharedResidencyPolicy,
+    TaskProfile,
+    TaskSpec,
+)
+from shadowspill.planning.admission.facts import build_admission_facts
+from shadowspill.planning.admission.outputs import TaskOutputBinding
+from shadowspill.planning.memory_search import GenericPlanningOptions
+from shadowspill.planning.memory_search.algorithms.pressurefit import PressureFit
+from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
+from shadowspill.simulator import SimulationConfig
+from shadowspill.task.allocations.events import (
+    TaskAllocationEvent,
+    TaskAllocationOperation,
+)
+
+
+def _program() -> ShadowSpillProgram:
+    return ShadowSpillProgram(
+        devices=(DeviceSpec("device_0", "process_0", "device", 0),),
+        alias_groups=(
+            AliasGroupSpec(
+                "shared_storage",
+                "device_0",
+                64,
+                shared_residency=SharedResidencyPolicy.SHARED_READ_ONLY,
+            ),
+            AliasGroupSpec("output_storage", "device_0", 32),
+        ),
+        objects=(
+            ObjectSpec("shared", "shared_storage", 0, 64),
+            ObjectSpec("output", "output_storage", 0, 32),
+        ),
+        profiles=(TaskProfile("profile", 10, 0, "task_contract"),),
+        tasks=(
+            TaskSpec(
+                "task",
+                ResourceSpec("device_0", ResourceKind.COMPUTE),
+                "profile",
+                inputs=("shared",),
+                outputs=("output",),
+            ),
+        ),
+    )
+
+
+def _config() -> SimulationConfig:
+    return SimulationConfig.single_device(
+        "device_0",
+        device_capacity_bytes=96,
+        spill_capacity_bytes=64,
+        fetch_solo_bandwidth_bytes_per_second=1_000_000,
+        fetch_concurrent_bandwidth_bytes_per_second=(1_000_000),
+        evict_solo_bandwidth_bytes_per_second=1_000_000,
+        evict_concurrent_bandwidth_bytes_per_second=(1_000_000),
+    )
+
+
+def test_pressurefit_never_creates_actions_for_shared_aliases() -> None:
+    result = PressureFit(
+        PressureFitOptions(
+            residency_strategies=("tight-stall",),
+            fetch_rules=("latest-safe",),
+        )
+    )(
+        _program(),
+        initial_residency=(),
+        final_residency=(ResidencySpec("output_storage", MemoryLocation.DEVICE),),
+        config=_config(),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+    )
+
+    assert result.schedule.actions == ()
+    assert result.schedule.initial_residency == ()
+    assert result.simulation.device_peak("device_0").total_bytes == 96
+
+
+def test_admission_facts_exclude_shared_execution_footprint() -> None:
+    topology = build_admission_facts(
+        _program(),
+        execution_pool_bytes=128,
+        object_capacity_bytes=96,
+        output_bindings={"task": (TaskOutputBinding(0, "output_storage"),)},
+        allocation_traces_by_compatibility={
+            "task_contract": (
+                TaskAllocationEvent(
+                    0,
+                    TaskAllocationOperation.ALLOCATE,
+                    32,
+                    32,
+                    output_leaf_indices=(0,),
+                    output_view_offsets=(0,),
+                    alignment_bytes=1,
+                ),
+            )
+        },
+        alignment=1,
+    )
+
+    assert topology.pool_capacity_bytes == 64
+    assert topology.object_capacity_bytes == 32
+
+
+def test_admission_facts_require_explicit_physical_evidence() -> None:
+    with pytest.raises(ValueError, match="lacks explicit physical allocation"):
+        build_admission_facts(
+            _program(),
+            execution_pool_bytes=128,
+            object_capacity_bytes=96,
+            alignment=1,
+        )

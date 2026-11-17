@@ -15,7 +15,7 @@ from shadowspill.artifacts.profiles import Profiles, TaskProfile
 from shadowspill.artifacts.program import Program
 from shadowspill.artifacts.tasks import stage_jobs
 from shadowspill.diagnostics.progress import event, phase
-from shadowspill.preparation.lifecycle import LoadedPreparations
+from shadowspill.operator_preparation.lifecycle import LoadedPreparations
 from shadowspill.pytorch.accelerator import resolve_device
 from shadowspill.pytorch.task_inputs import prepare_inputs
 from shadowspill.pytorch.toolchain import build_setup
