@@ -12,13 +12,15 @@ def build_candidates(
     microbatch_tokens: Sequence[int],
     projection_chunks: Sequence[int] = (0,),
     moe_chunks: Sequence[int] = (0,),
+    retention: Sequence[str] = ("cost-input",),
 ) -> BuildCandidates:
     """Try token capacities per input partition and independent chunk sizes.
 
     In data parallelism, each partition is one rank. Zero leaves the respective
     computation at full microbatch size. Chunking never splits sequence attention
-    boundaries. Retention, ordering and the model's bounded head keep their defaults.
-    The result uses ordinary portable policies and requires no server or Torch.
+    boundaries. Retention defaults to cost-input, with chunk-local scratch
+    regenerated inside its region. Ordering and the bounded head keep their
+    defaults. The result uses portable policies and requires no server or Torch.
     """
     sizes = BuildCandidates(microbatch_sizes=microbatch_tokens).microbatch_sizes
     assert sizes is not None
@@ -32,6 +34,15 @@ def build_candidates(
             integer(size, label)
         if len(set(choices)) != len(choices):
             raise ValueError(f"{label} must not contain duplicates")
+    if (
+        not retention
+        or any(
+            choice not in ("cost-input", "cost-attention", "attention-input")
+            for choice in retention
+        )
+        or len(set(retention)) != len(retention)
+    ):
+        raise ValueError("retention requires distinct supported text policy names")
     return BuildCandidates(
         cases=[
             BuildCase(
@@ -48,11 +59,15 @@ def build_candidates(
                                 "expert_chunk_size": expert or tokens,
                             },
                         )
-                    )
+                    ),
+                    graph_pair_policy=Policy(
+                        "shadowspill/text_retention@1",
+                        {"name": choice, "chunked": projection != 0 or expert != 0},
+                    ),
                 ),
             )
-            for tokens, projection, expert in product(
-                sizes, projection_chunks, moe_chunks
+            for tokens, projection, expert, choice in product(
+                sizes, projection_chunks, moe_chunks, retention
             )
         ]
     )

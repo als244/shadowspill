@@ -39,6 +39,9 @@ def test_default_fields_remain_schema_defaults_and_explicit_datum_is_unshifted()
         ("projection_chunks", [-1]),
         ("moe_chunks", [True]),
         ("moe_chunks", [0, 0]),
+        ("retention", []),
+        ("retention", ["cost-input", "cost-input"]),
+        ("retention", ["unknown"]),
     ],
 )
 def test_invalid_build_candidates_fail_on_the_client(field, values):

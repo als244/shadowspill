@@ -5,7 +5,7 @@ import json
 import pytest
 import torch
 
-from shadowspill_client import BuildOptions, Policy
+from shadowspill_client.text import build_candidates
 from shadowspill_workloads.definitions.moe_provider import DESTINATION_CONTRACTS
 from workload_tests.test_moe_bf16_service import bf16_options, qualify
 
@@ -13,15 +13,10 @@ from workload_tests.test_moe_bf16_service import bf16_options, qualify
 @pytest.mark.cuda
 def test_public_aligned_lora_chunks_accumulate_into_prepared_destinations(tmp_path):
     options = bf16_options(True, lora_rank=16)
-    options["build"] = BuildOptions(
-        chunking=Policy(
-            "shadowspill/text_chunks@1",
-            {"token_capacity": 8, "chunk_size": 4, "expert_chunk_size": 4},
-        ),
-        graph_pair_policy=Policy(
-            "shadowspill/text_retention@1", {"name": "cost-input", "chunked": True}
-        ),
-    ).to_dict()
+    cases = build_candidates(
+        microbatch_tokens=[8], projection_chunks=[4], moe_chunks=[4]
+    ).cases
+    options["build"] = cases[0].build.to_dict()
     bundle = qualify(tmp_path, options, lora=True)
     calls, chunks = set(), set()
     for plan in bundle.plans[0].values():
