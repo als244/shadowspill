@@ -141,17 +141,41 @@ def test_block_fp8_capture_keeps_scales_shared_and_routes_retained(monkeypatch):
         } == {32, 64}
 
 
-def test_block_fp8_nested_recipe_regions_capture_both_variants(monkeypatch):
+def test_block_fp8_nested_regions_capture_both_variants(monkeypatch):
     from mlops.block_fp8 import BlockFP8Weight
 
+    from shadowspill.integrations.mlops import sonicmoe_chunk_rules
     from shadowspill.pytorch.chunking.regions import region_artifact
-    from shadowspill_workloads.policies.glm_chunks import (
-        build_options,
-    )
+    from shadowspill_workloads.policies.text.execution import text_execution_chunks
+    from shadowspill_workloads.policies.text.retention import graph_pair_policy
 
+    targets = tuple(
+        f"mlops.lora_sonicmoe_{direction}_{phase}.default"
+        for direction in ("up", "down")
+        for phase in ("fwd", "bwd")
+    )
     monkeypatch.setenv("QUACK_ARCH", "90")
-    options = build_options(
-        dict(sequence_length=160, chunk_size=64, moe_chunk_size=128), 1
+    chunks = text_execution_chunks(
+        sequence_length=160,
+        batch_size=1,
+        chunk_size=64,
+        expert_chunk_size=128,
+        rules=(
+            *operator_chunk_rules(1),
+            *sonicmoe_chunk_rules(compute_precision="fp8_block"),
+        ),
+        expert_targets=targets,
+        variants=("save", "recompute"),
+        inner_targets=("mlops.lora_router_logits.default",),
+    )
+    retention = graph_pair_policy(
+        "cost-input",
+        retained_targets=(),
+        local_targets=(
+            "mlops.sonicmoe_routing_metadata.default",
+            "mlops.lora_sonicmoe_up_fwd.default",
+            "mlops.lora_sonicmoe_down_fwd.default",
+        ),
     )
     with FakeTensorMode(allow_non_fake_inputs=True) as mode:
         raw = tuple(mode.from_tensor(value) for value in fp8_inputs())
@@ -164,10 +188,10 @@ def test_block_fp8_nested_recipe_regions_capture_both_variants(monkeypatch):
                 make_fx(wrapped_fp8_region)(*inputs),
                 inputs,
                 original_output=wrapped_fp8_region(*inputs),
-                retention=getattr(options["graph_pair_policy"], variant),
+                retention=getattr(retention, variant),
             )
             forward = region_artifact(
-                pair.forward, options["chunking"], stage_id="layer", variant=variant
+                pair.forward, chunks, stage_id="layer", variant=variant
             )
             assert sum(bool(path) for _, path in forward.input_components) == 4
             assert all(
@@ -182,7 +206,7 @@ def test_block_fp8_nested_recipe_regions_capture_both_variants(monkeypatch):
             domains = forward.regions.output_domains
             backward = region_artifact(
                 pair.backward,
-                options["chunking"],
+                chunks,
                 stage_id="layer",
                 variant=variant,
                 input_domains=(
