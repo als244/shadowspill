@@ -1,1 +1,1 @@
-"""Shared preparation phases for fixed-window text training recipes."""
+"""Candidate expansion for saved phase fixtures."""
