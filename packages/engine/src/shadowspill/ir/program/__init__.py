@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 
 from shadowspill.schema import artifact_schema
+from shadowspill.serialization.sharing import read_record
 
 from ..serialization import (
     JsonValue,
@@ -130,28 +131,32 @@ class ShadowSpillProgram:
         groups = records("task_alternative_groups")
         return cls(
             devices=tuple(
-                DeviceSpec.from_value(item, f"program.devices[{index}]")
+                read_record(DeviceSpec.from_value, item, f"program.devices[{index}]")
                 for index, item in enumerate(devices)
             ),
             alias_groups=tuple(
-                AliasGroupSpec.from_value(item, f"program.alias_groups[{index}]")
+                read_record(
+                    AliasGroupSpec.from_value, item, f"program.alias_groups[{index}]"
+                )
                 for index, item in enumerate(aliases)
             ),
             objects=tuple(
-                ObjectSpec.from_value(item, f"program.objects[{index}]")
+                read_record(ObjectSpec.from_value, item, f"program.objects[{index}]")
                 for index, item in enumerate(objects)
             ),
             profiles=tuple(
-                TaskProfile.from_value(item, f"program.profiles[{index}]")
+                read_record(TaskProfile.from_value, item, f"program.profiles[{index}]")
                 for index, item in enumerate(profiles)
             ),
             tasks=tuple(
-                TaskSpec.from_value(item, f"program.tasks[{index}]")
+                read_record(TaskSpec.from_value, item, f"program.tasks[{index}]")
                 for index, item in enumerate(tasks)
             ),
             task_alternative_groups=tuple(
-                TaskAlternativeGroup.from_value(
-                    item, f"program.task_alternative_groups[{index}]"
+                read_record(
+                    TaskAlternativeGroup.from_value,
+                    item,
+                    f"program.task_alternative_groups[{index}]",
                 )
                 for index, item in enumerate(groups)
             ),

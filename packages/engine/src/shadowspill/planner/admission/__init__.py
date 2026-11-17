@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from shadowspill.ir import ShadowSpillProgram
 from shadowspill.schema import artifact_schema
+from shadowspill.serialization.sharing import read_record, reading_shared
 
 from ..strict import (
     _integer,
@@ -126,6 +127,8 @@ class _AllocationSteps:
         self.values: dict[tuple[tuple[type, Any], ...], TaskAllocationStep] = {}
 
     def read(self, value: object, path: str) -> TaskAllocationStep:
+        if reading_shared(value):
+            return read_record(TaskAllocationStep.from_value, value, path)
         data = _mapping(value, path)
         values = tuple(
             data.get(name)

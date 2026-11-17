@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
+from shadowspill.serialization.sharing import share
+
 
 def freeze(value: Any) -> Any:
     # Artifact metadata contains millions of scalar leaves. Avoid Mapping's
@@ -18,6 +20,10 @@ def freeze(value: Any) -> Any:
         return value
     if type(value) is float and math.isfinite(value):
         return value
+    return share(freeze, value, lambda: _freeze(value))
+
+
+def _freeze(value: Any) -> Any:
     if isinstance(value, Mapping):
         if not all(isinstance(key, str) for key in value):
             raise TypeError("metadata keys must be strings")

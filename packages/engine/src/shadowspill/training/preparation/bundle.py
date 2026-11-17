@@ -33,6 +33,7 @@ class TrainingBundle(Artifact):
     """
 
     artifact_kind: ClassVar[str] = "training_bundle"
+    shared_metadata: ClassVar[bool] = True
     # A family retains complete schedules for multiple geometries/orderings.
     # Allow large real-model families; this is a corruption guard, not a budget.
     metadata_limit_bytes: ClassVar[int | None] = 8 << 30
@@ -117,18 +118,27 @@ class TrainingBundle(Artifact):
         return recheck_bundle(self, capture_inventory(prepare_layouts(setup)))
 
     def to_dict(self) -> dict[str, Any]:
+        return self._value(checksums=True)
+
+    def _archive_value(self) -> dict[str, Any]:
+        # The archive checks the entire metadata table and every binary blob.
+        # Nested checksums would serialize/hash the expanded shared tree again
+        # on load. Source identities and Plan admission checks remain unchanged.
+        return self._value(checksums=False)
+
+    def _value(self, *, checksums: bool) -> dict[str, Any]:
         return {
-            "version": 1,
+            "version": 1 if checksums else 2,
             "config": self.config.to_dict(),
             "sources": [
-                {"id": key, **_saved(source)}
+                {"id": key, **_saved(source, checksums=checksums)}
                 for key, source in sorted(self.sources.items())
             ],
             "plans": [
                 {
                     "rank": rank,
                     "id": key,
-                    **_saved(plan),
+                    **_saved(plan, checksums=checksums),
                 }
                 for rank, plans in sorted(self.plans.items())
                 for key, plan in sorted(plans.items())
@@ -153,19 +163,20 @@ class TrainingBundle(Artifact):
         if (
             set(value) != {"version", "config", "sources", "plans", "metadata"}
             or type(value["version"]) is not int
-            or value["version"] != 1
+            or value["version"] not in (1, 2)
         ):
             raise ValueError("unsupported training bundle schema")
+        checksums = value["version"] == 1
         sources = {}
         for row in value["sources"]:
-            _entry(row, {"id", "digest", "value"})
+            _entry(row, {"id", "value"}, checksums=checksums)
             key = _identity(row["id"])
             if key in sources:
                 raise ValueError("duplicate bundle source")
             sources[key] = ProfiledProgram.from_dict(row["value"], payloads=payloads)
         plans: dict[int, dict[str, Plan]] = {}
         for row in value["plans"]:
-            _entry(row, {"rank", "id", "digest", "value"})
+            _entry(row, {"rank", "id", "value"}, checksums=checksums)
             rank, key = integer(row["rank"], "logical rank"), _identity(row["id"])
             if key in plans.setdefault(rank, {}):
                 raise ValueError("duplicate bundle Plan")
@@ -188,11 +199,13 @@ def _identity(value: object) -> str:
     return value
 
 
-def _entry(row: Mapping[str, Any], keys: set[str]) -> None:
-    if set(row) != keys or row["digest"] != digest(row["value"]):
+def _entry(row: Mapping[str, Any], keys: set[str], *, checksums: bool) -> None:
+    if set(row) != (keys | {"digest"} if checksums else keys) or (
+        checksums and row["digest"] != digest(row["value"])
+    ):
         raise ValueError("bundle artifact identity differs from its saved value")
 
 
-def _saved(artifact: Artifact) -> dict[str, Any]:
+def _saved(artifact: Artifact, *, checksums: bool) -> dict[str, Any]:
     value = plain(artifact.to_dict())
-    return {"digest": digest(value), "value": value}
+    return {"digest": digest(value), "value": value} if checksums else {"value": value}

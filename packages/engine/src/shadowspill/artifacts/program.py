@@ -26,6 +26,7 @@ from shadowspill.ir.program.checks import (
     require_shapes,
 )
 from shadowspill.parallelism import Parallelism
+from shadowspill.serialization.sharing import read_record
 
 from ._values import digest, freeze, nonnegative_int, plain
 from .archive import Artifact
@@ -199,7 +200,7 @@ class Program(Artifact):
             data["parallelism"] = Parallelism.from_dict(data["parallelism"])
         for name, record in records.items():
             data[name] = tuple(
-                record(item, f"program.{name}[{index}]")
+                read_record(record, item, f"program.{name}[{index}]")
                 for index, item in enumerate(data[name])
             )
         data["task_definitions"] = tuple(

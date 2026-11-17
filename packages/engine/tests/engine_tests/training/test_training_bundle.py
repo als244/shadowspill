@@ -1,5 +1,7 @@
 """Saved capability inventory is strict; native execution is qualified separately."""
 
+import hashlib
+import json
 import subprocess
 import sys
 import zipfile
@@ -367,9 +369,47 @@ def test_bundle_entry_checksums_duplicates_and_versions_are_strict(saved_family)
     value["sources"].append(value["sources"][0])
     with pytest.raises(ValueError, match="duplicate bundle source"):
         TrainingBundle.from_dict(value, payloads=bundle._archive_payloads())
-    for version in (True, 2):
+    for version in (True, 3):
         with pytest.raises(ValueError, match="unsupported training bundle"):
             TrainingBundle.from_dict({**bundle.to_dict(), "version": version})
+
+
+def test_bundle_archive_tables_preserve_old_json_reading_and_checksum_checks(
+    saved_family, tmp_path
+):
+    bundle, _ = saved_family
+    path = tmp_path / "bundle.ssp"
+    bundle.save(path)
+    with zipfile.ZipFile(path) as source:
+        manifest = json.loads(source.read("manifest.json"))
+        assert manifest["version"] == 2 and manifest["payload"] == "artifact.bin"
+        contents = {name: source.read(name) for name in source.namelist()}
+    corrupted = dict(contents)
+    data = bytearray(corrupted["artifact.bin"])
+    data[-1] ^= 1
+    corrupted["artifact.bin"] = bytes(data)
+    invalid = tmp_path / "corrupt.ssp"
+    with zipfile.ZipFile(invalid, "w") as output:
+        for name, data in corrupted.items():
+            output.writestr(name, data)
+    with pytest.raises(ValueError, match="checksum"):
+        TrainingBundle.load(invalid)
+    # Retained numerical/performance evidence still uses the original archive.
+    # Reproduce that exact data schema, without changing its source identities.
+    raw = json.dumps(bundle.to_dict(), sort_keys=True, separators=(",", ":")).encode()
+    manifest.update(
+        version=1, payload="artifact.json", sha256=hashlib.sha256(raw).hexdigest()
+    )
+    original = tmp_path / "original.ssp"
+    with zipfile.ZipFile(original, "w") as output:
+        output.writestr("manifest.json", json.dumps(manifest))
+        output.writestr("artifact.json", raw)
+        for name, data in contents.items():
+            if name.startswith("blobs/"):
+                output.writestr(name, data)
+    assert (
+        TrainingBundle.load(original).to_dict() == TrainingBundle.load(path).to_dict()
+    )
 
 
 def test_bundle_raw_load_and_inventory_rejection_need_no_framework(
