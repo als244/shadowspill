@@ -13,6 +13,19 @@ from shadowspill_workloads.models.shared.glm.common import RMSNorm, linear
 
 
 def positions_for(boundaries, x):
+    if isinstance(boundaries, torch.Tensor):
+        if (
+            boundaries.ndim != 1
+            or boundaries.numel() < 2
+            or boundaries.dtype not in (torch.int32, torch.int64)
+            or boundaries.device != x.device
+        ):
+            raise ValueError(
+                "runtime boundaries must be an integer vector beside inputs"
+            )
+        token = torch.arange(x.shape[0], device=x.device)
+        sequence = torch.searchsorted(boundaries, token, right=True) - 1
+        return token - boundaries[sequence]
     return torch.cat(
         [
             torch.arange(end - start, device=x.device)

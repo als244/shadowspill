@@ -9,6 +9,7 @@ from shadowspill_workloads.models.glm53.lora import (
 )
 from shadowspill_workloads.models.glm53.lora import TARGETS as LORA_TARGETS
 from shadowspill_workloads.models.shared.glm.common import RMSNorm
+from shadowspill_workloads.models.shared.glm.inputs import token_features
 from shadowspill_workloads.models.shared.glm.lora import enable_lora
 from shadowspill_workloads.models.shared.glm.moe import DenseMLP, MoE
 
@@ -36,6 +37,7 @@ class DecoderLayer(nn.Module):
 class Model(nn.Module):
     LORA_TARGETS = LORA_TARGETS
     LORA_SHARED_TARGETS = LORA_SHARED_TARGETS
+    token_features = token_features
 
     def __init__(self, config, *, device=None, vision_config=None):
         super().__init__()
@@ -66,11 +68,10 @@ class Model(nn.Module):
             enable_lora(self, config)
 
     def hidden(self, tokens, boundaries, cumulative=None, chunks=None):
-        if isinstance(boundaries, torch.Tensor):
-            raise ValueError(
-                "GLM-5.3 expects static packed sequence boundaries as a tuple"
-            )
-        if tokens.ndim != 1 or boundaries[0] != 0 or boundaries[-1] != tokens.numel():
+        if tokens.ndim != 1 or (
+            not isinstance(boundaries, torch.Tensor)
+            and (boundaries[0] != 0 or boundaries[-1] != tokens.numel())
+        ):
             raise ValueError(
                 "Packed sequence boundaries must cover the flat token input"
             )

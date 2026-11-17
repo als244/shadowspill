@@ -10,6 +10,7 @@ from shadowspill_workloads.models.glm53_flash.lora import (
 )
 from shadowspill_workloads.models.glm53_flash.lora import TARGETS as LORA_TARGETS
 from shadowspill_workloads.models.shared.glm.common import HyperConnection, RMSNorm
+from shadowspill_workloads.models.shared.glm.inputs import token_features
 from shadowspill_workloads.models.shared.glm.lora import enable_lora
 from shadowspill_workloads.models.shared.glm.moe import DenseMLP, MoE
 
@@ -56,6 +57,7 @@ class DecoderLayer(nn.Module):
 class Model(nn.Module):
     LORA_TARGETS = LORA_TARGETS
     LORA_SHARED_TARGETS = LORA_SHARED_TARGETS
+    token_features = token_features
 
     def __init__(self, config, *, device=None, vision_config=None):
         super().__init__()
