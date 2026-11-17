@@ -288,15 +288,20 @@ also issue the same collectives in the same order. Sharded weight fetches and
 gradient evictions are collectives each rank's planner places for its own
 hardware, so ranks on different GPUs store weights and gradients replicated and
 shard the optimizer state: a step's collectives are then its gradient reduction
-and weight publication tasks, in program order on every rank. Executor startup
-compares each Plan's collectives by tensor name and names the first that
-differs. A rank's contribution stays `loss_sum / global_normalizer` with the
+and weight publication tasks, in program order on every rank. Preparation and
+Executor startup compare the combined issue order of communication tasks and
+sharded transfers at their actual task boundaries, including write-back before
+fetch. Entries identify the operation and tensor names; a mismatch reports the
+first difference. Opaque model/provider collectives remain the provider's
+responsibility. A rank's contribution stays `loss_sum / global_normalizer` with the
 normalizer counting the whole update over every rank, so ranks taking different
 shares of a step are weighted correctly. Backend settings that belong to one
 node, such as the interface it reaches the network through, may differ between
-workers. These are worker setup choices; a public client still connects to one
-service endpoint and submits global batches. See the
-[service deployment reference](../advanced/service-client.md) for launcher support.
+workers. These are worker setup choices. The built-in public service launcher
+uses GPUs on one host, behind one endpoint receiving global batches. Using the
+direct phase APIs across hosts requires a launcher supplying all assigned nodes
+and their worker mappings. See the
+[service deployment reference](../advanced/service-client.md#connection-and-setup).
 
 ## Fresh execution workers
 

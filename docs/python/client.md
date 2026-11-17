@@ -64,16 +64,12 @@ Add `progress=True` to stream preparation and initialization while waiting.
 Logs show nested operations, timestamps and durations, including saved-Plan loading,
 memory allocation and checkpoint loading for each worker. Omission is silent.
 Do this once before the loop; each `step()` then supplies only a batch and any
-per-update settings. The [complete example](../examples/client-training.md) also
-sets the vocabulary size from your corpus and constructs its input batches.
+per-update settings. The [data guide](../examples/client-training.md) shows
+tokenization and batch construction for the supplied training examples.
 
 The [catalog](catalog.md) lists built-in models, optimizers and objectives, with
 examples for LoRA, freezing parameters and combining objectives. Installed custom
 definitions use the same settings.
-
-Python's `**settings` notation would expand a dictionary into these same named
-arguments. It is ordinary Python syntax, not an additional setup object or a
-required part of this API.
 
 ## Inspect the plan
 

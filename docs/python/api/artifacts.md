@@ -22,14 +22,13 @@ Import these names from `shadowspill`. Building finalizes task implementations
 and may require a representative GPU. Measurement uses the ordinary PyTorch
 allocator. Applying profiles, planning, inspecting archives and writing reports
 require neither an accelerator nor ShadowSpill pools. Executor sets up pools in a fresh
-worker. See the [phase architecture](../phases.md)
-for the full API and current qualification limits.
+worker. See the [phase guide](../phases.md) for the full API and artifact contracts.
 
 Artifact `load` also accepts `max_metadata_bytes` and `max_payload_bytes`. These
 limits check declared decompressed sizes before reading archive contents; they
 bound serialized bytes rather than decoded Python object overhead. Ordinary phase
-artifacts preserve their existing unbounded defaults. The developing
-[training bundle](../advanced/definitions.md) defaults to 256 MiB of metadata and 8 GiB of
+artifacts have unbounded defaults. The
+[training bundle](../advanced/definitions.md#preparation-and-capture) defaults to 8 GiB of metadata and 8 GiB of
 deduplicated binary payloads, with explicit per-load overrides. All archives reject
 duplicate JSON keys and nonfinite JSON values, in addition to verifying checksums
 and the exact member inventory.
@@ -399,6 +398,12 @@ budget. Users can also loop over `plan_program` directly. See [planning options]
 archive containing a versioned JSON description and checksummed payloads.
 Shared executable payloads are deduplicated within that archive. Inductor/Triton
 caches are separate and never required to pass artifacts between phases.
+
+Prepared training families and local Plan proposals use the same archive envelope
+with compact binary metadata. Shared records are encoded once and referenced by
+index, preserving sharing when loaded. Checksums cover the metadata and binary
+payloads; loading remains CPU-only. Use the artifact methods to inspect or copy
+these values rather than depending on their on-disk representation.
 
 `write_report(result, path)` is separate from persistence and is CPU-only. It
 writes the simulated timeline and memory/budget summaries into the directory

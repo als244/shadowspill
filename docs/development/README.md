@@ -12,10 +12,10 @@ what it must pass, and the words every surface uses.
 The [Python](../python/README.md) and [C](../c/README.md) references document
 the surfaces a change must keep working.
 
-Product code belongs in `packages/engine/src/shadowspill/` or `packages/engine/csrc/`. Reusable source-tree
-tooling belongs in `tools/`. Workload definitions, planning benchmarks,
-and release qualification consume product APIs and do not contain alternate
-implementations.
+Product code belongs in `packages/client/`, `packages/engine/` and
+`packages/workloads/`, according to its responsibility. Reusable source-tree
+tooling belongs in `tools/`. Examples, planning tools and release qualification
+consume installed APIs and do not contain alternate engine implementations.
 
 Public documentation is normative and describes only shipped behavior.
 Root-cause narratives, engineering plans, and logs belong under the ignored

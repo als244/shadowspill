@@ -81,7 +81,7 @@ temporary planning stores.
 Fresh-process tests deselected by the shared pytest process are run by CTest;
 capability skips are reported separately.
 
-Tests marked `slow` are end-to-end service and quickstart runs of minutes each;
+Tests marked `slow` are end-to-end service and saved-execution checks of minutes each;
 the default suite deselects them. `python -m pytest -m slow` runs the tier
 alone, and a gate config with `"suite": ["-m", "not fresh_process"]` includes it
 in the suite gate.

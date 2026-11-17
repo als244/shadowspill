@@ -89,8 +89,3 @@ cache entries built before this behavior cannot supply the new cut. The final
 graphs expose their saved tensors normally to compilation, profiling, planning,
 physical admission and serialization. Existing saved Programs and Plans retain
 their original behavior; rebuild and profile to obtain the new default.
-
-CPU checks cover independent VJPs, both variants of all three search policies,
-an explicit replay override, cached graph-pair restoration, and a near-tie
-perturbation that would otherwise change the selected expert. Real GPU training
-and distributed qualification of this new default remain separate requirements.

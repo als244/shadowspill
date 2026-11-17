@@ -516,16 +516,17 @@ padding exceeds hard limits before repeating buffers, and reports case-limit
 errors without shrinking the request. Geometry coverage is checked separately
 for every requested batch option.
 
-`training.preparation.setup.resolve_training` resolves the complete portable
-setup and rechecks saved configurations on CPU. `prepare_layouts` in the adjacent
-`layouts` module binds each operation, physical buffer and logical worker to its
+`shadowspill.training.preparation.setup.resolve_training` resolves the complete
+portable setup and rechecks saved configurations on CPU. `prepare_layouts` in
+`shadowspill.training.preparation.configuration.layouts` binds each operation,
+physical buffer and logical worker to its
 input adapter and output geometry, then checks the complete host-staging bound.
 Known staging-limit failures retain candidate reasons; unexpected definition
 errors propagate. Every requested operation and batch option must retain a
 constructive coverage witness. Identical adapter layouts share their resolved
 metadata across counts.
 
-The internal `training.preparation.bundle.TrainingBundle` saves a complete admitted
+The internal `shadowspill.training.preparation.artifacts.bundle.TrainingBundle` saves a complete admitted
 operation family through the existing phase-archive codec. It retains the resolved
 setup, referenced source captures/profiles, per-worker Plans, input/output layouts,
 coverage witnesses and shared-state admission. It contains no live weights or
@@ -542,7 +543,8 @@ Measured traces still supply byte sizes and physical placement. Missing requeste
 operations or required optimizer/accumulation paths are errors. Loading does not
 capture, profile, search, select replacement candidates or initialize training state.
 
-`training.preparation.job.prepare_job(directory, packages=..., config=...)` runs
+`prepare_job(directory, packages=..., config=...)` in
+`shadowspill.training.preparation.phases.job` runs
 resolved preparation through the existing fresh-process build, profile,
 communication and CPU planning phases. The caller supplies an assigned worker set
 and an owned job directory. The job saves its exact configuration, rejects
