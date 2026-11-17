@@ -15,9 +15,10 @@ import pytest
 
 from shadowspill_client import Datum
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, ProtocolError
+from shadowspill_client.protocol.codec import ProtocolError
 from shadowspill_client.protocol.payload import MAGIC, MEDIA_TYPE, snapshot_batch
 from shadowspill_client.protocol.payload_io import read_payload
+from shadowspill_client.protocol.payload_sizes import MAX_INPUT_METADATA_BYTES
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_client.protocol.tensors import TensorSource
 
@@ -191,7 +192,7 @@ def test_checksum_truncation_and_bad_layout_never_publish_partial_batches():
         with pytest.raises(ProtocolError):
             read_payload(io.BytesIO(malformed), reference(malformed), budget)
         assert budget.used == (0, 0)
-    too_large = MAGIC + struct.pack("<Q", MAX_METADATA_BYTES + 1)
+    too_large = MAGIC + struct.pack("<Q", MAX_INPUT_METADATA_BYTES + 1)
     with pytest.raises(ProtocolError, match="manifest exceeds"):
         read_payload(io.BytesIO(too_large), reference(too_large), budget)
 

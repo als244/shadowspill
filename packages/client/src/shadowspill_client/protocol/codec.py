@@ -114,7 +114,7 @@ def _constant(value: str) -> None:
     raise ProtocolError(f"nonfinite JSON number: {value}")
 
 
-def _depth(value: Any) -> None:
+def _depth(value: Any, *, max_nodes: int = MAX_METADATA_NODES) -> None:
     pending = [(value, 0)]
     nodes = 0
     while pending:
@@ -125,8 +125,8 @@ def _depth(value: Any) -> None:
         if isinstance(current, dict):
             nodes += len(current)  # Field names are decoded string objects too.
         children = len(current) if isinstance(current, dict | list) else 0
-        if nodes + len(pending) + children > MAX_METADATA_NODES:
-            raise ProtocolError(f"metadata exceeds {MAX_METADATA_NODES} nodes")
+        if nodes + len(pending) + children > max_nodes:
+            raise ProtocolError(f"metadata exceeds {max_nodes} nodes")
         if isinstance(current, dict):
             pending.extend((v, depth + 1) for v in current.values())
         elif isinstance(current, list):

@@ -7,10 +7,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from .._records import integer
-from .codec import MAX_METADATA_BYTES
 
 TREE_NODE_BYTES = 64
 MAX_TREE_DEPTH = 60
+# Batch manifests describe thousands of sequences, unlike control messages.
+# Actual sizes still reserve the client's/server's existing buffer budgets.
+MAX_INPUT_METADATA_BYTES = 64 << 20
+MAX_INPUT_METADATA_NODES = 1 << 20
 
 
 def metadata_json(value: Any) -> bytes:
@@ -41,7 +44,10 @@ class PayloadSize:
     def __post_init__(self) -> None:
         for name in ("tensors", "header", "tree", "largest_tensor"):
             integer(getattr(self, name), name)
-        if self.header > MAX_METADATA_BYTES or self.tree > MAX_METADATA_BYTES:
+        if (
+            self.header > MAX_INPUT_METADATA_BYTES
+            or self.tree > MAX_INPUT_METADATA_BYTES
+        ):
             raise ValueError("input metadata exceeds its bounded byte limit")
 
     @property

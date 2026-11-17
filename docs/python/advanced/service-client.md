@@ -132,6 +132,12 @@ GPU memory overruns are reported. Set it to `True` to reject those overruns.
 Pool bounds, preparation memory admission and the scheduled token cap remain
 enforced in either mode.
 
+`Execution(max_staging_bytes=2 << 30)` sets the default 2 GiB bound for host input
+snapshots, validation and packing workspace. This is separate from GPU and spill
+budgets. It is an accounting limit; small requests do not allocate 2 GiB. Explicit
+smaller bounds are checked during preparation. Binary batch metadata permits up
+to 64 MiB, with actual storage still charged to the staging budget.
+
 ## Saved Plans and reconnect
 
 See [download and reuse saved Plans](saved-plans.md) for single-GPU and distributed

@@ -11,9 +11,14 @@ from typing import Any, Protocol
 
 from .._records import integer
 from ..buffers import BufferBudget
-from .codec import MAX_METADATA_BYTES, ProtocolError, _constant, _depth, _object
+from .codec import ProtocolError, _constant, _depth, _object
 from .payload import MAGIC, MEDIA_TYPE, BatchSnapshot, owned_datums
-from .payload_sizes import TREE_NODE_BYTES, PayloadSize
+from .payload_sizes import (
+    MAX_INPUT_METADATA_BYTES,
+    MAX_INPUT_METADATA_NODES,
+    TREE_NODE_BYTES,
+    PayloadSize,
+)
 from .requests import ArtifactRef
 from .tensors import TensorPayload, tensor_bytes
 
@@ -27,7 +32,7 @@ def _manifest(
 ) -> tuple[list[Any], list[tuple[str, tuple[int, ...], int]], int]:
     try:
         header = json.loads(data, object_pairs_hook=_object, parse_constant=_constant)
-        _depth(header)
+        _depth(header, max_nodes=MAX_INPUT_METADATA_NODES)
         if not isinstance(header, dict) or set(header) != {
             "version",
             "kind",
@@ -83,7 +88,7 @@ def _manifest(
             raise ValueError(
                 "tensor references must cover each payload exactly once in order"
             )
-        if metadata_size > MAX_METADATA_BYTES:
+        if metadata_size > MAX_INPUT_METADATA_BYTES:
             raise ValueError("input tree metadata exceeds its byte limit")
         return header["datums"], layouts, metadata_size
     except (TypeError, ValueError, RecursionError, UnicodeError) as error:
@@ -121,7 +126,7 @@ def _read_header(
     if prefix[:8] != MAGIC:
         raise ProtocolError("unsupported binary Datum framing")
     length = struct.unpack("<Q", prefix[8:])[0]
-    maximum = MAX_METADATA_BYTES if limits is None else limits.header
+    maximum = MAX_INPUT_METADATA_BYTES if limits is None else limits.header
     if not 0 < length <= min(maximum, reference.size_bytes - 16):
         raise ProtocolError("tensor manifest exceeds its byte limit")
     header_buffer = bytearray(length)

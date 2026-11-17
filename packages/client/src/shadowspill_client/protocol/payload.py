@@ -10,8 +10,13 @@ from typing import Any, Self
 
 from ..buffers import BufferBudget, BufferLease
 from ..datum import Datum
-from .codec import MAX_METADATA_BYTES
-from .payload_sizes import MAX_TREE_DEPTH, TREE_NODE_BYTES, PayloadSize, manifest_json
+from .payload_sizes import (
+    MAX_INPUT_METADATA_BYTES,
+    MAX_TREE_DEPTH,
+    TREE_NODE_BYTES,
+    PayloadSize,
+    manifest_json,
+)
 from .tensors import TensorPayload, TensorSource
 
 MAGIC = b"SSDT\x01\0\0\0"
@@ -115,7 +120,7 @@ def snapshot_batch(
         metadata_size += TREE_NODE_BYTES
         # Leave room for the outer manifest/Datum containers under the shared
         # protocol's 64-level nesting limit.
-        if depth > MAX_TREE_DEPTH or metadata_size > MAX_METADATA_BYTES:
+        if depth > MAX_TREE_DEPTH or metadata_size > MAX_INPUT_METADATA_BYTES:
             raise ValueError("input tree metadata exceeds its bounded size/depth")
         if isinstance(value, Mapping):
             result = {}
@@ -136,7 +141,7 @@ def snapshot_batch(
     header = manifest_json(
         trees, [{"dtype": s.dtype, "shape": s.shape} for s in sources]
     )
-    if len(header) > MAX_METADATA_BYTES:
+    if len(header) > MAX_INPUT_METADATA_BYTES:
         raise ValueError("input tensor metadata exceeds its byte limit")
     # Arrays are immutable bytes, so NumPy decoding is a zero-copy view. Reserve
     # one extra leaf for list/endian/optional Torch normalization while copying.

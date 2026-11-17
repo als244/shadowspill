@@ -9,7 +9,7 @@ from .._records import Record, Value, integer, mapping, number
 @dataclass(frozen=True)
 class Execution(Record):
     seed: int = 0
-    max_staging_bytes: int = 256 << 20
+    max_staging_bytes: int = 2 << 30
     max_pending_requests: int = 2
     idle_timeout_seconds: float | None = None
     nsys: Mapping[str, Value] | None = None
