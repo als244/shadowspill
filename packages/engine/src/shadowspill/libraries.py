@@ -20,7 +20,9 @@ _PACKAGE_ROOT = Path(__file__).resolve().parent
 #: and slow or subtly incompatible in ways that look like the code's fault.
 LIBRARY_DIRECTORY_ENVIRONMENT: Final = "SHADOWSPILL_LIBRARY_DIRECTORY"
 
-_LIBRARY: Final = "libshadowspill.so"
+_LIBRARY: Final = (
+    "libshadowspill.dylib" if sys.platform == "darwin" else "libshadowspill.so"
+)
 
 
 def library_candidates(
@@ -28,8 +30,10 @@ def library_candidates(
     *,
     package_root: Path = _PACKAGE_ROOT,
 ) -> tuple[Path, ...]:
-    """Return the explicit, installed, and editable locations in precedence order."""
+    """Return explicit, installed and editable locations with native suffixes."""
 
+    if sys.platform == "darwin" and filename.endswith(".so"):
+        filename = filename.removesuffix(".so") + ".dylib"
     candidates: list[Path] = []
     override = os.environ.get(LIBRARY_DIRECTORY_ENVIRONMENT)
     if override:
@@ -70,7 +74,7 @@ def _editable_project_root(package_root: Path) -> Path | None:
 
 @cache
 def load_shadowspill_library() -> ctypes.CDLL:
-    """Load ``libshadowspill.so`` once and check the version it was built with."""
+    """Load the native core library once and check its ABI version."""
 
     path = resolve_library(_LIBRARY)
     if path is None:

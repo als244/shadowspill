@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,10 +21,14 @@ def _editable_checkout(tmp_path: Path) -> Path:
     return package
 
 
+@pytest.mark.parametrize("platform,suffix", [("linux", ".so"), ("darwin", ".dylib")])
 def test_packaged_and_editable_candidates_have_stable_precedence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    suffix: str,
 ) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
     monkeypatch.delenv(LIBRARY_DIRECTORY_ENVIRONMENT, raising=False)
     package = _editable_checkout(tmp_path)
 
@@ -32,7 +37,8 @@ def test_packaged_and_editable_candidates_have_stable_precedence(
         package_root=package,
     )
 
-    assert candidates[0] == package / "lib" / "libshadowspill_example.so"
+    assert candidates[0] == package / "lib" / f"libshadowspill_example{suffix}"
+    assert candidates[1].name == f"libshadowspill_example{suffix}"
     assert candidates[1].parent.name.startswith("cp")
     assert len(candidates) == 2
 
@@ -55,10 +61,14 @@ def test_no_build_directory_is_searched_unless_it_is_named(
     assert stale not in {candidate.parent for candidate in candidates}
 
 
+@pytest.mark.parametrize("platform,suffix", [("linux", ".so"), ("darwin", ".dylib")])
 def test_a_named_directory_is_searched_first(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    suffix: str,
 ) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
     package = _editable_checkout(tmp_path)
     named = tmp_path / "elsewhere"
     monkeypatch.setenv(LIBRARY_DIRECTORY_ENVIRONMENT, str(named))
@@ -68,7 +78,7 @@ def test_a_named_directory_is_searched_first(
         package_root=package,
     )
 
-    assert candidates[0] == named / "libshadowspill_example.so"
+    assert candidates[0] == named / f"libshadowspill_example{suffix}"
     assert len(candidates) == 3
 
 
@@ -77,9 +87,16 @@ def test_editable_build_libraries_are_discovered_without_environment() -> None:
     if library is None:
         pytest.skip("the editable library has not been built")
 
-    assert library.name.startswith("libshadowspill.so")
+    if sys.platform == "darwin":
+        assert library.name.startswith("libshadowspill.") and library.suffix == ".dylib"
+    else:
+        assert library.name.startswith("libshadowspill.so")
     try:
         adapter = adapter_path(None)
     except RuntimeError:
         pytest.skip("the optional PyTorch adapter has not been built")
-    assert adapter.name == "libshadowspill_pytorch.so"
+    assert adapter.name == (
+        "libshadowspill_pytorch.dylib"
+        if sys.platform == "darwin"
+        else "libshadowspill_pytorch.so"
+    )

@@ -41,10 +41,12 @@ add_library(shadowspill_build_options INTERFACE)
 # The tree compiles as strict ISO C11, which hides POSIX threads unless asked
 # for. Setting it here holds for every translation unit, so no header has to be
 # included before any system header for pthreads to exist. Windows has no such
-# switch and no such headers; see csrc/src/common/platform.h.
+# switch and no such headers; see csrc/src/common/platform.h. Darwin also needs
+# its extension declarations for logical CPU queries and anonymous mmap.
 target_compile_definitions(
   shadowspill_build_options
   INTERFACE $<$<NOT:$<PLATFORM_ID:Windows>>:_POSIX_C_SOURCE=200809L>
+            $<$<PLATFORM_ID:Darwin>:_DARWIN_C_SOURCE>
 )
 target_compile_options(
   shadowspill_build_options
