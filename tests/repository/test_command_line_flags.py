@@ -136,8 +136,6 @@ def _readers(path: Path) -> list[Path]:
             if module in imported:
                 readers.append(ROOT / relative_path)
         return readers
-    if path.parent == ROOT / "benchmarks/baselines/moe_layer":
-        return list(path.parent.rglob("*.py"))
     package_commands = {
         ROOT / "qualification/numerical/run.py",
         ROOT / "qualification/performance/run.py",

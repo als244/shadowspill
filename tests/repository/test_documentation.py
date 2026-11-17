@@ -785,8 +785,7 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
             set(forbidden.findall(path.read_text()))
         )
         for path in _normative_markdown_files()
-        if not path.is_relative_to(ROOT / "benchmarks/baselines")
-        and not path.is_relative_to(
+        if not path.is_relative_to(
             ROOT / "packages/workloads/src/shadowspill_workloads"
         )
         and not path.is_relative_to(ROOT / "packages/workloads/tests/workload_tests")

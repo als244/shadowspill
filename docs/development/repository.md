@@ -18,7 +18,7 @@ shadowspill/
 │   ├── demos/             short runnable clients with explicit training settings
 │   ├── extensions/        standalone custom-definition package
 │   └── training/          shared corpus readers and CLI application loops
-├── benchmarks/            measurements, saved-Plan runners and external baselines
+├── benchmarks/            measurements, saved-Plan runners and planner experiments
 ├── tools/                 trace analysis, source checks and corpus applications
 ├── tests/                 repository and cross-package checks
 ├── reference/             independent algorithm and training oracles

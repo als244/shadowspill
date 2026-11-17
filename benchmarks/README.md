@@ -1,7 +1,8 @@
 # Benchmarks
 
-Tools for measuring ShadowSpill preparation, planning and execution, plus
-comparisons with other training systems. For ordinary training, start with the
+Tools for measuring ShadowSpill preparation, planning and execution.
+Comparisons with other training systems live in the separate `shadowspill_baselines`
+project. For ordinary training, start with the
 [client demos](../examples/demos/README.md).
 
 ```text
@@ -14,7 +15,6 @@ benchmarks/
   planning_eval/       Run CPU planning experiments over that corpus
   bandwidth_frontier/  Sweep memory budgets and hypothetical transfer speeds
   host_memory/         Host-memory checks before creating spill pools
-  baselines/           Compare ShadowSpill, FSDP2, DeepSpeed, Megatron and AutoModel
 ```
 
 `data_geometry.py`, `journals.py`, `spill.py` and `_serialization.py` hold shared
@@ -32,7 +32,6 @@ The engine does not import benchmark programs.
 | Collect reusable GPU measurements | [Program collection](program_collection/README.md) |
 | Compare planner choices across measured workloads | [Planning evaluation](planning_eval/README.md) |
 | Sweep budgets and transfer assumptions without a GPU | [Bandwidth frontier](bandwidth_frontier/README.md) |
-| Compare training systems under shared measurement rules | [Baselines](baselines/README.md) |
 
 Collection builds and profiles on a representative GPU. Planning evaluation and
 bandwidth sweeps read saved `ProfiledProgram` artifacts on CPU. Saved-Plan runs
