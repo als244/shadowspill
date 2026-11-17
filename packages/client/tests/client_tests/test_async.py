@@ -98,3 +98,33 @@ def test_failed_future_does_not_retain_its_action_input():
         future.result(5)
     work.close()
     assert reference() is None and work.pending.used == (0, 0)
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_callbacks_observe_completion_before_result_is_consumed(failed):
+    work = ConnectionWork(1, 1)
+    release, observed = threading.Event(), threading.Event()
+    calls = []
+
+    def action():
+        assert release.wait(5)
+        if failed:
+            raise ValueError("expected failure")
+        return 17
+
+    def finished(value):
+        calls.append((value, value.done(), value.exception(0)))
+        observed.set()
+
+    try:
+        future = work.submit(action)
+        future.add_done_callback(finished)
+        release.set()
+        assert observed.wait(5)
+        assert len(calls) == 1 and calls[0][:2] == (future, True)
+        assert isinstance(calls[0][2], ValueError) if failed else calls[0][2] is None
+        future.add_done_callback(finished)
+        assert len(calls) == 2 and calls[1] == calls[0]
+    finally:
+        release.set()
+        work.close()

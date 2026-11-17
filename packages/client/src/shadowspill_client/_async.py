@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event
+from typing import Self
 
 from ._records import integer
 from .buffers import BufferBudget
@@ -28,6 +29,14 @@ class CallFuture[T]:
 
     def done(self) -> bool:
         return self._future.done()
+
+    def add_done_callback(self, callback: Callable[[Self], None]) -> None:
+        """Observe completion without waiting; callbacks should return promptly.
+
+        A callback receives this handle once, including on failure. Registration
+        after completion invokes it immediately, as with concurrent.futures.
+        """
+        self._future.add_done_callback(lambda _: callback(self))
 
     def cancel(self) -> bool:
         return False

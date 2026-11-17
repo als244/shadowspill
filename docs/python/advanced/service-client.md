@@ -93,6 +93,13 @@ with ServiceClient(ssh=SSH(host="training-host", server_port=8000)) as service:
     training.close().result()
 ```
 
+Use `pending.add_done_callback(callback)` to observe completion without waiting.
+The callback receives the completed future, including on failure, and should
+return promptly. It can record a client completion timestamp independently of
+when the training loop consumes the result. `result.execution_seconds` measures
+server worker execution; client submission/completion timestamps also reflect
+upload, queueing and result delivery.
+
 `setup` contains `Model`, `Objective`, optional `Optimizer`, `BatchConfig`, `Memory`
 and optional execution/preparation/operation settings. Definitions must already
 be installed on the server. Omitted initialization remains omitted; a preview
