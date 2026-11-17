@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from itertools import product
 from math import prod
 from typing import Any, Literal
@@ -48,10 +49,10 @@ def resolve_preparation(
     max_build_cases: int = 256,
 ) -> ResolvedPreparation:
     integer(max_build_cases, "max_build_cases", minimum=1)
-    preset = definition.definition.defaults(context)
+    supplied = requested or Preparation()
+    preset = definition.definition.defaults(replace(context, requested=supplied))
     if not isinstance(preset, Preparation):
         raise TypeError("installed preparation defaults must return Preparation")
-    supplied = requested or Preparation()
     if supplied.preset is not None and supplied.preset != definition.definition.id:
         raise ValueError("requested preset differs from its resolved definition")
     if preset.preset is not None and preset.preset != definition.definition.id:

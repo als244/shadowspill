@@ -49,6 +49,95 @@ def preparation():
     )
 
 
+def test_readme_dp_candidates_keep_full_updates_and_independent_moe_geometry():
+    from shadowspill.parallelism import Parallelism
+    from shadowspill_client import Model, Optimizer, Weights
+    from shadowspill_client.parallelism import data_parallel
+    from shadowspill_client.text import build_candidates
+
+    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    setup = resolve_training(
+        registry,
+        model=Model(
+            "qwen3moe", config={"preset": "30b-a3b"}, initialize=Weights.random(seed=0)
+        ),
+        objective=Objective.sum(
+            {"tokens": Objective("cross_entropy"), "balance": Objective("moe_balance")},
+            weights={"balance": 0.001},
+        ),
+        optimizer=Optimizer("adamw"),
+        parallelism=Parallelism.from_dict(data_parallel(8)),
+        batch=BatchConfig(
+            limits={
+                "token_capacity": 2097152,
+                "max_sequence_length": 4096,
+                "max_sequences": 8192,
+            }
+        ),
+        memory=Memory(20, 96),
+        prepare=Preparation(
+            candidates=build_candidates(
+                microbatch_tokens=[8192, 16384, 32768],
+                projection_chunks=[0, 8192],
+            )
+        ),
+    )
+    prepared = setup.config.preparation
+    assert prepared.planning.microbatch_counts == (1, 8, 16, 32)
+    assert len(prepared.cases) == 6
+    assert resolve_training(registry, setup.config).config == setup.config
+    for case in prepared.cases:
+        chunks = materialize_build_options(
+            registry, case.build, setup.config.policy_sources
+        )["chunking"]
+        if chunks is not None:
+            assert chunks.chunking.chunk_size == 8192
+            assert chunks.chunking.expert_chunk_size == case.microbatch_size
+    inventory = capture_inventory(prepare_layouts(setup))
+    full_sizes = set()
+    for candidates in inventory.families.values():
+        for candidate in candidates:
+            total = 0
+            for use in candidate.workers.values():
+                template = inventory.templates[use.main.template]
+                (size,) = template.binding.inputs.layout.buffer.fields[
+                    "inputs", "tokens"
+                ]
+                total += size * use.main.count
+            assert total <= 2097152
+            if total == 2097152:
+                full_sizes.add(size)
+    assert full_sizes == {8192, 16384, 32768}
+
+
+def test_explicit_token_candidates_derive_counts_but_explicit_counts_win():
+    from workload_tests.test_moe_definitions import settings
+
+    options = dict(
+        model=settings("qwen3moe"),
+        objective=Objective("cross_entropy"),
+        operations={"forward_backward": ["metrics"]},
+        batch=BatchConfig(
+            limits={"token_capacity": 64, "max_sequence_length": 4, "max_sequences": 16}
+        ),
+        memory=Memory(1, 1),
+    )
+    registry = load_registry(["shadowspill-workloads"])
+    candidates = BuildCandidates(microbatch_sizes=[8, 32])
+    inferred = resolve_training(
+        registry, **options, prepare=Preparation(candidates=candidates)
+    )
+    explicit = resolve_training(
+        registry,
+        **options,
+        prepare=Preparation(
+            candidates=candidates, planning=PlanningOptions(microbatch_counts=[1, 2])
+        ),
+    )
+    assert inferred.config.preparation.planning.microbatch_counts == (1, 2, 8)
+    assert explicit.config.preparation.planning.microbatch_counts == (1, 2)
+
+
 def test_complete_packed_cases_keep_geometry_policy_sources_and_scheduled_cap():
     from workload_tests.test_moe_definitions import settings
 

@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 
 from ..datum import Datum
+from .preparation import build_candidates
 from .statistics import text_batch_statistics
 
 
@@ -93,4 +94,4 @@ def text_batch(
     ]
 
 
-__all__ = ["text_batch", "text_batch_statistics", "text_datum"]
+__all__ = ["build_candidates", "text_batch", "text_batch_statistics", "text_datum"]

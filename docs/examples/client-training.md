@@ -80,6 +80,8 @@ The homepage passes this configuration to `create_training_client`:
 | Parallelism | Eight-way data parallelism with sharded parameter storage |
 | Sequence length | 4,096 positions |
 | Global batch | 512 sequences, or 2,097,152 scheduled tokens |
+| Microbatch candidates | 8K, 16K and 32K tokens per rank |
+| Projection chunks | Unchunked or 8K; MoE uses the full microbatch |
 | Execution budget | 20 GiB per worker |
 | Spill budget | 96 GiB per worker, 768 GiB in total |
 

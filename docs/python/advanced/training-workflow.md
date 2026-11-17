@@ -92,6 +92,24 @@ microbatches of 8 exceeds `max_examples=8` and is excluded; specifying counts do
 not relax the cap. Preparation measures supported candidates and selects fitting
 Plans. Omit `prepare` to use installed defaults instead.
 
+For the supplied packed text models, a CPU-only helper creates the build policies:
+
+```python
+from shadowspill_client.text import build_candidates
+
+prepare = Preparation(candidates=build_candidates(
+    microbatch_tokens=[8192, 16384, 32768],
+    projection_chunks=[0, 8192],
+))
+```
+
+Microbatch tokens are per input partition (per rank with data parallelism).
+Zero means unchunked. `moe_chunks` defaults to `[0]`, keeping expert computation
+at the full microbatch; supply its own size list to search expert chunks too.
+Accumulation counts are derived from the selected microbatch sizes and global
+token limit unless explicitly supplied. The helper keeps the ordinary retention,
+ordering and saved-head defaults; sequence attention boundaries remain intact.
+
 ## Submit updates and resume
 
 ```python

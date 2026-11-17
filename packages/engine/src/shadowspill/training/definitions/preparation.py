@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from shadowspill.parallelism import Parallelism
@@ -27,6 +27,7 @@ class PreparationContext:
     schema: InputSchema
     batches: tuple[BatchConfig, ...]
     parallelism: Parallelism
+    requested: Preparation = field(default_factory=Preparation)
 
     def __post_init__(self) -> None:
         batches = tuple(self.batches)

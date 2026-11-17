@@ -157,7 +157,9 @@ pretraining updates.
 
 ```python
 from examples.training.text_data import TokenBatches
+from shadowspill_client import Preparation
 from shadowspill_client.parallelism import data_parallel
+from shadowspill_client.text import build_candidates
 
 data = TokenBatches("data/fineweb-qwen3", sequence_length=4096, sequences_per_step=512)
 model = Model("qwen3moe", config={"preset": "30b-a3b"}, initialize=Weights.random(seed=0))
@@ -174,6 +176,9 @@ training = service.create_training_client(
         "token_capacity": 2097152, "max_sequence_length": 4096, "max_sequences": 8192,
     }),
     memory=Memory(device_gib=20, spill_gib=96),
+    prepare=Preparation(candidates=build_candidates(
+        microbatch_tokens=[8192, 16384, 32768], projection_chunks=[0, 8192],
+    )),
 ).result()
 ```
 
@@ -183,6 +188,8 @@ across eight GPUs. Each `step()` submits **one global batch** of 512 × 4,096 =
 2,097,152 tokens (2M); workers accumulate microbatches and apply one update.
 Scheduled padding counts toward that token cap. The execution budget is **20 GiB
 per GPU**; eight 96 GiB spill budgets require 768 GiB of spill capacity in total.
+Preparation compares 8K, 16K and 32K tokens per rank per microbatch, with projections
+unchunked (`0`) or chunked at 8K. MoE computation uses the full microbatch.
 
 See the [client guide](docs/python/client.md), [model catalog](docs/python/catalog.md)
 and [documentation index](docs/README.md). [Advanced usage](docs/python/advanced/README.md)

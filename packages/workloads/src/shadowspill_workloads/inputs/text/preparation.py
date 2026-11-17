@@ -117,9 +117,20 @@ def defaults(context, *, preset):
     # Compare full-capacity updates at each shape, plus a single microbatch for
     # small calls. Expansion rejects cross-products exceeding the global cap;
     # packing still checks the actual complete sequences against each layout.
+    candidates = context.requested.candidates
+    selected_sizes = (
+        {case.microbatch_size for case in candidates.cases}
+        if candidates.cases is not None
+        else candidates.microbatch_sizes or sizes
+    )
     counts = {
         1,
-        *(full // size for full in capacities for size in sizes if size <= full),
+        *(
+            full // size
+            for full in capacities
+            for size in selected_sizes
+            if size <= full
+        ),
     }
     return Preparation(
         preset=preset,
