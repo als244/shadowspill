@@ -1,9 +1,7 @@
-#define _GNU_SOURCE
-
-
 #include <pthread.h>
 #include <time.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -124,6 +122,7 @@ typedef struct DrainingRequest {
     ShadowSpillBackendStream stream;
     ShadowSpillStatus status;
     ShadowSpillAllocation allocation;
+    atomic_int finished;
 } DrainingRequest;
 
 static void *allocate_into_a_full_pool(void *pointer) {
@@ -131,6 +130,7 @@ static void *allocate_into_a_full_pool(void *pointer) {
     request->status = shadowspill_memory_pool_allocate(
         request->runtime, 0U, 128U, 1U, request->stream, &request->allocation
     );
+    atomic_store_explicit(&request->finished, 1, memory_order_release);
     return NULL;
 }
 
@@ -148,7 +148,7 @@ static void *allocate_into_a_full_pool(void *pointer) {
  * So this drains the release source without freeing anything and requires
  * the waiter to answer. The answer is NO_PROGRESS: the pool is full and
  * nothing is coming. Before the wait re-read its release source this hung
- * forever at full tilt on one core, and a bounded join is what tells the two
+ * forever at full tilt on one core, and a bounded wait is what tells the two
  * apart.
  */
 static int a_wait_ends_when_its_release_source_drains(void) {
@@ -191,6 +191,7 @@ static int a_wait_ends_when_its_release_source_drains(void) {
         .stream = stream,
         .status = SHADOWSPILL_STATUS_INVALID_STATE,
     };
+    atomic_init(&request.finished, 0);
     pthread_t thread;
     if (pthread_create(&thread, NULL, allocate_into_a_full_pool, &request) != 0) {
         return -1;
@@ -211,15 +212,30 @@ static int a_wait_ends_when_its_release_source_drains(void) {
     );
 
     struct timespec deadline;
-    clock_gettime(CLOCK_REALTIME, &deadline);
+    if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) {
+        _Exit(EXIT_FAILURE);
+    }
     deadline.tv_sec += 10;
-    const int join_status = pthread_timedjoin_np(thread, NULL, &deadline);
+    /* Observe completion before joining: pthread_timedjoin_np is Linux-only.
+       A failed wait must end the process, since the thread still owns request. */
+    while (!atomic_load_explicit(&request.finished, memory_order_acquire)) {
+        struct timespec now;
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0 ||
+            now.tv_sec > deadline.tv_sec ||
+            (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec)) {
+            fprintf(
+                stderr,
+                "the allocator never answered: it is still waiting for capacity "
+                "that stopped coming\n"
+            );
+            _Exit(EXIT_FAILURE);
+        }
+        struct timespec pause = {0, 1000000L};
+        nanosleep(&pause, NULL);
+    }
+    const int join_status = pthread_join(thread, NULL);
     if (join_status != 0) {
-        fprintf(
-            stderr,
-            "the allocator never answered: it is still waiting for capacity "
-            "that stopped coming\n"
-        );
+        fprintf(stderr, "joining the completed allocator failed: %d\n", join_status);
         return -1;
     }
     if (!reached_the_wait ||
