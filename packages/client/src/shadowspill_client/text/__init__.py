@@ -6,6 +6,7 @@ from typing import Any
 import numpy as np
 
 from ..datum import Datum
+from .statistics import text_batch_statistics
 
 
 def text_datum(tokens: Any, *, loss_mask: Any = None, weights: Any = None) -> Datum:
@@ -92,4 +93,4 @@ def text_batch(
     ]
 
 
-__all__ = ["text_batch", "text_datum"]
+__all__ = ["text_batch", "text_batch_statistics", "text_datum"]

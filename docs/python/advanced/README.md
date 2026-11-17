@@ -46,3 +46,5 @@ These guides cover optional controls, custom definitions and detailed diagnostic
 
 Engine design belongs in [architecture](../../architecture/README.md);
 native backend interfaces belong in the [C reference](../../c/README.md).
+
+- [Live command table](command-table.md): pending and completed rows for training, split updates and evaluation.

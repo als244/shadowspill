@@ -37,6 +37,7 @@ class BatchValidation:
     candidate: str | None
     scheduled_capacities: Mapping[str, int | float]
     note: str | None = None
+    estimated_seconds: float | None = None
 
 
 class BatchValidator:
@@ -54,6 +55,7 @@ class BatchValidator:
         self.proofs: dict[OperationKey, dict[int, CoverageCertificate]] = {}
         self.grouping: str | None = None
         self.workspaces: dict[OperationKey, int] = {}
+        self.costs: dict[str, float] = {}
 
     def _load(self) -> None:
         if self.grouping is not None:
@@ -168,6 +170,7 @@ class BatchValidator:
                     )
         self.candidates, self.proofs, self.grouping = candidates, proofs, grouping
         self.workspaces = workspaces
+        self.costs = costs
 
     def _key(
         self, operation: str, outputs: str | None, mode: str | None
@@ -244,4 +247,5 @@ class BatchValidator:
                 MappingProxyType(
                     dict(assignment.schedule.capacities(self.config.inputs))
                 ),
+                estimated_seconds=self.costs[candidate.id],
             )
