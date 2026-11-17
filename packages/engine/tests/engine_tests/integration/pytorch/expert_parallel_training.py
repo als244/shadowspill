@@ -32,7 +32,7 @@ def main():
     if int(os.environ.get("WORLD_SIZE", "1")) != 1:
         parser.error("launch once; the runner creates the distributed phase workers")
     run(
-        "shadowspill_workloads.recipes.text.expert_parallel:experiment",
+        "benchmarks.factories.expert_parallel:experiment",
         output_dir=root,
         phase="build",
         rank_map={0: 1, 1: 0},

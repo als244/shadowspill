@@ -72,7 +72,7 @@ model = Model(PRESETS["35b-a3b"])
 
 `shadowspill_workloads.models.catalog.build_on_meta("qwen35moe-35b-a3b", dtype="bfloat16")`
 declares the same model on `meta`, and the quickstart runs it with
-the [phase benchmark factory](../../recipes/text/benchmark/README.md)
+the [phase benchmark factory](../../../../../../benchmarks/factories/text/README.md)
 with `model="qwen35moe-35b-a3b"`. The
 [model catalog](../../MODELS.md) covers dtypes, LoRA, inputs and the loss.
 

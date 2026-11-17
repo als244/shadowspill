@@ -87,7 +87,7 @@ def test_precision_reaches_planning_and_the_optimizer_as_the_harness_names_it() 
 
 
 def test_text_recipe_normalizes_by_the_requested_step_total():
-    from shadowspill_workloads.recipes.text.benchmark.factory import experiment
+    from benchmarks.factories.text.factory import experiment
 
     setup = experiment(
         device="cuda:0",
@@ -100,8 +100,8 @@ def test_text_recipe_normalizes_by_the_requested_step_total():
 
 
 def test_text_recipe_reports_head_loss_and_keeps_other_objectives():
+    from benchmarks.factories.text.factory import metrics
     from shadowspill.training.observations import StepObservations
-    from shadowspill_workloads.recipes.text.benchmark.factory import metrics
 
     observed = StepObservations((2.0, 3.0), ({"head_loss": 1.5}, None))
     assert metrics(observed)["loss"] == 4.5
@@ -110,7 +110,7 @@ def test_text_recipe_reports_head_loss_and_keeps_other_objectives():
 @pytest.mark.parametrize("master", ["none", "float32"])
 @pytest.mark.parametrize("grad", [None, "float16", "float32"])
 def test_fp16_quickstart_constructs_the_requested_model_and_precision(master, grad):
-    from shadowspill_workloads.recipes.text.benchmark.factory import experiment
+    from benchmarks.factories.text.factory import experiment
 
     arguments = _arguments(
         model_dtype="float16",
@@ -149,7 +149,7 @@ def test_fp16_quickstart_constructs_the_requested_model_and_precision(master, gr
 
 
 def test_quickstart_keeps_bf16_defaults_without_probing_the_gpu():
-    from shadowspill_workloads.recipes.text.benchmark.factory import experiment
+    from benchmarks.factories.text.factory import experiment
 
     setup = experiment(device="cuda:0", model="llama3-8b")
     assert setup["metadata"]["dtypes"] == {

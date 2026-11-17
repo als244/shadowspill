@@ -18,10 +18,10 @@ the previous one to fill missing artifacts.
 
 Quickstart supports single-GPU training and single-node sharded DP, including
 examples with different shapes and static arguments within one update.
-The [catalog factory](../packages/workloads/src/shadowspill_workloads/recipes/text/benchmark/README.md) supplies
+The [catalog factory](factories/text/README.md) supplies
 ordinary text models, precision and LoRA settings. The GLM families use this
 same runner with their own model/input/initialization helpers. The
-[EP recipe](../packages/workloads/src/shadowspill_workloads/recipes/text/expert_parallel/README.md) declares generic
+[EP recipe](factories/expert_parallel/README.md) declares generic
 provider resources and uses distributed build/profiling when its tasks communicate.
 Ordinary DP qualification does not certify its transport.
 The core APIs can be used directly without quickstart; see the

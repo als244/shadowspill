@@ -1,13 +1,13 @@
 # Expert-parallel text phases
 
-This recipe reuses the common text inputs, objective, optimizer and bounded
+This factory reuses the common text inputs, objective, optimizer and bounded
 initialization. Qwen3 MoE, Qwen3.5 MoE and OLMoE supply portable Quack expert
 leaves; `Resource` descriptions recreate their shared MoonEP buffer in build,
 profiling and execution. Models contain no ShadowSpill imports or live groups.
 
 ```bash
 python -m benchmarks.quickstart \
-  --factory shadowspill_workloads.recipes.text.expert_parallel:experiment \
+  --factory benchmarks.factories.expert_parallel:experiment \
   --factory-args '{"model":"qwen3moe-30b-a3b","ranks":8,"sequence_length":4096,"sequences_per_step":64,"sequences_per_example":16}' \
   --search-budget-gib 30 50 77 --spill-gib 96 --steps 3 \
   --output-dir runs/qwen-ep8
@@ -24,17 +24,5 @@ updates. Input data differs across logical ranks, while matching dense tensors
 start identically. Loss normalization and throughput use the global token count.
 Masters, gradients and moments default to FP32; compute weights are BF16.
 
-The provider requires SM90 and fixed GEMM policies. Local metadata/construction
-tests pass; saved EP transport and numerical qualification run on two H100s:
-
-```bash
-python -m pytest packages/engine/tests/engine_tests/execution/expert_parallel/test_training.py -o addopts= -q
-```
-
-That test covers both save/recompute choices, four examples per invocation,
-reversed logical ranks, three updates, master/moment comparisons and checkpoint
-restore, with BF16 gradients, the dtype the reference accumulates in. Its eager
-reference shares expert kernels but uses ordinary PyTorch accumulation and FP32
-AdamW, and takes each step from the state the Executor held before it, so each
-comparison measures one step's arithmetic. Logs and artifacts are separate for
-each phase.
+The provider requires SM90 and fixed GEMM policies. See the
+[phase quickstart guide](../../quickstart.md) for phase commands and artifacts.

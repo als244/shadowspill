@@ -11,8 +11,8 @@ from shadowspill_workloads.lora import configure_lora
 from shadowspill_workloads.providers import operator_preparations
 from shadowspill_workloads.recipes.defaults import LEARNING_RATE
 from shadowspill_workloads.recipes.text.optimizer import build_optimizer
+from shadowspill_workloads.recipes.text.precision import Precision
 
-from ..precision import Precision
 from .inputs import candidates
 
 

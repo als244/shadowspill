@@ -68,6 +68,6 @@ model = Model(PRESETS["7b-a1b"])
 
 `shadowspill_workloads.models.catalog.build_on_meta("olmoe-7b-a1b", "mlops", dtype="bfloat16")`
 declares the same model on `meta`, and the quickstart runs it with
-the [phase benchmark factory](../../recipes/text/benchmark/README.md)
+the [phase benchmark factory](../../../../../../benchmarks/factories/text/README.md)
 with `model="olmoe-7b-a1b"`. The
 [model catalog](../../MODELS.md) covers dtypes, LoRA, inputs and the loss.

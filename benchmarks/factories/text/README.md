@@ -6,7 +6,7 @@ plans on CPU and executes saved Plans in fresh workers.
 
 ```bash
 python -m benchmarks.quickstart \
-  --factory shadowspill_workloads.recipes.text.benchmark.factory:experiment \
+  --factory benchmarks.factories.text.factory:experiment \
   --factory-args '{"model":"llama3-8b","sequence_length":1024,"sequences_per_step":64,"min_tokens_per_example":8192,"max_tokens_per_example":16384}' \
   --search-budget-gib 20 30 --run-budget-gib 20 30 --spill-gib 112 \
   --output-dir runs/llama3
@@ -16,7 +16,7 @@ The ordinary Llama3, Qwen3, Qwen3.5, OLMoE, Qwen3MoE and Qwen3.5MoE catalog
 entries share this factory. `model_config` overrides the family's configuration;
 `implementation` selects its supported `mlops` or `pytorch` implementation.
 GLM-5.3 and GLM-5.3-Flash have their own factories in
-[`glm/quickstart.py`](../glm/README.md), and expert parallelism has
+[`glm/quickstart.py`](../../../packages/workloads/src/shadowspill_workloads/recipes/text/glm/README.md), and expert parallelism has
 [its own](../expert_parallel/README.md).
 
 Factory options:
@@ -45,11 +45,5 @@ projections and expert banks) and keeps derived RoPE/norm/gate values, not the
 original module traversal's RNG stream. Optimizer state and master copies use the
 Program's initialization.
 
-Tiny Llama full training and LoRA are tested through every phase with FP32
-masters/gradients/moments. Initializer coverage is also checked on CPU for all six
-families, and shape/stride consistency and global loss normalization for tiny
-Llama. These checks do not establish large-model performance or every provider's
-portability.
-
-See the [phase quickstart guide](../../../../../../../benchmarks/quickstart.md) for
+See the [phase quickstart guide](../../quickstart.md) for
 independent phase commands, custom communication costs and result locations.

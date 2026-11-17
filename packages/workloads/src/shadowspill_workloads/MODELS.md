@@ -323,7 +323,7 @@ replicated across the EP group. Saved-phase callers use `expert_factory` to
 construct portable leaves and pass their provider descriptions through the
 builders' generic `resources` argument. The central `Parallelism` specifies
 expert-bank names as `Sharded` and dense parameters as replicated, with separate
-storage settings. The [EP recipe](recipes/text/expert_parallel/README.md) composes
+storage settings. The [EP recipe](../../../../benchmarks/factories/expert_parallel/README.md) composes
 these declarations without creating a communicator in the model.
 
 The caller defines global loss normalization and any replication across EP
@@ -399,14 +399,14 @@ For a benchmark using a supplied throughput preset and saved resolution plans:
 
 ```bash
 python -m benchmarks.quickstart \
-  --factory shadowspill_workloads.recipes.text.benchmark.factory:experiment \
+  --factory benchmarks.factories.text.factory:experiment \
   --factory-args '{"model":"llama3-8b","sequence_length":1024,"sequences_per_step":64,"min_tokens_per_example":8192,"max_tokens_per_example":16384}' \
   --search-budget-gib 20 30 --run-budget-gib 20 30 \
   --spill-gib 112 --output-dir runs/llama3
 ```
 
 The [quickstart guide](../../../../benchmarks/quickstart.md) describes every flag and
-custom experiment factories. The [text factory](recipes/text/benchmark/README.md)
+custom experiment factories. The [text factory](../../../../benchmarks/factories/text/README.md)
 supplies catalog models and optional LoRA; `ranks` selects sharded DP. The GLM
 families use the same phase runner with family-specific construction and loading.
 Model-owned EP resources use the same phase runner; their build and profiling
