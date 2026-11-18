@@ -673,7 +673,14 @@ class LocalCreation:
 
     def _archive_preparation(self) -> None:
         if self._artifacts is not None:
-            for path in self._check_files():
+            try:
+                files = self._check_files()
+            except ValueError:
+                # A directory outside its envelope is refused for publication,
+                # and that refusal may be what failed the creation. Retiring it
+                # unpublished lets the directory be removed and the job end.
+                files = ()
+            for path in files:
                 assert self._directory is not None
                 relative = str(
                     path.relative_to(Path(self._directory.name) / "preparation")

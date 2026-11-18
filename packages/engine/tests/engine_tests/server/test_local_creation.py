@@ -368,6 +368,27 @@ def test_impossible_combined_phase_host_demand_never_waits_or_launches(
         assert not ctx.phases
 
 
+def test_a_preparation_outside_its_file_envelope_fails_and_retires(
+    tmp_path, monkeypatch
+):
+    with configured(
+        tmp_path,
+        monkeypatch,
+        # The job record and the saved Plans alone are two files.
+        limits_change=lambda limits: replace(limits, max_preparation_files=1),
+    ) as ctx:
+        submit(ctx)
+        until(lambda: ctx.jobs.used == (0, 0))
+        info = ctx.service.catalog.get(IDENTITY)
+        assert info.state == "failed"
+        assert "file-count envelope" in info.error.message
+        # The refused directory is removed unpublished; nothing is left to retry.
+        assert ctx.owners[0].closed and ctx.owners[0]._directory is not None
+        assert not Path(ctx.owners[0]._directory.name).exists()
+        assert ctx.disk.used == (0, 0) and not ctx.jobs.failures()
+        assert ctx.phases == ["build", "profile", "communicate", "plan"]
+
+
 def test_failed_preparation_publication_keeps_artifacts_and_retries_cleanup_only(
     tmp_path, monkeypatch
 ):
