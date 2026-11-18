@@ -241,6 +241,21 @@ def test_failed_creation_is_terminal_but_cleanup_retains_its_slot_and_envelope(
         assert ctx.memory.used == (0, 0) and job.starts == 1
 
 
+def test_a_failed_creation_is_reported_while_its_cleanup_stays_blocked(tmp_path):
+    with configured(tmp_path, blocked=True, failed=True) as ctx:
+        create(ctx.jobs)
+        job = ctx.made[0]
+        job.closing_error = True
+        job.release.set()
+        until(ctx.jobs.failures)
+        info = ctx.service.catalog.get(IDENTITY)
+        assert info.state == "failed" and info.error.code == "creation_failed"
+        assert info.error.message == "stopped or failed preparation"
+        # Reporting releases nothing: the owner still has to close.
+        assert ctx.jobs.used == (1, 0) and not ctx.jobs.retired(IDENTITY)
+        assert ctx.jobs.failures() == ((IDENTITY, "cleanup is blocked"),)
+
+
 @pytest.mark.parametrize("where", ["factory", "thread"])
 def test_failure_before_creation_thread_records_a_single_failed_identity(
     tmp_path, monkeypatch, where

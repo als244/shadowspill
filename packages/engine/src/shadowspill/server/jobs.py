@@ -343,22 +343,33 @@ class RunJobs:
             if job.users:
                 return False
         if owner is not None:
-            owner.close()
-        info = self.storage.catalog.get(identity)
-        if info is not None and info.state == "preparing":
-            if self._closing:
-                self.storage.catalog.stop(
-                    identity,
-                    ServiceError("allocation_stopped", "Allocation ownership ended."),
-                )
-            else:
-                self.storage.catalog.fail(
-                    identity,
-                    ServiceError("creation_failed", job.error or "Creation failed."),
-                )
-        elif info is None or info.state == "ready":
+            try:
+                owner.close()
+            except BaseException:
+                # Cleanup is retried and can stay blocked without bound. The
+                # creation has ended either way, so its caller is told now; the
+                # job keeps its slot and envelope until the owner closes.
+                self._conclude(identity, job)
+                raise
+        info = self._conclude(identity, job)
+        if info is None or info.state == "ready":
             raise RuntimeError("retired creation did not record its terminal run state")
         return True
+
+    def _conclude(self, identity: RunIdentity, job: _Job) -> RunInfo | None:
+        """Give a creation that never became ready its terminal state, once."""
+        info = self.storage.catalog.get(identity)
+        if info is None or info.state != "preparing":
+            return info
+        if self._closing:
+            return self.storage.catalog.stop(
+                identity,
+                ServiceError("allocation_stopped", "Allocation ownership ended."),
+            )
+        return self.storage.catalog.fail(
+            identity,
+            ServiceError("creation_failed", job.error or "Creation failed."),
+        )
 
     def _maintain(self) -> None:
         while True:

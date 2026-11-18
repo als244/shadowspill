@@ -94,7 +94,7 @@ indefinitely. An operator's allocation expiry bounds all leases.
 | Agent dies | Local supervision/watchdog stops owned children; restart confirms cleanup before offering resources |
 | Executing member is lost | Fail the group, stop peers and preserve durable completed outcomes |
 | Controller restarts | Use a new incarnation; interrupt active runs and reject old assignment messages |
-| Cleanup fails | Keep resources unavailable and retain owners for a cleanup retry |
+| Cleanup fails | Record the run's outcome, keep resources unavailable and retain owners for a cleanup retry |
 
 A lease timeout alone never proves that a worker stopped. The controller waits
 for confirmed cleanup before reusing resources. The agent's local ownership lock

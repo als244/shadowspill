@@ -42,7 +42,9 @@ cannot launch another job.
 Phase processes and persistent workers use the installed orchestration launchers.
 The service accounts for host capacity, device slots, staged files and logs
 through their owners. Cleanup releases a reservation only after its consumers
-and owned processes finish. A failed cleanup retains ownership for retry.
+and owned processes finish. A failed cleanup retains ownership for retry, and
+a creation that ended without a ready run has its failure recorded first, so
+its caller is answered while the retry continues.
 These controls are deployment infrastructure, separate from the client's model,
 batch and memory settings.
 
