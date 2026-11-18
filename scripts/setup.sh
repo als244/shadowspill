@@ -16,9 +16,9 @@ Usage: ./scripts/setup.sh [--python PATH] [--torch-backend BACKEND]
 Create a complete ShadowSpill development environment.  By default the script
 creates .venv with Python 3.12 and automatically selects the installed GPU's
 PyTorch backend.  --python installs into an existing virtual or Conda
-environment instead.  --expert-parallel also installs mlops's optional
-expert-parallel backends, which the expert-parallel workloads use; it needs
-the mlops checkout beside this one.
+environment instead.  MLOps and its native providers are installed through
+its setup script, using the adjacent checkout or a cached pinned checkout.
+--expert-parallel also installs its optional expert-parallel backends.
 EOF
 }
 
@@ -53,14 +53,6 @@ while (($#)); do
       ;;
   esac
 done
-
-readonly mlops_checkout="$(cd "${project_root}/.." && pwd)/mlops"
-# The expert-parallel installer is a script in the mlops checkout, so the
-# fallback install from Git cannot provide it; say so before installing anything.
-if [[ -n "${expert_parallel}" && ! -x "${mlops_checkout}/scripts/setup.sh" ]]; then
-  echo "--expert-parallel needs the mlops checkout at ${mlops_checkout}" >&2
-  exit 2
-fi
 
 uv_executable="$(command -v uv || true)"
 bootstrap_dir=""
@@ -142,18 +134,24 @@ print(Path(next(iter(spec.submodule_search_locations))) / "share" / "cmake")
   --editable "${project_root}/packages/workloads[training]"
 
 echo "[3/5] Installing mlops with its implementation providers"
-if [[ -x "${mlops_checkout}/scripts/setup.sh" ]]; then
-  echo "  through ${mlops_checkout}/scripts/setup.sh, whose own steps follow"
-  "${mlops_checkout}/scripts/setup.sh" \
-    --python "${python_executable}" \
-    --torch-backend "${torch_backend}" \
-    ${expert_parallel:+--expert-parallel "${expert_parallel}"}
-else
-  "${uv_executable}" pip install \
-    --python "${python_executable}" \
-    --torch-backend "${torch_backend}" \
-    "mlops[providers,dev] @ git+https://github.com/als244/mlops.git"
+mlops_checkout="$(cd "${project_root}/.." && pwd)/mlops"
+if [[ ! -x "${mlops_checkout}/scripts/setup.sh" ]]; then
+  mlops_revision="3d47722af6f2e50a759dba101f9c0313be71b589"
+  mlops_checkout="${XDG_CACHE_HOME:-$HOME/.cache}/shadowspill/sources/mlops-${mlops_revision}"
+  if [[ ! -d "${mlops_checkout}/.git" ]]; then
+    mkdir -p "$(dirname "${mlops_checkout}")"
+    git clone --filter=blob:none --no-checkout \
+      https://github.com/als244/mlops.git "${mlops_checkout}"
+  fi
+  git -C "${mlops_checkout}" cat-file -e "${mlops_revision}^{commit}" 2>/dev/null || \
+    git -C "${mlops_checkout}" fetch origin "${mlops_revision}"
+  git -C "${mlops_checkout}" checkout --detach "${mlops_revision}"
 fi
+echo "  through ${mlops_checkout}/scripts/setup.sh, whose own steps follow"
+"${mlops_checkout}/scripts/setup.sh" \
+  --python "${python_executable}" \
+  --torch-backend "${torch_backend}" \
+  ${expert_parallel:+--expert-parallel "${expert_parallel}"}
 
 echo "[4/5] Verifying PyTorch and the accelerator backend"
 "${python_executable}" - <<'PY'
