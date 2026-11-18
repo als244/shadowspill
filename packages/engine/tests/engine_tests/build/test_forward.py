@@ -72,9 +72,9 @@ def test_meta_build_roundtrips_and_executes_bound_stages(tmp_path):
         model,
         example_args=(inputs,),
         example_kwargs={"options": {"scale": 2}},
-        parallelism=Parallelism.dp(),
+        parallelism=Parallelism.dp(min_shard_bytes=0),
     )
-    assert program.parallelism == Parallelism.dp()
+    assert program.parallelism == Parallelism.dp(min_shard_bytes=0)
     assert program.bindings["parameter_ownership"][0]["name"] == "layers.0.weight"
     assert all(parameter.is_meta for parameter in model.parameters())
     assert len(program.bindings["entrypoints"]) == 2

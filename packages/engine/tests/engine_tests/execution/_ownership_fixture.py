@@ -34,7 +34,7 @@ def parallelism(mode):
     if mode == "cutoff":
         return Parallelism.dp(ranks_per_replica=2, min_shard_bytes=100)
     if mode == "diagnostics":
-        return Parallelism.dp(ranks_per_replica=2)
+        return Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0)
     replicated = mode in {"replicated", "matrix"}
     return Parallelism(
         ranks_per_replica=2,

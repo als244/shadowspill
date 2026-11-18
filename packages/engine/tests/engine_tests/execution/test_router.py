@@ -36,7 +36,7 @@ def test_packed_router_training_from_saved_plan(tmp_path, ranks):
         partition="whole",
         master_dtype=torch.float32,
         grad_dtype=torch.float32,
-        parallelism=Parallelism.dp(ranks_per_replica=ranks),
+        parallelism=Parallelism.dp(ranks_per_replica=ranks, min_shard_bytes=0),
     )
     if ranks > 1:
         # One representative GPU prepares a distributed router without NCCL.

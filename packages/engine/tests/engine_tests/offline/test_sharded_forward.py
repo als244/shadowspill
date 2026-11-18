@@ -29,7 +29,7 @@ def forward():
             for task in value.tasks
         ),
         setup={"gpu": "fixture"},
-        parallelism=Parallelism.dp(ranks_per_replica=4),
+        parallelism=Parallelism.dp(ranks_per_replica=4, min_shard_bytes=0),
         bindings={
             "kind": "forward",
             "weight_shards": {
@@ -134,7 +134,9 @@ def test_planner_keeps_local_copies_and_full_gather_as_distinct_phases(tmp_path)
 
 
 def test_unlowered_distributed_training_cannot_be_planned_as_local():
-    value = replace(program(), parallelism=Parallelism.dp(ranks_per_replica=4))
+    value = replace(
+        program(), parallelism=Parallelism.dp(ranks_per_replica=4, min_shard_bytes=0)
+    )
     with pytest.raises(NotImplementedError, match="distributed training transfer"):
         plan_program(
             apply_profiles(value, profiles()),

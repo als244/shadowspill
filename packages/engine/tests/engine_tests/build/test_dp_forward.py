@@ -30,7 +30,7 @@ def test_build_profile_locally_then_plan_sharded_forward_on_cpu(tmp_path, monkey
     program = build_forward(
         model,
         example_args=(torch.empty(3, 9),),
-        parallelism=Parallelism.dp(ranks_per_replica=8),
+        parallelism=Parallelism.dp(ranks_per_replica=8, min_shard_bytes=0),
     )
     assert program.parallelism.world_size == 8
     shards = program.bindings["weight_shards"]

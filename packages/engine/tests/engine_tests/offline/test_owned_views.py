@@ -20,7 +20,9 @@ def program():
         ),
         tasks=(),
         task_definitions=(),
-        parallelism=Parallelism.dp(ranks_per_replica=2, num_replicas=2),
+        parallelism=Parallelism.dp(
+            ranks_per_replica=2, num_replicas=2, min_shard_bytes=0
+        ),
         bindings={
             "owned_parameter_views": {
                 "owned": {

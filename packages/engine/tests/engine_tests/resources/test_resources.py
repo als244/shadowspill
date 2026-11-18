@@ -14,7 +14,7 @@ from shadowspill.resources.lifecycle import ResourceBindings
 
 
 def test_description_roundtrip_does_not_import_provider(tmp_path):
-    parallel = Parallelism.dp(ranks_per_replica=2)
+    parallel = Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0)
     resource = Resource(
         "not_installed.backend:open",
         {"capacity": 32},

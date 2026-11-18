@@ -30,7 +30,7 @@ def expert_spec(num_replicas=1):
 
 
 def test_dp_replicas_repeat_storage_but_reduce_all_copies():
-    spec = Parallelism.dp(ranks_per_replica=4, num_replicas=2)
+    spec = Parallelism.dp(ranks_per_replica=4, num_replicas=2, min_shard_bytes=0)
     parameter = resolve(spec)
     assert spec.world_size == 8
     assert spec.group("all_ranks").groups == ((0, 1, 2, 3), (4, 5, 6, 7))
@@ -76,7 +76,7 @@ def test_buffers_are_stored_whole_on_every_rank():
     mutates one does so on each rank's own copy, so the storage modes leave it
     whole; a frozen parameter keeps its declared mode."""
 
-    spec = Parallelism.dp(ranks_per_replica=4, num_replicas=2)
+    spec = Parallelism.dp(ranks_per_replica=4, num_replicas=2, min_shard_bytes=0)
     counter, frozen = resolve_parameters(
         spec,
         (
@@ -126,7 +126,7 @@ def test_storage_components_can_use_different_groups_and_modes():
 
 def test_tied_names_exact_priority_and_conflicting_wildcards():
     names = ("embedding.weight", "lm_head.weight")
-    spec = Parallelism.dp(ranks_per_replica=4)
+    spec = Parallelism.dp(ranks_per_replica=4, min_shard_bytes=0)
     spec = replace(
         spec,
         parameter_storage={
@@ -160,7 +160,7 @@ def test_tied_names_exact_priority_and_conflicting_wildcards():
 
 def test_agreeing_patterns_compare_effective_values_and_typo_is_reported():
     spec = replace(
-        Parallelism.dp(ranks_per_replica=4),
+        Parallelism.dp(ranks_per_replica=4, min_shard_bytes=0),
         parameter_storage={
             "*": ParameterStorage(),
             "weight*": ParameterStorage(weights="sharded"),

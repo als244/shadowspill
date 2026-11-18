@@ -109,7 +109,9 @@ def fixture(elements=15, kind="step"):
         objects=tuple(objects),
         tasks=(),
         task_definitions=(),
-        parallelism=Parallelism.dp(ranks_per_replica=2, num_replicas=2),
+        parallelism=Parallelism.dp(
+            ranks_per_replica=2, num_replicas=2, min_shard_bytes=0
+        ),
         bindings=bindings,
     )
 
@@ -192,7 +194,9 @@ def columns_program(optimizer_groups):
         ),
         tasks=(),
         task_definitions=(),
-        parallelism=Parallelism.dp(ranks_per_replica=2, num_replicas=2),
+        parallelism=Parallelism.dp(
+            ranks_per_replica=2, num_replicas=2, min_shard_bytes=0
+        ),
         bindings=bindings,
     )
 

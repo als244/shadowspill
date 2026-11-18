@@ -61,7 +61,9 @@ def test_capacity_forces_early_reduction_and_shard_only_spill(tmp_path):
         task_definitions=(TaskDefinition("local", "local", 0),),
         final_residency=(ResidencySpec("gradient", MemoryLocation.SPILL),),
         setup={"gpu": "fixture"},
-        parallelism=Parallelism.dp(ranks_per_replica=2, num_replicas=2),
+        parallelism=Parallelism.dp(
+            ranks_per_replica=2, num_replicas=2, min_shard_bytes=0
+        ),
         bindings={
             "kind": "step",
             "distributed_training_lowered": "step",

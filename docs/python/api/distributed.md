@@ -81,9 +81,11 @@ only from `default_parameter_storage`.
 `ParameterStorage` has a common `group` and flat `weights`, `gradients` and
 `optimizer` modes (`"sharded"` or `"replicated"`). Optional `weight_group`,
 `gradient_group` and `optimizer_group` override the common group. Optional
-`min_shard_bytes`, also a `Parallelism.dp` argument and zero by default, keeps
-every component of a parameter whose unpadded physical weight storage is smaller
-replicated. Masters follow optimizer ownership. A storage group may contain only
+`min_shard_bytes`, also an argument of `Parallelism.dp` and of the client's
+`data_parallel`, where it is 2 MiB by default, keeps every component of a
+parameter whose unpadded physical weight storage is smaller replicated: a shard
+of a small tensor saves little memory and costs a collective at every fetch.
+Zero shards every parameter. Masters follow optimizer ownership. A storage group may contain only
 ranks that compute with copies of the same logical parameter slice.
 
 The modes govern parameters. A buffer is stored whole on every rank: it has no

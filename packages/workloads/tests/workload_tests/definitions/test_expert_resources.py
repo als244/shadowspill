@@ -178,7 +178,7 @@ def test_invalid_shapes_fail_before_worker_construction(changes):
         describe(
             dimensions(**changes),
             "qwen3moe",
-            Parallelism.dp(ranks_per_replica=2),
+            Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0),
             64,
             grad_dtype="float32",
         )

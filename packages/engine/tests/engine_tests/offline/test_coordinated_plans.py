@@ -101,7 +101,7 @@ def worker_plan(gpu, *, size, workspace, duration, order, serial=False, capacity
         initial_residency=entries,
         final_residency=entries,
         setup={"gpu": gpu},
-        parallelism=Parallelism.dp(ranks_per_replica=2),
+        parallelism=Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0),
         executables={gpu: gpu.encode()},
         bindings={
             "kind": "forward",

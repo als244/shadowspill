@@ -43,7 +43,10 @@ def test_union_preserves_rank_order_and_deduplicates_across_candidates():
 @pytest.mark.parametrize(
     "change,message",
     [
-        ({"parallelism": Parallelism.dp(ranks_per_replica=2)}, "same parallelism"),
+        (
+            {"parallelism": Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0)},
+            "same parallelism",
+        ),
         ({"setup": {"gpu": "different"}}, "same build setup"),
     ],
 )

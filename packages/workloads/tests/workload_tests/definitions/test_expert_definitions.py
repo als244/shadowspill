@@ -206,11 +206,83 @@ def fill(loader, name, shape, dtype, chunk):
 
 
 @pytest.mark.parametrize("family", FAMILIES)
+def test_a_seed_gives_expert_parallel_the_default_implementations_values(family):
+    from shadowspill_workloads.initialization.decoder import Initialize as Catalog
+    from shadowspill_workloads.initialization.expert_parallel import BANKS, Initialize
+    from shadowspill_workloads.models.catalog import entry
+
+    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    requested = settings(family)
+    architecture = entry(family + "-tiny").config(**requested.config["architecture"])
+    experts, hidden, width = (
+        architecture.n_experts,
+        architecture.d_ff_expert,
+        architecture.d_model,
+    )
+    gate_up, down = BANKS[family]
+    # The tensors a run without expert parallelism holds, by name and shape.
+    dense = replace(requested, implementation="mlops")
+    model = registry.resolve_model(dense.definition, settings=dense).create()
+    shapes = {name: tuple(value.shape) for name, value in model.named_parameters()}
+    assert shapes["blocks.0.moe.router.weight"] == (experts, width)
+    assert shapes[f"blocks.0.moe.{gate_up}"] == (experts, 2 * hidden, width)
+    assert shapes[f"blocks.0.moe.{down}"] == (experts, width, hidden)
+    # What that run loads for a seed, at the layer's payload precision.
+    catalog = Catalog(family, architecture, seed=17)
+    router_dtype = torch.float32 if family == "olmoe" else torch.bfloat16
+
+    def drawn(name, dtype):
+        return fill(catalog, name, shapes[name], torch.float32, 613).to(dtype).float()
+
+    full = {
+        "router_weight": drawn("blocks.0.moe.router.weight", router_dtype),
+        "gate_up_weight": drawn(f"blocks.0.moe.{gate_up}", torch.bfloat16),
+        "down_weight": drawn(f"blocks.0.moe.{down}", torch.bfloat16),
+    }
+    # The layer keeps gate row j beside up row j; the bank holds gate rows first.
+    gate, up = full["gate_up_weight"].split(hidden, dim=1)
+    full["gate_up_weight"] = torch.stack((gate, up), dim=2).flatten(1, 2)
+    for ranks in (1, 2, 4):
+        local = experts // ranks
+        joined = {name: [] for name in full}
+        for rank in range(ranks):
+            loader = Initialize(
+                catalog,
+                expert_rank=rank,
+                ranks=ranks,
+                banks=BANKS[family],
+                std=architecture.initializer_range,
+                router_dtype=router_dtype,
+            )
+            for name, shape in (
+                ("router_weight", (experts, width)),
+                ("gate_up_weight", (local, 2 * hidden, width)),
+                ("down_weight", (local, width, hidden)),
+            ):
+                # Chunks that split rows and experts differently on each rank.
+                value = fill(
+                    loader,
+                    f"blocks.0.moe.experts.{name}",
+                    shape,
+                    torch.float32,
+                    509 + 97 * rank,
+                )
+                joined[name].append(value)
+        for value in joined["router_weight"]:
+            torch.testing.assert_close(value, full["router_weight"], rtol=0, atol=0)
+        for name in ("gate_up_weight", "down_weight"):
+            # However many ranks share the experts, their banks join to the same one.
+            torch.testing.assert_close(
+                torch.cat(joined[name]), full[name], rtol=0, atol=0
+            )
+
+
+@pytest.mark.parametrize("family", FAMILIES)
 def test_initialization_preserves_replicas_expert_slices_and_payload_masters(
     tmp_path, family
 ):
     from shadowspill_workloads.initialization.decoder import Initialize as Catalog
-    from shadowspill_workloads.initialization.expert_parallel import Initialize
+    from shadowspill_workloads.initialization.expert_parallel import BANKS, Initialize
     from shadowspill_workloads.models.catalog import entry
 
     registry = load_registry(["shadowspill", "shadowspill-workloads"])
@@ -230,6 +302,8 @@ def test_initialization_preserves_replicas_expert_slices_and_payload_masters(
         expected = Initialize(
             Catalog(family, architecture, seed=17),
             expert_rank=rank % 2,
+            ranks=2,
+            banks=BANKS[family],
             std=architecture.initializer_range,
             router_dtype=torch.float32 if family == "olmoe" else torch.bfloat16,
         )
@@ -279,7 +353,7 @@ def test_unsupported_ep_modes_fail_before_construction(family):
 @pytest.mark.parametrize(
     "parallelism",
     [
-        Parallelism.dp(ranks_per_replica=2),
+        Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0),
         replace(ownership(2, 1), parameter_storage={}),
         replace(
             ownership(2, 1),

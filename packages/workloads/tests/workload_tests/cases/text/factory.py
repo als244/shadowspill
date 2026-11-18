@@ -67,6 +67,7 @@ def experiment(
         weights=weights,
         gradients=gradients,
         optimizer=optimizer,
+        min_shard_bytes=0,
     )
     if not 0 <= logical_rank < parallelism.world_size:
         raise ValueError("logical_rank is outside the declared parallelism")

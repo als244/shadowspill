@@ -171,7 +171,9 @@ def test_portable_keywords_use_the_existing_resolver_and_generic_parallelism():
         for field in resolve_training(installed(), **requested).config.inputs.fields
     ]
     layout = Parallelism.dp(
-        num_replicas=2, inputs=InputPlacement.independent(2, fields=fields)
+        num_replicas=2,
+        inputs=InputPlacement.independent(2, fields=fields),
+        min_shard_bytes=0,
     )
     requested["parallelism"] = layout
     requested["operations"] = {"forward": ["predictions"]}

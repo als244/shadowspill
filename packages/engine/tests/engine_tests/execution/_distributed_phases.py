@@ -32,7 +32,7 @@ def build(path, kind, ownership="sharded"):
     )
     fixture = oracle(kind, dtype) if masters else None
     template = Network(dtype=dtype, device="meta")
-    parallelism = Parallelism.dp(ranks_per_replica=2)
+    parallelism = Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0)
     if ownership in {"fp8", "fp8_cutoff"}:
         from engine_tests.execution import _fp8_fixture as quantized
 

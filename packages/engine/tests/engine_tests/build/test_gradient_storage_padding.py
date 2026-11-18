@@ -33,6 +33,7 @@ def test_replicated_gradient_keeps_its_extent_before_optimizer_padding(
                 weights="replicated",
                 gradients=gradients,
                 optimizer=optimizer,
+                min_shard_bytes=0,
             ),
         )
         reduce = gradient_reduction(ownership, destination="optimizer")

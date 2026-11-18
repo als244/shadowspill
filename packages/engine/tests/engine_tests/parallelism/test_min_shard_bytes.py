@@ -1,4 +1,4 @@
-"""An optional storage cutoff preserves compute ownership and gradient SUMs."""
+"""A storage floor keeps small parameters whole; ownership and gradient SUMs stay."""
 
 from dataclasses import replace
 
@@ -9,6 +9,7 @@ from torch import nn
 from shadowspill import Parallelism, ParameterStorage, Sharded
 from shadowspill.build.parallelism import model_parallelism
 from shadowspill.parallelism.reductions import gradient_reduction
+from shadowspill_client.parallelism import MIN_SHARD_BYTES, data_parallel
 
 
 def test_cutoff_uses_physical_dtype_and_unpadded_bytes():
@@ -37,15 +38,47 @@ def test_buffers_are_inventoried_whole_on_every_rank():
     model = nn.Module()
     model.weight = nn.Parameter(torch.empty(8, device="meta"))
     model.register_buffer("counter", torch.zeros((), dtype=torch.int64, device="meta"))
-    _, (weight, counter) = model_parallelism(model, Parallelism.dp(ranks_per_replica=2))
+    _, (weight, counter) = model_parallelism(
+        model, Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0)
+    )
     assert weight.weights.capacity == 4
     assert counter.weights.groups == ((0,), (1,))
     assert counter.weights.capacity == 1
 
 
-def test_cutoff_is_opt_in_and_exact_override_can_disable_it():
-    model = nn.Linear(8, 4, device="meta")
+def test_small_parameters_stay_whole_by_default():
+    model = nn.Module()
+    # 2 MiB of weight storage is the default floor: equal to it still shards.
+    model.large = nn.Parameter(
+        torch.empty(1 << 20, dtype=torch.bfloat16, device="meta")
+    )
+    model.small = nn.Parameter(
+        torch.empty((1 << 20) - 1, dtype=torch.bfloat16, device="meta")
+    )
     spec = Parallelism.dp(ranks_per_replica=4)
+    assert spec.default_parameter_storage.min_shard_bytes == 2 << 20
+    _, (large, small) = model_parallelism(model, spec)
+    assert large.weights.capacity == (1 << 20) // 4
+    assert (
+        small.weights.capacity
+        == small.gradients.capacity
+        == small.optimizer.capacity
+        == (1 << 20) - 1
+    )
+    # The portable declaration a client sends carries the same floor.
+    declared = data_parallel(4)["default_parameter_storage"]["min_shard_bytes"]
+    assert declared == MIN_SHARD_BYTES == 2 << 20
+    assert (
+        data_parallel(4, min_shard_bytes=0)["default_parameter_storage"][
+            "min_shard_bytes"
+        ]
+        == 0
+    )
+
+
+def test_zero_shards_everything_and_an_exact_override_can_disable_the_floor():
+    model = nn.Linear(8, 4, device="meta")
+    spec = Parallelism.dp(ranks_per_replica=4, min_shard_bytes=0)
     _, (weight, bias) = model_parallelism(model, spec)
     assert weight.weights.capacity == 8 and bias.weights.capacity == 1
     spec = replace(

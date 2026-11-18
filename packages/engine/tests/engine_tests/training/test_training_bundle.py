@@ -147,6 +147,7 @@ def test_bundle_reconstructs_shared_names_and_rejects_rank_local_renaming(monkey
             inputs=InputPlacement.independent(
                 2, fields=[InputFieldPlacement(tuple(f.path)) for f in fields]
             ),
+            min_shard_bytes=0,
         ),
     )
     restored = bundle.recheck(installed())

@@ -158,7 +158,7 @@ def test_existing_generic_ownership_is_preserved_and_replicas_never_alias():
     )
     source = replace(
         source,
-        parallelism=Parallelism.dp(ranks_per_replica=2),
+        parallelism=Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0),
         bindings={**source.bindings, "parameter_ownership": [ownership.to_dict()]},
     )
     first, second = program_state(source, 0), program_state(source, 1)

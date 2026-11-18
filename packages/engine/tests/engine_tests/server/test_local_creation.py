@@ -80,6 +80,7 @@ def configured(
                 ranks_per_replica=ranks,
                 num_replicas=1,
                 inputs=InputPlacement.independent(ranks, fields=fields),
+                min_shard_bytes=0,
             ),
         )
     family = prepared_worker(inv).bindings.prepared

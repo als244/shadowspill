@@ -40,7 +40,7 @@ def test_public_glm_hopper_allocation_coverage(family, implementation):
     parallelism = (
         expert_parallel(8, experts=["layers.*.mlp.experts.*"])
         if implementation == "mlops_ep"
-        else data_parallel(8)
+        else data_parallel(8, min_shard_bytes=0)
     )
     setup = resolve_training(
         load_registry(["shadowspill", "shadowspill-workloads"]),

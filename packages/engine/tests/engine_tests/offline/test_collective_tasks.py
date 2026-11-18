@@ -102,7 +102,7 @@ def collective_program(workspace=None):
             TaskDefinition("reduce", "reduce", workspace),
         ),
         initial_residency=(ResidencySpec("weight", MemoryLocation.SPILL),),
-        parallelism=Parallelism.dp(ranks_per_replica=2),
+        parallelism=Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0),
         setup={"hardware": "fixture"},
         fixed_device_bytes=0,
         bindings={

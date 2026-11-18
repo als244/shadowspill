@@ -68,7 +68,7 @@ def test_readme_dp_candidates_keep_full_updates_and_independent_moe_geometry():
             weights={"balance": 0.001},
         ),
         optimizer=Optimizer("adamw"),
-        parallelism=Parallelism.from_dict(data_parallel(8)),
+        parallelism=Parallelism.from_dict(data_parallel(8, min_shard_bytes=0)),
         batch=BatchConfig(
             limits={
                 "token_capacity": 2097152,

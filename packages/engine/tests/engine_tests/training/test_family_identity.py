@@ -19,6 +19,7 @@ def test_execution_names_reuse_only_when_every_worker_uses_the_same_operation():
             inputs=InputPlacement.independent(
                 2, fields=[InputFieldPlacement(tuple(f.path)) for f in fields]
             ),
+            min_shard_bytes=0,
         )
     )
     step = prepared.families[OperationKey("step", "metrics")][0]

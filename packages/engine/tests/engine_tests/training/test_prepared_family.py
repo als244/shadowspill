@@ -36,6 +36,7 @@ def test_prepared_workers_share_execution_names_without_merging_local_plans(
             inputs=InputPlacement.independent(
                 2, fields=[InputFieldPlacement(tuple(f.path)) for f in fields]
             ),
+            min_shard_bytes=0,
         )
     )
     rows, plans = [], {rank: {} for rank in (0, 1)}

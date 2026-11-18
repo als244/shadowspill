@@ -31,7 +31,7 @@ def main(mode, root):
             objective=lambda m, x: m(x).square().mean(),
             example_args=(torch.empty(2048, 1024),),
             num_examples=2,
-            parallelism=Parallelism.dp(ranks_per_replica=2),
+            parallelism=Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0),
             partition="whole",
         )
         profiles = measure_program(program, warmup_seconds=0.005, measure_seconds=0.01)

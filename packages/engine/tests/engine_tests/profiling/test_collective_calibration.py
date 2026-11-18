@@ -176,7 +176,7 @@ def _gpu_worker(worker, rendezvous, output):
         source = replace(
             source,
             setup=build_setup(device),
-            parallelism=Parallelism.dp(ranks_per_replica=2),
+            parallelism=Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0),
             bindings={
                 **source.bindings,
                 "weight_shards": {

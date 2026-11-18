@@ -17,9 +17,13 @@ class ParameterStorage:
     it. Master weights follow optimizer ownership; scalar optimizer controls do
     not acquire a parameter-shaped shard just because moments do.
 
-    ``min_shard_bytes`` is opt-in (zero by default). Parameters whose unpadded
-    physical weight storage is smaller keep all components replicated. Frozen
-    tensor-wrapper payloads/scales are also checked separately during lowering.
+    Parameters whose unpadded physical weight storage is smaller than
+    ``min_shard_bytes`` keep all components replicated: a shard of a small
+    tensor saves little memory and costs a collective at every fetch.
+    ``Parallelism.dp`` and the client's ``data_parallel`` set it to 2 MiB;
+    left unset here it inherits the default storage's, and zero shards
+    everything. Frozen tensor-wrapper payloads/scales are also checked
+    separately during lowering.
 
     The modes govern parameters. A buffer is stored whole on every rank: it has
     no gradient or optimizer state to share a shard with, and a program that

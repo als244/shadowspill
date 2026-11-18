@@ -3,18 +3,26 @@
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+#: Parameters whose weight storage is smaller stay whole on every rank: a
+#: shard of a small tensor saves little memory and costs a collective per fetch.
+MIN_SHARD_BYTES = 2 << 20
+
 
 def data_parallel(
     ranks: int,
     *,
     fields: Sequence[Sequence[str]] | None = None,
     outputs: Mapping[str, Any] | None = None,
+    min_shard_bytes: int = MIN_SHARD_BYTES,
 ) -> dict[str, Any]:
     """Declare data parallelism before build/profile/plan.
 
     Each worker receives an independent input partition. Omitted ``fields``
     are filled from the model/objective schema during setup. Explicit fields
     and output assembly rules are available for custom definitions.
+    Weights, gradients and optimizer state are sharded over the workers,
+    except parameters whose weight storage is under ``min_shard_bytes``,
+    which every worker keeps whole; zero shards every parameter.
     """
     return {
         "ranks_per_replica": ranks,
@@ -27,7 +35,7 @@ def data_parallel(
             "weights": "sharded",
             "gradients": "sharded",
             "optimizer": "sharded",
-            "min_shard_bytes": 0,
+            "min_shard_bytes": min_shard_bytes,
         },
         "parameter_storage": {},
         "inputs": {

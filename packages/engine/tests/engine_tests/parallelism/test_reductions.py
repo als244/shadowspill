@@ -8,7 +8,7 @@ from shadowspill.parallelism.resolve import ParameterGeometry, resolve_parameter
 
 
 def reduction_cases():
-    ordinary = Parallelism.dp(ranks_per_replica=2, num_replicas=2)
+    ordinary = Parallelism.dp(ranks_per_replica=2, num_replicas=2, min_shard_bytes=0)
     experts = Parallelism(
         ranks_per_replica=4,
         groups={"exchange": ((0, 1), (2, 3)), "owners": ((0, 2), (1, 3))},
@@ -17,7 +17,9 @@ def reduction_cases():
             group="owners", weights="sharded", gradients="sharded", optimizer="sharded"
         ),
     )
-    replicated = Parallelism.dp(ranks_per_replica=4, gradients="replicated")
+    replicated = Parallelism.dp(
+        ranks_per_replica=4, gradients="replicated", min_shard_bytes=0
+    )
     return [
         resolve_parameters(spec, (ParameterGeometry(("weight",), (5,), True),))[0]
         for spec in (ordinary, experts, replicated)
@@ -53,7 +55,7 @@ def test_gradient_completion_includes_matching_owners_across_replicas():
 
 
 def test_no_reduction_for_unique_owned_parameter_and_no_frozen_gradient():
-    spec = Parallelism.dp()
+    spec = Parallelism.dp(min_shard_bytes=0)
     parameter = resolve_parameters(spec, (ParameterGeometry(("weight",), (5,), True),))[
         0
     ]

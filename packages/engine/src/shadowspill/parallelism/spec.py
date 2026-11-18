@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from shadowspill_client.parallelism import MIN_SHARD_BYTES
 from shadowspill_client.placement.groups import GroupRef
 from shadowspill_client.placement.inputs import InputPlacement
 
@@ -99,7 +100,7 @@ class Parallelism:
         weights: StorageMode = "sharded",
         gradients: StorageMode = "sharded",
         optimizer: StorageMode = "sharded",
-        min_shard_bytes: int = 0,
+        min_shard_bytes: int = MIN_SHARD_BYTES,
         inputs: InputPlacement | None = None,
     ) -> Parallelism:
         return cls(

@@ -51,7 +51,9 @@ def test_step_build_measure_plan_and_local_owned_updates(
         partition="whole",
         grad_dtype=torch.float32,
         master_dtype=master_dtype,
-        parallelism=Parallelism.dp(ranks_per_replica=2, num_replicas=2),
+        parallelism=Parallelism.dp(
+            ranks_per_replica=2, num_replicas=2, min_shard_bytes=0
+        ),
     )
     assert not optimizer.state
     assert all(parameter.is_meta for parameter in model.parameters())

@@ -227,7 +227,10 @@ def test_flat_owned_regions_reuse_existing_resolver_and_exclude_padding(
 
 
 def test_factored_optimizer_state_uses_its_own_shape_and_needs_sharded_mapping():
-    source = shaped((4, 4), Parallelism.dp(ranks_per_replica=2, optimizer="replicated"))
+    source = shaped(
+        (4, 4),
+        Parallelism.dp(ranks_per_replica=2, optimizer="replicated", min_shard_bytes=0),
+    )
     moment = "optimizer.linear.weight.exp_avg"
     source = replace(
         source,

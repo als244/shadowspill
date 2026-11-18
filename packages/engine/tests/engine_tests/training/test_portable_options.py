@@ -26,7 +26,7 @@ def test_planning_records_carry_existing_search_serialization():
     )
     restored = SearchOptions.from_dict(portable.to_dict()["search"], "search")
     assert restored.to_dict() == original.to_dict()
-    parallelism = Parallelism.dp(ranks_per_replica=2)
+    parallelism = Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0)
     assert Parallelism.from_dict(parallelism.to_dict()) == parallelism
 
 

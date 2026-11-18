@@ -182,6 +182,7 @@ def test_replicated_dp_step_finalizes_gradient_copy_kernels():
             weights="replicated",
             gradients="replicated",
             optimizer="replicated",
+            min_shard_bytes=0,
         ),
     )
     copies = [row["padding"] for row in program.bindings["gradient_templates"]]

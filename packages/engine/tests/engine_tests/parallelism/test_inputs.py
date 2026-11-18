@@ -42,7 +42,7 @@ def pairs(*, loss="leader", sliced=False):
 
 
 def test_input_partitions_do_not_change_parameter_ownership_or_legacy_serialization():
-    base = Parallelism.dp(ranks_per_replica=4)
+    base = Parallelism.dp(ranks_per_replica=4, min_shard_bytes=0)
     declarations = (ParameterGeometry(("weight",), (8, 8), True),)
     independent = replace(base, inputs=InputPlacement.independent(4))
     cooperating = replace(base, inputs=pairs())
@@ -110,7 +110,9 @@ def test_scheduled_capacity_counts_padding_and_unique_input_partitions():
 
 def test_invalid_missing_or_ambiguous_declarations_fail_before_routing():
     with pytest.raises(ValueError, match="every logical rank"):
-        Parallelism.dp(ranks_per_replica=4, inputs=InputPlacement.independent(2))
+        Parallelism.dp(
+            ranks_per_replica=4, inputs=InputPlacement.independent(2), min_shard_bytes=0
+        )
     with pytest.raises(ValueError, match="nonempty names"):
         InputFieldPlacement("tokens")
     with pytest.raises(ValueError, match="unique"):
@@ -143,7 +145,8 @@ for name in ('torch', 'numpy', 'shadowspill_workloads', 'mlops',
              'shadowspill_client.transport'):
     sys.modules[name] = None
 from shadowspill.parallelism import InputPlacement, Parallelism
-p = Parallelism.dp(ranks_per_replica=4, inputs=InputPlacement.independent(4))
+placement = InputPlacement.independent(4)
+p = Parallelism.dp(ranks_per_replica=4, inputs=placement, min_shard_bytes=0)
 assert Parallelism.from_dict(json.loads(json.dumps(p.to_dict()))) == p
 assert p.inputs.scheduled_capacity([[32] for _ in range(4)]) == 128
 """

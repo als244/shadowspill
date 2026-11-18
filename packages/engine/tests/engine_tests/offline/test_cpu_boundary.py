@@ -56,7 +56,9 @@ from shadowspill.parallelism.resolve import ParameterGeometry, resolve_parameter
 from shadowspill.planning.memory_search import GenericPlanningOptions, SearchOptions
 from shadowspill.planning.shared import shared_memory
 plan = Plan.load('input.ssp')
-parallelism = Parallelism.dp(ranks_per_replica=8, num_replicas=2)
+parallelism = Parallelism.dp(
+    ranks_per_replica=8, num_replicas=2, min_shard_bytes=0
+)
 assert parallelism.group('all_ranks').size == 8
 parameter, = resolve_parameters(parallelism, (
     ParameterGeometry(('weight',), (32, 32), True),
