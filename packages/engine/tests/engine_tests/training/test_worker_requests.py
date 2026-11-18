@@ -12,7 +12,6 @@ from engine_tests.training.test_worker_output_frame import description, result
 from shadowspill.orchestration.launch.file_grants import FileGrants, resolve_file
 from shadowspill.orchestration.launch.publication import OutputFiles, require_output
 from shadowspill.training.session.dispatch import ExecutionNotStarted
-from shadowspill.training.worker import requests as request_module
 from shadowspill.training.worker.connection import WorkerConnection
 from shadowspill.training.worker.group import WorkerGroup
 from shadowspill.training.worker.output_files import FileOutputs
@@ -133,29 +132,22 @@ def test_results_retain_inputs_outputs_and_metadata_through_verification(
         assert ctx.group.valid
 
 
-def test_execution_time_excludes_file_preparation_and_later_publication(
+def test_execution_time_uses_slowest_worker_without_report_publication(
     tmp_path, monkeypatch
 ):
     with configured(tmp_path, monkeypatch) as ctx:
-        clock = [10.0]
-        monkeypatch.setattr(request_module, "monotonic", lambda: clock[0])
-        prepare, run = ctx.transport._prepare, ctx.group.run
-
-        def slow_prepare(*args):
-            clock[0] += 100
-            return prepare(*args)
+        run = ctx.group.run
 
         def execute(*args):
-            clock[0] += 2.5
-            return run(*args)
+            replies = run(*args)
+            return {
+                0: replace(replies[0], execution_seconds=2.5),
+                1: replace(replies[0], execution_seconds=3.0),
+            }
 
-        monkeypatch.setattr(ctx.transport, "_prepare", slow_prepare)
         monkeypatch.setattr(ctx.group, "run", execute)
         work = ctx.transport.execute(ctx.data, ctx.transition)
-        assert work.execution_seconds == 2.5
-        clock[0] += 100
-        work.verify()
-        assert work.execution_seconds == 2.5
+        assert work.execution_seconds == 3.0
         work.close()
 
 

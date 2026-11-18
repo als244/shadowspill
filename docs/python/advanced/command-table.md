@@ -24,7 +24,8 @@ token/sequence counts and total/supervised sequence lengths. Lengths use
 
 Times in **Submitted** and **Completed** use your laptop's local clock; the timezone
 appears above the table. **Time** comes from `result.execution_seconds`, excluding
-client preparation, uploads, queueing and final artifact publication. **Tokens/s**
+client preparation, uploads, queueing, output serialization and runtime-report
+generation. It reports the slowest worker’s execution duration. **Tokens/s**
 divides logical input tokens by that server duration. It excludes packing padding
 and replicated worker copies.
 

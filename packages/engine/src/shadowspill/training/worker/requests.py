@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from threading import Lock, RLock
-from time import monotonic
 from types import MappingProxyType
 from typing import BinaryIO, Self
 
@@ -164,14 +163,17 @@ class WorkerRequests:
                     raise ExecutionNotStarted(str(error)) from error
                 raise
             try:
-                started = monotonic()
                 replies = (
                     self.group.run(commands)
                     if checkpoint is None
                     else self._save(result, commands, checkpoint)
                 )
                 if call.key is not None:
-                    result.execution_seconds = monotonic() - started
+                    durations = [reply.execution_seconds for reply in replies.values()]
+                    if durations and all(value is not None for value in durations):
+                        result.execution_seconds = max(
+                            value for value in durations if value is not None
+                        )
                 if call.restore is not None:
                     assert self._checkpoints is not None
                     self._checkpoints.restored(call.restore)

@@ -211,7 +211,9 @@ def test_worker_loop_preserves_optional_trace_issue_and_never_replays():
     def execute(_):
         effects.append(1)
         return WorkerArtifacts(
-            None, trace=ArtifactRef("trace", "a" * 64, 10, "application/zip")
+            None,
+            trace=ArtifactRef("trace", "a" * 64, 10, "application/zip"),
+            execution_seconds=2.5,
         )
 
     worker = WorkerLoop(SCOPE, lambda _: bound, execute, BufferBudget(1))
@@ -219,5 +221,61 @@ def test_worker_loop_preserves_optional_trace_issue_and_never_replays():
     completed = worker.handle(WorkerControl(ready.ticket, "execute"))
     assert completed.status == completed.effect == "completed" and worker.valid
     assert completed.trace.id == "trace" and effects == [1]
+    assert completed.execution_seconds == 2.5
+    assert CODEC.decode(CODEC.encode(completed)).execution_seconds == 2.5
     with pytest.raises(ValueError):
         replace(completed, status="ready", effect="not_started")
+
+
+@pytest.mark.parametrize("traced", [False, True])
+def test_execution_duration_excludes_output_and_trace_report_processing(
+    monkeypatch, traced
+):
+    from shadowspill.training.worker import execution as module
+
+    clock = [100.0]
+    monkeypatch.setattr(module, "monotonic", lambda: clock[0])
+    call = traced_call()
+    call.command = replace(
+        call.command, request=replace(call.command.request, runtime_trace=traced)
+    )
+
+    def run(**kwargs):
+        clock[0] += 2.0
+        return SimpleNamespace(result=lambda: None)
+
+    def synchronize():
+        clock[0] += 0.5
+
+    def collect(*args):
+        clock[0] += 10.0
+
+    def report(*args):
+        clock[0] += 20.0
+        return None, None
+
+    traces = SimpleNamespace(
+        budget=lambda _: (
+            SimpleNamespace(host_bytes=1, capacities=None) if traced else None
+        ),
+        collect=report,
+    )
+    worker = WorkerExecution(
+        SimpleNamespace(run=run, synchronize=synchronize),
+        SimpleNamespace(scope=SCOPE, primary="main"),
+        BufferBudget(1),
+        collect,
+        traces=traces,
+        diagnostics=BufferBudget(1),
+    )
+    result = worker(call)
+    assert result.execution_seconds == 2.5
+    assert clock[0] == (133.0 if traced else 113.0)
+
+
+@pytest.mark.parametrize("duration", [-1, float("nan"), float("inf"), True])
+def test_worker_reply_rejects_invalid_execution_duration(duration):
+    with pytest.raises(ValueError):
+        WorkerReply(
+            ticket(call()), "completed", "completed", execution_seconds=duration
+        )

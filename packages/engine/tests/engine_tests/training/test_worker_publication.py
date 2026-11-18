@@ -63,7 +63,7 @@ def test_output_failure_classification_requires_both_terminal_boundaries(failure
         if failure == "disk":
             assert events == ["execute", "sync", "copy", "released", "sync"]
     else:
-        assert worker(call) is None
+        assert worker(call).result is None
         assert events == ["execute", "sync", "copy", "released", "sync"]
 
 
@@ -103,5 +103,5 @@ def test_input_lease_is_released_before_the_same_budget_is_used_for_output():
         budget,
         collect,
     )
-    assert worker(call) is None
+    assert worker(call).result is None
     assert events == ["input", "input_closed", "output"] and budget.used == (0, 0)

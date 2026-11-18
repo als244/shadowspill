@@ -14,8 +14,8 @@ elapsed_seconds = perf_counter() - start
 
 This end-to-end interval includes required terminal writeback and any enabled
 observations. Warm up before measuring steady state. Public client results report
-`execution_seconds` for server-side execution, excluding client data preparation
-and request queueing. Benchmark runners retain their measurement policy with
+`execution_seconds` for the slowest worker’s execution, excluding client data
+preparation, request queueing, output serialization and runtime-report generation. Benchmark runners retain their measurement policy with
 the results.
 
 ## Device trace

@@ -131,6 +131,7 @@ class WorkerLoop:
             value = self._execute(bound)
             saved = None
             trace = trace_issue = None
+            execution_seconds = None
             result: ArtifactRef | None
             if isinstance(value, RankSaved):
                 saved = value
@@ -145,6 +146,7 @@ class WorkerLoop:
                 if bound.checkpoint is not None:
                     raise ValueError("worker omitted its checkpoint completion")
                 if isinstance(value, WorkerArtifacts):
+                    execution_seconds = value.execution_seconds
                     result, trace, trace_issue = (
                         value.result,
                         value.trace,
@@ -164,6 +166,7 @@ class WorkerLoop:
                 saved=saved,
                 trace=trace,
                 trace_issue=trace_issue,
+                execution_seconds=execution_seconds,
             )
         except WorkerOutputError as error:
             return WorkerReply(identity, "failed", "completed", message=_message(error))

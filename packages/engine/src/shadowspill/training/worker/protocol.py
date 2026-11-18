@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from shadowspill_client._records import Record, integer, names, record, text
+from shadowspill_client._records import Record, integer, names, number, record, text
 from shadowspill_client.protocol.checkpoints import SaveInfo
 from shadowspill_client.protocol.codec import RecordCodec
 from shadowspill_client.protocol.requests import (
@@ -303,6 +303,7 @@ class WorkerReply(Record):
     saved: RankSaved | None = None
     trace: ArtifactRef | None = None
     trace_issue: ArtifactIssue | None = None
+    execution_seconds: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "ticket", record(WorkerTicket, self.ticket, "ticket"))
@@ -314,6 +315,10 @@ class WorkerReply(Record):
             raise ValueError("staging cannot claim execution effects")
         if self.status == "completed" and self.effect != "completed":
             raise ValueError("completed worker replies require confirmed effects")
+        if self.execution_seconds is not None:
+            number(self.execution_seconds, "worker execution seconds", minimum=0)
+            if self.effect != "completed":
+                raise ValueError("execution timing requires confirmed effects")
         if self.message is not None:
             text(self.message, "worker failure message")
             if len(self.message) > 1024:
@@ -363,6 +368,7 @@ class WorkerArtifacts:
     result: ArtifactRef | None
     trace: ArtifactRef | None = None
     trace_issue: ArtifactIssue | None = None
+    execution_seconds: float | None = None
 
 
 CODEC = RecordCodec(

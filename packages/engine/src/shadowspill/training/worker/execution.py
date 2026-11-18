@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from contextlib import nullcontext
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from shadowspill.runtime.plan.tracing import TraceCapacities
@@ -142,8 +143,9 @@ class WorkerExecution:
                     trace_issue=ArtifactIssue(
                         "runtime_trace_skipped", "Skipped operation executed no Plan."
                     ),
+                    execution_seconds=0.0,
                 )
-            return None
+            return WorkerArtifacts(None, execution_seconds=0.0)
         evaluation = self._randomness is not None and (
             call.command.request.operation == "forward" or call.command.skipped
         )
@@ -173,6 +175,7 @@ class WorkerExecution:
         value = invocation = None
         trace = issue = None
         try:
+            started = monotonic()
             with call.input_loader(self._budget) or nullcontext(None) as loader:
                 invocation = self._executor.run(
                     plan=None if call.plan == self._bindings.primary else call.plan,
@@ -192,6 +195,7 @@ class WorkerExecution:
             # Establish completed device effects before classifying a later
             # filesystem/transport error as publication failure.
             self._executor.synchronize()
+            execution_seconds = monotonic() - started
             try:
                 result = self._collect(call, value, self._budget)
             except OSError as error:
@@ -212,6 +216,4 @@ class WorkerExecution:
         self._executor.synchronize()
         if publication_error is not None:
             raise WorkerOutputError(publication_error)
-        if call.command.request.runtime_trace:
-            return WorkerArtifacts(result, trace, issue)
-        return result
+        return WorkerArtifacts(result, trace, issue, execution_seconds)
