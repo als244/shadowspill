@@ -136,8 +136,9 @@ with Executor(primary, plans=plans) as executor:
     )
 
     # The operation state selects fresh/additive paths from completed validity,
-    # not call number. A masked request still observes its requested outputs
-    # through a prepared forward-only computation with the same objective.
+    # not call number. A batch with no loss participation is refused as
+    # training; its outputs come from a prepared forward-only computation with
+    # the same objective, which the caller requests explicitly.
     executor.initialize(fill, chunk_bytes=32)
     state = OperationState()
 
@@ -146,12 +147,10 @@ with Executor(primary, plans=plans) as executor:
     ):
         transition = state.begin(command, request_id, participates=participates)
         output = None
-        if transition.skipped:
-            name = "masked_outputs" if args is not None else None
         if name is not None:
             controls = (
                 {}
-                if scale is None or transition.skipped
+                if scale is None
                 else {plans[name].program.bindings["gradient_scale_control"]: scale}
             )
             result = executor.run(
@@ -170,6 +169,18 @@ with Executor(primary, plans=plans) as executor:
             state.complete(transition)
         return transition, output
 
+    def refused(command, request_id, match="no loss participation", **given):
+        """A command the state refuses leaves the boundary and storage alone."""
+        boundary, before = state.boundary, snapshot(executor)
+        try:
+            state.begin(command, request_id, **given)
+        except (ValueError, RuntimeError) as error:
+            assert match in str(error), error
+        else:
+            raise AssertionError(f"{command} was accepted")
+        assert state.boundary == boundary
+        torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
+
     def mutable_state():
         return {
             name: value
@@ -179,10 +190,8 @@ with Executor(primary, plans=plans) as executor:
 
     masked = (*oracle["examples"][0][:2], torch.zeros_like(oracle["examples"][0][2]))
     initial = mutable_state()
-    empty, outputs = execute(
-        "forward_backward", "masked_first", args=masked, participates=False
-    )
-    assert empty.skipped and not empty.accumulate_gradients
+    refused("forward_backward", "masked_first", participates=False)
+    _, outputs = execute("forward", "masked_first_outputs", "masked_outputs", masked)
     assert outputs[0].item() == 0.0
     torch.testing.assert_close(
         outputs[1]["prediction"],
@@ -194,7 +203,8 @@ with Executor(primary, plans=plans) as executor:
     )
     assert not first.accumulate_gradients
     before = snapshot(executor)
-    execute("forward_backward", "masked_later", args=masked, participates=False)
+    refused("forward_backward", "masked_later", participates=False)
+    execute("forward", "masked_later_outputs", "masked_outputs", masked)
     torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
     evaluation = state.begin("forward", "evaluation_between_parts")
     executor.run(args=[(oracle["examples"][0][0],)]).result()
@@ -212,11 +222,12 @@ with Executor(primary, plans=plans) as executor:
         state.boundary.completed_updates == 1 and not state.boundary.accumulation.open
     )
 
+    # Nothing participated since that update, so there is nothing to apply.
     before = mutable_state()
-    execute("step", "masked_step", args=masked, participates=False)
-    execute("forward_backward", "entirely_masked", args=masked, participates=False)
-    skipped, _ = execute("optim_step", "skipped_update", "optim")
-    assert skipped.skipped and state.boundary.completed_updates == 1
+    refused("step", "masked_step", participates=False)
+    refused("forward_backward", "entirely_masked", participates=False)
+    refused("optim_step", "empty_update", match="open accumulation")
+    assert state.boundary.completed_updates == 1
     torch.testing.assert_close(mutable_state(), before, rtol=0, atol=0)
 
     # Discard closes the generation without an optimizer call; the next valid

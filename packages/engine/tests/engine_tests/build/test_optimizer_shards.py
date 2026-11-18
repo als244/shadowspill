@@ -18,11 +18,14 @@ from shadowspill.pytorch.optimizer.sandbox import (
     optimizer_parameters,
 )
 from shadowspill.pytorch.representations import is_wrapper
+from shadowspill.task.profiling import ProfilingOptions
 
 
 def owned_parameters(model, optimizer, *, master_dtype):
     named = dict(model.named_parameters())
-    _, declarations = model_parallelism(model, Parallelism.dp(ranks_per_replica=4))
+    _, declarations = model_parallelism(
+        model, Parallelism.dp(ranks_per_replica=4, min_shard_bytes=0)
+    )
     copied, names = copy_optimizer_to_meta(
         optimizer, {id(value): name for name, value in named.items()}
     )
@@ -105,7 +108,9 @@ def test_one_compiled_local_update_matches_full_adam_over_four_owned_shards(
             opt_state_dtype=torch.float32,
         )
     )
-    _, ownership = model_parallelism(model, Parallelism.dp(ranks_per_replica=4))
+    _, ownership = model_parallelism(
+        model, Parallelism.dp(ranks_per_replica=4, min_shard_bytes=0)
+    )
     training = capture_training_model(
         model,
         lambda model, x: model(x).float().square().mean(),
@@ -202,8 +207,7 @@ def test_one_compiled_local_update_matches_full_adam_over_four_owned_shards(
         tuple(states[0][binding.name].clone() for binding in update.captured.bindings),
         compiled.manifest.to_dict(),
         device=torch.device("cuda", 0),
-        warmup_seconds=0.005,
-        measure_seconds=0.01,
+        options=ProfilingOptions(conditioning_seconds=0.005, measurement_seconds=0.01),
     )
     assert measured.duration_seconds > 0
     assert measured.metadata["memory_kind"] == "measured"

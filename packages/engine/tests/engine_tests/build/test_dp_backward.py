@@ -17,7 +17,9 @@ from shadowspill import (
     measure_program,
     plan_program,
 )
+from shadowspill.communication.overlap import timing_class
 from shadowspill.communication.requests import collective_requests
+from shadowspill.communication.transfers import transfer_collectives
 from shadowspill.ir import MemoryLocation
 from shadowspill.step.ordering import StepDataOrdering
 
@@ -44,7 +46,9 @@ def test_one_gpu_build_profiles_compute_and_plans_sharded_gradient_spills(
         num_examples=2,
         partition="whole",
         grad_dtype=torch.float32,
-        parallelism=Parallelism.dp(ranks_per_replica=2, num_replicas=2),
+        parallelism=Parallelism.dp(
+            ranks_per_replica=2, num_replicas=2, min_shard_bytes=0
+        ),
     )
     source.save(tmp_path / "program.ssp")
     check_shard_loading(source)
@@ -115,9 +119,16 @@ def test_one_gpu_build_profiles_compute_and_plans_sharded_gradient_spills(
                 if a.alias_group_id == aliases[gradient]
             )
             assert transfer.spill_size_bytes == 72
+            # One timed phase holds the whole reduction: the scatter within a
+            # replica, then the sum across replicas. Its class is the route's.
+            route = transfer_collectives(path.program.bindings)[aliases[gradient]]
+            assert list(dict.fromkeys(r.operation for r in route)) == [
+                "reduce_scatter",
+                "all_reduce",
+            ]
             assert [
                 phase.timing_class for phase in transfer.evict if phase.kind == "timed"
-            ] == ["reduce_scatter_ring+all_reduce_ring"]
+            ] == [timing_class(route, info)]
             assert path.simulation_only_reasons
     requests = collective_requests(source, None)
     assert {row.operation for row in requests} == {

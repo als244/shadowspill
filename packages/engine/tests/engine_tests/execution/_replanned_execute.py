@@ -19,6 +19,12 @@ forbid_preparation(
     "shadowspill.planning",
     "engine_tests.execution._replanned_model",
     "shadowspill_workloads.models",
+    # A saved Plan is read through its own records: what the search admitted
+    # and how they are serialized. Reading them is not planning again.
+    allowed=(
+        "shadowspill.planning.memory_search",
+        "shadowspill.planning.serialization",
+    ),
 )
 directory, gib, kind = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 provider = {

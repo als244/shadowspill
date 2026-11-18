@@ -1,4 +1,4 @@
-"""A distributed replacement must allocate the complete padded storage root."""
+"""A buffer a task replaces keeps its whole, unpadded storage on every rank."""
 
 import pytest
 import torch
@@ -24,7 +24,7 @@ class MutableBuffers(nn.Module):
 
 
 @pytest.mark.cuda
-def test_sharded_mutations_allocate_padding_before_profiling(monkeypatch):
+def test_replaced_buffers_stay_whole_while_parameters_are_sharded(monkeypatch):
     if not torch.cuda.is_available():
         pytest.skip("requires one representative GPU")
 
@@ -42,7 +42,7 @@ def test_sharded_mutations_allocate_padding_before_profiling(monkeypatch):
         example_args=(torch.zeros(2, 5),),
         num_examples=2,
         partition="whole",
-        parallelism=Parallelism.dp(ranks_per_replica=2),
+        parallelism=Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0),
     )
     profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
     assert profiles.tasks
@@ -60,7 +60,9 @@ def test_sharded_mutations_allocate_padding_before_profiling(monkeypatch):
         for slot in job["forward"]["outputs"]:
             obj = next(o for o in program.objects if o.object_id == slot["object_id"])
             names = program.sources.get(obj.alias_group_id, ())
-            for name, increment, elements in (("count", 1, 2), ("running", 2, 6)):
+            # A buffer has no gradient or optimizer state to share a shard
+            # with, so it is never padded to a multiple of the ranks.
+            for name, increment, elements in (("count", 1, 1), ("running", 2, 5)):
                 if name not in names:
                     continue
                 source = next(

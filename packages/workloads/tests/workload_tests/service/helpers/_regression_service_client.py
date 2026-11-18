@@ -179,8 +179,13 @@ def weights(training):
 def check(training, oracle, memory, *, counter=None):
     actual = weights(training)
     assert actual.keys() == oracle.weights.keys() | {"updates"}
+    # A BF16 gradient is rounded where it is accumulated, and the engine and
+    # this oracle need not round at the same point. AdamW divides a gradient
+    # by its own running magnitude, so a rounding step in a small gradient
+    # moves its weight by a visible fraction of the learning rate.
+    rtol, atol = (3e-3, 3e-4) if oracle.gradient_dtype == "bfloat16" else (3e-4, 3e-6)
     for name, expected in oracle.weights.items():
-        np.testing.assert_allclose(actual[name], expected, rtol=3e-4, atol=3e-6)
+        np.testing.assert_allclose(actual[name], expected, rtol=rtol, atol=atol)
     if counter is not None:
         assert actual["updates"].item() == counter
     np.testing.assert_allclose(

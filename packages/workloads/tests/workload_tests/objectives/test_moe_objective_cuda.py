@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 import torch
 
+from engine_tests.precision import bf16_step
 from shadowspill.pytorch.capture.objective import capture_training_objective
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_workloads.lora import configure_lora
@@ -122,10 +123,11 @@ def test_provider_capture_and_two_updates_match_independent_geometry_oracle(
             if not actual.requires_grad:
                 torch.testing.assert_close(actual, expected, atol=0, rtol=0)
                 continue
+            # The two implementations round in a different order.
             torch.testing.assert_close(
                 actual.grad,
                 expected.grad,
-                atol=0.002,
+                atol=max(0.002, 2 * bf16_step(expected.grad)),
                 rtol=0.03,
                 msg=lambda message, name=name: name + "\n" + message,
             )

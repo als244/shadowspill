@@ -6,6 +6,7 @@ import pytest
 import torch
 from torch import nn
 
+from engine_tests.precision import bf16_step
 from shadowspill.pytorch.precision import apply_parameter_dtypes
 from shadowspill_workloads.models.qwen35.config import PRESETS as DENSE
 from shadowspill_workloads.models.qwen35.implementations.pytorch import linear_attention
@@ -123,7 +124,8 @@ def test_bfloat16_gpu_recurrence_matches_reference_decay_gradients(factory):
     )
     actual = module(hidden, cumulative, chunks)
     expected = reference(hidden, lengths)
-    torch.testing.assert_close(actual, expected, rtol=0.02, atol=1e-5)
+    # Both run the recurrence in BF16 and round in a different order.
+    torch.testing.assert_close(actual, expected, rtol=0.02, atol=bf16_step(expected))
     (actual.float() * tangent.float()).sum().backward()
     (expected.float() * tangent.float()).sum().backward()
     for name in ("A_log", "dt_bias"):
