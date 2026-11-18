@@ -42,6 +42,7 @@ from shadowspill.server.live import LiveRun  # noqa: E402
 from shadowspill.server.records.requests import RunIdentity  # noqa: E402
 from shadowspill.server.results import ResultPublisher  # noqa: E402
 from shadowspill.server.startup.configuration import LocalCreationLimits  # noqa: E402
+from shadowspill.server.startup.logs import archived_chunks  # noqa: E402
 from shadowspill.server.storage import ServiceStorage  # noqa: E402
 from shadowspill.training.definitions import load_registry  # noqa: E402
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle  # noqa: E402
@@ -62,6 +63,7 @@ from shadowspill_client.buffers import BufferBudget  # noqa: E402
 from shadowspill_client.protocol.codec import decode, encode  # noqa: E402
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch  # noqa: E402
 from shadowspill_client.protocol.payload_io import read_payload  # noqa: E402
+from shadowspill_client.protocol.progress import ProgressRequest  # noqa: E402
 from shadowspill_client.protocol.requests import (  # noqa: E402
     ArtifactRef,
     OperationRequest,
@@ -555,7 +557,12 @@ def qualify_allocation_stop():
             assert storage.catalog.get(identity).state == "stopped"
             with storage.requests(identity) as saved:
                 assert saved.get("backward")[1] == result
-            assert any(ref.id.startswith("worker-logs.") for ref in artifacts.page())
+            retained_logs = archived_chunks(artifacts, identity, ProgressRequest(), ())
+            assert {chunk.stream for chunk in retained_logs} == {
+                "worker-0.stdout",
+                "worker-0.stderr",
+            }
+            assert all(chunk.complete for chunk in retained_logs)
         finally:
             jobs.close(timeout=30)
             live.stop()
@@ -773,17 +780,20 @@ def qualify_public_server():
                         == status.result.history_id
                     )
                 manifests = []
-                for ref in artifacts.page(limit=128):
-                    if ref.id.startswith("preparation."):
-                        with artifacts.open(ref) as stream:
-                            manifest = json.load(stream)
-                        if manifest["run_id"] == result["run_id"]:
-                            manifests.append(manifest)
+                after = ""
+                while page := artifacts.page(after=after, limit=128):
+                    for ref in page:
+                        if ref.id.startswith("preparation."):
+                            with artifacts.open(ref) as stream:
+                                manifest = json.load(stream)
+                            if manifest["run_id"] == result["run_id"]:
+                                manifests.append(manifest)
+                    after = page[-1].id
                 phases = sorted(m["phase"] for m in manifests if "phase" in m)
                 assert phases == (
-                    ["build", "communicate", "plan", "profile"]
+                    ["build", "communicate", "plan", "profile", "startup", "worker-0"]
                     if mode == "fresh"
-                    else []
+                    else ["startup", "worker-0"]
                 )
                 receipts.append(
                     {

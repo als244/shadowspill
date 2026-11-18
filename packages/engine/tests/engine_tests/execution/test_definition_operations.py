@@ -344,6 +344,11 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         ],
         env={
             **os.environ,
+            # This fixture launches a worker directly, so it must supply the
+            # single-device visibility normally assigned by WorkerNode.
+            "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(
+                ","
+            )[0],
             "PYTHONHASHSEED": "3",
             "TORCHINDUCTOR_CACHE_DIR": str(tmp_path / "cold-inductor"),
             "TRITON_CACHE_DIR": str(tmp_path / "cold-triton"),
