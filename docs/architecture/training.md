@@ -42,7 +42,7 @@ compatible Plans within the requested memory budgets. Homogeneous workers share
 one complete Plan for each selected variant, with rank-specific tensor shards,
 inputs and communicator bindings supplied during startup.
 
-`prepare_training()` publishes saved Plans and predicted HTML reports before any
+`plan_training()` publishes saved Plans and predicted HTML reports before any
 training starts. Creating a training client from those Plans skips build,
 profiling and planning. Workers validate the saved computation and installed
 sources, bind their logical ranks and initialize model state through bounded
@@ -117,4 +117,4 @@ See [basic training](../examples/client-training.md),
 
 Previous: [Step structure and ordering](step.md) ·
 [Architecture index](README.md) ·
-Next: [Durable service records](service-records.md)
+Next: [Service and node agents](service/README.md)

@@ -4,6 +4,8 @@ Start with [basic training](../../examples/client-training.md). This reference c
 setup controls, saved Plans, recovery, artifact transfers and diagnostics.
 Hardware inventory, optional resource selection and planning before initialization
 are covered in [Compute resources](compute-resources.md).
+Operator setup, storage and the node-agent configuration contract are in
+[Service deployment](deployment.md).
 
 ## Contents
 
@@ -18,62 +20,10 @@ are covered in [Compute resources](compute-resources.md).
 
 ## Connection and setup
 
-Start the service on a machine with an assigned GPU allocation:
-
-```python
-from shadowspill.server import Server
-
-# SHADOWSPILL_TOKEN supplies the same credential used by the client.
-server = Server(
-    service_root="/local-ssd/shadowspill",
-)
-server.serve(host="127.0.0.1", port=8000)
-```
-
-List only installed definition packages; add a custom package when using its
-definitions. Omitting `workload_packages` enables the engine's built-ins and
-`shadowspill-workloads` when installed; it does not load unrelated extension
-packages. An explicit list replaces those defaults. Omitting `allocation` takes
-the same environment snapshot as `Allocation.from_environment()`.
-
-To reuse checkpoints already stored on the server:
-
-```python
-server = Server(
-    service_root="runs/service",
-    model_root="/path/to/models",
-)
-server.serve()
-```
-
-`model_root` is optional and separate from mutable run storage. For an unpinned
-`Model.from_pretrained("Qwen/Qwen3.5-9B")`, the server looks for
-`model_root/Qwen/Qwen3.5-9B` or `model_root/Qwen3.5-9B`. Distinct matches are an
-error. A match uses the installed local checkpoint reader, validates architecture
-and file contents, and records the absolute source and content checksums in the
-resolved settings. It never writes to the checkpoint directory. A missing match
-uses the ordinary installed reference resolver. Explicit revisions and already
-resolved configurations retain their exact source; lookup never substitutes a
-local directory for an explicitly pinned remote revision.
-
-Construction snapshots deployment
-settings; `serve` discovers assigned resources, recovers stored records and starts
-the listener. The allocation adapter supports a local machine or an
-assigned single-node Slurm step. The server never requests a scheduler allocation.
-For multiple GPUs on one host, the service supplies the complete worker mapping
-and a separate local rendezvous for each run. Callers do not configure worker
-ranks, ports or rendezvous files.
-
-For embedding, `server.start(...)` returns after opening a background listener;
-`server.address` reports its bound address. `server.close()` stops creation and
-live runs, waits for owned workers and preserves stored records/artifacts. Failed
-cleanup retains its owners for another `close()` attempt. Optional `ServerLimits`
-configures deployment memory, concurrency and storage envelopes. These limits
-belong to the deployment, independently of client training settings.
-Incomplete artifact transfers reserve their declared storage size and expire after
-24 hours without a verified chunk by default (`ServerLimits.upload_ttl_seconds`).
-The service reclaims them on new admissions, upload access or reopening; saved
-artifacts do not expire under this policy.
+Connect to a running endpoint with a client credential in `SHADOWSPILL_TOKEN`.
+For listener setup, storage, definition packages and local checkpoint lookup, see
+[Service deployment](deployment.md). Those operator settings are separate from
+the training configuration below.
 
 ```python
 from shadowspill_client import SSH, ServiceClient

@@ -144,6 +144,6 @@ publication and file/directory synchronization semantics.
 
 ---
 
-Previous: [Training composition](training.md) ·
+Previous: [Assignments and recovery](service/execution.md) ·
 [Architecture index](README.md) ·
 Next: [Capture, compilation and lowering](lowering.md)

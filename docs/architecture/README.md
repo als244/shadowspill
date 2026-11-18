@@ -16,7 +16,13 @@ do not define core architecture.
 - [Intermediate representation](ir.md)
 - [The ShadowSpillProgram](program.md)
 - [Step structure and ordering](step.md)
+
+## Service and workers
+
 - [Training composition](training.md)
+- [Service and node agents](service/README.md)
+- [Node registration and control](service/nodes.md)
+- [Assignments and recovery](service/execution.md)
 - [Durable service records](service-records.md)
 
 ## Capture and compilation
