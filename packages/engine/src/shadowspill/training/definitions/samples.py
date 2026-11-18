@@ -17,10 +17,32 @@ from shadowspill_client.protocol.inputs import InputSchema
 
 
 @dataclass(frozen=True)
-class RepresentativeSample:
-    """Repeat one aligned logical Datum with explicit scalar-valued tensor fills."""
+class UniformIntegers:
+    """Integers from ``low`` to ``high`` inclusive, drawn afresh at every element.
 
-    values: Mapping[Path, Scalar]
+    One scalar makes every element of a field equal, the worst case for work
+    that groups or accumulates by value, such as an embedding's gradient. The
+    draws are fixed by the field and the Datum's place in the pattern, so a
+    pattern always describes the same values, on every rank.
+    """
+
+    low: int
+    high: int
+
+    def __post_init__(self) -> None:
+        integer(self.low, "representative lower bound", minimum=-(1 << 63))
+        integer(self.high, "representative upper bound", minimum=self.low)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"uniform_integers": [self.low, self.high]}
+
+
+@dataclass(frozen=True)
+class RepresentativeSample:
+    """Repeat one aligned logical Datum, each tensor field filled with one
+    scalar or with ``UniformIntegers``."""
+
+    values: Mapping[Path, Scalar | UniformIntegers]
     dimensions: Mapping[str, int] = field(default_factory=dict)
     count: int = 1
 
@@ -35,7 +57,7 @@ class RepresentativeSample:
                 or any(not isinstance(p, str) or not p for p in path)
             ):
                 raise ValueError("representative values require tensor field paths")
-            if type(value) is not bool:
+            if type(value) is not bool and not isinstance(value, UniformIntegers):
                 number(value, "representative scalar")
         dimensions = dict(self.dimensions)
         for name, size in dimensions.items():
@@ -49,7 +71,12 @@ class RepresentativeSample:
             "count": self.count,
             "dimensions": dict(self.dimensions),
             "values": [
-                {"path": list(path), "value": value}
+                {
+                    "path": list(path),
+                    "value": value.to_dict()
+                    if isinstance(value, UniformIntegers)
+                    else value,
+                }
                 for path, value in sorted(self.values.items())
             ],
         }
@@ -109,12 +136,26 @@ class RepresentativePattern:
             values = {}
             for path, value in sample.values.items():
                 definition = definitions[path]
+                low: Scalar
+                high: Scalar
+                if isinstance(value, UniformIntegers):
+                    if not definition.dtype.startswith(("int", "uint")):
+                        raise ValueError(
+                            f"drawn representative values need an integer field: {path}"
+                        )
+                    if definition.batching == "shared":
+                        raise ValueError(
+                            "representative shared fields must be identical"
+                        )
+                    low, high = value.low, value.high
+                else:
+                    low = high = value
                 # Reuse portable scalar dtype/range validation without allocating
                 # tensors. Actual floating conversion is checked in bounded
                 # scratch before the materializer allocates the physical arrays.
-                replace(definition, required=False, default=value)
-                if (definition.minimum is not None and value < definition.minimum) or (
-                    definition.maximum is not None and value > definition.maximum
+                replace(definition, required=False, default=low)
+                if (definition.minimum is not None and low < definition.minimum) or (
+                    definition.maximum is not None and high > definition.maximum
                 ):
                     raise ValueError(
                         f"representative value is outside field bounds: {path}"
@@ -137,12 +178,15 @@ class RepresentativePattern:
                             f"representative shape exceeds physical field {path}"
                         )
                 if definition.batching == "shared":
-                    signature = (shape, value)
+                    # A shared field is never drawn, so its value is ``low``.
+                    signature = (shape, low)
                     if shared.setdefault(path, signature) != signature:
                         raise ValueError(
                             "representative shared fields must be identical"
                         )
-                values[path] = ValidatedTensor(definition.dtype, shape, default=value)
+                # A drawn field is described by its lower bound here; the
+                # materializer draws each Datum's values.
+                values[path] = ValidatedTensor(definition.dtype, shape, default=low)
             result.append(MappingProxyType(values))
         return tuple(result)
 

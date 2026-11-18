@@ -17,10 +17,12 @@ from shadowspill.training.definitions import (
     Registry,
     RepresentativePattern,
     RepresentativeSample,
+    UniformIntegers,
 )
 from shadowspill.training.inputs.adapters import InputBinding
 from shadowspill.training.inputs.materialize import buffer_size
 from shadowspill.training.preparation.capture.representative import (
+    _drawn,
     representative_inputs,
 )
 from shadowspill.training.preparation.capture.templates import capture_inventory
@@ -243,3 +245,61 @@ def test_missing_patterns_and_patterns_exceeding_logical_limits_fail_before_buil
     layouts = prepare_layouts(setup)
     with pytest.raises(ValueError, match="representative pattern exceeds max_examples"):
         capture_inventory(layouts)
+
+
+def test_uniform_integers_fill_an_integer_field_within_its_bounds():
+    schema = combined_schema(
+        InputSchema(
+            [
+                TensorField(
+                    ("ids",), "int64", ("position",), "pack", 0, minimum=0, maximum=96
+                ),
+                TensorField(("x",), "float32", ("position",), "pack", 0),
+            ],
+            [],
+        ),
+        InputSchema([], []),
+    )
+    physical = BufferShape(4, {("inputs", "ids"): (64,), ("inputs", "x"): (64,)})
+
+    def pattern(ids, x=1.0):
+        return RepresentativePattern(
+            "drawn",
+            [
+                RepresentativeSample(
+                    {("inputs", "ids"): ids, ("inputs", "x"): x},
+                    {"position": 16},
+                    count=4,
+                )
+            ],
+        )
+
+    spec = UniformIntegers(0, 96)
+    (described,) = pattern(spec).describe(schema, physical)
+    assert described["inputs", "ids"].shape == (16,)
+    assert pattern(spec).to_dict()["samples"][0]["values"][0] == {
+        "path": ["inputs", "ids"],
+        "value": {"uniform_integers": [0, 96]},
+    }
+    drawn = [
+        _drawn(("inputs", "ids"), slot, described["inputs", "ids"], spec)
+        for slot in range(4)
+    ]
+    values = np.concatenate([value.source.array() for value in drawn])
+    assert values.dtype == np.int64 and values.min() >= 0 and values.max() <= 96
+    # Not one repeated value: positions differ, and so do the pattern's Datums.
+    assert len(np.unique(values)) > 32
+    assert not np.array_equal(drawn[0].source.array(), drawn[1].source.array())
+    # The same pattern always describes the same values.
+    again = _drawn(("inputs", "ids"), 1, described["inputs", "ids"], spec)
+    assert np.array_equal(again.source.array(), drawn[1].source.array())
+    for value, message in (
+        (UniformIntegers(0, 97), "outside field bounds"),
+        (UniformIntegers(-1, 5), "outside field bounds"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            pattern(value).describe(schema, physical)
+    with pytest.raises(ValueError, match="need an integer field"):
+        pattern(0, UniformIntegers(0, 1)).describe(schema, physical)
+    with pytest.raises(ValueError, match="upper bound"):
+        UniformIntegers(3, 2)

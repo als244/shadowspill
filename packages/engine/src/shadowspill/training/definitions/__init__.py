@@ -22,7 +22,7 @@ from .policies import PolicyDefinition
 from .preparation import PreparationContext, PreparationDefinition
 from .references import ModelReferenceDefinition
 from .registry import Registry, ResolvedModel, ResolvedObjective, ResolvedOptimizer
-from .samples import RepresentativePattern, RepresentativeSample
+from .samples import RepresentativePattern, RepresentativeSample, UniformIntegers
 
 __all__ = [
     "ComponentLayout",
@@ -49,6 +49,7 @@ __all__ = [
     "ResolvedObjective",
     "ResolvedOptimizer",
     "TensorInitializer",
+    "UniformIntegers",
     "load_registry",
     "simple_loss",
 ]

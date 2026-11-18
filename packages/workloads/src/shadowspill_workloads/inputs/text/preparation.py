@@ -7,6 +7,7 @@ from shadowspill.training.definitions import (
     InputView,
     RepresentativePattern,
     RepresentativeSample,
+    UniformIntegers,
 )
 from shadowspill_client import BuildCandidates, PlanningOptions, Preparation
 from shadowspill_client.inputs.shapes import BufferShape
@@ -173,12 +174,20 @@ def representative(context, batch, physical):
     values = {}
     for field in context.schema.fields:
         path = tuple(field.path)
-        if path in physical.fields:
-            values[path] = (
-                field.default
-                if field.default is not None
-                else (True if field.dtype == "bool" else 0)
-            )
+        if path not in physical.fields:
+            continue
+        if field.default is not None:
+            values[path] = field.default
+        elif (
+            field.dtype.startswith("int")
+            and field.minimum is not None
+            and field.maximum is not None
+        ):
+            # Token ids: one repeated id would make every position collide in
+            # work that accumulates by token, which no text does.
+            values[path] = UniformIntegers(field.minimum, field.maximum)
+        else:
+            values[path] = True if field.dtype == "bool" else 0
     return RepresentativePattern(
         "packed_sequence_length_hint",
         [RepresentativeSample(values, {"position": length}, count=count)],
