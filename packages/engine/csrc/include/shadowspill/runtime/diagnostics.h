@@ -117,6 +117,13 @@ typedef struct ShadowSpillTransferProfile {
  * when its bytes began moving. **The gap between them is the wait** -- without
  * it a transfer held behind an event reads as a slow one.
  *
+ * A transfer that does more on its lane than copy -- a conversion, or a
+ * collective among the ranks that share the object -- is timed as a whole by
+ * its TRANSFER_COMPLETED event. A TRANSFER_COPIED event, appended just before
+ * it, carries the same three instants for the copy alone, with ``bytes`` the
+ * bytes the copy moved, so the copy is never read off the whole transfer.
+ * These are the lane's own marks around the copy; nothing else records one.
+ *
  * Each holds SHADOWSPILL_TRACE_NO_STREAM_TIME where the trace has no origin,
  * the lane does not report it, or the backend could not measure it; every other
  * event kind carries that value in all three always.

@@ -392,6 +392,28 @@ int shadowspill_action_finish_locked(
         }
         action->lane_handle = 0U;
         if (object->has_transfer) {
+            /* The lane timed the copy alone. Record that for itself: the
+             * transfer as a whole also ran a conversion or a collective. */
+            if (lane_started_at_ns != SHADOWSPILL_TRACE_NO_STREAM_TIME &&
+                lane_finished_at_ns != SHADOWSPILL_TRACE_NO_STREAM_TIME) {
+                shadowspill_append_stamped_trace_event_locked(
+                    runtime,
+                    SHADOWSPILL_TRACE_TRANSFER_COPIED,
+                    action->task_id,
+                    object->object_id,
+                    caller_handoff
+                        ? action->caller_handoff_lease->allocation_id
+                        : object->allocation_id,
+                    moved.bytes,
+                    action->kind == SHADOWSPILL_RUNTIME_FETCH
+                        ? SHADOWSPILL_TRANSFER_FETCH
+                        : SHADOWSPILL_TRANSFER_EVICT,
+                    action->action_ordinal,
+                    lane_issued_at_ns,
+                    lane_started_at_ns,
+                    lane_finished_at_ns
+                );
+            }
             /* Transport-only timing would omit gather/reduce/conversion work. */
             lane_issued_at_ns = shadowspill_lane_origin_instant(
                 runtime, action->compound_issued_ns

@@ -49,11 +49,12 @@
   .option h4::before { content: ""; width: 11px; height: 11px; border-radius: 2px; background: var(--c); align-self: center; }
   .tag { font: 12px ui-monospace, Menlo, monospace; color: var(--muted); font-weight: 400; }
   .option.chosen .tag { color: var(--ink); font-weight: 600; }
+  .option td, .option th { white-space: nowrap; }
   .option tr.sum td { border-bottom: none; font-weight: 600; }
   .option .kept { color: var(--muted); font: 12px ui-monospace, Menlo, monospace; padding: 2px 10px 6px; }
   .map table { width: auto; }
   .map td, .map th { text-align: center; padding: 3px 8px; }
-  .map td:first-child, .map th:first-child, .map td:last-child, .map th:last-child { text-align: left; }
+  .map td:first-child, .map th:first-child, .map td:nth-child(2), .map th:nth-child(2), .map td:last-child, .map th:last-child { text-align: left; }
   .map a { display: inline-block; width: 26px; height: 14px; border-radius: 3px; background: var(--c); vertical-align: middle; }
   .map .none { display: inline-block; width: 26px; color: var(--muted); }
   #tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--bg); padding: 6px 8px; border-radius: 6px; font: 12px/1.35 ui-monospace, Menlo, monospace; white-space: pre; display: none; z-index: 5; max-width: 60vw; }
@@ -528,9 +529,8 @@
         ? "Host-copy timing unavailable for " + phases.unresolved_copy_transfers.fetch + " fetches (" + fmtBytes(phases.unresolved_host_bytes.fetch)
           + ") and " + phases.unresolved_copy_transfers.evict + " evictions (" + fmtBytes(phases.unresolved_host_bytes.evict) + "). Gray regions remain unsplit; they are not reported as memcpy time."
         : "Every host copy has its own interval.")
-      + (phases.copy_capture ? " Transformed-copy capture " + (phases.copy_capture.complete ? "complete" : "incomplete")
-        + "; dropped " + phases.copy_capture.dropped + ", errors " + phases.copy_capture.errors + ", missing timing " + phases.copy_capture.missing_timings + "."
-        : " This capture predates separate host-copy events for transformed transfers.")
+      + (phases.copies_recorded ? " The copy inside a transfer that also converts or runs a collective is the interval its own lane marked around it."
+        : " This capture has no record of the copies inside transformed transfers.")
       + (phases.unmatched_records ? " " + phases.unmatched_records + " timed records could not be joined to a parent transfer." : "");
     root.append(note); document.getElementById("panels").append(root);
   }
@@ -625,7 +625,8 @@
     const ms = (ns) => ns == null ? "—" : (ns / 1e6).toFixed(ns < 1e5 ? 3 : 2) + " ms";
     const size = (bytes) => bytes == null ? "—" : bytes === 0 ? "0" : fmtBytes(bytes);
     const traced = DATA.view === "traced";
-    const span = (values, one, many) => {
+    // Numbers as runs, "3, 7–9"; past `limit` runs a list keeps its start and its end.
+    const span = (values, one, many, limit) => {
       const sorted = Array.from(new Set(values)).sort((a, b) => a - b);
       if (!sorted.length) return "";
       const runs = [];
@@ -633,17 +634,35 @@
         const last = runs[runs.length - 1];
         if (last && value === last[1] + 1) last[1] = value; else runs.push([value, value]);
       });
-      return (sorted.length === 1 ? one : many) + " " + runs.map(([a, b]) => a === b ? a : a + "–" + b).join(", ");
+      const text = runs.map(([a, b]) => a === b ? a : a + "–" + b);
+      const shown = limit && text.length > limit ? text.slice(0, limit - 1).join(", ") + ", … " + text[text.length - 1] : text.join(", ");
+      return ((sorted.length === 1 ? one : many) + " " + shown).trim();
     };
-    // Where each form occurs on the map: its stages and its microbatches.
+    // Parts of the model in a few words: a module by its path, the numbered
+    // members of a repeated one as runs, "embed_tokens, layers 1–2".
+    const parts = (components, limit) => {
+      const order = [], numbers = {};
+      (components || []).forEach(([name, number]) => {
+        if (!(name in numbers)) { numbers[name] = []; order.push(name); }
+        if (number != null) numbers[name].push(number);
+      });
+      return order.map((name) => numbers[name].length ? span(numbers[name], name.replace(/s$/, ""), name, limit) : name).join(", ");
+    };
+    // Where each kind occurs on the map: its stages and its microbatches.
     const where = ALTERNATIVES.forms.map(() => ({rows: [], columns: []}));
     if (ALTERNATIVES.map) ALTERNATIVES.map.rows.forEach((row) => row.cells.forEach((cell, index) => {
       if (!cell) return;
       where[cell[1]].rows.push(row.row); where[cell[1]].columns.push(ALTERNATIVES.map.columns[index]);
     }));
-    const title = (form) => form.label || span(where[form.index].rows, "stage", "stages") || "alternative " + form.index;
+    const title = (form) => "kind " + form.kind;
+    // A kind with how many stages are of it, and which when they are more than `rows`.
+    const kind = (form, rows) => {
+      const all = Array.from(new Set(where[form.index].rows));
+      return form.kind + " · " + all.length + (all.length === 1 ? " stage" : " stages")
+        + (all.some((row) => !rows.includes(row)) ? " (" + span(all, "", "", 4) + ")" : "");
+    };
 
-    make("p", "Every stage of the step can run as one of its alternatives. Each distinct pair is shown once, with the number of occurrences that chose each; an identical layer or a repeated microbatch is an occurrence, not another card. Profiled time is what the planner priced."
+    make("p", "A stage is one place in the model, and can run as any one of its alternatives. Stages that compile to the same tasks are one kind, lettered in the order the step reaches them: a kind is shown once, with the number of occurrences that chose each alternative, and an identical layer or a repeated microbatch is an occurrence, not another card. Profiled time is what the planner priced."
       + (traced ? " Measured time is this step's median over the occurrences that ran; an alternative that was not chosen never ran." : "")
       + " Sizes are the device bytes a task's inputs, outputs and mutated objects reach; total is what they reach together plus the task's workspace.", root, "note");
 
@@ -654,19 +673,20 @@
       const legend = make("div", null, panel, "legend");
       ALTERNATIVES.options.forEach((name) => { const item = make("span", name, legend); item.style.setProperty("--c", optionColor(name)); });
       const table = make("table", null, make("div", null, panel, "scroll"));
-      const header = make("tr", null, table); make("th", "stage", header);
+      const header = make("tr", null, table); make("th", "stage", header); make("th", "covers", header);
       ALTERNATIVES.map.columns.forEach((column) => make("th", "mb " + column, header));
-      make("th", "form", header);
-      // Consecutive stages that chose alike, with the same forms, share a line.
+      make("th", "kind", header);
+      // Consecutive stages that chose alike, of the same kinds, share a line.
       const lines = [];
       ALTERNATIVES.map.rows.forEach((row) => {
         const key = JSON.stringify(row.cells), last = lines[lines.length - 1];
-        if (last && last.key === key && row.row === last.rows[last.rows.length - 1] + 1) last.rows.push(row.row);
-        else lines.push({key, rows: [row.row], cells: row.cells});
+        if (last && last.key === key && row.row === last.rows[last.rows.length - 1] + 1) { last.rows.push(row.row); last.covers.push(...(row.covers || [])); }
+        else lines.push({key, rows: [row.row], cells: row.cells, covers: (row.covers || []).slice()});
       });
       lines.forEach((line) => {
         const tr = make("tr", null, table);
         make("td", span(line.rows, "stage", "stages"), tr);
+        make("td", parts(line.covers, 4) || "—", tr);
         line.cells.forEach((cell) => {
           const td = make("td", null, tr);
           if (!cell) { make("span", "·", td, "none"); return; }
@@ -676,12 +696,15 @@
           link.addEventListener("click", (event) => { event.preventDefault(); document.getElementById("form-" + cell[1]).scrollIntoView({behavior: "smooth", block: "start"}); });
         });
         const forms = Array.from(new Set(line.cells.filter(Boolean).map((cell) => cell[1])));
-        make("td", forms.map((index) => title(ALTERNATIVES.forms[index])).filter((name, index, all) => all.indexOf(name) === index).join(" · "), tr);
+        make("td", forms.map((index) => kind(ALTERNATIVES.forms[index], line.rows)).join(" / "), tr);
       });
     }
 
     const columns = ["task", "profiled"].concat(traced ? ["measured"] : [], ["input", "output", "mutated", "workspace", "total"]);
-    const cells = (row) => [row.phase, ms(row.runtime_ns)].concat(
+    // A task is named by what it does; hovering gives the profile key that
+    // progress lines and errors print beside the same name.
+    const key = (row) => row.profile ? "profile " + row.profile.slice(0, 12) : "";
+    const cells = (row) => [row.label || row.phase, ms(row.runtime_ns)].concat(
       traced ? [row.measured ? ms(row.measured.median_ns) : "—"] : [],
       [size(row.input_bytes), size(row.output_bytes), size(row.mutated_bytes), size(row.workspace_bytes), size(row.total_bytes)]);
     const measuredTitle = (row) => row.measured
@@ -691,8 +714,9 @@
     ALTERNATIVES.forms.slice().sort((a, b) => first(where[a.index].rows) - first(where[b.index].rows)
       || first(where[a.index].columns) - first(where[b.index].columns) || a.index - b.index).forEach((form) => {
       const panel = make("div", null, root, "panel stage"); panel.id = "form-" + form.index;
-      make("h3", title(form), panel);
-      const place = [span(where[form.index].rows, "stage", "stages"), span(where[form.index].columns, "microbatch", "microbatches")].filter(Boolean).join(" × ");
+      const covered = parts(form.covers, 4);
+      make("h3", "Kind " + form.kind + (covered ? " · " + covered : ""), panel);
+      const place = [span(where[form.index].rows, "stage", "stages", 6), span(where[form.index].columns, "microbatch", "microbatches", 6)].filter(Boolean).join(" × ");
       make("div", form.instances + (form.instances === 1 ? " occurrence" : " occurrences") + (place ? " · " + place : "")
         + " · chosen: " + form.options.map((option) => option.option + " " + option.chosen).join(" · ")
         + (form.sizes_vary ? " · sizes differ between occurrences; the first is shown" : ""), panel, "where");
@@ -707,7 +731,7 @@
         option.tasks.forEach((row) => {
           const tr = make("tr", null, table);
           cells(row).forEach((value, index) => { const td = make("td", value, tr); if (traced && index === 2) td.title = measuredTitle(row); });
-          tr.title = row.label;
+          tr.title = key(row);
         });
         const sum = make("tr", null, table, "sum");
         const measured = option.tasks.every((row) => row.measured) ? option.tasks.reduce((total, row) => total + row.measured.median_ns, 0) : null;
@@ -722,14 +746,14 @@
       const panel = make("div", null, root, "panel");
       const details = make("details", null, panel);
       const count = ALTERNATIVES.single.reduce((total, row) => total + row.count, 0);
-      make("summary", "Tasks without an alternative · " + count + " tasks in " + ALTERNATIVES.single.length + " forms", details);
+      make("summary", "Tasks without an alternative · " + count + " tasks of " + ALTERNATIVES.single.length + " kinds", details);
       const table = make("table", null, make("div", null, details, "scroll"));
       const header = make("tr", null, table);
-      ["task", "phase", "count"].concat(columns.slice(1)).forEach((name) => make("th", name, header));
+      ["task", "covers", "phase", "count"].concat(columns.slice(1)).forEach((name) => make("th", name, header));
       ALTERNATIVES.single.slice().sort((a, b) => (b.runtime_ns || 0) * b.count - (a.runtime_ns || 0) * a.count).forEach((row) => {
-        const tr = make("tr", null, table);
-        [row.label || "—", row.phase, row.count.toLocaleString()].concat(cells(row).slice(1)).forEach((value, index) => {
-          const td = make("td", value, tr); if (traced && index === 4) td.title = measuredTitle(row);
+        const tr = make("tr", null, table); tr.title = key(row);
+        [row.label || row.phase, parts(row.covers, 4) || "—", row.phase, row.count.toLocaleString()].concat(cells(row).slice(1)).forEach((value, index) => {
+          const td = make("td", value, tr); if (traced && index === 5) td.title = measuredTitle(row);
         });
       });
     }

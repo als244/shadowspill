@@ -67,7 +67,6 @@ def test_old_composite_trace_leaves_copy_and_dispatch_time_unresolved():
 def test_measured_copy_phase_has_local_bytes_and_its_own_duration():
     program, diagnostics = fixture()
     diagnostics["collectives"]["host_copies"] = {
-        "complete": True,
         "records": [
             {
                 "source": "fetch",
@@ -160,7 +159,6 @@ def test_transformed_recipe_without_copy_events_stays_unresolved(phases):
 def test_time_between_measured_events_is_not_called_unresolved():
     program, diagnostics = fixture()
     diagnostics["collectives"]["host_copies"] = {
-        "complete": True,
         "records": [
             {
                 "source": "fetch",
@@ -250,15 +248,20 @@ def test_transfer_records_require_payload_identity(field):
         transfer_phase_data(program, diagnostics)
 
 
-@pytest.mark.parametrize("operation,inputs,outputs", [
-    ("all_gather", 100, 800),
-    ("reduce_scatter", 800, 100),
-    ("all_reduce", 800, 800),
-])
+@pytest.mark.parametrize(
+    "operation,inputs,outputs",
+    [
+        ("all_gather", 100, 800),
+        ("reduce_scatter", 800, 100),
+        ("all_reduce", 800, 800),
+    ],
+)
 def test_collective_throughput_counts_one_full_payload(operation, inputs, outputs):
     program, diagnostics = fixture()
     diagnostics["collectives"]["records"][0].update(
-        operation=operation, input_bytes=inputs, output_bytes=outputs,
+        operation=operation,
+        input_bytes=inputs,
+        output_bytes=outputs,
     )
     row = transfer_phase_data(program, diagnostics)["summary"][0]
     assert row["throughput_bytes"] == 800

@@ -450,6 +450,15 @@ pool -- and the transfer's `SHADOWSPILL_TRACE_TRANSFER_COMPLETED` event carries
 what that lane reports back, in `lane_issued_at_ns`, `lane_started_at_ns` and
 `lane_finished_at_ns`.
 
+A transfer that does more on its lane than copy -- a conversion, or a
+collective among the ranks that share the object -- reports the whole of that
+work in its `TRANSFER_COMPLETED` event, and its copy alone in a
+`SHADOWSPILL_TRACE_TRANSFER_COPIED` event appended just before it: the same
+three fields from the lane's marks around the copy, and in `bytes` the bytes
+the copy moved. The lane's marks are the only ones around a copy, so a copy's
+interval holds the copy and nothing a trace added; a frontend that performs
+the rest of such a transfer times its own collectives and no copies.
+
 `lane_issued_at_ns` is when the runtime handed the transfer to its lane, before
 any dependency it was given had cleared; `lane_started_at_ns` is when its bytes
 began moving. **The gap between them is the wait**, and separating them is what
@@ -489,6 +498,7 @@ meaning to. Kinds below are named without their `SHADOWSPILL_TRACE_` prefix.
 | `ACTION_QUEUED` | the `ShadowSpillRuntimeActionKind` queued | actions this boundary published |
 | `DESTINATION_RESERVED` | the `ShadowSpillRuntimeActionKind` the destination is for | the reserved lease's slab offset |
 | `TRANSFER_DISPATCHED`, `TRANSFER_COMPLETED` | the `ShadowSpillTransferDirection`; a write-back reports evict, since it shares that lane | actions queued runtime-wide at that moment |
+| `TRANSFER_COPIED` | the `ShadowSpillTransferDirection` of the transfer the copy belongs to | the transfer's ordinal among the actions its task boundary admitted |
 | `ALLOCATION_WAIT_BEGIN`, `ALLOCATION_WAIT_END` | the pool's free bytes | its largest free range |
 | `RETIREMENT_COMPLETED` | the retired lease's slab offset | its charged bytes |
 | `FAILURE_LATCHED` | the `ShadowSpillStatus` being latched | the pool's free bytes at that moment |

@@ -31,9 +31,12 @@ def _check_collective_traces(directory, invocation=0):
             assert not runtime[field], (rank, field)
         collectives = trace["collectives"]
         assert collectives["enabled"] and collectives["complete"]
-        for category in (collectives, collectives["host_copies"]):
-            for field in ("dropped", "errors", "missing_timings"):
-                assert category[field] == 0, (rank, field)
+        for field in ("dropped", "errors", "missing_timings"):
+            assert collectives[field] == 0, (rank, field)
+        assert all(
+            copy["finished_at_ns"] >= copy["started_at_ns"]
+            for copy in collectives["host_copies"]["records"]
+        )
         records = collectives["records"]
         assert records
         sequences = defaultdict(list)

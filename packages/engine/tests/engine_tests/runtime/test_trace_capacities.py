@@ -68,7 +68,9 @@ def test_each_kind_of_record_is_counted_where_it_can_occur() -> None:
 
     session = 3
     tasks = 2 + (2 + 3 + 3 * 2)  # entered and left; three objects; two allocations
-    copies = 3 * (1 + 3)  # fetch, evict, write-back: queued, then three records
+    # Fetch, evict, write-back: queued, reserved, dispatched and completed,
+    # and once more for the copy inside a transfer that does more than copy.
+    copies = 3 * (1 + 4)
     retirements = 2  # the evict and the release free a lease each
     release = 1  # queued
     assert capacities.events == session + tasks + copies + retirements + release

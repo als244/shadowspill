@@ -1,5 +1,7 @@
 """Resolve an opt-in execution trace into immutable diagnostics."""
 
+from dataclasses import replace
+
 from shadowspill.diagnostics.step import (
     StepDiagnostics,
     Timelines,
@@ -19,7 +21,7 @@ from .evidence import (
     validate_completed_timing,
 )
 from .summary import build_step_summary
-from .transfers import transfer_lanes
+from .transfers import transfer_copies, transfer_lanes
 
 
 class DiagnosticAssemblyError(RuntimeError):
@@ -95,5 +97,7 @@ def _assemble(
         timelines=timelines,
         allocator=build_allocator_trace(evidence),
         runtime=runtime,
-        collectives=timing.collectives,
+        collectives=replace(
+            timing.collectives, host_copies=transfer_copies(timing, evidence, bridge)
+        ),
     )

@@ -476,8 +476,16 @@ was initialized, and the view is then empty. `capacity` bounds the records;
 `dropped`, `errors` and `missing_timings` count records the bound turned away,
 capture failures, and records without both device times, and `complete` is
 true when all three are zero, which `summary.trace_complete` requires.
-`host_copies`, when present, keeps the same counts and its own records for the
-physical host copies inside transformed transfers.
+`host_copies` holds the copy inside each transfer that did more than copy -- a
+conversion, or a collective among the ranks that share the object. Such a
+transfer's own times cover all of that work, so its copy is recorded for
+itself, from the marks the runtime's lane puts around the copy alone: `source`,
+`bytes`, the task, alias and `action_ordinal` it belongs to, and
+`issued_at_ns`, `started_at_ns` and `finished_at_ns`. Nothing else marks the
+stream around a copy, so the interval holds the copy and nothing a trace
+added. A record exists only with both instants; a transfer whose copy could
+not be timed has none and is drawn unsplit. `host_copies` is absent when the
+runtime trace ran out of room.
 
 ## Exporting diagnostics
 

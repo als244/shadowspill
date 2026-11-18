@@ -62,8 +62,8 @@ int enqueue_transfer(
         if (transfer->replicas && transfer->replicas->getRank() != 0) {
           return 0;
         }
-        return shadowspill_pytorch_copy_spill(
-            copy, copy_context, static_cast<char*>(destination) + transfer->offset,
+        return copy(
+            copy_context, static_cast<char*>(destination) + transfer->offset,
             source, static_cast<uint64_t>(transfer->shard_bytes));
       }
       auto* mutable_source = const_cast<void*>(source);
@@ -89,19 +89,19 @@ int enqueue_transfer(
         options.asyncOp = true;
         transfer->replicas->allreduce(values, options)->blockCurrentStream();
       }
-      return shadowspill_pytorch_copy_spill(
-          copy, copy_context, destination, owned.data_ptr(),
+      return copy(
+          copy_context, destination, owned.data_ptr(),
           static_cast<uint64_t>(transfer->shard_bytes));
     }
     if (!fetch) {
-      return shadowspill_pytorch_copy_spill(
-          copy, copy_context, destination,
+      return copy(
+          copy_context, destination,
           static_cast<const char*>(source) + transfer->offset,
           static_cast<uint64_t>(transfer->shard_bytes));
     }
     auto* owned = static_cast<char*>(destination) + transfer->offset;
-    const int status = shadowspill_pytorch_copy_spill(
-        copy, copy_context, owned, source,
+    const int status = copy(
+        copy_context, owned, source,
         static_cast<uint64_t>(transfer->shard_bytes));
     if (status != 0 || transfer->group->getSize() == 1) {
       return status;

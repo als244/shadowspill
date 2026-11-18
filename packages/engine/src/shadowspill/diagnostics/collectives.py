@@ -32,7 +32,11 @@ class CollectiveRecord:
 
 @dataclass(frozen=True, slots=True)
 class HostCopyRecord:
-    """Device-event interval around one physical copy within a transformed transfer."""
+    """The copy inside one transfer that did more than copy, as its lane timed it.
+
+    The runtime's lane marks the stream around the copy alone and nothing else
+    does, so the interval holds the copy and nothing a trace added.
+    """
 
     copy_id: str
     source: str
@@ -49,17 +53,16 @@ class HostCopyRecord:
 
 @dataclass(frozen=True, slots=True)
 class HostCopyTrace:
-    capacity: int = 0
-    dropped: int = 0
-    errors: int = 0
-    missing_timings: int = 0
+    """Every such copy of a step, from the runtime's own trace.
+
+    A record exists only with both of its instants. A transfer whose copy the
+    lane could not time has none, and stays unsplit where it is drawn.
+    """
+
     records: tuple[HostCopyRecord, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
-        return {
-            **asdict(self),
-            "complete": not (self.dropped or self.errors or self.missing_timings),
-        }
+        return asdict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +83,7 @@ class CollectiveTrace:
     errors: int = 0
     missing_timings: int = 0
     records: tuple[CollectiveRecord, ...] = ()
-    # None means host-copy observation was not enabled for this capture.
+    # None when the runtime trace ran out of room and its events are not joined.
     host_copies: HostCopyTrace | None = None
 
     @property

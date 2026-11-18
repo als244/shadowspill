@@ -378,11 +378,11 @@ def inspect(directory, case):
                     assert not trace["runtime"][key], (phase, step, rank, key)
                 collective = trace["collectives"]
                 assert collective["enabled"] and collective["complete"]
-                for records in (collective, collective["host_copies"]):
-                    assert all(
-                        records[key] == 0
-                        for key in ("dropped", "errors", "missing_timings")
-                    )
+                assert all(
+                    collective[key] == 0
+                    for key in ("dropped", "errors", "missing_timings")
+                )
+                assert collective["host_copies"] is not None
                 fields = (
                     "operation",
                     "group_ranks",

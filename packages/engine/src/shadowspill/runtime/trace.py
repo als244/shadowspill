@@ -42,6 +42,7 @@ class RuntimeTraceEventKind(IntEnum):
     ALLOCATION_WAIT_END = 10
     RETIREMENT_COMPLETED = 11
     FAILURE_LATCHED = 12
+    TRANSFER_COPIED = 13
 
 
 _ACTION_NAMES = {0: "release", 1: "evict", 2: "fetch", 3: "write_back"}
@@ -66,6 +67,11 @@ class RuntimeTraceEvent:
     a copy held behind an event reads as a slow one. Each is ``None`` where the
     trace had no origin, the lane does not report it, or it could not be
     measured, and on every other event kind.
+
+    A transfer that does more on its lane than copy, a conversion or a
+    collective, is timed as a whole by its TRANSFER_COMPLETED event; a
+    TRANSFER_COPIED event just before it carries the same three instants for
+    the copy alone, with ``bytes`` the bytes the copy moved.
 
     These sit on the origin's axis and ``timestamp_ns`` on the host clock;
     ``CapturedRuntimeTrace.origin_host_ns`` is what relates the two.
@@ -117,6 +123,13 @@ class RuntimeTraceEvent:
                     self.detail_0, f"unknown_{self.detail_0}"
                 ),
                 "queued_actions": self.detail_1,
+            }
+        if self.kind is RuntimeTraceEventKind.TRANSFER_COPIED:
+            return {
+                "direction": _DIRECTION_NAMES.get(
+                    self.detail_0, f"unknown_{self.detail_0}"
+                ),
+                "action_ordinal": self.detail_1,
             }
         if self.kind in {
             RuntimeTraceEventKind.ALLOCATION_WAIT_BEGIN,

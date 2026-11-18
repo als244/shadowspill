@@ -698,6 +698,109 @@ static int transfer_timing_survives_burst(uint32_t count, uint32_t timed_count) 
     return failed ? -1 : 0;
 }
 
+static void transfer_context_noop(void *context) { (void)context; }
+
+/* A transfer that does more on its lane than copy. */
+static int copy_then_more(
+    void *context, const ShadowSpillBackend *backend,
+    ShadowSpillBackendStream stream, uint8_t fetch,
+    void *destination, const void *source,
+    ShadowSpillTransferCopy copy, void *copy_context
+) {
+    (void)context; (void)backend; (void)stream; (void)fetch;
+    return copy(copy_context, destination, source, 16U);
+}
+
+/* Such a transfer is timed as a whole by its completion, and its copy alone
+ * by a record of its own just before; a plain copy has only its completion. */
+static int transformed_transfer_records_its_copy(void) {
+    enum { BYTES = 16, EVENTS = 64 };
+    ShadowSpillBackend mock = {0};
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = 0U;
+    ShadowSpillTimingMarker *origin = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {0};
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    if (shadowspill_test_create_runtime(
+            &mock, 2U * BYTES, 2U * BYTES, 1U, 1000U, &runtime
+        ) != SHADOWSPILL_STATUS_OK ||
+        mock.create_stream(mock.state, &compute) != 0) {
+        destroy_runtime(&mock, runtime, compute);
+        return -1;
+    }
+    const ShadowSpillObjectTransfer transfer = {
+        .spill_size_bytes = BYTES, .collective_directions = 1U,
+        .context = NULL, .retain = transfer_context_noop,
+        .release = transfer_context_noop, .enqueue = copy_then_more,
+    };
+    const ShadowSpillObjectDescription objects[2] = {
+        {.object_id = 1U, .size_bytes = BYTES, .initial_pool_id = 1U,
+         .retain_spill_copy = 1U, .initially_resident = 1U, .transfer = &transfer},
+        {.object_id = 2U, .size_bytes = BYTES, .initial_pool_id = 1U,
+         .initially_resident = 1U},
+    };
+    const ShadowSpillRuntimeAction actions[2] = {
+        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_FETCH},
+        {.object_id = 2U, .kind = SHADOWSPILL_RUNTIME_FETCH},
+    };
+    ShadowSpillTraceEvent events[EVENTS] = {0};
+    const ShadowSpillTraceConfig config = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .event_capacity = EVENTS,
+        .allocation_event_capacity = EVENTS,
+    };
+    ShadowSpillTraceSummary summary = {0};
+    int failed =
+        shadowspill_register_object(runtime, &objects[0]) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_register_object(runtime, &objects[1]) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_trace_prepare(runtime, &config) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_timing_marker_create(runtime, &origin) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_timing_marker_record(origin, compute) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_trace_begin(runtime, 9U, origin) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_submit_actions(runtime, 300U, compute, actions, 2U) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_trace_end(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_trace_read(runtime, &summary, events, EVENTS, NULL, 0U) !=
+            SHADOWSPILL_STATUS_OK ||
+        summary.event_overflow;
+    uint32_t copied = 0U, completed = 0U;
+    for (uint64_t index = 0U; !failed && index < summary.event_count; ++index) {
+        const ShadowSpillTraceEvent *event = &events[index];
+        if (event->kind == SHADOWSPILL_TRACE_TRANSFER_COMPLETED) {
+            ++completed;
+            continue;
+        }
+        if (event->kind != SHADOWSPILL_TRACE_TRANSFER_COPIED) {
+            continue;
+        }
+        ++copied;
+        /* Appended by the worker just before the completion it belongs to. */
+        const ShadowSpillTraceEvent *whole = &events[index + 1U];
+        failed = index + 1U >= summary.event_count ||
+            whole->kind != SHADOWSPILL_TRACE_TRANSFER_COMPLETED ||
+            event->object_id != 1U || whole->object_id != 1U ||
+            event->task_id != whole->task_id ||
+            event->bytes != BYTES ||
+            event->detail_0 != 0U /* the fetch direction */ ||
+            event->lane_issued_at_ns == SHADOWSPILL_TRACE_NO_STREAM_TIME ||
+            event->lane_started_at_ns == SHADOWSPILL_TRACE_NO_STREAM_TIME ||
+            event->lane_finished_at_ns < event->lane_started_at_ns ||
+            /* The copy lies inside the transfer it is part of. */
+            whole->lane_started_at_ns == SHADOWSPILL_TRACE_NO_STREAM_TIME ||
+            whole->lane_started_at_ns > event->lane_started_at_ns ||
+            whole->lane_finished_at_ns < event->lane_finished_at_ns;
+    }
+    fprintf(stderr, "transformed transfer: copied=%u completed=%u\n",
+        copied, completed);
+    failed = failed || copied != 1U || completed != 2U;
+    shadowspill_timing_marker_release(origin);
+    destroy_runtime(&mock, runtime, compute);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
 #define REQUIRE_TELEMETRY_CANARY(call)                                      \
     do {                                                                    \
@@ -714,6 +817,7 @@ int main(void) {
     REQUIRE_TELEMETRY_CANARY(bounded_runtime_trace_is_opt_in());
     REQUIRE_TELEMETRY_CANARY(transfer_timing_survives_burst(1024U, 1024U));
     REQUIRE_TELEMETRY_CANARY(transfer_timing_survives_burst(1100U, 1024U));
+    REQUIRE_TELEMETRY_CANARY(transformed_transfer_records_its_copy());
     REQUIRE_TELEMETRY_CANARY(overflow_stops_recording_not_the_runtime());
     return EXIT_SUCCESS;
 }

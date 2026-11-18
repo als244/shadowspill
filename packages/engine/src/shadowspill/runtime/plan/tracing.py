@@ -41,7 +41,8 @@ def trace_capacities(
 
     Most of the count is exact: the session opens and closes, each task is
     entered and left, each action is queued, and each copy reserves its
-    destination, is dispatched and completes. The rest is bounded from the
+    destination, is dispatched and completes, and may be recorded once more
+    for itself when its transfer does more than copy. The rest is bounded from the
     plan: a task waits at most once for each distinct object it reads or
     updates; each allocation in its profiled contract may wait for a range,
     which is two records, and retires once; a release or an eviction retires
@@ -69,7 +70,7 @@ def trace_capacities(
     for action in actions:
         events += 1
         if action.kind is not MemoryActionKind.RELEASE:
-            events += 3
+            events += 4
         if action.kind in (MemoryActionKind.RELEASE, MemoryActionKind.EVICT):
             events += 1
         leases += 1

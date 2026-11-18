@@ -1,7 +1,8 @@
 """Separate measured host copies, collectives, and unresolved transfer time.
 
-A composite lane interval is not a memcpy measurement. Device events bracket
-host copies and collectives separately; missing times remain unresolved.
+A composite lane interval is not a memcpy measurement. The lane's own marks
+bracket the copy and a collective's events bracket the collective; missing
+times remain unresolved.
 """
 
 from collections.abc import Mapping
@@ -55,7 +56,6 @@ def transfer_phase_data(
                 raise ValueError(f"{direction} transfer is missing {sorted(missing)}")
     aliases = {a["alias_group_id"]: a for a in program.get("alias_groups", ())}
     ledger = diagnostics.get("collectives") or {}
-    copy_ledger = ledger.get("host_copies") or {}
     by_parent, summaries = index_records(ledger)
     result: dict[str, Any] = {"fetch": [], "evict": [], "unmatched_records": 0}
     matched: set[tuple[str, int]] = set()
@@ -104,13 +104,8 @@ def transfer_phase_data(
     )
     result["unresolved_host_bytes"] = unresolved_bytes
     result["unresolved_copy_transfers"] = unresolved_transfers
-    result["copy_capture"] = (
-        {
-            k: copy_ledger.get(k)
-            for k in ("capacity", "complete", "dropped", "errors", "missing_timings")
-        }
-        if ledger.get("host_copies") is not None
-        else None
-    )
+    # False when the capture holds no record of the copies inside transformed
+    # transfers at all, as against holding none because there were none.
+    result["copies_recorded"] = ledger.get("host_copies") is not None
     result["summary"] = summarize(summaries)
     return result

@@ -3,6 +3,7 @@
 from collections import defaultdict, deque
 from collections.abc import Iterator, Sequence
 
+from shadowspill.diagnostics.collectives import HostCopyRecord, HostCopyTrace
 from shadowspill.diagnostics.step import TransferRecord
 from shadowspill.diagnostics.timing import ArmedExecutionTiming
 from shadowspill.ir.indexing import MEMORY_ACTION_CODE
@@ -118,6 +119,58 @@ def transfer_lanes(
             ),
         )
     return lanes
+
+
+def transfer_copies(
+    timing: ArmedExecutionTiming, evidence: TraceEvidence, bridge: RuntimeBridge
+) -> HostCopyTrace | None:
+    """The copy inside every transfer that did more than copy.
+
+    A transfer that also converts or runs a collective is timed as a whole by
+    its completion; the runtime records its copy for itself, from the lane's
+    own marks. None for a runtime trace that ran out of room, whose events are
+    only the step's first and are joined to nothing.
+    """
+
+    trace = evidence.runtime_trace
+    if trace.event_overflow:
+        return None
+    tasks = {
+        canonical_index(task_id, "task_"): (
+            task_id,
+            f"execution_{task.execution_ordinal:06d}",
+        )
+        for task_id, task in timing.tasks.items()
+    }
+    aliases = {
+        bridge.objects.runtime_object_id(alias): alias
+        for alias in timing.alias_accesses
+        if bridge.objects.requires_storage(alias)
+    }
+    records = []
+    copied = _events_of_kind(trace.events, RuntimeTraceEventKind.TRANSFER_COPIED)
+    for index, event in enumerate(copied):
+        task, execution = (
+            (None, None) if event.task_id is None else tasks.get(event.task_id)
+        ) or (None, None)
+        records.append(
+            HostCopyRecord(
+                copy_id=f"host_copy_{index:06d}",
+                source=_direction(event) or "unknown",
+                bytes=event.bytes,
+                task_id=task,
+                execution_task_id=execution,
+                object_id=event.object_id,
+                alias_group_id=None
+                if event.object_id is None
+                else aliases.get(event.object_id),
+                action_ordinal=event.detail_1,
+                issued_at_ns=event.lane_issued_at_ns,
+                started_at_ns=event.lane_started_at_ns,
+                finished_at_ns=event.lane_finished_at_ns,
+            )
+        )
+    return HostCopyTrace(records=tuple(records))
 
 
 def _object_relations(
