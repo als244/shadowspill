@@ -21,6 +21,8 @@ from tempfile import NamedTemporaryFile
 from time import time_ns
 from typing import BinaryIO
 
+from shadowspill.diagnostics.progress import phase
+
 CHUNK_BYTES = 1 << 20
 _cache: ContextVar[Path | None] = ContextVar("checkpoint_digest_cache", default=None)
 
@@ -135,16 +137,17 @@ def sha256_file(path: Path, size: int) -> str:
         checksum = _read(directory, path, facts)
         cached = checksum is not None
         if checksum is None:
-            checksum = _digest(stream, size)
-            if not settled:
-                # Recent files can change within one timestamp tick. Preserve
-                # content checking in this unusual case; old model checkpoints
-                # take the single-read/cache path.
-                stream.seek(0)
-                if _digest(stream, size) != checksum:
-                    raise ValueError(
-                        f"checkpoint file changed while pinning: {path.name}"
-                    )
+            with phase(f"Fingerprint {path.name} ({size / (1 << 30):.2f} GiB)"):
+                checksum = _digest(stream, size)
+                if not settled:
+                    # Recent files can change within one timestamp tick. Preserve
+                    # content checking in this unusual case; old model checkpoints
+                    # take the single-read/cache path.
+                    stream.seek(0)
+                    if _digest(stream, size) != checksum:
+                        raise ValueError(
+                            f"checkpoint file changed while pinning: {path.name}"
+                        )
         if (
             file_identity(os.fstat(stream.fileno())) != facts
             or file_identity(path.stat()) != facts

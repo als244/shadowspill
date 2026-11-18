@@ -22,6 +22,7 @@ from time import monotonic
 import numpy as np
 
 from examples.training.text_data import TokenBatches
+from shadowspill.diagnostics.progress import logged_phase
 from shadowspill_client import (
     BatchConfig,
     LoRA,
@@ -133,6 +134,7 @@ def write_json(path, value):
     temporary.replace(path)
 
 
+@logged_phase("Check training setup and checkpoint")
 def preflight(data, output, requested, *, cache_root=None):
     from shadowspill.checkpoint.file_digest import checksum_cache
     from shadowspill.training.definitions import load_registry

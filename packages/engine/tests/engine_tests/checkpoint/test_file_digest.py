@@ -8,6 +8,7 @@ import pytest
 
 from shadowspill.checkpoint import file_digest
 from shadowspill.checkpoint.file_digest import checksum_cache, sha256_file
+from shadowspill.diagnostics.progress import Progress
 
 
 def track_reads(monkeypatch, path, after_read=lambda: None):
@@ -142,3 +143,21 @@ def test_cached_source_still_requires_its_declared_size(tmp_path):
         sha256_file(path, 8)
         with pytest.raises(ValueError, match="size/type"):
             sha256_file(path, 7)
+
+
+def test_progress_reports_payload_scan_but_not_cached_reads(tmp_path, monkeypatch):
+    path = tmp_path / "model-00001-of-00002.safetensors"
+    path.write_bytes(b"weights")
+    monkeypatch.setattr(
+        file_digest, "time_ns", lambda: path.stat().st_ctime_ns + 3_000_000_000
+    )
+    events = []
+    with Progress(events.append).activate(), checksum_cache(tmp_path / "cache"):
+        sha256_file(path, 7)
+        assert len(events) == 2
+        assert "→ Fingerprint model-00001-of-00002.safetensors" in events[0]
+        assert "✓ Fingerprint model-00001-of-00002.safetensors" in events[1]
+        assert " — " in events[1]
+        events.clear()
+        sha256_file(path, 7)
+        assert events == []

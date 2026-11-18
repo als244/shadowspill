@@ -19,6 +19,7 @@ from shadowspill.checkpoint.file_digest import (
     settled_identity,
     sha256_file,
 )
+from shadowspill.diagnostics.progress import phase
 
 from . import headers, weight_files
 from .hub import read_config
@@ -66,7 +67,12 @@ def describe(reference, known=None):
     # Check metadata bounds before any tensor-payload scan or reader construction.
     headers.validate(directory, inventory)
     if known is None:
-        manifest = tuple(_checksum(directory, file) for file in inventory)
+        size_gib = sum(file.size for file in inventory) / (1 << 30)
+        with phase(
+            f"Resolve checkpoint fingerprints: {len(inventory)} files, "
+            f"{size_gib:.2f} GiB"
+        ):
+            manifest = tuple(_checksum(directory, file) for file in inventory)
     else:
         manifest = tuple(sorted(weight_files.files(known), key=lambda file: file.name))
         if [(f.name, f.size) for f in manifest] != [
