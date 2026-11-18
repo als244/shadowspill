@@ -136,7 +136,7 @@ print(Path(next(iter(spec.submodule_search_locations))) / "share" / "cmake")
 echo "[3/5] Installing mlops with its implementation providers"
 mlops_checkout="$(cd "${project_root}/.." && pwd)/mlops"
 if [[ ! -x "${mlops_checkout}/scripts/setup.sh" ]]; then
-  mlops_revision="3d47722af6f2e50a759dba101f9c0313be71b589"
+  mlops_revision="e6882f4d39cd118284500bdca7ed07ecfa52d3a8"
   mlops_checkout="${XDG_CACHE_HOME:-$HOME/.cache}/shadowspill/sources/mlops-${mlops_revision}"
   if [[ ! -d "${mlops_checkout}/.git" ]]; then
     mkdir -p "$(dirname "${mlops_checkout}")"
