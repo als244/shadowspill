@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -96,6 +97,7 @@ class OwnedProcess:
         cwd: Path,
         log_limit_bytes: int = 64 << 20,
         pass_fds: Sequence[int] = (),
+        guard_fds: Sequence[int] | None = None,
     ) -> None:
         if os.name != "posix" or not hasattr(os, "WNOWAIT"):
             raise RuntimeError(
@@ -108,6 +110,16 @@ class OwnedProcess:
         ):
             raise ValueError("provide a nonempty installed worker command")
         integer(log_limit_bytes, "per-stream log byte limit")
+        if guard_fds is not None and not sys.platform.startswith("linux"):
+            raise RuntimeError("agent child supervision requires Linux")
+        if guard_fds is not None and (
+            not isinstance(guard_fds, (tuple, list))
+            or len(guard_fds) > 1025
+            or any(type(fd) is not int or fd < 3 for fd in guard_fds)
+            or len(set(guard_fds)) != len(guard_fds)
+            or set(guard_fds).intersection(pass_fds)
+        ):
+            raise ValueError("supervisor ownership descriptors must be distinct")
         if (
             not isinstance(pass_fds, (tuple, list))
             or len(pass_fds) > 32
@@ -125,6 +137,18 @@ class OwnedProcess:
             output.close()
             raise
         try:
+            self._lifeline: int | None = None
+            self._guarded = guard_fds is not None
+            child_lifeline = None
+            if guard_fds is not None:
+                from .processes import worker_command
+
+                child_lifeline, self._lifeline = os.pipe()
+                command = worker_command(
+                    "shadowspill.orchestration.launch.parent_guard",
+                    (child_lifeline, ",".join(map(str, pass_fds)), "--", *command),
+                )
+                pass_fds = (*pass_fds, child_lifeline, *guard_fds)
             self._process = subprocess.Popen(
                 list(command),
                 env=dict(environment),
@@ -137,9 +161,15 @@ class OwnedProcess:
                 pass_fds=tuple(pass_fds),
             )
         except BaseException:
+            if self._lifeline is not None:
+                os.close(self._lifeline)
+                self._lifeline = None
             output.close()
             error.close()
             raise
+        finally:
+            if child_lifeline is not None:
+                os.close(child_lifeline)
         self.pid = self._process.pid
         self._command = tuple(command)
         self._reaped = False
@@ -213,6 +243,14 @@ class OwnedProcess:
     def _signal(self, sig: signal.Signals) -> None:
         if self._reaped:
             return
+        if self._guarded and sig == signal.SIGKILL:
+            # Never kill the cleanup owner while descendants might still live.
+            # Closing the lifeline asks it to kill/reap all owned work. A stuck
+            # supervisor keeps its locks and resource claim for explicit retry.
+            if self._lifeline is not None:
+                os.close(self._lifeline)
+                self._lifeline = None
+            sig = signal.SIGTERM
         with suppress(ProcessLookupError):
             # start_new_session pins the child's group to its owned PID. Never
             # infer another process group from allocation/global rank metadata.
@@ -251,6 +289,9 @@ class OwnedProcess:
             if any(log.thread.is_alive() for log in self._logs):
                 raise RuntimeError("owned worker log streams did not close")
             self.closed = True
+            if self._lifeline is not None:
+                os.close(self._lifeline)
+                self._lifeline = None
 
     def __enter__(self) -> Self:
         if self.closed:

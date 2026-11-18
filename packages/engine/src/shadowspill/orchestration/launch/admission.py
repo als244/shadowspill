@@ -111,10 +111,20 @@ class ResourceUsage:
 
 
 class NodeAdmission:
-    def __init__(self, capacity: NodeCapacity, *, max_claims: int = 1024) -> None:
+    def __init__(
+        self,
+        capacity: NodeCapacity,
+        *,
+        max_claims: int = 1024,
+        guard_fds: Sequence[int] | None = None,
+    ) -> None:
         if not isinstance(capacity, NodeCapacity):
             raise TypeError("node admission requires trusted allocation capacity")
         self.capacity = capacity
+        # Node agents retain their ownership lock descriptors in independent
+        # supervisors until every child exits. Local service callers can keep
+        # their existing process ownership without this additional boundary.
+        self.guard_fds = None if guard_fds is None else tuple(guard_fds)
         self.max_claims = integer(max_claims, "maximum live claims", minimum=1)
         self.devices = MappingProxyType(
             {device.id: device for device in capacity.devices}
@@ -265,6 +275,7 @@ class NodeLease:
                 log_limit_bytes=log_limit_bytes,
                 startup_timeout=startup_timeout,
                 shutdown_grace_seconds=shutdown_grace_seconds,
+                guard_fds=self._owner.guard_fds,
             )
             self._children[device_id] = child
             return child
@@ -292,6 +303,7 @@ class NodeLease:
                 cwd=cwd,
                 log_limit_bytes=log_limit_bytes,
                 startup_timeout=startup_timeout,
+                guard_fds=self._owner.guard_fds,
             )
             self._children[""] = child
             return child
@@ -336,6 +348,7 @@ class NodeLease:
                 directory=directory,
                 cwd=cwd,
                 log_limit_bytes=log_limit_bytes,
+                guard_fds=self._owner.guard_fds,
             )
             self._command = child
             return child

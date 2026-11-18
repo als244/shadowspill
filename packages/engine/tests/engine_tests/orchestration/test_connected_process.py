@@ -17,7 +17,9 @@ from shadowspill.training.worker.startup import WorkerStartupConnection, start_w
 from shadowspill_client.protocol.codec import ProtocolError
 
 
-def launch(root, mode="normal", timeout=5):
+def launch(root, mode="normal", timeout=5, *, guard=False):
+    if guard and sys.platform != "linux":
+        pytest.skip("Linux node supervisor")
     return ConnectedProcess(
         lambda fd: [
             sys.executable,
@@ -31,6 +33,7 @@ def launch(root, mode="normal", timeout=5):
         cwd=root,
         log_limit_bytes=1024,
         startup_timeout=timeout,
+        guard_fds=() if guard else None,
     )
 
 
@@ -44,8 +47,9 @@ def startup(child):
     )
 
 
-def test_private_control_survives_large_logs_and_closes_orderly_on_eof(tmp_path):
-    with launch(tmp_path) as child:
+@pytest.mark.parametrize("guard", [False, True])
+def test_private_control_survives_large_logs_and_closes_orderly_on_eof(tmp_path, guard):
+    with launch(tmp_path, guard=guard) as child:
         with startup(child) as group:
             child.ready()
             assert child._socket.gettimeout() is None
@@ -63,8 +67,9 @@ def test_private_control_survives_large_logs_and_closes_orderly_on_eof(tmp_path)
     assert all(log.bytes_written == 1024 for log in child.process.logs)
 
 
-def test_process_death_before_ready_never_returns_live_connections(tmp_path):
-    with launch(tmp_path, "lost_ready") as child:
+@pytest.mark.parametrize("guard", [False, True])
+def test_process_death_before_ready_never_returns_live_connections(tmp_path, guard):
+    with launch(tmp_path, "lost_ready", guard=guard) as child:
         with pytest.raises(ProtocolError, match="evidence"):
             startup(child)
         assert child.closed and child.stream.closed
@@ -72,8 +77,12 @@ def test_process_death_before_ready_never_returns_live_connections(tmp_path):
     assert (tmp_path / "effects").read_text() == "initialized\n"
 
 
-def test_lost_execute_reply_stops_owned_process_and_never_replays(tmp_path):
-    with launch(tmp_path, "lost_completion") as child, startup(child) as group:
+@pytest.mark.parametrize("guard", [False, True])
+def test_lost_execute_reply_stops_owned_process_and_never_replays(tmp_path, guard):
+    with (
+        launch(tmp_path, "lost_completion", guard=guard) as child,
+        startup(child) as group,
+    ):
         child.ready()
         with pytest.raises(ProtocolError, match="absent"):
             group.run({0: call()})

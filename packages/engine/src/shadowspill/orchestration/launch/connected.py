@@ -30,6 +30,7 @@ class ConnectedProcess:
         log_limit_bytes: int = 64 << 20,
         startup_timeout: float = 120,
         shutdown_grace_seconds: float = 5,
+        guard_fds: Sequence[int] | None = None,
     ) -> None:
         if number(startup_timeout, "worker startup timeout", minimum=0) == 0:
             raise ValueError("worker startup timeout must be positive")
@@ -51,6 +52,7 @@ class ConnectedProcess:
                     cwd=cwd,
                     log_limit_bytes=log_limit_bytes,
                     pass_fds=(child.fileno(),),
+                    guard_fds=guard_fds,
                 )
             except BaseException:
                 self.stream.close()
