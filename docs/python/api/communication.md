@@ -143,9 +143,13 @@ infer general scale-up/out rates or contention between arbitrary groups.
 ## Compute and transfer overlap
 
 Overlap calibration times the saved task alone, the transfer alone and both
-together, using actual NCCL work events and bounded message sizes. It excludes
-arrival skew and post-compute transfer tails, and does not fit a full training
-step. Isolated baselines and buffer allocations are reused within the session;
+together, using actual NCCL work events and bounded message sizes. Each route
+is probed at up to ten of its own object sizes, spread evenly in log bytes from
+its smallest to its largest, because a collective's rate under compute changes
+steeply with message size and the simulator interpolates between the sizes
+probed. It excludes arrival skew and post-compute transfer tails, and does not
+fit a full training step. Isolated baselines and buffer allocations are reused
+within the session;
 `OverlapProfileCache` can also reuse compatible paired evidence across candidates.
 Its identity includes task/input lineage, routes, backend/rank geometry and
 sampling policy, and reuse requires all-rank agreement.

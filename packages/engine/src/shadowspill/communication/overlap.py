@@ -1,5 +1,6 @@
 """CPU-only identities and representative routes for paired timing measurements."""
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -49,11 +50,36 @@ class OverlapRoute:
         return max(r.tensor_bytes for r in self.requests)
 
 
+#: The most sizes one route is probed at.
+MAX_ROUTE_SIZES = 10
+
+
+def spread_sizes(sizes: list[int], limit: int = MAX_ROUTE_SIZES) -> list[int]:
+    """Up to ``limit`` of the sorted ``sizes``, spread evenly in log size.
+
+    The extremes are always kept. Each point between them is the actual size
+    nearest an even step from smallest to largest in ``log1p`` bytes, the
+    coordinate the simulator interpolates overlap rates in. Sizes that cluster
+    therefore share a probe, and a wide range gets one in every part of it.
+    """
+    if len(sizes) <= limit:
+        return list(sizes)
+    scale = [math.log1p(size) for size in sizes]
+    chosen = {0, len(sizes) - 1}
+    for step in range(1, limit - 1):
+        target = scale[0] + (scale[-1] - scale[0]) * step / (limit - 1)
+        chosen.add(min(range(len(sizes)), key=lambda i: abs(scale[i] - target)))
+    return [sizes[index] for index in sorted(chosen)]
+
+
 def overlap_routes(
     program: Program, info: CommunicationInfo
 ) -> tuple[OverlapRoute, ...]:
-    """Small/middle/large actual objects per route; no synthetic traffic sizes.
+    """Actual objects per route, spread over its sizes; no synthetic traffic sizes.
 
+    An overlap rate changes steeply with message size, and the simulator
+    interpolates between the sizes probed, so a route is probed across its
+    whole range (see ``spread_sizes``) rather than at its ends and one middle.
     A reduction and its replica sum form one ordered transfer, as at execution.
     All members of a group family participate concurrently in paired probes.
     """
@@ -80,9 +106,5 @@ def overlap_routes(
         )
     result: list[OverlapRoute] = []
     for _, routes in sorted(by_class.items()):
-        sizes = sorted(routes)
-        result.extend(
-            routes[size]
-            for size in sorted({sizes[0], sizes[len(sizes) // 2], sizes[-1]})
-        )
+        result.extend(routes[size] for size in spread_sizes(sorted(routes)))
     return tuple(result)

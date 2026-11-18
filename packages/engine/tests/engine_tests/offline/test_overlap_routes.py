@@ -1,9 +1,16 @@
 """Route identity, traffic coordinates and profile overlays stay CPU-only."""
 
+import math
 from dataclasses import replace
+from itertools import pairwise
 
 from shadowspill import CommunicationInfo, Profiles, TaskProfile, apply_profiles
-from shadowspill.communication.overlap import overlap_routes, timing_class
+from shadowspill.communication.overlap import (
+    MAX_ROUTE_SIZES,
+    overlap_routes,
+    spread_sizes,
+    timing_class,
+)
 from shadowspill.communication.requests import CollectiveRequest
 from shadowspill.ir import TaskOverlapCost
 
@@ -98,6 +105,34 @@ def test_representative_routes_use_actual_sizes_and_planner_traffic_units():
     )
     source = replace(source, setup={"gpu": "test"})
     routes = overlap_routes(source, info)
-    assert [r.buffer_bytes for r in routes] == [64, 256, 1024]
-    assert [r.bytes for r in routes] == [32, 128, 512]
+    # Five sizes are within the limit, so each is probed.
+    assert [r.buffer_bytes for r in routes] == [64, 128, 256, 512, 1024]
+    assert [r.bytes for r in routes] == [32, 64, 128, 256, 512]
     assert len({r.timing_class for r in routes}) == 1
+
+
+def test_a_wide_route_is_probed_across_its_whole_size_range():
+    # Many small objects and a few large ones, as a model's sharded weights are:
+    # the middle object by count is small, far below the largest.
+    small = [28 + 512 * index for index in range(60)]
+    large = [1 << 20, 8 << 20, 64 << 20, 512 << 20, 4032 << 20]
+    sizes = sorted(small + large)
+    assert sizes[len(sizes) // 2] < 1 << 20
+    chosen = spread_sizes(sizes)
+    assert len(chosen) <= MAX_ROUTE_SIZES and set(chosen) <= set(sizes)
+    assert chosen[0] == sizes[0] and chosen[-1] == sizes[-1]
+    assert chosen == sorted(set(chosen))
+    # No two neighbouring probes are more than three even steps apart, so
+    # nothing between 1 MiB and 4 GiB is left to one interpolation.
+    step = (math.log1p(sizes[-1]) - math.log1p(sizes[0])) / (MAX_ROUTE_SIZES - 1)
+    gaps = [math.log1p(b) - math.log1p(a) for a, b in pairwise(chosen)]
+    assert max(gaps) <= 3 * step
+    assert sum(1 << 20 <= size < 4032 << 20 for size in chosen) >= 3
+    # Few sizes are all kept, and the choice does not depend on input order.
+    assert spread_sizes([64, 128, 256]) == [64, 128, 256]
+    # With three, the middle probe is the size nearest the middle of the range
+    # in log bytes, not the middle object by count.
+    middle = (math.log1p(sizes[0]) + math.log1p(sizes[-1])) / 2
+    nearest = min(sizes, key=lambda size: abs(math.log1p(size) - middle))
+    assert spread_sizes(sizes, 3) == [sizes[0], nearest, sizes[-1]]
+    assert nearest > sizes[len(sizes) // 2]
