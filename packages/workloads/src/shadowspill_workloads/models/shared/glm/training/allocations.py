@@ -12,7 +12,14 @@ row. Index padding follows a fixed provider tile. Its LSE, delta and FP32 KV
 gradients are geometry-sized. Hopper's FlashMLA selection/LSE convention is saved
 by a separate preparation factory, so execution never performs its GPU probe.
 
+Native cuLA KDA allocates an input-shaped output, FP32 gates and 128 bytes per
+device SM for its forward workspace; final-state output is disabled. Its backward
+reconstructs fixed 64-column intra-chunk matrices and capacity-sized histories.
+The GPU-side active chunk count changes only which work runs, not those extents.
+
 Four-stream mHC uses T*4/T*16 coefficients and input-sized outputs/gradients.
+TileKernels post allocates an input-shaped output and four input-shaped gradients;
+its on-chip tiles and contiguous copies depend only on geometry and layout.
 DeepGEMM preprocessing allocates fixed split*T*24 and split*T partials; backward
 allocates fixed coefficient partials and input gradients. Frozen projections
 decode exactly their declared WeightSpec shape. Native block-FP8 expert GEMMs
@@ -47,6 +54,7 @@ def contracts(config):
             for name in (
                 "kimi_delta_attention_fla",
                 "kimi_delta_attention_fla_ieee",
+                "kimi_delta_attention_cula_sm90_native",
                 "packed_swiglu_builtin_triton",
                 "sparse_latent_attention_tilelang",
                 "sparse_latent_attention_hopper",
@@ -67,6 +75,8 @@ def contracts(config):
                 "mhc_post_four_coefficient_grads",
                 "mhc_pre_deepgemm",
                 "mhc_pre_deepgemm_backward",
+                "mhc_post_tilekernels",
+                "mhc_post_tilekernels_backward",
             )
         },
         "torch.ops.mlops_seqmoe.decode_weight.default": CONTRACT,
