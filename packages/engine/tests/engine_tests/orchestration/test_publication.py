@@ -106,8 +106,12 @@ def test_reservation_precedes_any_producer_and_failed_admission_exposes_no_permi
     spec, _, _ = output()
     before = memory.used
     with disk.reserve(disk.max_bytes):
-        with pytest.raises(TimeoutError):
+        with pytest.raises(TimeoutError, match="temporary output disk capacity") as exc:
             files.reserve(spec)
+        assert f"{disk.max_bytes:,}/{disk.max_bytes:,} bytes already reserved" in str(
+            exc.value
+        )
+        assert "timed out" not in str(exc.value)
         assert not list(files.root.iterdir()) and memory.used == before
     with memory.reserve(memory.max_bytes - before[0]):
         with pytest.raises(TimeoutError):

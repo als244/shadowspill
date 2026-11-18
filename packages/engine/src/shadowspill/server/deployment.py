@@ -30,7 +30,9 @@ class ServerLimits:
     artifact_bytes: int = 512 << 30
     artifact_count: int = 100000
     upload_ttl_seconds: float = UPLOAD_TTL_SECONDS
-    temporary_disk_bytes: int = 32 << 30
+    # Preparation files coexist with all workers' output/trace reservations.
+    # This is an accounting ceiling, not a preallocated disk file.
+    temporary_disk_bytes: int = 128 << 30
     temporary_files: int = 4096
     # Initial metadata resolution can stream a large local checkpoint's hashes.
     # Match the HTTP service/client default rather than cutting it off at 30s.

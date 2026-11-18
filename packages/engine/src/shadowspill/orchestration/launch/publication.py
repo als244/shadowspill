@@ -161,6 +161,15 @@ class OutputFiles:
             memory = self._memory.reserve(4096 + 8 * len(raw) + COPY_BYTES, timeout=0)
             try:
                 disk = self._disk.reserve(spec.size_bytes + len(raw), timeout=0)
+            except (ValueError, TimeoutError) as error:
+                memory.close()
+                used, requests = self._disk.used
+                raise type(error)(
+                    "temporary output disk capacity exhausted: "
+                    f"requested {spec.size_bytes + len(raw):,} bytes; "
+                    f"{used:,}/{self._disk.max_bytes:,} bytes already reserved; "
+                    f"{requests}/{self._disk.max_requests} reservations"
+                ) from error
             except BaseException:
                 memory.close()
                 raise
