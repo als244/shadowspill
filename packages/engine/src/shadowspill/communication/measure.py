@@ -9,7 +9,7 @@ import torch.distributed as dist
 
 from shadowspill.artifacts._values import digest, plain
 from shadowspill.artifacts.program import Program
-from shadowspill.diagnostics.progress import phase
+from shadowspill.diagnostics.progress import event, phase
 from shadowspill.memory import PinnedHostPool, SpillPool
 from shadowspill.parallelism.agreement import agreement_digest
 from shadowspill.pytorch.accelerator import resolve_device
@@ -24,6 +24,7 @@ from .host import measure_host_copies
 from .info import CommunicationInfo
 from .measure_collectives import measure_collectives
 from .memory_session import CommunicationMemory
+from .placement import bind_to_device, host_placement
 from .requests import CollectiveRequest, collective_requests
 
 
@@ -38,6 +39,7 @@ def measure_communication(
     warmup_seconds: float | None = None,
     measure_seconds: float | None = None,
     spill: SpillPool | None = None,
+    numa_binding: bool = True,
 ) -> CommunicationInfo:
     """Calibrate spill copies and optionally a Program's lowered collectives.
 
@@ -55,6 +57,13 @@ def measure_communication(
     spill selects an existing pool configuration; None uses ordinary pinned-host
     copies. External backends use bounded native probe pools without installing
     the execution allocator. Build and compute profiling need no spill setting.
+
+    By default the measuring process first takes the host placement a runtime
+    gives an execution worker: thread affinity narrowed to the device's host
+    NUMA node, and that node's memory preferred for the buffers it pins. These
+    are process-lifetime changes. ``numa_binding=False`` keeps the caller's
+    placement, for execution that also runs with ``numa_binding=False``. The
+    result records the placement it measured under as ``host_placement``.
     """
     coordinated = program is not None or collectives is not None or rank_map is not None
     distributed = coordinated and dist.is_initialized() and dist.get_world_size() > 1
@@ -63,7 +72,10 @@ def measure_communication(
     identity, failure = "", None
     bindings = None
     memory = None
+    placement: dict[str, Any] = {"numa_binding": numa_binding}
     try:
+        if not isinstance(numa_binding, bool):
+            raise TypeError("numa_binding must be a bool")
         if spill is not None and not isinstance(spill, SpillPool):
             raise TypeError("spill must be a SpillPool configuration")
         sizes = tuple(sorted(set(sizes_bytes)))
@@ -88,6 +100,21 @@ def measure_communication(
             raise RuntimeError(
                 "communication measurement requires the native PyTorch allocator"
             )
+        # Before any buffer is pinned or any communicator thread is created.
+        if numa_binding:
+            unplaced = bind_to_device(target.index or 0)
+            if unplaced is not None:
+                placement["unplaced"] = unplaced
+        placement.update(host_placement())
+        event(
+            f"Host placement: {placement['cpus']} CPUs on NUMA node(s) "
+            f"{placement['numa_nodes']}"
+            + (
+                f"; not placed: {placement['unplaced']}"
+                if "unplaced" in placement
+                else ""
+            )
+        )
         setup = build_setup(target)
         if program is not None and program.setup and plain(program.setup) != setup:
             raise ValueError(
@@ -150,6 +177,10 @@ def measure_communication(
             if bindings is not None:
                 bindings.check(failure)
             assert host is not None
+            # Each worker's own placement stays beside its own rates.
+            host = replace(
+                host, metadata={**host.metadata, "host_placement": placement}
+            )
             result = combine_host(host, bindings)
             with phase(f"Collective measurements · {len(requests)} configurations"):
                 measurements = measure_collectives(

@@ -22,6 +22,18 @@ passed to `plan_program`. With no arguments it measures local pinned-host copies
 | `warmup_seconds` | `None` | Conditioning-time shortcut, mutually exclusive with `options`. |
 | `measure_seconds` | `None` | Measurement-time shortcut, mutually exclusive with `options`. |
 | `spill` | `None` | Pinned-host copies, or an explicit external spill-backend configuration. |
+| `numa_binding` | `True` | Take a runtime's host placement before measuring: thread affinity narrowed to the device's host NUMA node and its memory preferred, for the life of the process. `False` keeps the caller's placement, to match execution that runs with `numa_binding=False`. |
+
+Rates describe execution only when they are measured where execution runs. A
+pinned buffer on another NUMA node copies at a fraction of the device-local
+rate, and a distributed calibration prices every worker at its slowest
+worker's rate, so one misplaced worker lowers them all. The measuring process
+therefore takes its placement the way an execution worker does, from the
+initialization of a runtime, here a probe runtime with minimal pools that is
+released at once. The result's `host_placement` records the choice, the CPUs
+and NUMA nodes measured on, and `unplaced` with the reason when the process
+could not be placed; a distributed result keeps each worker's record beside its
+own rates under `per_rank`.
 
 After applying compute profiles, `measure_overlap(profiled_program,
 communication_info, ...)` returns a `Profiles` overlay. Merge it with the base

@@ -47,6 +47,10 @@ for direction in ("fetch", "evict"):
     assert getattr(info, f"{direction}_concurrent_bytes_per_second") > 1e6
 assert len(info.metadata["observations"]) == (8 if spill.addressable else 4)
 assert info.metadata["spill_kind"] == spill.kind_name
+# The measurement ran under the placement a runtime gives this device.
+placed = info.metadata["host_placement"]
+assert placed["numa_binding"] is True and "unplaced" not in placed, placed
+assert placed["cpus"] >= 1 and placed["numa_nodes"], placed
 info.save(sys.argv[1])
 assert CommunicationInfo.load(sys.argv[1]).to_dict() == info.to_dict()
 # The Program form never restores compiled tasks or creates runtime pools.
@@ -66,7 +70,9 @@ derived = measure_communication(
     warmup_seconds=0.001,
     measure_seconds=0.005,
     spill=spill,
+    numa_binding=False,
 )
+assert derived.metadata["host_placement"]["numa_binding"] is False
 assert derived.measurements[0]["duration_seconds"] == 0
 assert not torch.distributed.is_initialized()
 assert torch.cuda.memory_allocated() == baseline

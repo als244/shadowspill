@@ -297,6 +297,12 @@ This is automatic by default and disabled by `numa_binding=False` in Python
 restrictions warn without preventing startup. Existing pages are not migrated.
 These are process-lifetime placement changes, not task scheduling operations.
 
+Communication calibration measures under the same placement. Before it pins a
+buffer it creates and releases a probe runtime with minimal pools, whose
+initialization applies this placement to the measuring process, so the rates
+a plan is priced with are those of device-local host memory. The same switch
+disables it.
+
 ---
 
 Previous: [Writing a search algorithm](search-algorithm.md) ·

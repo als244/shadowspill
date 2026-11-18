@@ -301,6 +301,10 @@ install or modify the adapter's global PyTorch allocator. The Python public entr
 point is `measure_communication(spill=...)`; returned rates and latencies include
 backend staging/completion and can be saved independently of execution pools.
 
+Calibration also uses the split lifecycle below once before it measures: open,
+acquire minimal pinned-host pools with NUMA binding enabled, destroy. Runtime
+creation is what places the process, and the placement outlives the probe.
+
 Capacity-bound memory observations use a split lifecycle on the same probe:
 
 1. `shadowspill_pytorch_spill_probe_open()` loads the backend and optional

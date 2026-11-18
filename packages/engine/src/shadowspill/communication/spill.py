@@ -108,6 +108,6 @@ def measure_spill(
             "observations": observations,
             "fit": "small-copy completion latency + largest queued-copy bandwidth",
             "probe_sizes_bytes": sizes,
-            "scope": "bounded scratch pool; caller's host/NUMA placement",
+            "scope": "bounded scratch pool; the measuring process's host placement",
         },
     )

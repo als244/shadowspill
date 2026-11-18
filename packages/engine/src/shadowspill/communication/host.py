@@ -112,6 +112,6 @@ def measure_host_copies(
             "observations": observations,
             "fit": "startup + bytes / bandwidth; concurrent at largest size",
             "fit_rms_error_seconds": errors,
-            "scope": "one GPU; caller's current host NUMA placement",
+            "scope": "one GPU; the measuring process's host placement",
         },
     )
