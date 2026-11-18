@@ -20,7 +20,7 @@ from shadowspill.training.definitions import load_registry
 from shadowspill_client import Objective
 from shadowspill_workloads.definitions.expert_parallel import ownership
 from shadowspill_workloads.initialization.decoder import Initialize as DecoderInitialize
-from shadowspill_workloads.initialization.expert_parallel import Initialize
+from shadowspill_workloads.initialization.expert_parallel import BANKS, Initialize
 from workload_tests.definitions.test_expert_definitions import settings
 from workload_tests.service.oracles._moe_oracle import WeightGradients as DenseGradients
 
@@ -132,6 +132,8 @@ def initial_model(*, grad_dtype="bfloat16"):
                 fill = Initialize(
                     base,
                     expert_rank=rank,
+                    ranks=2 if sharded else 1,
+                    banks=BANKS["qwen3moe"],
                     std=model.config.initializer_range,
                     router_dtype=torch.bfloat16,
                 )

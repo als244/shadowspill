@@ -201,13 +201,18 @@ def initialization(config, architecture, family, context):
     def open_experts(runtime):
         import torch
 
-        from shadowspill_workloads.initialization.expert_parallel import Initialize
+        from shadowspill_workloads.initialization.expert_parallel import (
+            BANKS,
+            Initialize,
+        )
 
+        ranks = context.parallelism.ranks_per_replica
         with description.open(runtime) as catalog:
             yield Initialize(
                 catalog,
-                expert_rank=context.logical_rank
-                % context.parallelism.ranks_per_replica,
+                expert_rank=context.logical_rank % ranks,
+                ranks=ranks,
+                banks=BANKS[family],
                 std=architecture.initializer_range,
                 router_dtype=torch.float32 if family == "olmoe" else torch.bfloat16,
             )

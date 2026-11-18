@@ -3,7 +3,7 @@
 from functools import partial
 
 from shadowspill_workloads.definitions.expert_parallel import describe, ownership
-from shadowspill_workloads.initialization.expert_parallel import Initialize
+from shadowspill_workloads.initialization.expert_parallel import BANKS, Initialize
 from shadowspill_workloads.models import catalog
 from shadowspill_workloads.models.shared.expert_parallel import resources
 from workload_tests.cases.precision import Precision
@@ -94,6 +94,8 @@ def experiment(
     setup["fill_tensor"] = Initialize(
         setup["fill_tensor"],
         expert_rank=logical_rank % ranks,
+        ranks=ranks,
+        banks=BANKS[entry.family],
         std=options.init_std,
         router_dtype=options.router_dtype,
     )

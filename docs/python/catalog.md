@@ -34,7 +34,9 @@ model = Model(
 The text models default to the small `tiny` preset. Initial weights are a separate
 choice: use `Weights.random(seed=...)` to train from scratch, or
 `Model.from_pretrained("/models/checkpoint")` for a supported checkpoint on the
-server. Configuration, precision and initialization details are in the
+server. The seed alone decides random weights: a model starts from the same
+values whatever its parallelism, its number of workers or which worker owns
+which parameters. Configuration, precision and initialization details are in the
 [definition reference](advanced/definitions.md#supplied-definitions).
 
 ## Optimizers
