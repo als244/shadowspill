@@ -29,6 +29,15 @@ shards, inputs and communicator bindings. Different targets need compatible
 target-specific Plans. Collective constraints include communication within weight
 fetches, gradient spills and optimizer tasks, not only explicit model operations.
 
+Distributed training candidates share a traversal ordering. Its `depth` is the
+number of complete forward/backward passes; `breadth` is the number of
+microbatches visited within each pass. Select these jointly across workers,
+including heterogeneous workers, while allowing their token capacities to differ.
+An independently fastest depth on each GPU can repeat sharded-weight fetches a
+different number of times. Equal depth is only an initial constraint: final
+Plans must still agree on collective participation and issue order, since
+different spill decisions can introduce incompatible communication.
+
 ## Runtime commands and workload shares
 
 The client continues to submit a global batch through `step()`,
