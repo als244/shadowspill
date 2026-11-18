@@ -122,9 +122,10 @@ def _replay(target: Plan, source: Plan, rank: int) -> Plan:
     if target is source:
         return target
     ours, theirs = target._costed_program, source._costed_program
-    # Names alone are not a topology contract. Require the same task dataflow,
-    # alternatives, alias ownership and invocation boundaries. Shapes and local
-    # implementations may differ; replay and admission use only the target's.
+    # Names alone are not a topology contract. Require the same flow of data
+    # between tasks, alternatives, alias ownership and invocation boundaries.
+    # Shapes and local implementations may differ; replay and admission use only
+    # the target's.
     compatible = (
         target.program.initial_residency == source.program.initial_residency
         and target.program.final_residency == source.program.final_residency
