@@ -152,7 +152,7 @@ Start the service once inside an **eight-GPU allocation on one host**. Prepare
 FineWeb-Edu with the Qwen3 tokenizer, as described in the
 [distributed example](docs/examples/client-training.md#eight-gpu-data-parallel-pretraining).
 Reuse the connection, reports and loop above with this setup and
-`optim={"lr": 0.0003}` for pretraining updates.
+`optim={"lr": 0.00001}` for pretraining updates.
 
 ```python
 from examples.training.text_data import TokenBatches

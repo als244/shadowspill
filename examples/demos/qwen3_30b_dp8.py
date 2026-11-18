@@ -91,7 +91,7 @@ for step in range(options.steps):
     validation = training.validate_batch(batch).result()
     following = training.step(
         batch,
-        optim={"lr": 0.0003},
+        optim={"lr": 0.00001},
         runtime_trace=step == options.steps - 1,
     )
     table.track(

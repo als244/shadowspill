@@ -369,7 +369,7 @@ def main():
                     args.output,
                     args.steps,
                     requested,
-                    1e-4 if args.model == "glm" else 3e-4,
+                    1e-4 if args.model == "glm" else 1e-5,
                     prepared=args.prepared,
                 )
     except BaseException:
