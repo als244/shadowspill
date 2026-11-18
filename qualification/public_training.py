@@ -36,6 +36,7 @@ from shadowspill_client import (
 from shadowspill_client.display import CommandTable
 from shadowspill_client.parallelism import data_parallel, expert_parallel
 from shadowspill_client.protocol.setup import TrainingSetup
+from shadowspill_client.protocol.training import ResolvedTraining
 from shadowspill_client.text import build_candidates, text_batch_statistics
 
 
@@ -186,7 +187,7 @@ def report_document(path):
     )
 
 
-def train(service, batch, data, output, steps, requested, lr):
+def train(service, batch, data, output, steps, requested, lr, *, prepared=None):
     receipt = {
         "host": socket.gethostname(),
         "data": data.identity,
@@ -195,28 +196,42 @@ def train(service, batch, data, output, steps, requested, lr):
         "started_utc": datetime.now(UTC).isoformat(),
     }
     start = monotonic()
-    preview = service.describe_training(**requested).result(300)
-    write_json(output / "preview.json", preview.to_dict())
-    measured = service.prepare_training(config=preview.config, progress=True).result(
-        14400
-    )
-    measured.export().result().download(output / "measurements.zip").result(600)
-    write_json(
-        output / "measurement-reuse.json",
-        {
-            "measurements": {
-                "session_id": measured.info.session_id,
-                "run_id": measured.info.run_id,
+    if prepared is not None:
+        config = ResolvedTraining.from_dict(
+            json.loads((prepared / "training-config.json").read_text())
+        )
+        plans = service.artifacts.upload(prepared / "plans.ssp").result(600)
+        training = service.create_training_client(
+            config=config, plans=plans, progress=True
+        ).result(14400)
+        receipt["reused_plans"] = str(prepared)
+    else:
+        preview = service.describe_training(**requested).result(300)
+        write_json(output / "preview.json", preview.to_dict())
+        measured = service.prepare_training(
+            config=preview.config, progress=True
+        ).result(14400)
+        measured.export().result().download(output / "measurements.zip").result(600)
+        write_json(
+            output / "measurement-reuse.json",
+            {
+                "measurements": {
+                    "session_id": measured.info.session_id,
+                    "run_id": measured.info.run_id,
+                },
             },
-        },
-    )
-    training = service.create_training_client(
-        **{**requested, "prepare": replace(requested["prepare"], reuse=measured.reuse)},
-        progress=True,
-    ).result(14400)
+        )
+        training = service.create_training_client(
+            **{
+                **requested,
+                "prepare": replace(requested["prepare"], reuse=measured.reuse),
+            },
+            progress=True,
+        ).result(14400)
     receipt.update(run_id=training.run_id, preparation_seconds=monotonic() - start)
     write_json(output / "receipt.json", receipt)
     try:
+        write_json(output / "training-config.json", training.get_config().to_dict())
         training.plans.download(output / "plans.ssp").result(600)
         write_json(output / "plans.json", training.plans.reference.to_dict())
         training.plans.report().result(300).download(output / "plan.html").result(300)
@@ -240,6 +255,9 @@ def train(service, batch, data, output, steps, requested, lr):
 
         def finish(index, future):
             result = future.result(3600)
+            # Preserve diagnostic values even when a numerical assertion fails.
+            receipt["steps"].append(result.record.to_dict())
+            write_json(output / "receipt.json", receipt)
             assert (
                 result.outcome == "completed" and result.completed_updates == index + 1
             )
@@ -254,8 +272,6 @@ def train(service, batch, data, output, steps, requested, lr):
                     "tokens.loss_sum" in result.metrics
                     and "balance.loss_sum" in result.metrics
                 )
-            receipt["steps"].append(result.record.to_dict())
-            write_json(output / "receipt.json", receipt)
             if index == steps - 1:
                 assert result.traces
                 result.traces[0].download_report(output / "runtime.html").result(300)
@@ -304,6 +320,11 @@ def main():
     parser.add_argument("--model", choices=("qwen", "glm"), default="qwen")
     parser.add_argument("--parallelism", choices=("dp", "ep"), default="dp")
     parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument(
+        "--prepared",
+        type=Path,
+        help="Reuse plans.ssp and training-config.json from a completed preparation",
+    )
     args = parser.parse_args()
     if args.steps < 2:
         parser.error("at least two steps are needed to check learning")
@@ -349,6 +370,7 @@ def main():
                     args.steps,
                     requested,
                     1e-4 if args.model == "glm" else 3e-4,
+                    prepared=args.prepared,
                 )
     except BaseException:
         write_json(
