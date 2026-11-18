@@ -15,6 +15,9 @@ from time import monotonic
 from typing import TYPE_CHECKING, Protocol, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from shadowspill.orchestration.nodes.authentication import NodeTokens
+from shadowspill.orchestration.nodes.protocol import HTTP_BYTES as NODE_HTTP_BYTES
+from shadowspill.orchestration.nodes.registry import NodeRegistry
 from shadowspill.orchestration.nodes.selection import HardwareSelectionError
 from shadowspill.training.session.writers import Attachment
 from shadowspill_client._records import Record, number
@@ -22,6 +25,7 @@ from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.protocol.codec import (
     MAX_METADATA_BYTES,
     ProtocolError,
+    RecordCodec,
     decode,
     encode,
 )
@@ -40,6 +44,7 @@ from .artifacts import ArtifactStore
 from .authentication import BearerTokens
 from .records.requests import RequestRecords, RunIdentity, WriterFenced
 from .routes import artifacts as artifact_routes
+from .routes import nodes as node_routes
 from .routes import observations
 from .routes import requests as request_routes
 from .routes import runs as run_routes
@@ -150,8 +155,10 @@ class _Body:
         self.remaining -= count
         return count
 
-    def record(self) -> Record:
-        if not 0 < self.length <= MAX_METADATA_BYTES:
+    def record(
+        self, *, codec: RecordCodec | None = None, max_bytes: int = MAX_METADATA_BYTES
+    ) -> Record:
+        if not 0 < self.length <= max_bytes:
             raise ProtocolError("control body exceeds the portable metadata bound")
         payload = bytearray(self.length)
         try:
@@ -160,7 +167,11 @@ class _Body:
                 while offset < len(view):
                     with view[offset : offset + _CHUNK] as part:
                         offset += self.readinto(part)
-            return decode(bytes(payload))
+            return (
+                decode(bytes(payload))
+                if codec is None
+                else codec.decode(bytes(payload), max_bytes=max_bytes)
+            )
         finally:
             del payload
 
@@ -188,6 +199,9 @@ class HTTPService(ThreadingHTTPServer):
         jobs: RunJobs | None = None,
         describe: Callable[[TrainingDescription], TrainingPreview] | None = None,
         hardware: Callable[[], HardwareInventory] | None = None,
+        nodes: NodeRegistry | None = None,
+        node_authentication: NodeTokens | None = None,
+        connections: BufferBudget | None = None,
         request_timeout: float = 120,
         tls: ssl.SSLContext | None = None,
     ) -> None:
@@ -199,6 +213,16 @@ class HTTPService(ThreadingHTTPServer):
         # keeps decoded request/response metadata in its existing scratch owner.
         self.describe = describe
         self.hardware = hardware
+        if (nodes is None) != (node_authentication is None) or (
+            nodes is not None and connections is None
+        ):
+            raise ValueError(
+                "node control requires authentication and connection admission"
+            )
+        if node_authentication is not None:
+            node_authentication.require_separate(authentication)
+        self.nodes, self.node_authentication = nodes, node_authentication
+        self.connections = connections
         if jobs is not None and jobs.storage.incarnation != self.incarnation:
             raise ValueError("creation registry belongs to another server incarnation")
         if memory.max_bytes < HTTP_SCRATCH_BYTES:
@@ -235,7 +259,11 @@ class HTTPService(ThreadingHTTPServer):
         if not isinstance(request, socket.socket):
             raise TypeError("HTTP requires a stream socket")
         try:
-            lease = self.memory.reserve(HTTP_SCRATCH_BYTES, timeout=0)
+            lease = (
+                self.memory.reserve(HTTP_SCRATCH_BYTES, timeout=0)
+                if self.connections is None
+                else self.connections.reserve(NODE_HTTP_BYTES, timeout=0)
+            )
         except (RuntimeError, TimeoutError):
             # TLS handshakes also need an admitted thread. Do not start one on
             # the listener thread merely to send a capacity error.
@@ -335,7 +363,20 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _serve(self) -> None:
         self.close_connection = True
+        client_lease = None
         try:
+            if self.path.startswith("/v1/nodes/"):
+                # Small, separately admitted requests keep long polls from owning
+                # the much larger client upload/metadata scratch arena.
+                parsed = urlsplit(self.path)
+                if parsed.query or parsed.fragment or len(self.path) > 256:
+                    raise ProtocolError("invalid node route")
+                node_routes.dispatch(
+                    self, tuple(parsed.path.split("/")[3:]), self._body()
+                )
+                return
+            if self.server.connections is not None:
+                client_lease = self.server.memory.reserve(HTTP_SCRATCH_BYTES, timeout=0)
             owner = self.server.authentication.owner(
                 self.headers.get_all("Authorization") or ()
             )
@@ -377,6 +418,9 @@ class _Handler(BaseHTTPRequestHandler):
             return
         except Exception:
             self._reply(ServiceError("service_failed", "Service request failed."), 500)
+        finally:
+            if client_lease is not None:
+                client_lease.close()
 
     def _body(self) -> _Body:
         lengths = self.headers.get_all("Content-Length") or ()
@@ -497,12 +541,20 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _reply(
-        self, value: Record, status: int = 200, *, content_range: str | None = None
+        self,
+        value: Record,
+        status: int = 200,
+        *,
+        content_range: str | None = None,
+        codec: RecordCodec | None = None,
+        max_bytes: int = MAX_METADATA_BYTES,
     ) -> None:
         if self._response_started:
             # Never append an error record to a partially written binary body.
             return
-        encoded = encode(value)
+        encoded = (
+            encode(value) if codec is None else codec.encode(value, max_bytes=max_bytes)
+        )
         self._headers(
             status, len(encoded), CONTROL_MEDIA_TYPE, content_range=content_range
         )

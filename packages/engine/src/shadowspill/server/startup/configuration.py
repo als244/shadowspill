@@ -14,6 +14,7 @@ from shadowspill.orchestration.launch.admission import (
     NodeAdmission,
 )
 from shadowspill.orchestration.nodes.hardware import node_hardware
+from shadowspill.orchestration.nodes.registry import NodeRegistry
 from shadowspill.orchestration.nodes.selection import select_hardware
 from shadowspill.server.startup.model_sources import local_model_source
 from shadowspill.server.storage import ServiceStorage
@@ -88,9 +89,11 @@ class LocalCreationFactory:
         base_host_bytes: int,
         model_root: Path | None = None,
         pool: str = "default",
+        nodes: NodeRegistry | None = None,
     ) -> None:
         self.storage, self.node = storage, node
         self.pool = text(pool, "compute pool")
+        self.nodes = nodes
         self.packages = names(packages, "definition packages")
         self.root, self.cache = root, cache
         self.model_root = model_root
@@ -108,7 +111,13 @@ class LocalCreationFactory:
         return LocalCreation(self, info)
 
     def inventory(self) -> HardwareInventory:
-        return HardwareInventory((node_hardware(self.node, pool=self.pool),))
+        local = node_hardware(self.node, pool=self.pool)
+        if self.nodes is None:
+            return HardwareInventory((local,))
+        remote = self.nodes.inventory().nodes
+        if any(node.id == local.id for node in remote) and local.devices:
+            raise ValueError("local allocation and remote agent have the same node ID")
+        return HardwareInventory((local, *remote) if local.devices else remote)
 
     def describe(self, request: TrainingDescription) -> TrainingPreview:
         """Use the same CPU resolver; the caller owns the control-memory envelope."""

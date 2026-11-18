@@ -22,6 +22,7 @@ class ServerLimits:
     controller_host_bytes: int = 1 << 30
     max_training_runs: int = 1
     max_http_requests: int = 4
+    max_nodes: int = 32
     job_host_bytes: int = 512 << 20
     request_host_bytes: int = 128 << 20
     max_open_records: int = 2
@@ -51,6 +52,7 @@ class ServerLimits:
             "controller_host_bytes",
             "max_training_runs",
             "max_http_requests",
+            "max_nodes",
             "job_host_bytes",
             "request_host_bytes",
             "max_open_records",

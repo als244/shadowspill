@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import socket
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
-from shadowspill.orchestration.launch.admission import NodeAdmission
+from shadowspill.orchestration.launch.admission import NodeAdmission, NodeCapacity
+from shadowspill.orchestration.launch.host_memory import host_memory
 from shadowspill.orchestration.launch.node_capacity import discover_capacity
 from shadowspill_client._records import text
 
@@ -24,8 +26,11 @@ class Allocation:
 
     environment: Mapping[str, str] = field(repr=False)
     pool: str = "default"
+    controller_only: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.controller_only) is not bool:
+            raise TypeError("controller_only must be boolean")
         if len(text(self.pool, "compute pool")) > 256:
             raise ValueError("compute pool exceeds its size bound")
         if not isinstance(self.environment, Mapping) or any(
@@ -41,7 +46,25 @@ class Allocation:
     def from_environment(cls, *, pool: str = "default") -> Allocation:
         return cls(os.environ, pool)
 
+    @classmethod
+    def controller(cls) -> Allocation:
+        """Use this host only for service CPU/storage; agents supply all GPUs."""
+        return cls(os.environ, controller_only=True)
+
     def _local_node(self, root: Path, *, controller_host_bytes: int) -> NodeAdmission:
+        if self.controller_only:
+            memory = host_memory()
+            available = min(memory.capacity_bytes, memory.available_bytes)
+            if controller_host_bytes > available:
+                raise ValueError("controller cannot fit its fixed host reservation")
+            return NodeAdmission(
+                NodeCapacity(
+                    socket.gethostname(),
+                    (),
+                    available - controller_host_bytes,
+                    len(os.sched_getaffinity(0)),
+                )
+            )
         # Refuse an incomplete deployment before probing or starting workers.
         for key in ("SLURM_JOB_NUM_NODES", "SLURM_NNODES"):
             value = self.environment.get(key)

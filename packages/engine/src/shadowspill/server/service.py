@@ -13,6 +13,9 @@ from uuid import uuid4
 
 from shadowspill.orchestration.launch.admission import NodeAdmission
 from shadowspill.orchestration.launch.host_arena import HostArena, HostPartition
+from shadowspill.orchestration.nodes.authentication import NodeTokens
+from shadowspill.orchestration.nodes.protocol import HTTP_BYTES as NODE_HTTP_BYTES
+from shadowspill.orchestration.nodes.registry import NodeRegistry
 from shadowspill.server.startup.configuration import LocalCreationFactory
 from shadowspill.training.definitions import load_registry
 from shadowspill_client._records import names
@@ -47,6 +50,7 @@ class Server:
         model_root: str | Path | None = None,
         cache_root: str | Path | None = None,
         authentication: BearerTokens | None = None,
+        node_authentication: NodeTokens | None = None,
         limits: ServerLimits | None = None,
     ) -> None:
         if allocation is None:
@@ -74,7 +78,13 @@ class Server:
         )
         if not isinstance(self.authentication, BearerTokens):
             raise TypeError("authentication requires BearerTokens")
+        if node_authentication is not None:
+            if not isinstance(node_authentication, NodeTokens):
+                raise TypeError("node_authentication requires NodeTokens")
+            node_authentication.require_separate(self.authentication)
+        self.node_authentication = node_authentication
         self.incarnation = uuid4().hex
+        self._nodes: NodeRegistry | None = None
         self._lock = RLock()
         self._node: NodeAdmission | None = None
         self._host: HostArena | None = None
@@ -119,7 +129,15 @@ class Server:
         self._node = self.allocation._local_node(
             self.cache, controller_host_bytes=limits.controller_host_bytes
         )
-        self._host = HostArena(self._node, limits.fixed_host_bytes, 4)
+        connection_slots = limits.max_http_requests + 3 * limits.max_nodes
+        connection_bytes = (
+            0
+            if self.node_authentication is None
+            else NODE_HTTP_BYTES * connection_slots
+        )
+        self._host = HostArena(
+            self._node, limits.fixed_host_bytes + connection_bytes, 5
+        )
         host_memory = self._host
 
         def partition(size: int, count: int) -> BufferBudget:
@@ -138,6 +156,10 @@ class Server:
         http_memory = partition(
             HTTP_SCRATCH_BYTES * limits.max_http_requests, limits.max_http_requests
         )
+        connections = None
+        if self.node_authentication is not None:
+            self._nodes = NodeRegistry(self.incarnation, max_nodes=limits.max_nodes)
+            connections = partition(connection_bytes, connection_slots)
         self._disk = BufferBudget(limits.temporary_disk_bytes, limits.temporary_files)
         self._storage = ServiceStorage(
             self.root,
@@ -163,9 +185,10 @@ class Server:
             environment=environment,
             limits=limits.creation,
             disk=self._disk,
-            base_host_bytes=limits.fixed_host_bytes,
+            base_host_bytes=limits.fixed_host_bytes + connection_bytes,
             model_root=self.model_root,
             pool=self.allocation.pool,
+            nodes=self._nodes,
         )
         self._jobs = RunJobs(
             self._storage,
@@ -190,6 +213,9 @@ class Server:
             describe=describe,
             hardware=factory.inventory,
             memory=http_memory,
+            nodes=self._nodes,
+            node_authentication=self.node_authentication,
+            connections=connections,
             request_timeout=limits.request_timeout,
             tls=tls,
         )
@@ -224,6 +250,13 @@ class Server:
     def close(self, *, timeout: float = 30) -> None:
         with self._lock:
             self._closing = True
+            if self._nodes is not None and self._jobs is not None:
+                # Agents still need the listener to acknowledge worker cleanup.
+                # A failed close retains both owners for a subsequent retry.
+                self._jobs.close(timeout=timeout)
+                self._jobs = None
+            if self._nodes is not None:
+                self._nodes.close()
             if self._http is not None:
                 if self._thread is not None and self._thread.is_alive():
                     self._http.shutdown()

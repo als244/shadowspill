@@ -39,3 +39,12 @@ class BearerTokens:
         if owner is None:
             raise PermissionError("Service authentication failed.")
         return owner
+
+    def require_separate(self, other: "BearerTokens") -> None:
+        """One bearer credential cannot confer both client and node authority."""
+        if any(
+            hmac.compare_digest(left, right)
+            for left, _ in self._owners
+            for right, _ in other._owners
+        ):
+            raise ValueError("client and node credentials must be distinct")
