@@ -38,6 +38,13 @@ different number of times. Equal depth is only an initial constraint: final
 Plans must still agree on collective participation and issue order, since
 different spill decisions can introduce incompatible communication.
 
+Matching collective order does not require matching local schedules. Workers
+may retain or recompute different intermediates and fetch or spill at different
+task boundaries when those choices preserve collective participation and order.
+Preparation keeps such independently admitted Plans unchanged. This applies to
+both replicated and sharded storage; replicated weight fetches are local, while
+sharded weight fetches can introduce collectives.
+
 If independently selected Plans disagree, preparation tries a common logical
 schedule from the searched candidates. Each worker keeps its own compiled code,
 measured costs and tensor sizes. The common retention, recomputation and transfer
@@ -45,6 +52,9 @@ decisions are simulated and physically admitted on every worker; only a candidat
 that fits all workers and has matching collective order can run. This requires
 matching task/storage topology. Failure to find such a candidate is reported as
 search exhaustion, rather than relaxing the communication or memory checks.
+This fallback restricts local scheduling choices and can sacrifice some
+worker-specific optimization; it does not require equal wall-clock timings,
+tensor sizes, kernel implementations or physical memory offsets.
 
 ## Runtime commands and workload shares
 

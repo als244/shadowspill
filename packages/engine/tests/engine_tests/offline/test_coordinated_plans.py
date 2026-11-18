@@ -244,6 +244,29 @@ def test_common_schedule_keeps_local_kernels_costs_and_physical_admission(
     assert coordinate_plans(result) == result
 
 
+def test_compatible_collectives_preserve_different_local_schedules():
+    prefetched = worker_plan(
+        "fast", size=256, workspace=256, duration=1000, order=("a", "b")
+    )
+    serial = worker_plan(
+        "small",
+        size=256,
+        workspace=512,
+        duration=2000,
+        order=("a", "b"),
+        serial=True,
+        capacity=768,
+    )
+    # One worker prefetches both weights; the other cannot fit that schedule.
+    # Matching gather order is sufficient, even with sharded parameters. Keep
+    # each admitted schedule and layout instead of forcing common boundaries.
+    assert prefetched.schedule != serial.schedule
+    assert collective_sequence(prefetched) == collective_sequence(serial)
+    result = coordinate_plans({0: prefetched, 1: serial})
+    assert result[0] is prefetched
+    assert result[1] is serial
+
+
 def test_accumulation_paths_coordinate_even_when_fresh_collectives_already_match(
     workers,
 ):
