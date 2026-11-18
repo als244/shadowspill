@@ -82,7 +82,8 @@ def measure_overlap(
     """Return a Profiles overlay; original timing/memory evidence stays intact.
 
     Call on every participant after communication calibration. Saved task forms
-    and their probe order must agree across workers; finalized binaries and
+    and their probe order must agree for paired measurements; differing worker
+    shapes/targets return an explicit unmeasured overlay. Finalized binaries and
     measurement/cache identities remain local. Merge with
     ``profiled_program.profiles``, then ``apply_profiles`` before planning.
     No build, runtime pool or training-step
@@ -137,7 +138,18 @@ def measure_overlap(
             raise
         failure = str(error)
     groups = GroupBindings(
-        identity=identity,
+        # Communication must agree even when local compute shapes/targets do
+        # not. The latter cannot use this paired probe: local task deduplication
+        # could skip different collective calls. Keep the ordinary conservative
+        # cost model instead of inventing overlap evidence or weakening the
+        # execution family's separate collective-order admission.
+        identity=digest(
+            {
+                "requests": [request.to_dict() for request in requests],
+                "stages": None if stages is None else list(stages),
+                "trials": trials,
+            }
+        ),
         groups=[r.ranks for r in requests],
         rank_map=rank_map,
         topology=communication_info.topology,
@@ -146,6 +158,15 @@ def measure_overlap(
     )
     try:
         assert target is not None
+        identities = groups.gather(identity)
+        if any(value != identity for value in identities):
+            result.metadata["overlap_calibration"] = {
+                "status": "different_worker_tasks_not_probed",
+                "measured_tasks": 0,
+                "rank_probe_identities": identities,
+                "reason": "local task shapes, targets or probe routes differ",
+            }
+            return result
         backend = shared_backend_setup(groups, requests, device_ordinal=target.index)
         expected = plain(communication_info.metadata.get("backend_setup", {}))
         # A calibration can contain more groups than this candidate uses.
