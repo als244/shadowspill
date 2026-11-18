@@ -48,6 +48,7 @@ def worker_call(
             if rank == scope.rank
         )
     )
+    tokens = call.step_tokens()
     result = WorkerCall(
         scope,
         invocation,
@@ -66,6 +67,8 @@ def worker_call(
         ),
         history_id=transition.before.history_id,
         completed_updates=transition.before.completed_updates,
+        batch_tokens=None if tokens is None else tokens[0],
+        scheduled_tokens=None if tokens is None else tokens[1],
     )
     # This must succeed before dispatch; receivers enforce the same envelope.
     CODEC.encode(result)

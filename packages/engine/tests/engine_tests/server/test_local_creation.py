@@ -136,7 +136,7 @@ def configured(
     monkeypatch.setattr(
         plan_summaries,
         "occupancy_data",
-        lambda plan, *, description: {
+        lambda plan, *, description, tokens_per_step=None: {
             "plan": description,
             "view": "simulated",
             "clock": "CPU service fixture",

@@ -233,6 +233,8 @@ class TraceFiles:
             "plan": call.plan,
             "accumulate_gradients": command.accumulate_gradients,
             "skipped": command.skipped,
+            "batch_tokens": command.batch_tokens,
+            "scheduled_tokens": command.scheduled_tokens,
         }
         evidence = diagnostics.as_dict(events=False)
         stream = _Stream(output)

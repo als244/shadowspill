@@ -41,6 +41,8 @@ def traced_call():
         history_id="history",
         completed_updates=4,
         request=replace(command.request, runtime_trace=True),
+        batch_tokens=900,
+        scheduled_tokens=1024,
     )
     return SimpleNamespace(
         command=command,
@@ -170,6 +172,8 @@ def test_trace_publication_preserves_completed_effects_and_owned_file_lifetime(
                         manifest["request"] == bound.command.request.identity.to_dict()
                     )
                     assert manifest["completed_updates_before"] == 4
+                    assert manifest["batch_tokens"] == 900
+                    assert manifest["scheduled_tokens"] == 1024
                     assert manifest["history_id"] == "history" and manifest["rank"] == 0
                     assert (
                         manifest["plan"] == "main"

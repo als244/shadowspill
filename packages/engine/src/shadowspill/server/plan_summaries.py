@@ -9,6 +9,7 @@ from shadowspill.diagnostics.occupancy.page import script_json
 from shadowspill.reporting.occupancy import occupancy_data
 from shadowspill.training.preparation.artifacts.inspection import summary_rows
 from shadowspill.training.preparation.planning.records import PreparedPlans
+from shadowspill.training.throughput import token_capacity
 from shadowspill_client._records import Value, mapping
 from shadowspill_client.protocol.codec import ProtocolError, digest, encode
 from shadowspill_client.protocol.plans import (
@@ -36,9 +37,31 @@ def publish_summary(
     )
 
 
+def _scheduled_tokens(prepared: PreparedPlans) -> dict[tuple[int, str], int]:
+    """Tokens each worker's compute Plan is priced for, padding included.
+
+    A Plan shared by candidates that schedule different totals has no single
+    count and is left out, as is every Plan of a schema without one scheduled
+    token capacity.
+    """
+    schema = prepared.inventory.layouts.setup.context.schema
+    name = token_capacity(schema)
+    if name is None:
+        return {}
+    totals: dict[tuple[int, str], set[int]] = {}
+    for candidates in prepared.families.values():
+        for candidate in candidates:
+            schedule = candidate.source.layout.candidate.schedule
+            total = schedule.capacities(schema)[name]
+            for rank, worker in candidate.workers.items():
+                totals.setdefault((rank, worker.main), set()).add(total)
+    return {key: min(found) for key, found in totals.items() if len(found) == 1}
+
+
 def _inspection_rows(
     artifacts: ArtifactStore, prepared: PreparedPlans
 ) -> Iterable[PlanSummaryRow]:
+    tokens = _scheduled_tokens(prepared)
     for row in summary_rows(prepared):
         if row.kind == "worker_plan":
             rank, identity = row.values["rank"], row.values["id"]
@@ -51,7 +74,9 @@ def _inspection_rows(
                     continue
                 payload = script_json(
                     occupancy_data(
-                        path, description=f"Rank {rank} · {identity} · {mode}"
+                        path,
+                        description=f"Rank {rank} · {identity} · {mode}",
+                        tokens_per_step=tokens.get((rank, identity)),
                     )
                 ).encode()
                 if len(payload) > 16 << 20:

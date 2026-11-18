@@ -176,9 +176,21 @@ class WorkerCall(Record):
     restore: RankRestore | None = None
     history_id: str | None = None
     completed_updates: int = 0
+    #: Tokens the request supplies and tokens its candidate schedules, over
+    #: the whole batch; both absent when the request has no token count.
+    batch_tokens: int | None = None
+    scheduled_tokens: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scope", record(WorkerScope, self.scope, "scope"))
+        if (self.batch_tokens is None) != (self.scheduled_tokens is None):
+            raise ValueError("supplied and scheduled tokens come together")
+        if self.batch_tokens is not None:
+            assert self.scheduled_tokens is not None
+            integer(self.batch_tokens, "request tokens")
+            integer(self.scheduled_tokens, "scheduled tokens")
+            if self.batch_tokens > self.scheduled_tokens:
+                raise ValueError("a request cannot supply more tokens than scheduled")
         object.__setattr__(
             self, "request", record(OperationRequest, self.request, "request")
         )

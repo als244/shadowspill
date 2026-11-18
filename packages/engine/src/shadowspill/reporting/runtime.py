@@ -37,8 +37,13 @@ def runtime_html(
     append('{"kind":"runtime_trace","rows":')
     write_json([{"kind": "invocation", "values": invocation}])
     append(',"views":[')
-    for index, (mode, evidence) in enumerate(
-        (("Measured runtime", diagnostics), ("Predicted Plan", None))
+    # The trace is timed against the tokens its request supplied; the saved
+    # Plan is priced for the tokens its candidate schedules, padding included.
+    for index, (mode, evidence, tokens) in enumerate(
+        (
+            ("Measured runtime", diagnostics, invocation.get("batch_tokens")),
+            ("Predicted Plan", None, invocation.get("scheduled_tokens")),
+        )
     ):
         if index:
             append(",")
@@ -54,6 +59,7 @@ def runtime_html(
                         f" · Plan {invocation['plan']}"
                     ),
                     diagnostics=evidence,
+                    tokens_per_step=tokens,
                 ),
             }
         )

@@ -12,6 +12,7 @@ from shadowspill.training.preparation.planning.records import (
     PlannedCandidate,
     PreparedPlans,
 )
+from shadowspill.training.throughput import token_capacity
 from shadowspill_client.buffers import BufferBudget, BufferLease
 from shadowspill_client.inputs.packing import PackedAssignment
 from shadowspill_client.inputs.selection import (
@@ -52,6 +53,22 @@ class PreparedCall:
     closed: bool = False
     ranks: tuple[int, ...] = ()
     restore: ResolvedCheckpoint | None = None
+
+    def step_tokens(self) -> tuple[int, int] | None:
+        """Tokens this request supplies, and tokens its candidate schedules.
+
+        Both count the schema's scheduled token capacity over the whole
+        batch, on every worker; the scheduled total includes padding. None
+        for a request without inputs or a schema without one such capacity.
+        """
+        if self.assignment is None:
+            return None
+        batch = self.assignment.batch
+        name = token_capacity(batch.schema)
+        if name is None:
+            return None
+        scheduled = self.assignment.schedule.capacities(batch.schema)
+        return batch.capacities[name], scheduled[name]
 
     def worker_plans(self, transition: Transition) -> Mapping[int, str | None]:
         """Select the saved compute or optimizer dependency for this request."""
