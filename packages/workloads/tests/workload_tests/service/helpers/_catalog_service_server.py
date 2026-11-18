@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 from dataclasses import replace
@@ -127,22 +128,43 @@ with Server(
     options.update(port=service.address[1], token=token)
     host = os.environ.get("SHADOWSPILL_DEMO_CLIENT_HOST")
     if host:
-        command = [
+        remote = [
             "ssh",
             "-o",
             "BatchMode=yes",
             "-o",
             "ConnectTimeout=10",
             host,
+        ]
+        client_python = os.environ["SHADOWSPILL_DEMO_CLIENT_PYTHON"]
+        expected_client_host = subprocess.check_output(
+            [
+                *remote,
+                shlex.join(
+                    [
+                        client_python,
+                        "-I",
+                        "-c",
+                        "import socket; print(socket.gethostname())",
+                    ]
+                ),
+            ],
+            text=True,
+            timeout=30,
+        ).strip()
+        command = [
+            *remote,
             shlex.join(
                 [
-                    os.environ["SHADOWSPILL_DEMO_CLIENT_PYTHON"],
+                    client_python,
                     "-I",
                     os.environ["SHADOWSPILL_DEMO_CLIENT_SCRIPT"],
                 ]
             ),
         ]
-        options["ssh_host"] = "chicago"
+        options["ssh_host"] = os.environ.get(
+            "SHADOWSPILL_DEMO_SERVER_HOST", socket.gethostname()
+        )
     else:
         command = [
             sys.executable,
@@ -163,7 +185,7 @@ with Server(
     assert client.returncode == 0, client.stdout + client.stderr
     receipt = json.loads(client.stdout)
     if host:
-        assert receipt["client_host"] == "tubingen"
+        assert receipt["client_host"] == expected_client_host
     deadline = monotonic() + 30
     while service._jobs.used != (0, 0):
         assert monotonic() < deadline, service._jobs.failures()
