@@ -38,6 +38,14 @@ different number of times. Equal depth is only an initial constraint: final
 Plans must still agree on collective participation and issue order, since
 different spill decisions can introduce incompatible communication.
 
+If independently selected Plans disagree, preparation tries a common logical
+schedule from the searched candidates. Each worker keeps its own compiled code,
+measured costs and tensor sizes. The common retention, recomputation and transfer
+decisions are simulated and physically admitted on every worker; only a candidate
+that fits all workers and has matching collective order can run. This requires
+matching task/storage topology. Failure to find such a candidate is reported as
+search exhaustion, rather than relaxing the communication or memory checks.
+
 ## Runtime commands and workload shares
 
 The client continues to submit a global batch through `step()`,

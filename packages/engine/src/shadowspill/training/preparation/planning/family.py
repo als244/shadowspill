@@ -22,8 +22,10 @@ from shadowspill.training.preparation.capture.templates import (
     TemplateUse,
     instantiate_template,
 )
+from shadowspill.training.preparation.planning.coordination import coordinate_workers
 from shadowspill.training.preparation.planning.identity import (
     candidate_identity,
+    execution_names,
     plan_identity,
     validate_profile,
 )
@@ -209,6 +211,9 @@ def plan_family(
                         )
                         for rank, worker in sorted(candidate.workers.items())
                     }
+                    workers = coordinate_workers(
+                        workers, plans, execution_names(candidate, ordering)
+                    )
                     _collectives(workers, plans)
                 except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
                     outcome.rejected = True
