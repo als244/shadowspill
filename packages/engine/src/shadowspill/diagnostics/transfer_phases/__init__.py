@@ -12,6 +12,32 @@ from .summary import summarize
 from .timeline import copy_only, match_parts, regions
 
 
+def _copies_whole_payload(
+    geometry: Mapping[str, Any], direction: str, host_bytes: int
+) -> bool:
+    """Whether this direction's lane interval is one copy of the entire payload.
+
+    An alias without a recipe is a plain copy. Planning also prices a device's
+    host latency as a timed phase ahead of that copy; the lane still performs
+    one untransformed copy, so its interval remains the copy's measurement.
+    Any other timed phase, a split copy, or a different size is a transformation.
+    """
+
+    recipe = geometry.get("transfer")
+    if recipe is None:
+        return True
+    phases = recipe.get(direction, ())
+    copies = [phase for phase in phases if phase["kind"] == "copy"]
+    return (
+        len(copies) == 1
+        and copies[0]["bytes"] == host_bytes
+        and all(
+            phase["kind"] == "copy" or phase.get("timing_class") == "host_latency"
+            for phase in phases
+        )
+    )
+
+
 def transfer_phase_data(
     program: Mapping[str, Any], diagnostics: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -61,7 +87,9 @@ def transfer_phase_data(
             copies = [part for part in parts if part["kind"] == "copy"]
             # Transformed transfers need their own copy events: even a shard
             # slice can include memset/preparation before the physical copy.
-            if not copies and geometry.get("transfer") is None and not parts:
+            if not parts and _copies_whole_payload(
+                geometry, direction, transfer["bytes"]
+            ):
                 copies = [copy_only(context)]
                 parts.extend(copies)
             copy_complete = sum(copy["bytes"] for copy in copies) == transfer["bytes"]

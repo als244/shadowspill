@@ -66,5 +66,9 @@ def _gap(
         "start_ns": start,
         "end_ns": end,
         "bytes": None,
-        "timing": "unresolved lane interval",
+        "timing": (
+            "lane time outside its measured events"
+            if copy_complete
+            else "unresolved lane interval"
+        ),
     }

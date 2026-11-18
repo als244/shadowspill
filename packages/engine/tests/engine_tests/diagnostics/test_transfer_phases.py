@@ -108,6 +108,82 @@ def test_plain_copy_uses_lane_events_without_inventing_a_collective():
     assert result["summary"][0]["host_copy_gbps"] == pytest.approx(100 / 900)
 
 
+def recipe(*phases, spill=100):
+    return {
+        "spill_size_bytes": spill,
+        "fetch": [
+            {"kind": "timed", "bytes": 0, "timing_class": phase}
+            if isinstance(phase, str)
+            else {"kind": "copy", "bytes": phase, "timing_class": None}
+            for phase in phases
+        ],
+    }
+
+
+def test_priced_host_latency_leaves_a_plain_copy_a_plain_copy():
+    program, diagnostics = fixture()
+    program["alias_groups"][0]["transfer"] = recipe("host_latency", 100)
+    diagnostics.pop("collectives")
+    result = transfer_phase_data(program, diagnostics)
+    assert [(p["kind"], p["timing"]) for p in result["fetch"]] == [
+        ("copy", "copy-only lane events")
+    ]
+    assert result["fetch"][0]["bytes"] == 100
+    assert result["unresolved_copy_transfers"] == {"fetch": 0, "evict": 0}
+    assert result["unresolved_host_bytes"] == {"fetch": 0, "evict": 0}
+    assert result["summary"][0]["host_copy_gbps"] == pytest.approx(100 / 900)
+
+
+@pytest.mark.parametrize(
+    "phases",
+    [
+        (100, "collective_0f3a"),  # a collective completes the object
+        ("zero_measurement", "host_latency", 100),  # preparation before the copy
+        ("host_latency", 60),  # the copy moves less than the payload
+        ("host_latency", 60, 40),  # the payload is split between copies
+    ],
+)
+def test_transformed_recipe_without_copy_events_stays_unresolved(phases):
+    program, diagnostics = fixture()
+    program["alias_groups"][0]["transfer"] = recipe(*phases)
+    diagnostics.pop("collectives")
+    result = transfer_phase_data(program, diagnostics)
+    assert [(p["kind"], p["operation"]) for p in result["fetch"]] == [
+        ("unresolved", "unresolved")
+    ]
+    assert result["fetch"][0]["timing"] == "unresolved lane interval"
+    assert result["unresolved_copy_transfers"]["fetch"] == 1
+    assert result["unresolved_host_bytes"]["fetch"] == 100
+    assert result["summary"] == []
+
+
+def test_time_between_measured_events_is_not_called_unresolved():
+    program, diagnostics = fixture()
+    diagnostics["collectives"]["host_copies"] = {
+        "complete": True,
+        "records": [
+            {
+                "source": "fetch",
+                "alias_group_id": "a",
+                "execution_task_id": "e0",
+                "started_at_ns": 110,
+                "finished_at_ns": 310,
+                "bytes": 100,
+                "copy_id": "h0",
+            }
+        ],
+    }
+    result = transfer_phase_data(program, diagnostics)
+    gaps = [p for p in result["fetch"] if p["operation"] == "overhead"]
+    assert [(p["start_ns"], p["end_ns"]) for p in gaps] == [
+        (100, 110),
+        (310, 400),
+        (900, 1000),
+    ]
+    assert {p["timing"] for p in gaps} == {"lane time outside its measured events"}
+    assert all(p["bytes"] is None for p in gaps)
+
+
 def test_repeated_aliases_join_to_their_own_parent_and_unmatched_stays_explicit():
     program, diagnostics = fixture()
     first = diagnostics["transfers"]["fetch"]["fetch_0"]
