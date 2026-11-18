@@ -1,9 +1,13 @@
 """Content fingerprints for stable local files, with a deployment-owned cache.
 
-The cache reuses a checksum only while device, inode, size, mtime and ctime all
-match. It is an optimization for trusted local checkpoint storage, not a storage
-scrubber: callers can omit the cache to force a fresh content read. Cache files
-are expendable and never modify the checkpoint directory.
+The cache reuses a checksum only while inode, size, mtime and ctime all match.
+The device number is not part of that: each machine numbers a mounted filesystem
+for itself, so two nodes reading one shared checkpoint disagree about it and
+would each hash every file again. A read still compares the complete identity,
+device included, before and after it hashes. The cache is an optimization for
+trusted local checkpoint storage, not a storage scrubber: callers can omit it to
+force a fresh content read. Cache files are expendable and never modify the
+checkpoint directory.
 """
 
 from __future__ import annotations
@@ -47,6 +51,11 @@ def file_identity(value: os.stat_result) -> tuple[int, ...]:
     )
 
 
+def cached_identity(facts: tuple[int, ...]) -> list[int]:
+    """What identifies the same file from every machine that mounts it."""
+    return list(facts[1:])
+
+
 def settled_identity(facts: tuple[int, ...]) -> bool:
     # Even nanosecond stat fields can be updated only once per filesystem/kernel
     # clock tick. Do not trust a just-written file's timestamps as a cache key.
@@ -70,7 +79,7 @@ def _read(directory: Path | None, path: Path, facts: tuple[int, ...]) -> str | N
             not isinstance(value, dict)
             or value.get("version") != 1
             or value.get("path") != str(path)
-            or value.get("identity") != list(facts)
+            or value.get("identity") != cached_identity(facts)
             or any(type(item) is not int for item in value["identity"])
             or not isinstance(value.get("sha256"), str)
             or re.fullmatch(r"[0-9a-f]{64}", value["sha256"]) is None
@@ -90,7 +99,12 @@ def _write(
     try:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         payload = json.dumps(
-            {"version": 1, "path": str(path), "identity": facts, "sha256": checksum},
+            {
+                "version": 1,
+                "path": str(path),
+                "identity": cached_identity(facts),
+                "sha256": checksum,
+            },
             separators=(",", ":"),
         ).encode()
         if len(payload) > 4096:

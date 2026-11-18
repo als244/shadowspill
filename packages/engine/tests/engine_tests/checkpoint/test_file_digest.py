@@ -1,6 +1,7 @@
 """Local checksum reuse requires unchanged file identity, not just a pathname."""
 
 import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -70,6 +71,41 @@ def test_cached_identity_avoids_payload_reads_and_can_be_reverified(
         reads.clear()
         assert sha256_file(path, len(payload)) == expected
         assert not reads
+
+
+def test_another_machines_device_number_reuses_the_entry(tmp_path, monkeypatch):
+    path, cache = tmp_path / "weights", tmp_path / "cache"
+    payload = b"checkpoint" * 100
+    path.write_bytes(payload)
+    monkeypatch.setattr(
+        file_digest, "time_ns", lambda: path.stat().st_ctime_ns + 3_000_000_000
+    )
+    expected = hashlib.sha256(payload).hexdigest()
+    reads = track_reads(monkeypatch, path)
+    with checksum_cache(cache):
+        assert sha256_file(path, len(payload)) == expected
+    assert reads
+    (entry,) = cache.iterdir()
+    recorded = json.loads(entry.read_text())["identity"]
+    facts = path.stat()
+    assert recorded == [
+        facts.st_ino,
+        facts.st_size,
+        facts.st_mtime_ns,
+        facts.st_ctime_ns,
+    ]
+    # Another node mounts the same filesystem under its own device number.
+    original = file_digest.file_identity
+    monkeypatch.setattr(
+        file_digest,
+        "file_identity",
+        lambda value: (original(value)[0] + 14, *original(value)[1:]),
+    )
+    reads.clear()
+    with checksum_cache(cache):
+        assert sha256_file(path, len(payload)) == expected
+    assert not reads
+    assert json.loads(entry.read_text())["identity"] == recorded
 
 
 @pytest.mark.parametrize("replace_inode", [False, True])

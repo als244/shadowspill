@@ -277,6 +277,9 @@ call. It supports those same four families and checkpoint overrides. First
 resolution fingerprints the files with bounded SHA256 reads; this scans the
 checkpoint payload once without constructing tensors. Reusing the resolved setup
 rechecks bounded config/index/header metadata without repeating that scan.
+The service remembers each file's fingerprint by its inode, size and timestamps,
+so a later resolution does not scan an unchanged file again, on this machine or
+on another that mounts the same files.
 Workers verify all content checksums before and after initialization. The source
 must stay unchanged while it is read. A private temporary directory exposes only
 the pinned files through links, then is removed; the source checkpoint is neither
