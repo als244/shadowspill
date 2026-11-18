@@ -60,8 +60,9 @@ def text_batch(
     batch once, then submit slices of the resulting list.
 
     Use ``text_datum`` for explicit weights or unnormalized objectives. This
-    helper does not change the objective's additive reduction or normalize other
-    objective terms.
+    helper does not change additive reductions. The built-in cross-entropy,
+    policy and MoE-balancing objectives consume these weights by default;
+    custom objectives declare their own weighting semantics.
     """
     batch = (
         [text_datum(tokens) for tokens in sequences]

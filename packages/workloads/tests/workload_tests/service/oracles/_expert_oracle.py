@@ -214,7 +214,10 @@ def loss(model, records, indices, coefficient, *, size=4):
         model.config.n_experts
         * (counts / routes.shape[0] * routes.softmax(-1).mean(0)).sum()
     )
-    return primary + coefficient * auxiliary * valid.sum()
+    return (
+        primary
+        + coefficient * auxiliary * torch.where(valid, fields["weights"], 0).sum()
+    )
 
 
 def options(*, grad_dtype="bfloat16"):

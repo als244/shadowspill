@@ -14,6 +14,7 @@ from shadowspill_client import Objective
 from shadowspill_client.protocol.definitions import DefinitionSource
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.operations import OperationKey
+from shadowspill_client.text import text_batch
 from shadowspill_workloads.definitions import moe_objective, token
 from shadowspill_workloads.lora import configure_lora
 from shadowspill_workloads.models.olmoe.config import Config as OLMoEConfig
@@ -47,7 +48,7 @@ def model(request):
     )
 
 
-def resolve(model, *, include_padding=False, policy=False):
+def resolve(model, *, include_padding=False, policy=False, weight_field="weights"):
     registry = Registry()
     token.register(registry)
     moe_objective.register(registry)
@@ -88,6 +89,7 @@ def resolve(model, *, include_padding=False, policy=False):
     config = {
         "include_padding": include_padding,
         "participation_field": "response_mask" if policy else "loss_mask",
+        "weight_field": weight_field,
     }
     if isinstance(model, OLMoE):
         config.update(layer_reduction="sum", normalize_top_k=True)
@@ -198,8 +200,75 @@ def independent(
     else:
         term = -logprobs
     primary = torch.where(valid, term * fields["weights"], 0).sum()
-    auxiliary_sum = auxiliary * valid.sum()
+    auxiliary_sum = auxiliary * torch.where(valid, fields["weights"], 0).sum()
     return primary + coefficient * auxiliary_sum, primary, auxiliary_sum
+
+
+@pytest.mark.parametrize("split", [False, True])
+def test_text_batch_normalizes_both_objective_losses_and_gradients(model, split):
+    from workload_tests.definitions.test_token_definitions import bound
+
+    batch = text_batch(
+        [[1, 2, 3, 4], [4, 5, 6]],
+        loss_masks=[[True, True, False, True], [True, True, True]],
+    )
+    count = 4  # Excludes the shifted first tokens and the masked target.
+    _, description, objective = resolve(model)
+    key = OperationKey("forward_backward" if split else "step", "metrics")
+    for rows in [batch[:1], batch[1:]] if split else [batch]:
+        with bound(description, objective, key, rows) as (binding, adapted):
+            inputs, fields, controls = binding.arguments(adapted)
+            lengths = [len(row.inputs["tokens"]) for row in rows]
+            inputs = {
+                "tokens": inputs["tokens"][None, :],
+                "sequence_lengths": torch.tensor(
+                    [*lengths, 8 - sum(lengths)], dtype=torch.int32
+                ),
+            }
+            fields = {name: value[None, :] for name, value in fields.items()}
+            actual = objective.computation(key)(model, inputs, fields, controls)
+            unit_fields = {**fields, "weights": torch.ones_like(fields["weights"])}
+            expected, primary, balance = independent(
+                model, inputs, unit_fields, 0.001, include_padding=False
+            )
+            torch.testing.assert_close(actual.loss, expected / count)
+            torch.testing.assert_close(
+                actual.metrics["primary.loss_sum"], primary / count
+            )
+            torch.testing.assert_close(
+                actual.metrics["balance.loss_sum"], balance / count
+            )
+            torch.testing.assert_close(
+                torch.autograd.grad(actual.loss, tuple(model.parameters())),
+                torch.autograd.grad(expected / count, tuple(model.parameters())),
+                atol=3e-6,
+                rtol=5e-4,
+            )
+
+
+@pytest.mark.parametrize("weight_field", [None, "balance_weights"])
+def test_advanced_balancing_weights_can_be_independent(model, weight_field):
+    _, _, objective = resolve(model, weight_field=weight_field)
+    inputs, fields = physical([1, 2, 3, 4, 5], [3, 2], weighted=True)
+    fields["loss_mask"][0, 0] = False
+    controls = {name: torch.tensor(value) for name, value in objective.defaults.items()}
+    if weight_field is not None:
+        fields[weight_field] = torch.full_like(fields["weights"], 0.25)
+        # Masked invalid values must not leak into the auxiliary objective.
+        fields[weight_field][~fields["loss_mask"]] = float("nan")
+    actual = objective.computation()(model, inputs, fields, controls)
+    _, primary, _ = independent(model, inputs, fields, 0.001, include_padding=False)
+    uniform = {**fields, "weights": torch.ones_like(fields["weights"])}
+    _, _, balance = independent(model, inputs, uniform, 0.001, include_padding=False)
+    balance = balance * (1 if weight_field is None else 0.25)
+    torch.testing.assert_close(actual.metrics["balance.loss_sum"], balance)
+    torch.testing.assert_close(actual.loss, primary + 0.001 * balance)
+    torch.testing.assert_close(
+        torch.autograd.grad(actual.loss, tuple(model.parameters())),
+        torch.autograd.grad(primary + 0.001 * balance, tuple(model.parameters())),
+        atol=3e-6,
+        rtol=5e-4,
+    )
 
 
 @pytest.mark.parametrize("lora", [False, True])
@@ -418,6 +487,8 @@ def test_generic_registration_replaces_family_specific_objective(model):
         {"normalize_top_k": 1},
         {"layer_reduction": "mystery"},
         {"participation_field": "other"},
+        {"weight_field": ""},
+        {"weight_field": 1},
     ):
         with pytest.raises((TypeError, ValueError)):
             registry.resolve_objective(

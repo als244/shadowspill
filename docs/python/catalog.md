@@ -83,6 +83,9 @@ objective = Objective.sum(
 Padding is excluded from balancing by default. Balancing statistics are computed
 per physical microbatch, so splitting a batch can change that term. Token losses
 are weighted sums; choose input weights or `grad_scale` for your normalization.
+By default, MoE balancing shares the primary token weights, so `text_batch()`
+normalizes both terms over the global supervised-token count. Advanced callers
+can select an independent `weight_field` in the balancing objective.
 See the [objective recipes](advanced/objectives.md) and
 [objective settings and inputs](advanced/definitions.md#text-objectives).
 

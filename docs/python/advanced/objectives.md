@@ -208,8 +208,16 @@ Use `Objective.sum` to combine compatible declared objectives; the
 [catalog](../catalog.md#objectives) shows cross entropy plus MoE balancing. With a
 policy objective, configure balancing with `participation_field="response_mask"`
 so both terms share the same update-participation contract. Router masks separately
-control balancing tokens; padding is excluded by default. Each term retains its
-own reduction, so select its coefficient explicitly.
+control balancing tokens; padding is excluded by default. Balancing uses the
+same supervised token weights as the primary objective by default, so a normal
+`text_batch()` averages both terms over the global training-token count. Its
+router statistic is still calculated per physical microbatch; splitting a batch
+can change that statistic.
+
+Advanced objectives can use independent auxiliary weights with
+`Objective("moe_balance", config={"weight_field": "balance_weights"})`, supplying
+that field in each Datum. `weight_field=None` uses one unit per supervised token;
+in that case, explicitly normalize the whole objective or its balance coefficient.
 
 ## Inspect each objective's loss
 

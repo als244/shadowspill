@@ -23,6 +23,7 @@ class Config(token.TokenConfig):
     layer_reduction: str = "combined"
     normalize_top_k: bool = False
     participation_field: str = "loss_mask"
+    weight_field: str | None = "weights"
 
     def __post_init__(self):
         super().__post_init__()
@@ -37,6 +38,10 @@ class Config(token.TokenConfig):
             raise ValueError(
                 "router participation_field must be loss_mask or response_mask"
             )
+        if self.weight_field is not None and (
+            not isinstance(self.weight_field, str) or not self.weight_field
+        ):
+            raise ValueError("router weight_field must name a field or be None")
 
 
 def fields(config):
@@ -56,6 +61,17 @@ def fields(config):
             **geometry,
         )
     ]
+    if config.weight_field is not None:
+        result.append(
+            TensorField(
+                (config.weight_field,),
+                "float32",
+                required=False,
+                default=1.0,
+                validity=(config.participation_field,),
+                **geometry,
+            )
+        )
     if not config.include_padding:
         result.append(
             TensorField(
@@ -81,6 +97,8 @@ def outputs(config):
 
 
 def compute(evaluated, inputs, loss_inputs, loss_params, *, config):
+    import torch
+
     from shadowspill.pytorch.contracts import ObjectiveResult
     from shadowspill_workloads.objectives.moe import router_balance
 
@@ -92,9 +110,16 @@ def compute(evaluated, inputs, loss_inputs, loss_params, *, config):
         layer_reduction=config.layer_reduction,
         normalize_top_k=config.normalize_top_k,
     )
-    # Sum reduction uses supervised positions, independently of primary weights.
-    count = loss_inputs[config.participation_field].sum()
-    loss = auxiliary * count
+    # Share text_batch's global token normalization by default. The router
+    # statistic still uses its own mask and is computed per physical microbatch.
+    valid = loss_inputs[config.participation_field]
+    count = valid.sum()
+    mass = (
+        count
+        if config.weight_field is None
+        else torch.where(valid, loss_inputs[config.weight_field], 0.0).sum()
+    )
+    loss = auxiliary * mass
     return ObjectiveResult(loss, {"loss_sum": loss.detach(), "valid_tokens": count})
 
 
