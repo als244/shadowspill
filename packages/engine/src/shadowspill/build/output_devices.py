@@ -89,7 +89,10 @@ def _calls(
             ),
         )
     for job in stage_jobs(program, None):
-        for phase in ("forward", "backward", "optimizer", "gradient"):
+        # Gradient padding/copy calls already have complete slots in entrypoints.
+        # Their compact templates contain only a profile key and output object;
+        # unlike alternative training forms, they add no unselected call here.
+        for phase in ("forward", "backward", "optimizer"):
             if phase in job:
                 component = job[phase]
                 yield (

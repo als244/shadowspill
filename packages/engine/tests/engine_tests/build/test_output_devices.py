@@ -106,3 +106,89 @@ def test_unselected_form_cannot_conflict_with_selected_output_device():
             replace(original, bindings=bindings),
             {"produce": ("cpu",), "alternate": ("cuda",)},
         )
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_gradient_copy_devices_use_the_complete_entrypoint_slots(device):
+    from shadowspill.artifacts._values import plain
+
+    original = fixture()
+    bindings = plain(original.bindings)
+    bindings["training_templates"][0][0] = bindings["training_templates"][0][0][:1]
+    bindings["gradient_templates"] = [
+        {
+            "source": "fresh",
+            "padding": {"profile_key": "copy", "output": "add"},
+        }
+    ]
+    bindings["compiler_memory"]["copy"] = {"off_device_output_leaves": []}
+    bindings["entrypoints"].append(
+        {
+            "task_id": "gradient_copy",
+            "input_slots": [{"leaf_index": 0, "object_id": "fresh"}],
+            "output_slots": [{"leaf_index": 0, "object_id": "add"}],
+        }
+    )
+    bindings["task_inputs"]["copy"] = {
+        "tensor_positions": [0],
+        "tensor_geometry": [{"device_type": "cuda"}],
+    }
+    original = replace(
+        original,
+        bindings=bindings,
+        task_definitions=(*original.task_definitions, TaskDefinition("copy", "copy")),
+        tasks=(
+            *original.tasks,
+            TaskSpec(
+                "gradient_copy",
+                original.tasks[0].resource,
+                "copy",
+                dependencies=("selected",),
+                inputs=("fresh",),
+                outputs=("add",),
+            ),
+        ),
+    )
+    resolved = resolve_output_devices(
+        original, {"produce": (device,), "copy": (device,)}
+    )
+    assert resolved.objects[1].size_bytes == (0 if device == "cpu" else 8)
+    assert (
+        resolved.bindings["task_inputs"]["copy"]["tensor_geometry"][0]["device_type"]
+        == device
+    )
+
+
+@pytest.mark.cuda
+def test_replicated_dp_step_finalizes_gradient_copy_kernels():
+    import torch
+    from torch import nn
+
+    from shadowspill import Parallelism, build_step, measure_program
+
+    if not torch.cuda.is_available():
+        pytest.skip("requires one representative GPU")
+    model = nn.Linear(7, 5, dtype=torch.bfloat16, device="meta")
+    program = build_step(
+        model,
+        optimizer=torch.optim.AdamW(model.parameters(), foreach=False),
+        objective=lambda model, x: model(x).float().square().mean(),
+        example_args=(torch.zeros(2, 7, dtype=torch.bfloat16),),
+        partition="whole",
+        grad_dtype=torch.float32,
+        master_dtype=torch.float32,
+        parallelism=Parallelism.dp(
+            ranks_per_replica=2,
+            weights="replicated",
+            gradients="replicated",
+            optimizer="replicated",
+        ),
+    )
+    copies = [row["padding"] for row in program.bindings["gradient_templates"]]
+    assert copies and all(copy is not None for copy in copies)
+    profiles = measure_program(program, warmup_seconds=0.001, measure_seconds=0.002)
+    for copy in copies:
+        assert copy["profile_key"] in profiles.tasks
+        assert not program.bindings["compiler_memory"][copy["profile_key"]][
+            "off_device_output_leaves"
+        ]
