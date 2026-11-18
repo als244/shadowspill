@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from shadowspill.artifacts.plan import Plan
-from shadowspill.artifacts.program import TaskDefinition
+from shadowspill.artifacts.task_names import profile_names, task_parts
 from shadowspill.diagnostics.occupancy import attribute
 from shadowspill.diagnostics.occupancy.alternatives import alternatives_data
 from shadowspill.diagnostics.occupancy.page import page_data
@@ -68,10 +68,8 @@ def occupancy_data(
             for choice in plan.selections
         ],
         positions=_positions(plan),
-        labels={
-            definition.profile_key: _label(definition)
-            for definition in plan.program.task_definitions
-        },
+        labels={key: name.task for key, name in profile_names(plan.program).items()},
+        covers=task_parts(plan.program),
         measured_ns=_measured(diagnostics),
     )
     data["allocation"] = plan.summary
@@ -94,34 +92,6 @@ def _positions(plan: Plan) -> dict[str, tuple[int, int]] | None:
             return None
         placed[group.group_id] = place
     return placed
-
-
-def _label(definition: TaskDefinition) -> str:
-    """A task form's modules in a few words: outermost paths, numbered runs joined."""
-    paths = definition.module_paths
-    outer = [
-        path
-        for path in paths
-        if not any(path.startswith(other + ".") for other in paths)
-    ]
-    numbered: dict[str, list[int]] = {}
-    named = []
-    for path in dict.fromkeys(outer):
-        prefix, _, last = path.rpartition(".")
-        if prefix and last.isdecimal():
-            numbered.setdefault(prefix, []).append(int(last))
-        else:
-            named.append(path)
-    for prefix, values in numbered.items():
-        values.sort()
-        joined = (
-            f"{values[0]}\u2013{values[-1]}"
-            if len(values) > 1 and values == list(range(values[0], values[-1] + 1))
-            else ",".join(map(str, values))
-        )
-        named.append(f"{prefix}.{joined}")
-    text = ", ".join(named) or definition.name
-    return text if len(text) <= 96 else text[:95] + "\u2026"
 
 
 def _measured(diagnostics: Mapping[str, Any] | None) -> dict[str, list[int]]:

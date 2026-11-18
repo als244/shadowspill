@@ -13,6 +13,7 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.profiles import Profiles
 from shadowspill.artifacts.program import Program
+from shadowspill.artifacts.task_names import profile_labels
 from shadowspill.communication.binding.groups import GroupBindings
 from shadowspill.diagnostics.progress import event, phase
 from shadowspill.errors import ProfilingError
@@ -53,6 +54,7 @@ class MeasurementSession:
             check=None if groups is None else groups.check,
         )
         self.program, self.device, self.inputs = program, device, inputs
+        self.labels = profile_labels(program)
         self.groups = groups
         self.preparations = preparations
         self.options = options
@@ -179,7 +181,7 @@ class MeasurementSession:
         )
         try:
             with (
-                phase(f"Measure {definition.name or 'task'} · {key[:12]}"),
+                phase(f"Measure {self.labels[key]} · {key[:12]}"),
                 torch.cuda.stream(self.streams[key]),
             ):
                 result = measure_task(

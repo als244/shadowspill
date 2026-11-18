@@ -4,6 +4,11 @@ A step repeats its stages: identical layers share one compiled form, and each
 microbatch runs every stage again. Alternatives are therefore grouped by form,
 the tasks' profiles option by option, and each form is described once with the
 count of occurrences that chose each option.
+
+A form is a kind of stage, lettered in the order the program first reaches it,
+so a letter belongs to one program; a stage is one place in the model. What a
+stage covers is given per task and never comes from the form, which every
+stage of that kind shares.
 """
 
 from __future__ import annotations
@@ -41,6 +46,16 @@ def _extent(object_ids: Iterable[str], objects: Mapping[str, Mapping[str, Any]])
     return total
 
 
+def _kind(index: int) -> str:
+    """A, B, ... Z, AA, AB, ...: a short name for the index-th distinct form."""
+    letters = ""
+    index += 1
+    while index:
+        index, digit = divmod(index - 1, 26)
+        letters = chr(ord("A") + digit) + letters
+    return letters
+
+
 def _observed(values: Sequence[int]) -> dict[str, int] | None:
     if not values:
         return None
@@ -58,18 +73,26 @@ def alternatives_data(
     *,
     positions: Mapping[str, tuple[int, int]] | None = None,
     labels: Mapping[str, str] | None = None,
+    covers: Mapping[str, Sequence[Sequence[Any]]] | None = None,
     measured_ns: Mapping[str, Sequence[int]] | None = None,
 ) -> dict[str, Any]:
     """What a page's task view draws.
 
-    ``forms`` holds one entry per distinct alternative group: its label, how
-    many occurrences share it, how many chose each option, and each option's
-    tasks with profiled time and sizes. ``map`` places every occurrence on a
-    grid when ``positions`` gives each group a ``(column, row)``, such as its
-    microbatch and stage. ``single`` lists the tasks outside every group, by
-    phase and profile. ``labels`` names a profile; ``measured_ns`` gives the
-    durations a trace observed for a task, and is summarised over the
-    occurrences that ran.
+    ``forms`` holds one entry per distinct alternative group: its lettered
+    ``kind``, how many occurrences share it, how many chose each option, and
+    each option's tasks with profiled time and sizes. ``map`` places every
+    occurrence on a grid when ``positions`` gives each group a ``(column,
+    row)``, such as its microbatch and stage. ``single`` lists the tasks
+    outside every group, by phase and profile. ``labels`` says what a
+    profile's tasks do; ``measured_ns`` gives the durations a trace observed
+    for a task, and is summarised over the occurrences that ran.
+
+    ``covers`` gives the parts of the model each task reaches, by task id:
+    each a module's path and, for a numbered member of a repeated part, its
+    number. With it every map row, form and single row has ``covers``. A form
+    is compiled once for every stage of its kind, so only a stage's own tasks
+    say where in the model it is; a form's ``covers`` is every place its kind
+    occurs.
 
     A task's sizes are the device bytes its inputs, outputs and mutated objects
     reach. Its total is the bytes all three reach together plus its profiled
@@ -78,6 +101,7 @@ def alternatives_data(
     """
 
     labels = labels or {}
+    covers = covers or {}
     measured_ns = measured_ns or {}
     chosen = {item["group_id"]: item["option_id"] for item in selections}
     tasks = {task["task_id"]: task for task in program["tasks"]}
@@ -97,6 +121,7 @@ def alternatives_data(
         reach = _extent({*inputs, *outputs, *mutated}, objects)
         return {
             "phase": str(task.get("phase")),
+            "profile": task["profile_id"],
             "label": labels.get(task["profile_id"], ""),
             "runtime_ns": profile.get("runtime_ns"),
             "input_bytes": _extent(inputs, objects),
@@ -106,8 +131,19 @@ def alternatives_data(
             "total_bytes": None if workspace is None else reach + int(workspace),
         }
 
+    def reached(task_ids: Iterable[str]) -> list[list[Any]]:
+        found: dict[tuple[Any, ...], None] = {}
+        for task_id in task_ids:
+            for where in covers.get(task_id, ()):
+                found.setdefault(tuple(where))
+        return [list(where) for where in found]
+
+    def merge(known: list[list[Any]], more: Iterable[list[Any]]) -> None:
+        known.extend(part for part in more if part not in known)
+
     forms: dict[Any, dict[str, Any]] = {}
     form_of: dict[str, int] = {}
+    covered: dict[str, list[list[Any]]] = {}
     grouped: set[str] = set()
     option_ids: list[str] = []
     for group in program.get("task_alternative_groups", ()):
@@ -133,6 +169,8 @@ def alternatives_data(
         if form is None:
             form = forms[key] = {
                 "index": len(forms),
+                "kind": _kind(len(forms)),
+                "covers": [],
                 "instances": 0,
                 "sizes_vary": False,
                 "options": [
@@ -159,6 +197,12 @@ def alternatives_data(
             form["sizes_vary"] = True
         form["instances"] += 1
         form_of[group["group_id"]] = form["index"]
+        covered[group["group_id"]] = reached(
+            task_id
+            for option in group["options"]
+            for task_id in option["active_task_ids"]
+        )
+        merge(form["covers"], covered[group["group_id"]])
         for entry, option in zip(form["options"], group["options"], strict=True):
             grouped.update(option["active_task_ids"])
             if option["option_id"] not in option_ids:
@@ -177,17 +221,6 @@ def alternatives_data(
                 row["measured"] = _observed(seen)
             times = [row["runtime_ns"] for row in entry["tasks"]]
             entry["runtime_ns"] = None if None in times else sum(times)
-        first = form["options"][0]["tasks"]
-        # A label that only repeats the phase names nothing; the page then
-        # titles the form by where it occurs.
-        form["label"] = next(
-            (
-                row["label"]
-                for row in first
-                if row["label"] and row["label"] != row["phase"]
-            ),
-            "",
-        )
         listed.append(form)
 
     grid = None
@@ -198,6 +231,9 @@ def alternatives_data(
             (positions[group][1], positions[group][0]): (chosen.get(group), index)
             for group, index in form_of.items()
         }
+        row_covers: dict[int, list[list[Any]]] = {row: [] for row in rows}
+        for group in form_of:
+            merge(row_covers[positions[group][1]], covered[group])
         grid = {
             "columns": columns,
             "rows": [
@@ -207,6 +243,7 @@ def alternatives_data(
                         None if (row, column) not in cells else list(cells[row, column])
                         for column in columns
                     ],
+                    "covers": row_covers[row],
                 }
                 for row in rows
             ],
@@ -219,8 +256,9 @@ def alternatives_data(
             continue
         form_key = (str(task.get("phase")), task["profile_id"])
         if form_key not in single:
-            single[form_key] = {"count": 0, **describe(task)}
+            single[form_key] = {"count": 0, "covers": [], **describe(task)}
         single[form_key]["count"] += 1
+        merge(single[form_key]["covers"], reached((task["task_id"],)))
         seen_single[form_key].extend(measured_ns.get(task["task_id"], ()))
     for form_key, row in single.items():
         row["measured"] = _observed(seen_single[form_key])

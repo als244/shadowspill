@@ -10,6 +10,7 @@ from torch.utils._pytree import tree_flatten
 
 from shadowspill.artifacts._values import digest
 from shadowspill.artifacts.program import Program
+from shadowspill.artifacts.task_names import profile_labels
 from shadowspill.artifacts.tasks import stage_jobs
 from shadowspill.diagnostics.progress import phase, timed
 from shadowspill.errors import CompilationError
@@ -59,6 +60,7 @@ def _finalize_tasks(
     kernels: dict[str, Any] = {}
     output_devices: dict[str, tuple[str | None, ...]] = {}
     executables = dict(program.executables)
+    labels = profile_labels(program)
     functions: dict[str, Any] = {}
     controls = ControlInputs(program, device)
 
@@ -96,7 +98,7 @@ def _finalize_tasks(
                 return finalize(key, arguments)
             with phase(
                 f"Task {len(executables) - len(pending) + 1}/{len(executables)} "
-                f"· {key[:12]}"
+                f"· {labels[key]} · {key[:12]}"
             ):
                 return finalize(key, arguments)
         except Exception as error:

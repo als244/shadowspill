@@ -224,6 +224,36 @@ when automatic values are unsuitable or control semantics are unknown.
 Build and measurement preserve the caller's default CPU and target-device random
 generator states. Execution consumes random values normally.
 
+A compiled task is shared by every stage that needs it, so each measurement is
+named by what the task does and by every part of the model its stages cover,
+followed by the first characters of its profile key:
+
+```text
+Measure recompute backward · layers 3, 7, 11, … 43 · a03fad661bf5
+Measure save backward (accumulating) · embedding, layer 0 · 3af01b3f8409
+Measure all_gather · layers 3–44 · 1bac7302ae7f
+```
+
+A stage's task is its alternative and its phase, and `(accumulating)` marks a
+backward that adds into gradients already there. Any other task is its
+operation. The parts come from the parameters and buffers the task's stages
+read or change: a module's name, or the numbers of a repeated one, a long list
+keeping its start and its end. A stage is where all of its tasks are, so a
+backward that reads no parameter itself is still placed. Two profiles can share
+a name; the key tells them apart. Kernel finalization, a failed task's error
+and a Plan report's task rows use the same names, and the key is what a
+report's task row shows on hover.
+
+Automatic values are valid rather than real data. Floating activations and
+parameters are uniform in ±0.02, gradients and optimizer state are zero, and a
+model's input fields take the values its preparation preset describes: one
+scalar per field, or integers drawn uniformly over a range, a fresh draw at
+every element. The supplied text preset draws token ids over the vocabulary,
+because one repeated id is the worst case for work that accumulates by token,
+such as an embedding's gradient. A task whose time depends on its data, for
+example on how evenly tokens spread over experts held by different workers, can
+therefore run at a different time than its profile.
+
 Structural capture does not read model payloads to compute inter-stage controls.
 When an integer/boolean input is produced by another stage, build-time provider
 finalization and profiling obtain it by replaying the compiled producer with the

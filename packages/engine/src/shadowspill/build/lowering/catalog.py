@@ -75,10 +75,10 @@ class CompiledTasks:
             if artifact.regions.lifetime_report not in reports:
                 reports.append(artifact.regions.lifetime_report)
         paths = tuple(dict.fromkeys((*definition.module_paths, *paths)))
+        # A definition is shared by every stage that needs it. Its name says
+        # what it does; where a task is comes from the program, per task.
         self.definitions[key] = replace(
-            definition,
-            module_paths=paths,
-            name=f"{' / '.join(paths)} {artifact.kind}".strip(),
+            definition, module_paths=paths, name=artifact.kind
         )
         return key
 

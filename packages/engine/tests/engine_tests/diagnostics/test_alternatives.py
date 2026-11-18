@@ -1,6 +1,6 @@
 """A program's alternatives are described once per form, with what was chosen."""
 
-from shadowspill.diagnostics.occupancy.alternatives import alternatives_data
+from shadowspill.diagnostics.occupancy.alternatives import _kind, alternatives_data
 from shadowspill.planning.training.order import coordinates, task_id
 
 
@@ -132,19 +132,59 @@ def test_measured_time_covers_only_the_occurrences_that_ran():
     assert (single["input_bytes"], single["mutated_bytes"]) == (30, 100)
 
 
-def test_different_profiles_are_different_forms_and_labels_come_from_profiles():
+def test_different_profiles_are_different_kinds_lettered_in_step_order():
     described = program()
     described["tasks"][4]["profile_id"] = "save-f-first"
     described["profiles"].append(
         {"profile_id": "save-f-first", "runtime_ns": 1, "workspace_bytes": 0}
     )
-    labels = {"save-f": "model.blocks.0-1", "save-f-first": "forward"}
-    data = alternatives_data(described, chosen("save", "save"), labels=labels)
+    data = alternatives_data(
+        described, chosen("save", "save"), labels={"adam": "update"}
+    )
     first, second = data["forms"]
     assert (first["instances"], second["instances"]) == (1, 1)
-    assert first["label"] == "model.blocks.0-1"
-    # A label that only repeats the phase leaves the form to be named by place.
-    assert second["label"] == ""
+    assert (first["kind"], second["kind"]) == ("A", "B")
+    assert [_kind(index) for index in (25, 26, 27, 701, 702)] == [
+        "Z",
+        "AA",
+        "AB",
+        "ZZ",
+        "AAA",
+    ]
+    # A label says what a profile's tasks do; a row also carries its profile.
+    assert [row["label"] for row in data["single"]] == ["update"]
+    assert [row["profile"] for row in data["single"]] == ["adam"]
+    assert first["options"][0]["tasks"][0]["label"] == ""
+    assert first["options"][0]["tasks"][0]["profile"] == "save-f"
+
+
+def test_a_stage_covers_what_its_own_tasks_reach():
+    # Two stages of one kind; the first also reaches the embedding.
+    covers = {
+        "m0.save.forward": [("embedding", None), ("layers", 0)],
+        "m0.recompute.forward": [("layers", 0)],
+        "m1.save.forward": [("decoder.blocks", 2)],
+        "m1.recompute.backward": [("decoder.blocks", 2), ("scale", None)],
+        "update": [("layers", 0)],
+    }
+    described = program()
+    data = alternatives_data(
+        described,
+        chosen("save", "recompute"),
+        positions={"g0": (0, 0), "g1": (0, 1)},
+        covers=covers,
+    )
+    (form,) = data["forms"]
+    first, second = data["map"]["rows"]
+    assert first["covers"] == [["embedding", None], ["layers", 0]]
+    assert second["covers"] == [["decoder.blocks", 2], ["scale", None]]
+    # The kind is compiled once for both, and occurs in every place they are.
+    assert form["covers"] == first["covers"] + second["covers"]
+    assert [row["covers"] for row in data["single"]] == [[["layers", 0]]]
+    # Without places nothing is covered, and nothing is guessed.
+    bare = alternatives_data(described, [], positions={"g0": (0, 0), "g1": (0, 1)})
+    assert bare["forms"][0]["covers"] == []
+    assert [row["covers"] for row in bare["map"]["rows"]] == [[], []]
 
 
 def test_the_map_places_every_occurrence_by_column_and_row():
@@ -155,8 +195,8 @@ def test_the_map_places_every_occurrence_by_column_and_row():
     assert data["map"] == {
         "columns": [0, 1],
         "rows": [
-            {"row": 7, "cells": [["save", 0], ["recompute", 0]]},
-            {"row": 9, "cells": [None, [None, 0]]},
+            {"row": 7, "cells": [["save", 0], ["recompute", 0]], "covers": []},
+            {"row": 9, "cells": [None, [None, 0]], "covers": []},
         ],
     }
     # Without a place for every group there is no map, and nothing is guessed.

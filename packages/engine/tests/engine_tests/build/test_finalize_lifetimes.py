@@ -83,6 +83,11 @@ def test_forward_only_roots_are_dead_when_backward_preparation_starts(
         lambda *args: ({"forward": forward, "backward": backward},),
     )
     monkeypatch.setattr(finalize, "ControlInputs", Controls)
+    monkeypatch.setattr(
+        finalize,
+        "profile_labels",
+        lambda program: {"forward": "forward", "backward": "backward"},
+    )
 
     def prepare(*args, slots, values, **kwargs):
         return tuple(values[s["object_id"]] for s in slots)

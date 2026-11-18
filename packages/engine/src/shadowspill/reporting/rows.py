@@ -3,12 +3,14 @@
 from typing import Any
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.artifacts.task_names import describe, profile_names, task_parts
 from shadowspill.communication.task_costs import task_collective_cost, task_collectives
 
 
 def task_rows(plan: Plan) -> list[dict[str, Any]]:
     tasks = {item.task_id: item for item in plan.program.tasks}
     definitions = {item.profile_key: item for item in plan.program.task_definitions}
+    names, parts = profile_names(plan.program), task_parts(plan.program)
     collectives = task_collectives(plan.program)
     costs = {
         key: task_collective_cost(requests, plan.communication_info, plan.program.setup)
@@ -18,17 +20,18 @@ def task_rows(plan: Plan) -> list[dict[str, Any]]:
     for interval in plan.timeline.task_intervals:
         task = tasks[interval.task_id]
         definition = definitions[task.profile_id]
+        name = names[task.profile_id]
         requests = collectives.get(task.profile_id)
         cost = costs.get(task.profile_id)
         duration = (interval.end_ns - interval.start_ns) / 1e9
         rows.append(
             {
                 "task_id": task.task_id,
-                "name": definition.name or task.task_id,
+                "name": f"{name.variant} {name.task}".strip(),
                 "binding": plan.program.bindings.get("task_names", {}).get(
                     task.task_id, ""
                 ),
-                "modules": ", ".join(definition.module_paths),
+                "covers": describe(parts[task.task_id]),
                 "profile_key": definition.profile_key,
                 "phase": task.phase,
                 "resource": task.resource.kind.value,

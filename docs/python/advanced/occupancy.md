@@ -202,17 +202,29 @@ are read against one time axis.
 
 A saved Plan's report and a runtime trace's report add a second view, **Tasks**,
 beside this timeline. It lists every stage's alternatives, chosen or not. A
-step repeats its stages -- identical layers share one compiled form and every
-microbatch runs each stage again -- so each distinct form is one card, with how
-many occurrences chose each alternative, and a map above the cards shows the
-choice per stage and microbatch, consecutive stages that chose alike sharing a
-line. A card sets a form's alternatives side by side, the selected one
-outlined: each task's profiled time, the device bytes its inputs, outputs and
+stage is one place in the model, and a step repeats its stages: stages that
+compile to the same tasks are one *kind*, lettered in the order the step
+reaches them, and every microbatch runs each stage again. A letter belongs to
+the Plan it is shown for. Each kind is one
+card, titled with its letter and the parts of the model its stages cover, with
+how many occurrences chose each alternative. A map above the cards has a line
+per stage: the modules that stage covers, read from the parameters and buffers
+its own tasks touch, the choice in each microbatch, and its kind with the
+number of stages of that kind and, when they are elsewhere too, which.
+Consecutive stages that chose alike, of the same kinds, share a line. A model
+whose layers each compile differently has one kind per stage. A card sets a
+kind's alternatives side by side, the selected one
+outlined: each task by what it does, where `(accumulating)` marks a backward
+that adds into gradients already there, with its profiled time, the device
+bytes its inputs, outputs and
 mutated objects reach, its workspace, and their total, then the pair's time
 and what the alternative holds between its forward and its backward. On a
 runtime trace a measured column gives the traced step's median over the
 occurrences that ran, with the range on hover; an alternative that was not
-chosen never ran. Tasks outside every alternative follow in one table.
+chosen never ran. Tasks outside every alternative follow in one table, each
+named by its operation, with the parts of the model it touches. Hovering a
+task's row gives the first characters of its profile key, which is what
+preparation prints beside the same name when it measures that task.
 
 Dragging across a span zooms to it, shift-dragging pans, scrolling zooms
 around the cursor, `fit` resets, and the buttons zoom in steps. A lane is rasterised by pixel column: a column is

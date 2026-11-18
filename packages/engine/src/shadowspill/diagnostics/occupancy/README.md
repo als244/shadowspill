@@ -96,18 +96,23 @@ seconds, and on a traced view `collectives` and `transfer_phases`.
 ## Task alternatives
 
 `alternatives_data(program, selections, positions=None, labels=None,
-measured_ns=None)` describes every alternative group of a program, chosen or
-not, for a page's task view. A step repeats its stages, so groups whose options
-activate the same profiles in the same phases are one *form*, described once.
+covers=None, measured_ns=None)` describes every alternative group of a
+program, chosen or not, for a page's task view. A step repeats its stages, so
+groups whose options activate the same profiles in the same phases are one
+*form*, described once. A form is a kind of stage and is compiled once for
+every stage of its kind; a stage is one place in the model. A form therefore
+cannot say where a stage is: the caller gives the parts of the model each task
+reaches, by task id, as `covers`.
 
 | Field | Meaning |
 | --- | --- |
 | `options` | The option ids the program's groups offer, in first-seen order. |
-| `forms` | One entry per form: `index`, `label` (the first task label that says more than its phase, else empty), `instances` (groups sharing the form), `sizes_vary` (an occurrence's sizes differ from the first, which is the one described) and `options`. |
+| `forms` | One entry per form: `index`, `kind` (a letter, `A`, `B`, ... `Z`, `AA`, in the order the program first reaches the form, so a letter belongs to one program and is not an identity across programs), `covers` (every part of the model the form's occurrences cover), `instances` (groups sharing the form), `sizes_vary` (an occurrence's sizes differ from the first, which is the one described) and `options`. |
 | `forms[].options` | Per option: `option`, `chosen` (occurrences that selected it), `tasks`, `runtime_ns` (the tasks' profiled time, `None` if any is unprofiled), and `retained_groups` and `retained_bytes`, the alias groups the option holds across the group's boundary. |
-| `tasks` rows | `phase`, `label`, `runtime_ns` and `workspace_bytes` from the task's profile, `input_bytes`, `output_bytes`, `mutated_bytes`, `total_bytes` and `measured`. |
-| `map` | When `positions` gives every group a `(column, row)`: `columns`, and per row its `cells`, each `[chosen option, form index]` or `None` where no group sits. `None` when any group has no position. |
-| `single` | The tasks outside every group, one row per phase and profile, with `count` and the same columns. |
+| `tasks` rows | `phase`, `profile` (the task's profile id), `label` (what `labels` says the profile's tasks do, else empty), `runtime_ns` and `workspace_bytes` from the task's profile, `input_bytes`, `output_bytes`, `mutated_bytes`, `total_bytes` and `measured`. |
+| `map` | When `positions` gives every group a `(column, row)`: `columns`, and per row its `cells`, each `[chosen option, form index]` or `None` where no group sits, and its `covers`. `None` when any group has no position. |
+| `single` | The tasks outside every group, one row per phase and profile, with `count`, `covers` and the same columns. |
+| `covers` | Parts of the model, in the order first met, each `[path, number]` as the caller gave them: a module's path and, for a numbered member of a repeated part, its number (`["layers", 3]`, `["embedding", None]`). Empty without the `covers` argument, and for tasks it places nowhere. |
 
 A size is the device storage a set of objects reaches, each alias group's
 spans merged, so two views of one allocation count once. `total_bytes` is what
@@ -117,7 +122,11 @@ workspace it is `None`, never the smaller number. `measured` summarises the
 durations `measured_ns` holds for a task over the occurrences that selected its
 option (`count`, `median_ns`, `min_ns`, `max_ns`); an option nothing selected
 never ran and has none. A saved Plan's report attaches this as each view's
-`alternatives`, with a group's microbatch and stage as its position.
+`alternatives`, with a group's microbatch and stage as its position, and with
+`labels` and `covers` from the Plan's program: what each profile's tasks do
+(`forward`, `backward (accumulating)`, `all_gather`) and the parameters and
+buffers each task reads or changes. Progress lines and task errors name a task
+from the same source, beside the profile key a row carries as `profile`.
 
 ## Reading the numbers
 
