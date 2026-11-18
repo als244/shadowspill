@@ -35,8 +35,14 @@ def _files(root: Path, max_bytes: int, max_files: int) -> tuple[list[Path], int]
                 )
             used += 4096 + (path.stat().st_size if path.is_file() else 0)
             count += 1
-            if used > max_bytes or count > max_files:
-                raise ValueError("preparation files exceed the export storage envelope")
+            if used > max_bytes:
+                raise ValueError(
+                    f"preparation exceeds its export disk envelope of {max_bytes} bytes"
+                )
+            if count > max_files:
+                raise ValueError(
+                    f"preparation exceeds its export file-count envelope of {max_files}"
+                )
             relative = path.relative_to(root)
             if relative in (Path(JOB_NAME), Path(REUSE_NAME)) or (
                 len(relative.parts) == 2

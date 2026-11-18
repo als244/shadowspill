@@ -73,7 +73,9 @@ def test_incomplete_or_unsafe_exports_never_create_output(measured, tmp_path, da
     elif damage == "link":
         (root / "link").symlink_to(tmp_path / "unrelated")
     destination = tmp_path / "export.zip"
-    with pytest.raises(ValueError):
+    # A refusal over an envelope names which one, and its bound.
+    expected = "file-count envelope of 2" if damage == "file_count" else ""
+    with pytest.raises(ValueError, match=expected):
         export(root, destination, max_files=2 if damage == "file_count" else 128)
     assert not destination.exists()
 

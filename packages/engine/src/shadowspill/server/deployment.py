@@ -45,7 +45,9 @@ class ServerLimits:
             transfer_bytes=64 << 20,
             publication_bytes=64 << 20,
             log_bytes=64 << 20,
-            max_preparation_files=1024,
+            # Workers whose programs differ keep one profiling-cache entry per
+            # worker and task, so the count grows with both.
+            max_preparation_files=1 << 16,
         )
     )
 

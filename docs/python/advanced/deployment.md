@@ -59,6 +59,13 @@ changes to a client's execution/spill budget. Incomplete uploads expire after
 24 hours without a verified chunk by default (`ServerLimits.upload_ttl_seconds`);
 saved artifacts do not expire under this policy.
 
+`ServerLimits.creation` holds one creation's envelopes. Its
+`max_preparation_files`, 65,536 by default, bounds the entries of a
+preparation's working directory, profiling cache included: workers whose
+programs differ keep one cache entry per worker and task, so the count grows
+with both. A preparation beyond an envelope fails with the envelope named, and
+its directory is removed without being published.
+
 For a directly reachable listener, pass a server TLS context:
 
 ```python
