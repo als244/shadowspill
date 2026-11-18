@@ -94,51 +94,6 @@ packages and include any [custom definitions](custom-definitions.md) used by
 clients. Omitting it enables the engine and supplied workloads when installed;
 it does not discover unrelated extension packages.
 
-## Independent node agents: configuration contract
-
-The [node-agent protocol](../../architecture/service/nodes.md) is a design being
-implemented. The following describes operator configuration, not an available
-configuration-file parser or launch command.
-
-Each independently started agent receives the service URL, its own credential,
-stable identity, assigned resources and local paths. For example:
-
-```yaml
-# Illustrative agent configuration; field spelling is provisional.
-service_url: https://training.example.org
-node_id: worker-a
-credential_file: /etc/shadowspill/node-token
-devices: [0, 1]
-work_root: /local-ssd/shadowspill/agent
-model_root: /models
-worker_address: 10.20.0.11
-```
-
-A second machine uses another identity/credential and its own paths and worker
-address. Neither the agent nor the controller needs the other's SSH alias. The
-controller authorizes credentials for node identities and pools, then learns
-inventory through registration. Ordinary client tokens cannot register agents.
-
-| Control | Owner and meaning |
-| --- | --- |
-| Service URL and trusted CA | Agent's outbound control destination and service verification |
-| Node credential and stable ID | Operator-issued membership identity; each process also gets a fresh incarnation |
-| Allowed pools | Controller policy associated with the credential |
-| Assigned devices/CPU/host limits | Agent-local capacity, bounded by the supplied scheduler/container allocation |
-| Working/cache and model roots | Agent-local paths; no shared mount or identical path requirement |
-| Worker address/interface | Operator-selected network for worker rendezvous and collectives |
-| Heartbeat, membership lease and I/O bounds | Negotiated control liveness; distinct from training execution time |
-| Artifact/log quotas and process cleanup | Node-local admission and supervision limits |
-
-Agents may be started by a shell, service manager or an existing Slurm allocation.
-SSH is an optional startup convenience. The service does not request machines
-or scheduler jobs, and restarting a controller does not replay uncertain updates.
-
-Outbound HTTPS allows registration through NAT. A run spanning nodes also needs
-worker-to-worker connectivity; configure a suitable private network/VPN and
-preflight the selected interfaces before preparation. Control traffic, artifact
-transfers and worker collectives have separate responsibilities.
-
-The controller can run apart from the compute machines. That deployment changes
-operator setup only: existing demos still connect to one endpoint and use the
-same `step()`, `forward_backward()`, `optim_step()` and `forward()` calls.
+The public training deployment uses GPUs assigned to one host. The separate
+[node-agent architecture](../../architecture/service/README.md) describes the
+multi-node protocol; it is not an available public training deployment.

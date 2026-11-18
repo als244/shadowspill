@@ -4,9 +4,10 @@ One service endpoint coordinates the compute assigned to it. A client connects
 to that endpoint, selects training settings and submits global batches. Node
 addresses, process launch and physical worker placement belong to the service.
 
-This section specifies the node-agent architecture. Remote registration and
-per-worker setup are being implemented; the runnable deployment API is described
-in [Advanced deployment](../../python/advanced/deployment.md).
+This section specifies the multi-node architecture and its component contracts.
+The public training deployment currently uses GPUs assigned to one host, as
+described in [Advanced deployment](../../python/advanced/deployment.md). The
+node-agent design below is not a public multi-node training deployment API.
 
 ```mermaid
 flowchart TB
