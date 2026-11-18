@@ -133,4 +133,4 @@ def test_forward_only_roots_are_dead_when_backward_preparation_starts(
             instance, {"forward": forward, "backward": backward}
         )
     assert all(reference() is None for reference in references.values())
-    assert cache_reclaims == [False]
+    assert cache_reclaims == ([False] if phase == "finalize" else [False, True])

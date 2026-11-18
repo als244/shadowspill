@@ -47,6 +47,10 @@ def check_shard_loading(program):
                     torch.arange(region.offset, region.offset + region.length) + 1
                 )
         state.initial = set(values)
+        state.spill_sizes = {
+            alias: value.numel() * value.element_size()
+            for alias, value in values.items()
+        }
         state.spill = MemorySpill(values)
 
         def fill(request, tensor):
