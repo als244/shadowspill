@@ -1,6 +1,7 @@
 """The public inventory/preview and startup use one placement/admission contract."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,6 +14,7 @@ from engine_tests.training.test_setup_resolution import arguments
 from shadowspill.orchestration.launch.admission import ResourceRequest
 from shadowspill_client import Resources, ServiceClient
 from shadowspill_client.creation import CreationError
+from shadowspill_client.protocol.hardware import HardwareInventory
 from shadowspill_client.transport.http import RemoteError
 
 
@@ -47,6 +49,38 @@ def test_public_hardware_inspection_tracks_claims_without_reserving(
             claim.close()
         assert client.list_hardware().result(5) == inventory
         assert ctx.node.used == before and not ctx.owners and not ctx.phases
+
+
+def test_a_registered_node_is_listed_but_a_preview_places_only_where_runs_start(
+    tmp_path, monkeypatch
+):
+    with (
+        configured(tmp_path, monkeypatch) as ctx,
+        endpoint(ctx) as (server, _),
+        ServiceClient(address(server), token=TOKEN) as client,
+    ):
+        (local,) = client.list_hardware().result(5).nodes
+        # Another node registers with a free GPU while this node's is claimed:
+        # automatic selection over both would prefer the registered one.
+        registered = replace(local, id="registered")
+        ctx.factory.nodes = SimpleNamespace(
+            inventory=lambda: HardwareInventory((registered,))
+        )
+        claim = ctx.node.reserve(ResourceRequest({"gpu": 1}, 1024))
+        try:
+            listed = client.list_hardware().result(5).nodes
+            assert [node.id for node in listed] == ["local", "registered"]
+            assert not listed[0].devices[0].available
+            assert listed[1].devices[0].available
+            preview = client.describe_training(config=ctx.config).result(5)
+            assert [row.node for row in preview.hardware] == ["local"]
+            # Naming the registered node is refused, as creation refuses it.
+            with pytest.raises(RemoteError, match="no assigned hardware"):
+                client.describe_training(
+                    config=ctx.config, resources=Resources(node="registered")
+                ).result(5)
+        finally:
+            claim.close()
 
 
 def test_public_preview_selects_exact_order_and_creation_uses_it(tmp_path, monkeypatch):

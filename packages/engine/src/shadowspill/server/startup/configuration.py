@@ -119,6 +119,16 @@ class LocalCreationFactory:
             raise ValueError("local allocation and remote agent have the same node ID")
         return HardwareInventory((local, *remote) if local.devices else remote)
 
+    def startable(self) -> HardwareInventory:
+        """The hardware a run can start on: this service's own node.
+
+        ``inventory`` also lists registered nodes, which cannot yet run a
+        training worker. Creation selects from this node alone, so a preview
+        selects from the same hardware and never shows a placement that
+        creation would not make.
+        """
+        return HardwareInventory((node_hardware(self.node, pool=self.pool),))
+
     def describe(self, request: TrainingDescription) -> TrainingPreview:
         """Use the same CPU resolver; the caller owns the control-memory envelope."""
         with checksum_cache(self.cache / "source-digests"):
@@ -129,7 +139,7 @@ class LocalCreationFactory:
                 local_model_source(settings, self.model_root),
             )
         selection = select_hardware(
-            self.inventory(),
+            self.startable(),
             ranks=setup.context.parallelism.world_size,
             device_bytes=int(setup.config.memory.device_gib * (1 << 30)),
             resources=request.resources,

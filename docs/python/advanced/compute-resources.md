@@ -63,6 +63,8 @@ print(preview.summary())
 The preview shows proposed workers, per-worker memory budgets and preparation
 candidate counts. It creates no GPU workers and reserves no hardware. Busy
 devices remain visible so you can inspect the setup before deciding to wait.
+The preview selects from the same hardware creation uses, so the workers it
+proposes are the ones a run would start on.
 
 Pass both parts of the preview when creating the run:
 
