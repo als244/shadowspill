@@ -157,6 +157,21 @@ class Leave(Record):
         object.__setattr__(self, "scope", record(NodeScope, self.scope, "membership"))
 
 
+@dataclass(frozen=True)
+class Reconcile(Record):
+    """Confirm local cleanup of a journaled attempt, even if Join's reply was lost.
+
+    The agent must first acquire its node/device locks, which supervisors retain
+    until all old children exit. The identical reply acknowledges that cleanup;
+    it grants no new membership or execution authority.
+    """
+
+    incarnation: str
+
+    def __post_init__(self) -> None:
+        identifier(self.incarnation, "previous agent incarnation")
+
+
 CODEC = RecordCodec(
     {
         "node.join": Join,
@@ -167,5 +182,6 @@ CODEC = RecordCodec(
         "node.receipt": Receipt,
         "node.acknowledged": Acknowledged,
         "node.leave": Leave,
+        "node.reconcile": Reconcile,
     }
 )

@@ -24,7 +24,7 @@ from shadowspill_client.protocol.requests import identifier
 from .hardware import node_hardware
 from .membership import Membership
 from .ownership import NodeOwnership
-from .protocol import Command, Join, Joined, NodeScope
+from .protocol import Command, Join, Joined, NodeScope, Reconcile
 from .transport import NodeTransport
 
 
@@ -140,16 +140,34 @@ class NodeAgent:
         )
         self._locks: NodeOwnership | None = None
         self._assignments: AgentAssignments | None = None
+        self._incarnation = uuid4().hex
         self._served = False
         self.closed = False
 
     def _joined(self, joined: Joined) -> None:
-        # Persist only public scope identifiers, never credentials. A restart
-        # can reconcile this membership after the shared ownership locks prove
-        # that every previous supervisor/worker has exited.
+        self._journal(joined.scope)
+
+    def _journal(self, scope: NodeScope | None = None) -> None:
+        # Write the attempt before Join. A restart can confirm old child exit
+        # using ownership locks even when the Join response was never received.
         temporary = self.root / "membership.tmp"
-        temporary.write_text(json.dumps(joined.scope.to_dict(), sort_keys=True))
+        with temporary.open("w") as stream:
+            json.dump(
+                {
+                    "incarnation": self._incarnation,
+                    "scope": None if scope is None else scope.to_dict(),
+                },
+                stream,
+                sort_keys=True,
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
         temporary.replace(self.root / "membership.json")
+        directory = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
     def serve(self) -> None:
         if self._served or self.closed:
@@ -161,18 +179,34 @@ class NodeAgent:
             self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
             previous_path = self.root / "membership.json"
             previous = None
+            reconcile = None
             if previous_path.exists():
                 with previous_path.open("rb") as stream:
                     raw = stream.read(4097)
                 if len(raw) > 4096:
                     raise ValueError("saved membership exceeds its bound")
-                previous = NodeScope.from_dict(json.loads(raw))
+                journal = json.loads(raw)
+                if not isinstance(journal, dict) or set(journal) != {
+                    "incarnation",
+                    "scope",
+                }:
+                    raise ValueError("invalid saved node membership journal")
+                reconcile = Reconcile(journal["incarnation"])
+                if journal["scope"] is not None:
+                    previous = NodeScope.from_dict(journal["scope"])
             capacity = discover_capacity(
                 environment=self.environment,
                 root=self.root,
                 reserved_host_bytes=self.host_bytes,
             )
             self._locks.acquire(*(f"device:{device.id}" for device in capacity.devices))
+            if (
+                reconcile is not None
+                and self._membership.transport.exchange("reconcile", reconcile)
+                != reconcile
+            ):
+                raise ValueError("node cleanup acknowledgement differs from journal")
+            self._journal()
             admission = NodeAdmission(
                 replace(capacity, node_id=self.node_id),
                 guard_fds=self._locks.descriptors,
@@ -181,7 +215,7 @@ class NodeAgent:
             load_registry(self.packages)
             self._membership.run(
                 Join(
-                    uuid4().hex,
+                    self._incarnation,
                     node_hardware(admission, pool=self.pool),
                     self.packages,
                     self.worker_address,

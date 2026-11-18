@@ -225,3 +225,59 @@ def test_lost_join_ack_retries_same_membership_and_cleans_up():
         assert len(transport.scopes) == 2
         assert transport.scopes[0] == transport.scopes[1]
         assert cleaned.is_set() and not registry.inventory().nodes
+
+
+def test_agent_restart_reconciles_a_join_that_never_returned(tmp_path, monkeypatch):
+    import json
+    from uuid import uuid4
+
+    from shadowspill.orchestration.launch.admission import (
+        AssignedDevice,
+        NodeCapacity,
+    )
+    from shadowspill.orchestration.nodes import agent as agent_module
+    from shadowspill.orchestration.nodes.agent import NodeAgent
+
+    capacity = NodeCapacity(
+        "worker", (AssignedDevice("test-" + uuid4().hex, "0", 100),), 1000
+    )
+    monkeypatch.setattr(agent_module, "discover_capacity", lambda **_: capacity)
+    with endpoint() as (registry, _, url), ThreadPoolExecutor(max_workers=1) as pool:
+        first = NodeAgent(
+            url, node_id="worker", pool="lab", work_root=tmp_path, token=TOKEN
+        )
+        exchange = first._membership.transport.exchange
+
+        def lost(route, request):
+            response = exchange(route, request)
+            if route == "join":
+                raise OSError("all join acknowledgements lost")
+            return response
+
+        monkeypatch.setattr(first._membership.transport, "exchange", lost)
+        with pytest.raises(OSError, match="all join"):
+            first.serve()
+        journal = json.loads((tmp_path / "membership.json").read_text())
+        assert journal["scope"] is None and registry.inventory().nodes
+        second = NodeAgent(
+            url, node_id="worker", pool="lab", work_root=tmp_path, token=TOKEN
+        )
+        joined = Event()
+        persist = second._joined
+
+        def recorded(value):
+            persist(value)
+            joined.set()
+
+        monkeypatch.setattr(second, "_joined", recorded)
+        future = pool.submit(second.serve)
+        try:
+            assert joined.wait(3)
+            assert registry.inventory().nodes[0].id == "worker"
+            recovered = json.loads((tmp_path / "membership.json").read_text())
+            assert recovered["scope"] is not None
+            assert recovered["incarnation"] != journal["incarnation"]
+        finally:
+            second.close()
+        future.result(timeout=3)
+        assert not registry.inventory().nodes

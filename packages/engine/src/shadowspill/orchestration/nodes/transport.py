@@ -57,7 +57,7 @@ class NodeTransport:
             raise ValueError("node HTTP timeout must be positive")
 
     def exchange(self, route: str, request: Record) -> Record:
-        if route not in ("join", "heartbeat", "poll", "receipt", "leave"):
+        if route not in ("join", "heartbeat", "poll", "receipt", "leave", "reconcile"):
             raise ValueError("unknown node control route")
         url = self._url
         assert url.hostname is not None

@@ -12,6 +12,7 @@ from shadowspill.orchestration.nodes.protocol import (
     Leave,
     Poll,
     Receipt,
+    Reconcile,
 )
 from shadowspill_client._records import Record
 from shadowspill_client.protocol.codec import ProtocolError
@@ -43,6 +44,8 @@ def dispatch(handler: _Handler, parts: tuple[str, ...], body: _Body) -> None:
         response = registry.complete(access.node_id, request)
     elif parts == ("leave",) and isinstance(request, Leave):
         response = registry.leave(access.node_id, request)
+    elif parts == ("reconcile",) and isinstance(request, Reconcile):
+        response = registry.reconcile(access.node_id, request)
     else:
         raise ProtocolError("node record does not match its route")
     handler._reply(response, codec=CODEC, max_bytes=CONTROL_BYTES)

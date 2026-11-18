@@ -25,6 +25,7 @@ from .protocol import (
     NodeScope,
     Poll,
     Receipt,
+    Reconcile,
 )
 
 
@@ -349,6 +350,22 @@ class NodeRegistry:
             member.host_bytes.clear()
             self._condition.notify_all()
             return Acknowledged(request.scope, member.retired)
+
+    def reconcile(self, node: str, request: Reconcile) -> Reconcile:
+        """An authenticated agent has reaped its journaled predecessor locally.
+
+        A dropped Join/reconciliation acknowledgement is safe to repeat. A stale
+        journal never fences a different incarnation; a controller restart or an
+        unaccepted Join has no matching ownership to retire.
+        """
+        with self._condition:
+            member = self._members.get(node)
+            if member is not None and member.join.incarnation == request.incarnation:
+                member.fenced = member.cleaned = True
+                member.devices.clear()
+                member.host_bytes.clear()
+                self._condition.notify_all()
+            return request
 
     def close(self) -> None:
         with self._condition:

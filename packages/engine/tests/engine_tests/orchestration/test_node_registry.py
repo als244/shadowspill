@@ -17,6 +17,7 @@ from shadowspill.orchestration.nodes.protocol import (
     NodeScope,
     Poll,
     Receipt,
+    Reconcile,
 )
 from shadowspill.orchestration.nodes.registry import NodeRegistry, NodeUnavailable
 from shadowspill.server.authentication import BearerTokens
@@ -86,6 +87,24 @@ def test_expiry_never_revives_or_proves_cleanup():
         service.complete("worker", Receipt(joined.scope, 1))
     with pytest.raises(NodeUnavailable):
         service.leave("worker", Leave(joined.scope))
+
+
+def test_reconciliation_targets_only_the_journaled_predecessor():
+    service, joined, _ = registry()
+    service.submit("worker", "run", "claim", {"devices": {"gpu": 90}})
+    service.reconcile("worker", Reconcile("unaccepted-join"))
+    assert (
+        service.inventory().nodes
+        and not service.inventory().nodes[0].devices[0].available
+    )
+    request = Reconcile("agent")
+    assert service.reconcile("worker", request) == service.reconcile("worker", request)
+    with pytest.raises(NodeUnavailable):
+        service.heartbeat("worker", Heartbeat(joined.scope, 1, ()))
+    fresh = service.join(ACCESS, join_request("replacement"))
+    service.reconcile("worker", request)
+    assert service.heartbeat("worker", Heartbeat(fresh.scope, 1, ()))
+    assert service.inventory().nodes[0].devices[0].available
 
 
 def test_deliver_retry_receipt_retirement_and_stop_failure():
