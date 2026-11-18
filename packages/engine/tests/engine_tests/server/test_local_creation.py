@@ -28,6 +28,7 @@ from shadowspill.orchestration.launch.host_arena import HostArena
 from shadowspill.orchestration.launch.phases import PhaseInvocation
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
 from shadowspill.server import plan_summaries
+from shadowspill.server.deployment import ServerLimits
 from shadowspill.server.jobs import RunJobs
 from shadowspill.server.startup import configuration as configuration_module
 from shadowspill.server.startup import creation as module
@@ -43,6 +44,7 @@ from shadowspill.training.preparation.phases.job import (
     PreparationJob,
 )
 from shadowspill.training.worker import launch as launch_module
+from shadowspill.training.worker.node import WorkerNode
 from shadowspill.training.worker.resources import WorkerHost
 from shadowspill_client import BatchConfig, Weights
 from shadowspill_client.buffers import BufferBudget
@@ -309,6 +311,34 @@ def test_factory_owns_preparation_and_persistent_child_without_a_recipe_loop(
                     len([name for name in names if name.startswith("preparation.")])
                     == 6 + ranks + 2  # Worker logs, worker index and startup log.
                 )
+
+
+def test_workers_start_under_the_deployments_startup_wait(tmp_path, monkeypatch):
+    waits = []
+    start = WorkerNode.start
+
+    def observed(node, *args, **options):
+        waits.append(options["startup_timeout"])
+        return start(node, *args, **options)
+
+    monkeypatch.setattr(WorkerNode, "start", observed)
+    with configured(
+        tmp_path,
+        monkeypatch,
+        saved=True,
+        limits_change=lambda limits: replace(limits, worker_startup_seconds=75),
+    ) as ctx:
+        submit(ctx)
+        until(lambda: ctx.service.catalog.get(IDENTITY).state != "preparing")
+        assert ctx.service.catalog.get(IDENTITY).state == "ready", ctx.jobs.failures()
+        assert waits == [75]
+
+
+def test_a_startup_wait_must_be_positive():
+    limits = ServerLimits().creation
+    assert limits.worker_startup_seconds == 1800
+    with pytest.raises(ValueError, match="worker startup wait"):
+        replace(limits, worker_startup_seconds=0)
 
 
 @pytest.mark.parametrize(

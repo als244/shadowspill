@@ -21,7 +21,7 @@ from shadowspill.server.storage import ServiceStorage
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.worker.resources import WorkerHost
-from shadowspill_client._records import integer, names, text
+from shadowspill_client._records import integer, names, number, text
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.hardware import HardwareInventory
 from shadowspill_client.protocol.preview import TrainingDescription, TrainingPreview
@@ -50,6 +50,10 @@ class LocalCreationLimits:
     log_bytes: int
     max_preparation_files: int
     nsys: CollectorLimits = field(default_factory=CollectorLimits)
+    # A started worker binds its Plans and loads the run's model values before
+    # it reports ready, so the wait grows with the checkpoint and its storage.
+    # A worker that exits is seen at once; this bounds only one that hangs.
+    worker_startup_seconds: float = 1800
 
     def __post_init__(self) -> None:
         for name in (
@@ -65,6 +69,8 @@ class LocalCreationLimits:
             raise TypeError("worker host envelope requires WorkerHost")
         if not isinstance(self.nsys, CollectorLimits):
             raise TypeError("Nsight deployment envelope requires CollectorLimits")
+        if not number(self.worker_startup_seconds, "worker startup wait", minimum=0):
+            raise ValueError("worker startup wait must be positive")
 
 
 class LocalCreationFactory:

@@ -164,7 +164,9 @@ class LiveRun:
             if self._closing or self.closed:
                 raise RuntimeError("run ownership is closing or closed")
 
-    def start(self, *, wait_for_resources: bool = False) -> None:
+    def start(
+        self, *, wait_for_resources: bool = False, startup_seconds: float = 120
+    ) -> None:
         if not self._creating.acquire(blocking=False):
             raise RuntimeError("run initialization is already in progress")
         try:
@@ -210,6 +212,7 @@ class LiveRun:
                         self._artifacts.open,
                         local_source=self._artifacts.local_path,
                         wait=wait_for_resources,
+                        startup_timeout=startup_seconds,
                     )
                 )
             self._group = start_processes(processes, stop=self._stop_nodes)

@@ -66,6 +66,11 @@ programs differ keep one cache entry per worker and task, so the count grows
 with both. A preparation beyond an envelope fails with the envelope named, and
 its directory is removed without being published.
 
+`worker_startup_seconds`, 1,800 by default, is how long a started training
+worker may take to report ready. A worker binds its Plans and loads the run's
+model values in that time, so a large checkpoint on slow storage needs more.
+A worker that exits is reported at once; the wait bounds only one that hangs.
+
 For a directly reachable listener, pass a server TLS context:
 
 ```python

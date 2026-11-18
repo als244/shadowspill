@@ -540,7 +540,10 @@ class LocalCreation:
         )
         self._active()
         with phase("Start training workers"):
-            self.run.start(wait_for_resources=creation.wait_for_resources)
+            self.run.start(
+                wait_for_resources=creation.wait_for_resources,
+                startup_seconds=limits.worker_startup_seconds,
+            )
 
     def _convert_state[Saved: (ResolvedCheckpoint, ResolvedWeights)](
         self,
