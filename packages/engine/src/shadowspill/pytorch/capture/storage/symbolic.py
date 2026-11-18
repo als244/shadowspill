@@ -9,6 +9,10 @@ from typing import Any
 import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx import GraphModule, Node
+from torch.utils._python_dispatch import (
+    is_traceable_wrapper_subclass,
+    transform_subclass,
+)
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
@@ -45,11 +49,12 @@ def _fresh_symbolic_arguments(
     example_inputs: tuple[object, ...],
 ) -> tuple[object, ...]:
     bases: dict[int, tuple[torch.Tensor, torch.device]] = {}
-    result: list[object] = []
-    for value in example_inputs:
-        if not isinstance(value, torch.Tensor):
-            result.append(value)
-            continue
+
+    def fresh(value: torch.Tensor) -> torch.Tensor:
+        # A wrapper stays a wrapper, around fresh components: a graph that
+        # reads one of its components needs the wrapper it was captured with.
+        if is_traceable_wrapper_subclass(value):
+            return transform_subclass(value, lambda _name, inner: fresh(inner))
         if value.layout is not torch.strided:
             raise CaptureError("task storage contract requires strided tensor inputs")
         storage_identity = live_storage_identity(value)
@@ -73,8 +78,12 @@ def _fresh_symbolic_arguments(
             tuple(int(extent) for extent in value.shape),
             tuple(int(stride) for stride in value.stride()),
         )
-        result.append(symbolic)
-    return tuple(result)
+        return symbolic
+
+    return tuple(
+        fresh(value) if isinstance(value, torch.Tensor) else value
+        for value in example_inputs
+    )
 
 
 def _canonical_input_positions(example_inputs: tuple[object, ...]) -> tuple[int, ...]:
