@@ -14,6 +14,7 @@ implementation has these responsibilities:
 | `spill.py`, `execution.py` | Spill residency and physical execution leases |
 | `plan.py`, `summary.py` | Assemble a plan view or a floor and compute its summary |
 | `page.py`, `html.py`, `occupancy_page.html` | Numeric page data, HTML tables and the interactive timeline |
+| `alternatives.py` | Every task alternative beside what the selection chose: forms, counts, sizes and observed time |
 | `stored.py` | Locate the program a stored selection was made for |
 | `cli.py` | Argument parsing and command orchestration |
 
@@ -92,6 +93,32 @@ name over `times`, with its peak, reported peak, capacity and a `note`),
 `[start, end, execution bytes, category, alias group, host bytes]`, times in
 seconds, and on a traced view `collectives` and `transfer_phases`.
 
+## Task alternatives
+
+`alternatives_data(program, selections, positions=None, labels=None,
+measured_ns=None)` describes every alternative group of a program, chosen or
+not, for a page's task view. A step repeats its stages, so groups whose options
+activate the same profiles in the same phases are one *form*, described once.
+
+| Field | Meaning |
+| --- | --- |
+| `options` | The option ids the program's groups offer, in first-seen order. |
+| `forms` | One entry per form: `index`, `label` (the first task label that says more than its phase, else empty), `instances` (groups sharing the form), `sizes_vary` (an occurrence's sizes differ from the first, which is the one described) and `options`. |
+| `forms[].options` | Per option: `option`, `chosen` (occurrences that selected it), `tasks`, `runtime_ns` (the tasks' profiled time, `None` if any is unprofiled), and `retained_groups` and `retained_bytes`, the alias groups the option holds across the group's boundary. |
+| `tasks` rows | `phase`, `label`, `runtime_ns` and `workspace_bytes` from the task's profile, `input_bytes`, `output_bytes`, `mutated_bytes`, `total_bytes` and `measured`. |
+| `map` | When `positions` gives every group a `(column, row)`: `columns`, and per row its `cells`, each `[chosen option, form index]` or `None` where no group sits. `None` when any group has no position. |
+| `single` | The tasks outside every group, one row per phase and profile, with `count` and the same columns. |
+
+A size is the device storage a set of objects reaches, each alias group's
+spans merged, so two views of one allocation count once. `total_bytes` is what
+a task's inputs, outputs and mutated objects reach together plus its profiled
+workspace, the storage that must be resident for it to run; without a profiled
+workspace it is `None`, never the smaller number. `measured` summarises the
+durations `measured_ns` holds for a task over the occurrences that selected its
+option (`count`, `median_ns`, `min_ns`, `max_ns`); an option nothing selected
+never ran and has none. A saved Plan's report attaches this as each view's
+`alternatives`, with a group's microbatch and stage as its position.
+
 ## Reading the numbers
 
 - The execution pool has three peaks. The walk's sums the live leases as if
@@ -113,6 +140,16 @@ seconds, and on a traced view `collectives` and `transfer_phases`.
   phases, such as a collective, do the rest. Neither measures collective
   fabric traffic, and a collective's intervals already lie inside their
   parent task or transfer.
+- `transfer_phases` splits each traced transfer's lane interval into regions.
+  A `copy` or `collective` region is an event the trace timed. A transfer
+  whose recipe is one copy of its whole payload, alone or after the device's
+  priced host latency, has no separate events: its interval is one `copy`
+  region timed by `copy-only lane events`. Lane time outside a transfer's
+  measured events is an `overhead` region. A transformed transfer without a
+  copy event is one `unresolved` region and counts in
+  `unresolved_copy_transfers` and `unresolved_host_bytes`; neither kind of
+  gap carries bytes or a rate. A page draws these regions and its collective
+  sections when the step recorded a collective or left a transfer unsplit.
 - A simulated view achieves its assumed rates by construction; a traced view
   shows what the device did against them. A transfer interval runs from its
   start on the lane to its finish, never from its issue.

@@ -180,9 +180,17 @@ are read against one time axis.
   when the step has them. The backward task of a group chosen as
   `recompute` opens in a recompute colour for the length of its
   regeneration, the group's profiled cost beyond its `save` option, then
-  continues in the backward colour. On the traced page a transfer bar is
-  split by operation instead -- the host copies and collectives the trace
-  timed, and the time no event accounts for -- and coloured by it. A
+  continues in the backward colour. On the traced page of a step with
+  collectives a transfer bar is split by operation instead -- the host
+  copies and collectives the trace timed, and the lane time outside those
+  events -- and coloured by it, and a collective timeline and a host-copy
+  and collective accounting table follow the lanes. A transfer whose recipe
+  is one copy of its whole payload, with or without the device's priced host
+  latency ahead of it, is that copy over its lane interval; a transformed
+  transfer the trace gives no copy event for stays one gray region with no
+  bytes or rate. A step without collectives has nothing to split, so its
+  bars keep the by-object colours and both collective sections are omitted,
+  unless a transfer is left unsplit. A
   transfer bar runs from the transfer's start on its lane to its finish,
   never from its issue, which can come long before, while the spill copy an
   evict or write-back makes counts from its issue: the spill pool can rise
@@ -191,6 +199,20 @@ are read against one time axis.
   the trace could not time -- a record whose lane reported no start or
   finish, or none at all -- is left off the lanes, its trigger task's end
   stands in where a walk needs its time, and the subtitle counts them.
+
+A saved Plan's report and a runtime trace's report add a second view, **Tasks**,
+beside this timeline. It lists every stage's alternatives, chosen or not. A
+step repeats its stages -- identical layers share one compiled form and every
+microbatch runs each stage again -- so each distinct form is one card, with how
+many occurrences chose each alternative, and a map above the cards shows the
+choice per stage and microbatch, consecutive stages that chose alike sharing a
+line. A card sets a form's alternatives side by side, the selected one
+outlined: each task's profiled time, the device bytes its inputs, outputs and
+mutated objects reach, its workspace, and their total, then the pair's time
+and what the alternative holds between its forward and its backward. On a
+runtime trace a measured column gives the traced step's median over the
+occurrences that ran, with the range on hover; an alternative that was not
+chosen never ran. Tasks outside every alternative follow in one table.
 
 Dragging across a span zooms to it, shift-dragging pans, scrolling zooms
 around the cursor, `fit` resets, and the buttons zoom in steps. A lane is rasterised by pixel column: a column is

@@ -83,7 +83,11 @@ report.download("plan.html").result()
 Open `plan.html` in your laptop's browser. It includes every prepared build and
 retained worker Plan, estimated step times, compute and transfer lanes, and
 execution/spill memory over time with category breakdowns. The page works offline.
-These are simulated predictions from the measured profiles.
+Its **Tasks** view lists each stage's alternatives side by side with the one
+the Plan chose.
+These are simulated predictions from the measured profiles. A Plan's tokens per
+second is the tokens it schedules for a step, padding included, over its
+estimated step time.
 
 Reports remain available after closing training. See the
 [Plan guide](advanced/plan-report.md) for saved summaries and direct engine usage.
@@ -96,7 +100,10 @@ result.traces[0].download_report("runtime.html").result()
 ```
 
 The offline page opens on measured compute and transfer timings; switch views to
-see the matching prediction. Memory occupancy is reconstructed from the Plan's
+see the matching prediction. The measured view's tokens per second counts the
+tokens the request supplied over the traced step's time; the prediction counts
+the tokens the Plan schedules over its estimated time. Both count the whole
+batch, on every worker. Memory occupancy is reconstructed from the Plan's
 lifetimes on the traced clock, with interpolation labeled. Distributed calls
 return one trace per worker. Tracing adds overhead only when requested.
 
