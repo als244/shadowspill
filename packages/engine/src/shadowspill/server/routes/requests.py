@@ -105,7 +105,15 @@ def _request(
         ):
             raise ProtocolError("body differs from registered input type")
         if status.state == "uploading":
-            status = run.live().receive(route[1], None if expected is None else body)
+            # An earlier request can hold the staging this one needs until it
+            # finishes. Wait for room for up to half of the exchange's time,
+            # keeping the rest for the body; past that the client is told the
+            # service is busy and sends the input again.
+            status = run.live().receive(
+                route[1],
+                None if expected is None else body,
+                timeout=exchange.remaining_time() / 2,
+            )
         exchange._reply(status)
         return
     raise KeyError("route")

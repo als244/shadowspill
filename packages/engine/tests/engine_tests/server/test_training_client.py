@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from dataclasses import replace
 from threading import Event, Thread
+from time import monotonic
 
 import pytest
 
@@ -13,6 +14,7 @@ from engine_tests.server.test_jobs import until
 from engine_tests.server.test_local_creation import configured as creation_service
 from engine_tests.server.test_service_client import address
 from engine_tests.training.test_controller import configured
+from shadowspill.server.live import LiveRun
 from shadowspill.server.plan_summaries import _publish_pages
 from shadowspill.training.preparation.artifacts.inspection import summary_rows
 from shadowspill_client import ServiceClient, TrainingClient
@@ -23,8 +25,9 @@ from shadowspill_client.protocol.codec import digest
 from shadowspill_client.protocol.payload import snapshot_batch
 from shadowspill_client.protocol.requests import ArtifactRef, WriterLease
 from shadowspill_client.protocol.runs import RunInfo
+from shadowspill_client.protocol.service import ServiceError
 from shadowspill_client.results import TrainingRequestError
-from shadowspill_client.transport.http import TransportError
+from shadowspill_client.transport.http import RemoteError, TransportError
 
 
 @contextmanager
@@ -128,6 +131,53 @@ def test_close_future_waits_for_full_retirement_before_immediate_recreation(
         assert next_run.run_id != training.run_id and len(calls) == 2
         next_run.close().result(5)
         assert ctx.jobs.used == (0, 0)
+
+
+@pytest.mark.parametrize("stage", ["files", "outcome"])
+def test_a_close_whose_cleanup_keeps_failing_still_answers(
+    tmp_path, monkeypatch, stage
+):
+    broken = Event()
+
+    def failing(original):
+        def call(*args, **kwargs):
+            if broken.is_set():
+                raise OSError("run cleanup fault")
+            return original(*args, **kwargs)
+
+        return call
+
+    with (
+        creation_service(tmp_path, monkeypatch) as ctx,
+        creation_endpoint(ctx) as (transport, _),
+        ServiceClient(address(transport), token=TOKEN) as service,
+    ):
+        if stage == "files":
+            original = LiveRun._publish_logs
+            monkeypatch.setattr(LiveRun, "_publish_logs", failing(original))
+        else:
+            catalog = ctx.service.catalog
+            monkeypatch.setattr(catalog, "finish", failing(catalog.finish))
+        training = service.create_training_client(config=ctx.config).result(5)
+        broken.set()
+        closing = training.close()
+        try:
+            if stage == "files":
+                # The outcome was recorded before the file cleanup failed.
+                assert closing.result(10).operation == "close"
+                reply = transport.request("GET", training._route)
+                assert reply.status == 200 and reply.value.state == "closed"
+            else:
+                with pytest.raises(RemoteError) as raised:
+                    closing.result(10)
+                assert raised.value.code == "retirement_failed"
+                assert "run cleanup fault" in str(raised.value)
+            assert ctx.jobs.used == (1, 0)
+        finally:
+            broken.clear()
+        until(lambda: ctx.jobs.used == (0, 0))
+        reply = transport.request("GET", training._route)
+        assert reply.status == 200 and reply.value.state == "closed"
 
 
 @pytest.mark.parametrize("raw", [False, True])
@@ -238,6 +288,58 @@ def test_input_and_control_snapshots_ordered_accumulation_and_explicit_recovery(
         assert updated.completed_updates == 1 and not updated.accumulation.open
         assert updated.optim["lr"] == pytest.approx(0.03)
         assert updated.grad_scale == 0.5
+        assert training.close().result(5).completed_updates == 1
+
+
+@pytest.mark.parametrize("refusal", ["busy", "closed"])
+def test_an_input_the_service_is_too_busy_to_take_is_sent_again(
+    tmp_path, monkeypatch, refusal
+):
+    with runtime(tmp_path) as (service, training, run, _):
+        original = service._transport.upload
+        attempts = []
+
+        def refused_once(*args):
+            attempts.append(args[0])
+            if len(attempts) == 1:
+                # The service refuses before reading: a busy reply, or for a
+                # large body a connection closed while it is still being sent.
+                if refusal == "busy":
+                    raise RemoteError(
+                        429,
+                        ServiceError(
+                            "backpressure", "Request could not acquire capacity."
+                        ),
+                    )
+                raise TransportError("HTTP transfer failed (BrokenPipeError)")
+            return original(*args)
+
+        monkeypatch.setattr(service._transport, "upload", refused_once)
+        first = training.forward_backward(records())
+        assert first.result(5).accumulation.contributions == (first.request_id,)
+        assert len(attempts) == 2 and attempts[0] == attempts[1]
+        # The handle keeps working: later submissions are sent and run.
+        second = training.forward_backward(records()).result(5)
+        assert len(second.accumulation.contributions) == 2
+        assert run.workers.calls == [first.request_id, second.request_id]
+        assert training.optim_step().result(5).completed_updates == 1
+        assert training.close().result(5).completed_updates == 1
+
+
+def test_a_bounded_request_wait_stops_and_leaves_the_request_running(tmp_path):
+    with runtime(tmp_path, blocked=True) as (_, training, run, _):
+        first = training.forward_backward(records())
+        assert run.workers.entered.wait(5)
+        started = monotonic()
+        waiting = training.requests.get(first.request_id, timeout=0.2)
+        with pytest.raises(TimeoutError, match="continues on the service"):
+            waiting.result(5)
+        assert waiting.done() and monotonic() - started < 2.5
+        run.workers.release.set()
+        looked_up = training.requests.get(first.request_id, timeout=5).result(5)
+        assert looked_up.accumulation.contributions == (first.request_id,)
+        assert first.result(5).accumulation == looked_up.accumulation
+        assert training.optim_step().result(5).completed_updates == 1
         assert training.close().result(5).completed_updates == 1
 
 

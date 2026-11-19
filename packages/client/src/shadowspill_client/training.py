@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from threading import Condition, Lock
+from time import monotonic
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from ._async import CallFuture
-from ._records import Value
+from ._records import Value, number
 from .batch_validation import BatchValidation, BatchValidator
 from .buffers import BufferBudget
 from .captures import NsightCapture
@@ -19,7 +20,7 @@ from .plans import PlansHandle
 from .protocol.checkpoint_settings import SaveSettings
 from .protocol.controls import Scalar
 from .protocol.metrics import MetricRecord
-from .protocol.payload import MEDIA_TYPE
+from .protocol.payload import MEDIA_TYPE, BatchSnapshot
 from .protocol.requests import (
     ArtifactRef,
     Operation,
@@ -33,6 +34,7 @@ from .protocol.runs import RunInfo
 from .protocol.training import ResolvedTraining
 from .reports import ReportHandle, report
 from .results import OperationFuture, TrainingRequestError, TrainingResult
+from .transport.http import RemoteError, TransportError
 from .weights import WeightsHandle
 
 if TYPE_CHECKING:
@@ -48,10 +50,25 @@ class RequestQueries:
         training = self._training
         return training._service._work.submit(lambda: training._status(request_id))
 
-    def get(self, request_id: str) -> CallFuture[TrainingResult]:
+    def get(
+        self, request_id: str, *, timeout: float | None = None
+    ) -> CallFuture[TrainingResult]:
+        """Wait for a request's result.
+
+        ``timeout`` bounds the wait, counted from this call: past it the future
+        fails with ``TimeoutError`` and stops polling. The request itself
+        continues on the service and can be looked up again.
+        """
         identifier(request_id, "request ID")
+        deadline = (
+            None
+            if timeout is None
+            else monotonic() + number(timeout, "timeout", minimum=0)
+        )
         training = self._training
-        return training._service._work.submit(lambda: training._wait(request_id))
+        return training._service._work.submit(
+            lambda: training._wait(request_id, deadline=deadline)
+        )
 
 
 class TrainingClient:
@@ -161,10 +178,12 @@ class TrainingClient:
         self._slots.close()
         self._snapshots.close()
 
-    def _status(self, request_id: str, *, wait: bool = False) -> RequestStatus:
+    def _status(
+        self, request_id: str, *, wait: bool = False, seconds: float = 1.0
+    ) -> RequestStatus:
         path = self._route + "/requests/" + request_id
         if wait:
-            path += "?wait=completed&timeout=1"
+            path += f"?wait=completed&timeout={seconds:.3f}"
         status = self._service._request("GET", path, RequestStatus)
         if (
             status.identity.request_id != request_id
@@ -173,15 +192,60 @@ class TrainingClient:
             raise ValueError("request lookup crossed run or request identity")
         return status
 
+    def _send_input(
+        self, request: OperationRequest, snapshot: BatchSnapshot | None
+    ) -> RequestStatus:
+        """Send one request's input, again while the service is only busy.
+
+        Earlier requests can hold the staging this input needs. The service
+        then refuses the upload as busy, or closes the connection before
+        reading it; neither changes the request, which still waits for its
+        input, so the same input is sent again after a pause. Any other answer
+        is the request's own status or a failure. Called holding ``_upload``.
+        """
+        request_id = request.identity.request_id
+        path = self._route + "/requests/" + request_id + "/input"
+        delay = 0.1
+        while True:
+            try:
+                if snapshot is None:
+                    return self._service._request("PUT", path, RequestStatus)
+                assert request.payload is not None
+                value = self._service._transport.upload(
+                    path, request.payload, snapshot.chunks()
+                ).value
+                if not isinstance(value, RequestStatus):
+                    raise ValueError("upload returned no request status")
+                return value
+            except (RemoteError, TransportError) as error:
+                if isinstance(error, RemoteError) and error.code != "backpressure":
+                    raise
+                status = self._status(request_id)
+                if status.state != "uploading":
+                    return status
+            self._service._work.check()
+            self._upload.wait(delay)
+            delay = min(2.0, delay * 2)
+
     def _wait(
         self,
         request_id: str,
         future: OperationFuture[TrainingResult] | None = None,
         status: RequestStatus | None = None,
+        *,
+        deadline: float | None = None,
     ) -> TrainingResult:
         while True:
             if status is None:
-                status = self._status(request_id, wait=True)
+                seconds = 1.0
+                if deadline is not None:
+                    seconds = min(seconds, deadline - monotonic())
+                    if seconds <= 0:
+                        raise TimeoutError(
+                            f"request {request_id} has not finished within the "
+                            "wait; it continues on the service"
+                        )
+                status = self._status(request_id, wait=True, seconds=seconds)
             if future is not None:
                 future._observe(status)
             if status.failure is not None:
@@ -321,23 +385,7 @@ class TrainingClient:
                             )
                             future._observe(status)
                             if status.state == "uploading":
-                                path = (
-                                    self._route + "/requests/" + request_id + "/input"
-                                )
-                                if snapshot is None:
-                                    status = self._service._request(
-                                        "PUT", path, RequestStatus
-                                    )
-                                else:
-                                    assert request.payload is not None
-                                    value = self._service._transport.upload(
-                                        path, request.payload, snapshot.chunks()
-                                    ).value
-                                    if not isinstance(value, RequestStatus):
-                                        raise ValueError(
-                                            "upload returned no request status"
-                                        )
-                                    status = value
+                                status = self._send_input(request, snapshot)
                                 future._observe(status)
                         except BaseException:
                             with self._state:
