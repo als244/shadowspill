@@ -38,6 +38,9 @@ artifact_store/v<N>/
 ├── build/
 │   ├── graph_pairs/                 structural AOT graph pairs
 │   └── optimizers/                  captured optimizer updates
+├── profiling/
+│   ├── tasks/                       finalized task measurements
+│   └── overlap/                     compute/collective overlap measurements
 └── planning/
     ├── programs/                   costed IR inputs
     ├── requests/                   search inputs and settings

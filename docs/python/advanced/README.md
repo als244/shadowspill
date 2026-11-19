@@ -5,23 +5,26 @@ These guides cover optional controls, custom definitions and detailed diagnostic
 
 ## Training through the service
 
+Setup, objectives, recovery and the service itself.
+
 | Task | Guide |
 | --- | --- |
 | Accumulate gradients, evaluate and resume | [Complete workflow](training-workflow.md) |
 | Pretrain, fine-tune, run GRPO/PPO actor updates or distill responses | [Objectives](objectives.md) |
-| Tune preparation, reuse Plans or reconnect | [Service client reference](service-client.md) |
+| Tune preparation (microbatches, orderings, chunk sizes, retention), reuse Plans or reconnect | [Service client reference](service-client.md) |
 | Inspect hardware and select a compute pool or devices | [Compute resources](compute-resources.md) |
-| Configure the endpoint, storage and compute-node membership | [Service deployment](deployment.md) |
+| Configure the endpoint, storage and definition packages | [Service deployment](deployment.md) |
 | Download Plans and start on other physical GPUs | [Saved Plans](saved-plans.md) |
-| Supply a model, objective or optimizer | [Step-by-step guide](custom-definitions.md), [hook reference](definitions.md) |
-| Work directly with build/profile/plan/execute | [Phase guide](../phases.md), [custom models](custom-definitions.md) |
+| Supply a model, objective, optimizer or build policy | [Step-by-step guide](custom-definitions.md), [hook reference](definitions.md) |
+| Work directly with build/profile/plan/execute | [Phase guide](../phases.md) |
 
 ## Tune training and search
+
+Precision, long sequences and the planner's choices.
 
 | Task | Guide |
 | --- | --- |
 | Override model tensor dtypes | [Parameter precision](precision.md) |
-| Select microbatches, orderings, chunk sizes and retention candidates | [Preparation controls](service-client.md#preparation-and-local-planning), [build policies](definitions.md#preparation-and-capture) |
 | Train long sequences with explicit computation chunks | [Long-context LoRA](long-context.md) |
 | Compare memory budgets and hypothetical transfer speeds on a laptop | [Offline sweeps](offline-sweeps.md) |
 | Separate checkpoint regions from execution chunks | [Partitioning example](../../examples/custom-partitioning.md), [build policies](../api/frontend.md) |
@@ -29,6 +32,8 @@ These guides cover optional controls, custom definitions and detailed diagnostic
 | Measure an executable saved Plan | [Plan measurement](../../../tools/measure_plan/README.md) |
 
 ## Inspect artifacts and execution
+
+What was planned, what ran, and what went wrong.
 
 | Topic | Guide |
 | --- | --- |
@@ -41,6 +46,8 @@ These guides cover optional controls, custom definitions and detailed diagnostic
 | Errors and cleanup | [Failure handling](failures.md) |
 
 ## Integrate operators and runtimes
+
+Custom operators, kernels and allocation.
 
 | Topic | Guide |
 | --- | --- |

@@ -39,6 +39,7 @@ artifact folders or live model for inspection.
 | `program` | Task definitions, objects, alternatives and semantic source metadata |
 | `profiled_program` | Applied task durations and memory evidence |
 | `memory_budgets` | Total GPU allowance and spill capacity per worker |
+| `pool_memory` | The measured pool-process footprint planning charged, when supplied |
 | `communication_info` | Topology, supplied rates and measured communication evidence |
 | `schedule`, `selections` | Selected task alternatives and transfer actions |
 | `timeline` | Simulated tasks, transfers, makespan and memory peaks |

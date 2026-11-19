@@ -23,8 +23,8 @@ program = build_step(
 )
 ```
 
-The factory is supplied by the provider. The default empty tuple preserves the
-existing build behavior. This interface does not discover or prepare arbitrary
+The factory is supplied by the provider. The default empty tuple builds
+without prepared operators. This interface does not discover or prepare arbitrary
 external compilers automatically. A provider must qualify the entire dispatch
 surface it claims, including generated epilogues, tails, accumulation forms,
 helper kernels and native launchers.
@@ -91,8 +91,8 @@ initialization or eliminate every source of first-invocation latency.
 The Program stores manifests under `bindings["operator_preparation"]`, keyed by
 unique executable/profile key. `operator_binaries` holds digest-addressed blobs,
 deduplicated in Program, ProfiledProgram and Plan archives. Neither local build
-cache paths nor warm caches are required to recover archived binaries. Existing
-Programs without preparation retain their serialized field layout.
+cache paths nor warm caches are required to recover archived binaries. A Program
+without prepared operators serializes no `operator_binaries` field.
 
 Each task's compatibility digest includes its provider descriptions, factory
 source and selected manifests. A changed implementation requires corresponding

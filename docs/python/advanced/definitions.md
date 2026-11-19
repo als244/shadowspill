@@ -54,9 +54,9 @@ models = "my_project.definitions:register"
 ```
 
 After installing that package on the server, include its distribution name in
-`Server(..., workload_packages=["my-project", "shadowspill"])`. The optional
-`"shadowspill"` entry enables built-in AdamW; omit it when your package supplies
-its own optimizer. The separate `shadowspill-workloads` catalog is optional.
+`Server(..., workload_packages=["my-project", "shadowspill-workloads"])`. The
+optional `"shadowspill-workloads"` entry enables the supplied catalog, including
+the MLOps AdamW; omit it when your package supplies its own optimizer.
 
 ## Model and objective hooks
 
@@ -254,15 +254,15 @@ fixed, including nulls and complete sequences; changed or removed values are
 rejected. The same resolved settings are rechecked when creating a training run.
 
 The supplied `shadowspill/huggingface@1` resolver accepts Hub repository IDs for
-Llama 3, Qwen3 MoE, the Qwen3.5 MoE text decoder and OLMoE. It reads bounded
+every catalog family that declares checkpoint types: Llama 3, Qwen3, Qwen3.5,
+Qwen3 MoE, Qwen3.5 MoE, OLMoE, GLM-5.3 and GLM-5.3-Flash. It reads bounded
 config/index metadata and shard sizes/checksums, pins the immutable Hub commit and
 uses the existing catalog parsers. Tensor payloads are fetched only after worker
 resources are reserved.
 The resolved manifest belongs to `Weights.metadata`, separate from model
 configuration. Selecting another compatible weight source or fresh random weights
 does not change the model computation. Explicit pinned metadata is rechecked and
-cannot be silently replaced. Clients and servers use protocol version 2; older
-versions are rejected explicitly.
+cannot be silently replaced.
 It imports no tensor framework and executes no repository Python. An explicit
 `config={"architecture": {"max_seq_len": ...}}` replaces the metadata's context
 capacity; overrides that change stored tensor geometry are rejected. Other model
@@ -273,7 +273,7 @@ endpoint settings apply, and the client supplies a repository ID.
 
 The supplied `shadowspill/local_safetensors@1` resolver also accepts an absolute
 server path through the same `Model.from_pretrained("/checkpoints/model", ...)`
-call. It supports those same four families and checkpoint overrides. First
+call. It supports the same families and checkpoint overrides. First
 resolution fingerprints the files with bounded SHA256 reads; this scans the
 checkpoint payload once without constructing tensors. Reusing the resolved setup
 rechecks bounded config/index/header metadata without repeating that scan.
@@ -291,7 +291,7 @@ The supplied pretrained loader verifies content checksums, streams downloads in
 files are read without modification. New files live in a private temporary directory
 and are removed when the loader closes, including on failure; a later restore can
 fetch the same pinned source again. Config/index/aggregate-header bounds are
-1/4/4 MiB, with at most 512 shards and 65,536 tensor declarations. The declared host
+1/32/32 MiB, with at most 512 shards and 262,144 tensor declarations. The declared host
 allowance covers metadata decoding, retained reader state, conversion and generated
 buffers; full model tensors are never assembled by the loader. Derived rotary
 buffers and fresh LoRA factors use the existing deterministic initializer. Fresh
@@ -389,7 +389,7 @@ also needs an exact `module:factory` entry covering bound-task activation/wrappi
 These are source-pinned semantic guarantees, like padding safety; sampled peaks
 cannot supply them. Wildcards, conflicting declarations and unresolved compiler
 geometry are rejected. Value-dependent allocation needs a separate maximum-bound
-mechanism and currently cannot qualify a prepared family through this contract.
+mechanism and cannot qualify a prepared family through this contract.
 
 ### Input adapters
 
@@ -434,8 +434,10 @@ defaults to true for real input positions and false for padding, independently
 of the prediction mask: real prompt tokens still contribute routing statistics.
 `config={"include_padding": True}` explicitly counts all physical rows.
 The buffer's full allocated size still counts against the scheduled token cap.
-The balancing value is scaled by the supervised-token count; primary token
-weights do not scale balancing. The caller chooses its coefficient through
+By default the balancing value is scaled by the primary objective's `weights`
+summed over participating positions, so with `text_batch()` it is averaged over
+the global supervised-token count; with `weight_field=None` it is scaled by the
+supervised-token count. The caller chooses its coefficient through
 `balance.weight`. Training calls with no prediction supervision are rejected;
 use an explicitly prepared `forward()` for evaluation without supervision.
 
@@ -460,7 +462,7 @@ of shape `[layers, experts]`, scalar `router_rows` (selected positions per layer
 integer `router_top_k`, and aligned `logprobs` when targets are supplied. A null
 router mask explicitly means all physical rows. Qwen and OLMoE supply this hook.
 Compatible primary and secondary terms share one transformer evaluation. The
-current fused provider lacks masked statistics, so exclusion adds a bounded router
+fused provider computes no masked statistics, so exclusion adds a bounded router
 projection/selection per layer; its work and storage must be captured and admitted.
 
 The input pipeline validates owned binary snapshots with these same
@@ -525,8 +527,9 @@ portable setup and rechecks saved configurations on CPU. `prepare_layouts` in
 physical buffer and logical worker to its
 input adapter and output geometry, then checks the complete host-staging bound.
 Known staging-limit failures retain candidate reasons; unexpected definition
-errors propagate. Every requested operation and batch option must retain a
-constructive coverage witness. Identical adapter layouts share their resolved
+errors propagate. Every requested operation and batch option must retain at
+least one admitted layout; a constructive coverage certificate is recorded
+wherever one can be built. Identical adapter layouts share their resolved
 metadata across counts.
 
 The internal `shadowspill.training.preparation.artifacts.bundle.TrainingBundle` saves a complete admitted
@@ -646,14 +649,15 @@ optimizer's update must be capturable by the existing engine. Custom optimizer
 functions can be exposed through the same factory contract; arbitrary Python
 functions are not uploaded or executed from client requests.
 
-The engine distribution publishes an optional optimizer registration hook. Include
-`"shadowspill"` in the server's `workload_packages` alongside your installed model
-package to enable `Optimizer("adamw")`. This requires MLOps on the server;
-external packages can supply their own optimizers without loading this hook.
+The workloads distribution registers this optimizer with its catalog. Include
+`"shadowspill-workloads"` in the server's `workload_packages` alongside your
+installed model package to enable `Optimizer("adamw")`. This requires MLOps on
+the server, which the workloads package's setup installs; external packages can
+supply their own optimizers without loading the catalog.
 Registration hashes the installed provider source without importing Torch or
 constructing an optimizer. Construction calls the existing `mlops.optim.AdamW`.
 
-This definition currently supports one parameter group, selecting only trainable
+This definition supports one parameter group, selecting only trainable
 parameters. Runtime controls are `lr`, `beta1`, `beta2`, `eps` and `weight_decay`;
 omitted values use the immutable setup defaults. Structural `config` supports
 `maximize`. `precision` accepts `gradient_dtype` and `opt_state_dtype` (`parameter`,
@@ -681,7 +685,7 @@ worker ownership and loader chunk sizes. Its `predictions` output needs only
 `Datum.inputs["value"]` (16 FP32 values), and evaluation leaves the model's
 training counter unchanged. `weighted_squared_error` takes eight
 FP32 targets per Datum, optional scalar `weights` and boolean `valid`, and returns
-the weighted squared-error sum. To reproduce the original global mean, supply
+the weighted squared-error sum. For the mean over all targets in the global batch, supply
 `weights=1 / (8 * number_of_global_examples)`; the engine adds no normalization.
 
 The phase engine also provides `artifacts.state_inventory.program_state(program,

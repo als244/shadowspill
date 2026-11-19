@@ -472,7 +472,7 @@ a timeline renderer -- the occupancy tool's traced page -- reads them without
 rerunning the model.
 
 The trace says how complete it is. `enabled` is false when no process group
-was initialized, and the view is then empty. `capacity` bounds the records;
+was initialized, and `records` is then empty. `capacity` bounds the records;
 `dropped`, `errors` and `missing_timings` count records the bound turned away,
 capture failures, and records without both device times, and `complete` is
 true when all three are zero, which `summary.trace_complete` requires.
@@ -484,8 +484,9 @@ itself, from the marks the runtime's lane puts around the copy alone: `source`,
 `issued_at_ns`, `started_at_ns` and `finished_at_ns`. Nothing else marks the
 stream around a copy, so the interval holds the copy and nothing a trace
 added. A record exists only with both instants; a transfer whose copy could
-not be timed has none and is drawn unsplit. `host_copies` is absent when the
-runtime trace ran out of room.
+not be timed has none and is drawn unsplit. `host_copies` is `None` (`null` in
+JSON) when the runtime trace ran out of room; otherwise `host_copies.records`
+holds one record per timed copy.
 
 ## Exporting diagnostics
 
