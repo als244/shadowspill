@@ -83,9 +83,14 @@ def nsys(
             raise KeyError("rank capture")
         if info.plans is not None and value.plans != info.plans:
             raise ValueError("capture differs from its source Plans")
-        if value.status == "pending" and info.state not in ("preparing", "ready"):
-            # A restart may recover a terminal run but only a pending record.
-            # Report the missing finalization; never infer a usable report.
+        if (
+            value.status == "pending"
+            and info.state not in ("preparing", "ready")
+            and jobs.retired(identity)
+        ):
+            # An ended run still owned is publishing its captures. A retired
+            # one, or one a restart recovered, left only a pending record:
+            # report the missing finalization; never infer a usable report.
             value = missing_manifest(
                 value, "Run ended without a finalized capture record."
             )

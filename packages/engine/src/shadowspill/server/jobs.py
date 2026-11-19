@@ -129,6 +129,12 @@ class RunJobs:
                 and not job.owner.run.finished
             )
 
+    def cleanup_failure(self, identity: RunIdentity) -> str | None:
+        """Why the run's last cleanup attempt failed, while it is retried."""
+        with self._mutex:
+            job = self._jobs.get(identity)
+            return None if job is None else job.cleanup_error
+
     def retired(self, identity: RunIdentity) -> bool:
         """All run owners and the creation envelope have been released."""
         with self._mutex:

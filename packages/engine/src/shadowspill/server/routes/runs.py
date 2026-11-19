@@ -18,7 +18,7 @@ from shadowspill_client.protocol.plans import (
 )
 from shadowspill_client.protocol.progress import ProgressPage, ProgressRequest
 from shadowspill_client.protocol.runs import RunInfo, RunPage
-from shadowspill_client.protocol.service import CONTROL_MEDIA_TYPE
+from shadowspill_client.protocol.service import CONTROL_MEDIA_TYPE, ServiceError
 
 from ..plan_reports import generate_plan_report
 from ..records.artifact_index import ArtifactAlias
@@ -198,13 +198,22 @@ def plan_report(
 
 def reply(exchange: _Handler, info: RunInfo, identity: RunIdentity) -> None:
     require_scope(info, identity)
-    assert exchange.server.jobs is not None
+    jobs = exchange.server.jobs
+    assert jobs is not None
+    # A cleanup that keeps failing is the service's to retry; it must not hold
+    # a caller's wait open. An ended run's outcome is final and is answered; a
+    # run that could not record its end reports why.
+    failure = jobs.cleanup_failure(identity)
+    if info.state == "ready" and failure is not None and not jobs.available(identity):
+        exchange._reply(ServiceError("retirement_failed", failure), 500)
+        return
     pending = (
         info.state == "preparing"
-        or (info.state == "ready" and not exchange.server.jobs.available(identity))
+        or (info.state == "ready" and not jobs.available(identity))
         or (
             info.state in ("closed", "failed", "stopped", "prepared", "planned")
-            and not exchange.server.jobs.retired(identity)
+            and not jobs.retired(identity)
+            and failure is None
         )
     )
     exchange._reply(info, 202 if pending else 200)

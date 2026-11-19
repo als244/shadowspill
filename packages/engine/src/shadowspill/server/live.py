@@ -294,6 +294,32 @@ class LiveRun:
         if errors:
             raise BaseExceptionGroup("run workers have not confirmed exit", errors)
 
+    def _record_end(self) -> None:
+        """Give a ready run its terminal state once, after confirmed worker exit."""
+        if not self.ready:
+            return
+        info = self.storage.catalog.get(self.identity)
+        if info is None or info.state != "ready":
+            return
+        if self._controller is not None and self._controller.expired:
+            self.storage.catalog.stop(
+                self.identity,
+                ServiceError(
+                    "idle_timeout", "Configured idle timeout released workers."
+                ),
+            )
+        elif self._failure is not None:
+            self.storage.catalog.stop(
+                self.identity, ServiceError("controller_failed", self._failure)
+            )
+        elif self._stopped:
+            self.storage.catalog.stop(
+                self.identity,
+                ServiceError("allocation_stopped", "Allocation ownership ended."),
+            )
+        else:
+            self.storage.catalog.finish(self.identity)
+
     def _remember_failure(self) -> None:
         """Read the controller's failure before the first stop, and only then."""
         if not self._failure_read and self._controller is not None:
@@ -388,6 +414,9 @@ class LiveRun:
                     else:
                         self._controller.close()
                 self._closing = True
+                # The controller has confirmed its workers' exit: the run's
+                # outcome is final, whatever its file cleanup does below.
+                self._record_end()
                 self._stop_nodes()
                 if self._workers is not None:
                     self._workers.close()
@@ -405,29 +434,6 @@ class LiveRun:
                         errors.append(error)
                 if errors:
                     raise BaseExceptionGroup("run files still require cleanup", errors)
-                if self.ready:
-                    if self._controller is not None and self._controller.expired:
-                        self.storage.catalog.stop(
-                            self.identity,
-                            ServiceError(
-                                "idle_timeout",
-                                "Configured idle timeout released workers.",
-                            ),
-                        )
-                    elif self._failure is not None:
-                        self.storage.catalog.stop(
-                            self.identity,
-                            ServiceError("controller_failed", self._failure),
-                        )
-                    elif self._stopped:
-                        self.storage.catalog.stop(
-                            self.identity,
-                            ServiceError(
-                                "allocation_stopped", "Allocation ownership ended."
-                            ),
-                        )
-                    else:
-                        self.storage.catalog.finish(self.identity)
                 # Drop decoded families/closed owners before the parent can return
                 # their host envelope. Pins outlive every producer and publisher.
                 self._controller = self._publisher = self._workers = self._group = None
