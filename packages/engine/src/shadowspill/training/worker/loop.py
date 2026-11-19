@@ -179,7 +179,8 @@ class WorkerLoop:
         self._pending = None
 
     def serve(self, reader: BinaryIO, writer: BinaryIO) -> None:
-        """Block without an idle timeout; the owning agent manages process lifetime."""
+        """Block without an idle timeout; the owning node daemon manages process
+        lifetime."""
         try:
             while self.valid:
                 message = read_message(reader)

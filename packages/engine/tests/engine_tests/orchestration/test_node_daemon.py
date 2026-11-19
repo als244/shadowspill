@@ -11,7 +11,7 @@ from shadowspill.orchestration.launch.admission import (
     NodeAdmission,
     NodeCapacity,
 )
-from shadowspill.orchestration.nodes.agent import AgentAssignments
+from shadowspill.orchestration.nodes.daemon import DaemonAssignments
 from shadowspill.orchestration.nodes.ownership import NodeOwnership
 from shadowspill.orchestration.nodes.protocol import Command, NodeScope
 
@@ -22,7 +22,7 @@ def claims():
     node = NodeAdmission(
         NodeCapacity("node", [AssignedDevice("gpu", "gpu", 100)], 1000)
     )
-    return node, AgentAssignments(node)
+    return node, DaemonAssignments(node)
 
 
 def command(sequence=1, assignment="run", operation="claim", payload=None):
@@ -59,7 +59,7 @@ def test_partial_claim_failure_has_no_leak():
     owners.close()
 
 
-def test_failed_child_cleanup_retains_agent_owner_for_retry(monkeypatch):
+def test_failed_child_cleanup_retains_node_daemon_owner_for_retry(monkeypatch):
     node, owners = claims()
     owners.handle(command())
     lease = owners._leases["run"]

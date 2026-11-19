@@ -1,4 +1,4 @@
-"""Agent-owned child control sockets, separate from bounded process logs."""
+"""Node-daemon-owned child control sockets, separate from bounded process logs."""
 
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
@@ -15,9 +15,9 @@ from .supervision import OwnedProcess
 class ConnectedProcess:
     """Pass one private socket descriptor to a trusted installed child command.
 
-    ``command(fd)`` is agent code, not a request-supplied callable/executable. The
+    ``command(fd)`` is node daemon code, not a request-supplied callable/executable. The
     child owns that descriptor; no listener, TCP port or authentication token is
-    exposed. Agents use authenticated connections between hosts separately.
+    exposed. Node daemons use authenticated connections between hosts separately.
     """
 
     def __init__(

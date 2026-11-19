@@ -77,12 +77,13 @@ def _open_regular(path: Path) -> BinaryIO:
 
 
 def require_output(root: Path, spec: OutputSpec) -> Path:
-    """Check an agent's bounded permit; the root is private launch configuration."""
+    """Check a node daemon's bounded permit; the root is private launch
+    configuration."""
     permit, payload = _paths(root, spec)
     with _open_regular(permit) as stream:
         raw = stream.read(PERMIT_BYTES + 1)
     if _CODEC.decode(raw, max_bytes=PERMIT_BYTES) != spec:
-        raise ValueError("worker output differs from the agent reservation")
+        raise ValueError("worker output differs from the node daemon's reservation")
     return payload
 
 
@@ -113,7 +114,7 @@ def write_output(
     spec: OutputSpec,
     write: Callable[[OutputWriter], ArtifactRef],
 ) -> ArtifactRef:
-    """Write a permitted output once; the agent owns even partial failed files.
+    """Write a permitted output once; the node daemon owns even partial failed files.
 
     The owner must mark its producer active before releasing the worker command.
     No filesystem evidence alone establishes that the producer has stopped.
@@ -238,7 +239,8 @@ class OutputFile:
             self._started = self._producing = True
 
     def finished(self) -> None:
-        """Agent calls only after confirmed command termination or child cleanup."""
+        """A node daemon calls only after confirmed command termination or child
+        cleanup."""
         with self._owner._lock:
             if not self._producing:
                 raise RuntimeError("output has no active producer")

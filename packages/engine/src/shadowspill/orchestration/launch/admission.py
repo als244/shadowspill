@@ -41,7 +41,7 @@ class NodeCapacity:
     """Trusted allocation facts/ceilings, never capacities supplied by a request.
 
     Discovery must limit these to assigned devices and actual node/cgroup memory.
-    Host capacity excludes controller/agent reservations. Storage retains its own
+    Host capacity excludes controller/node-daemon reservations. Storage retains its own
     file-lifetime reservations; stopping a process does not delete its artifacts.
     This ledger does not probe hardware or reserve a scheduler allocation.
     """
@@ -78,7 +78,7 @@ class ResourceRequest:
     """Complete simultaneous node demand, including all live process overhead.
 
     Host demand includes spill, staging, decoded artifacts, framework/process and
-    agent delivery reservations. Disk is admitted by the separate file owners.
+    node daemon delivery reservations. Disk is admitted by the separate file owners.
     Device amounts are complete process budgets; a claimed slot is exclusive.
     """
 
@@ -121,7 +121,7 @@ class NodeAdmission:
         if not isinstance(capacity, NodeCapacity):
             raise TypeError("node admission requires trusted allocation capacity")
         self.capacity = capacity
-        # Node agents retain their ownership lock descriptors in independent
+        # Node daemons retain their ownership lock descriptors in independent
         # supervisors until every child exits. Local service callers can keep
         # their existing process ownership without this additional boundary.
         self.guard_fds = None if guard_fds is None else tuple(guard_fds)

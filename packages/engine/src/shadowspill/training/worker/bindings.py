@@ -106,7 +106,7 @@ class BoundWorkerCall:
 class WorkerBindings:
     """One immutable prepared family and identity for this worker's lifetime.
 
-    The agent owns staged files and supplies the opaque-reference resolver.
+    The node daemon owns staged files and supplies the opaque-reference resolver.
     This resolver never sees paths from the network. Binding is CPU-only and
     cannot compile, plan, run an adapter, or import a requested model module.
     """

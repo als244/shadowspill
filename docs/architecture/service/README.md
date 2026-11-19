@@ -1,4 +1,4 @@
-# Service and node agents
+# Service and node daemons
 
 One service endpoint coordinates the compute assigned to it. A client connects
 to that endpoint, selects training settings and submits global batches. Node
@@ -7,13 +7,13 @@ addresses, process launch and physical worker placement belong to the service.
 This section specifies the multi-node architecture and its component contracts.
 The public training deployment currently uses GPUs assigned to one host, as
 described in [Advanced deployment](../../python/advanced/deployment.md). The
-node-agent design below is not a public multi-node training deployment API.
+node-daemon design below is not a public multi-node training deployment API.
 
 ```mermaid
 flowchart TB
     C[Client] -->|Setup, batches, results| S[Service endpoint]
-    A[Node agent A] -->|Authenticated outbound registration and control| S
-    B[Node agent B] -->|Authenticated outbound registration and control| S
+    A[Node daemon A] -->|Authenticated outbound registration and control| S
+    B[Node daemon B] -->|Authenticated outbound registration and control| S
     A --> WA[Local phase processes and workers]
     B --> WB[Local phase processes and workers]
     WA <-->|Direct worker communication| WB
@@ -25,24 +25,24 @@ flowchart TB
 | --- | --- |
 | Client | Own data, inspect hardware/Plans, submit training commands and read results |
 | Service | Authenticate clients/nodes, maintain inventory, select resources, coordinate preparation and own ordered runs and durable outcomes |
-| Node agent | Offer assigned capacity, claim local resources, stage artifacts, supervise owned processes and confirm cleanup |
+| Node daemon | Offer assigned capacity, claim local resources, stage artifacts, supervise owned processes and confirm cleanup |
 | Worker | Run existing build/profile/plan phases or the Executor using its assigned logical rank |
 
-The controller needs no GPU. An embedded local agent provides the same ownership
-and admission rules for a local deployment. Independent agents use the remote
+The controller needs no GPU. An embedded local node daemon provides the same ownership
+and admission rules for a local deployment. Independent node daemons use the remote
 protocol. Model definitions, objectives, packing and optimizer semantics stay in
-their existing owners; an agent has no second training state machine.
+their existing owners; a node daemon has no second training state machine.
 
 ## Discovery begins at the node
 
-The operator gives an agent the service URL, a node credential and its assigned
-resources. The agent registers with that service. The service learns hardware
+The operator gives a node daemon the service URL, a node credential and its assigned
+resources. The node daemon registers with that service. The service learns hardware
 and connection state from this registration and subsequent heartbeats. It does
 not need a hostname list, network scan or SSH access to discover members.
 
 The service decides which identities may join and which compute pools they may
-enter. The agent reports only resources supplied by its operator or scheduler.
-SSH, a shell, a service manager or a Slurm step can start the same agent; none
+enter. The node daemon reports only resources supplied by its operator or scheduler.
+SSH, a shell, a service manager or a Slurm step can start the same node daemon; none
 changes the joining protocol or requests new capacity.
 
 See [registration and control](nodes.md) for the join algorithm and message
@@ -56,7 +56,7 @@ Admitted artifact streams carry Plans, inputs, results and logs. Worker
 collectives exchange model state directly between participating workers.
 Neither the laptop nor the service relays these collectives.
 
-An agent can register through an outbound HTTPS connection across the Internet
+A node daemon can register through an outbound HTTPS connection across the Internet
 or NAT. A distributed run additionally needs worker-to-worker rendezvous and
 collective reachability, normally through a private routed network or VPN.
 Registration success alone does not establish this. The chosen worker interfaces
@@ -69,7 +69,7 @@ See [NCCL's networking guidance](https://docs.nvidia.com/deeplearning/nccl/user-
 | Package | Owns |
 | --- | --- |
 | `server/` | Public/internal authenticated routes, controller composition, durable records and artifact access |
-| `orchestration/nodes/` | Hardware selection, membership, agent connections and generic node coordination |
+| `orchestration/nodes/` | Hardware selection, membership, node daemon connections and generic node coordination |
 | `orchestration/launch/` | Assigned-resource admission, file staging and owned process supervision |
 | `training/preparation/` | Target-specific phase work and compatible Plan families |
 | `training/session/` | Ordered training commands and optimizer/accumulation state |

@@ -20,7 +20,7 @@ do not define core architecture.
 ## Service and workers
 
 - [Training composition](training.md)
-- [Service and node agents](service/README.md)
+- [Service and node daemons](service/README.md)
 - [Node registration and control](service/nodes.md)
 - [Assignments and recovery](service/execution.md)
 - [Durable service records](service-records.md)

@@ -37,7 +37,7 @@ def _step(environment: Mapping[str, str], node_id: str) -> tuple[int, int] | Non
     job_id = _decimal(environment, "SLURM_JOB_ID", minimum=1)
     if "SLURM_JOBID" in environment and _decimal(environment, "SLURM_JOBID") != job_id:
         raise ValueError("Slurm job environment identities disagree")
-    # A batch script or allocation shell is not a per-node GPU assignment. Agents
+    # A batch script or allocation shell is not a per-node GPU assignment. Node daemons
     # run in explicit numeric steps; their local CUDA mask is supplied by Slurm.
     _decimal(environment, "SLURM_STEP_ID")
     count = _decimal(environment, "SLURM_GPUS_ON_NODE")
@@ -60,7 +60,7 @@ def assigned_capacity(
     """Make a ledger ceiling from trusted observations in this node's context.
 
     Host claims fit physical/cgroup capacity, the initial availability snapshot
-    and any scheduler ceiling, less explicit controller/agent fixed allowances.
+    and any scheduler ceiling, less explicit controller/node-daemon fixed allowances.
     Artifact arenas and worker claims are added later through NodeAdmission.
     Device totals and free snapshots are different facts: this function does not
     claim that an observed GPU is idle or establish ownership over other jobs.
@@ -117,9 +117,9 @@ def discover_capacity(
     node_id: str | None = None,
     timeout: float = 30,
 ) -> NodeCapacity:
-    """Discover only this agent's node; a controller cannot invent remote slots.
+    """Discover only this node daemon's node; a controller cannot invent remote slots.
 
-    The existing Slurm allocation launcher must start one agent inside an assigned
+    The existing Slurm allocation launcher must start one node daemon inside an assigned
     step per node. This read-only helper never starts a scheduler job or step.
     Local deployment explicitly supplies its inherited CUDA visibility, if any.
     """

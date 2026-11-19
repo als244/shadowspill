@@ -42,7 +42,7 @@ def _key(reference: ArtifactRef) -> str:
 
 
 def resolve_file(root: Path, reference: ArtifactRef) -> Path:
-    """Resolve only a complete opaque reference inside an agent-supplied root.
+    """Resolve only a complete opaque reference inside a node-daemon-supplied root.
 
     The root comes from private launch configuration, never a training request.
     The caller must retain the corresponding grant through the consumer's exit or
@@ -58,7 +58,7 @@ def resolve_file(root: Path, reference: ArtifactRef) -> Path:
 def verify_file(root: Path, reference: ArtifactRef) -> Path:
     """Recheck startup artifacts with bounded scratch before decoding/loading.
 
-    The agent retains the immutable grant through this read and the later worker
+    The node daemon retains the immutable grant through this read and the later worker
     consumer lifetime. Input frames have their own prepared payload decoder.
     """
     path = resolve_file(root, reference)

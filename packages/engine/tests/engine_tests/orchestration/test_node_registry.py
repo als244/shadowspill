@@ -27,7 +27,7 @@ ACCESS = NodeAccess("worker", "lab")
 TOKEN = "node-test-" + "a" * 32
 
 
-def join_request(incarnation="agent", previous=None):
+def join_request(incarnation="daemon", previous=None):
     return Join(
         incarnation,
         HardwareNode(
@@ -56,7 +56,7 @@ def test_join_identity_version_and_separate_credentials():
     with pytest.raises(PermissionError):
         service.join(NodeAccess("somebody-else"), join_request())
     with pytest.raises(NodeUnavailable, match="reconciled"):
-        service.join(ACCESS, join_request("other-agent"))
+        service.join(ACCESS, join_request("other-daemon"))
     with pytest.raises(ValueError, match="version"):
         replace(join_request(), version=2)
     auth = NodeTokens({TOKEN: ACCESS})
@@ -97,7 +97,7 @@ def test_reconciliation_targets_only_the_journaled_predecessor():
         service.inventory().nodes
         and not service.inventory().nodes[0].devices[0].available
     )
-    request = Reconcile("agent")
+    request = Reconcile("daemon")
     assert service.reconcile("worker", request) == service.reconcile("worker", request)
     with pytest.raises(NodeUnavailable):
         service.heartbeat("worker", Heartbeat(joined.scope, 1, ()))
@@ -150,7 +150,7 @@ def test_heartbeat_sequence_and_restart_fencing():
     now[0] = 40
     assert not service.inventory().nodes
     restarted = NodeRegistry("new-controller")
-    fresh = restarted.join(ACCESS, join_request("new-agent", previous=joined.scope))
+    fresh = restarted.join(ACCESS, join_request("new-daemon", previous=joined.scope))
     assert fresh.scope.controller == "new-controller"
     with pytest.raises(NodeUnavailable):
         restarted.heartbeat("worker", heartbeat)

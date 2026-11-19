@@ -72,7 +72,7 @@ from shadowspill_client.protocol.requests import (  # noqa: E402
 from shadowspill_client.transport.http import HTTPTransport  # noqa: E402
 
 root = Path(sys.argv[1])
-directory = root / "agent"
+directory = root / "daemon"
 directory.mkdir()
 packages = PreparationJob.load(root / JOB_NAME).packages
 family = TrainingBundle.load(root / "training.ssp").recheck(load_registry(packages))
@@ -84,7 +84,7 @@ with (root / "training.ssp").open("rb") as stream:
     )
 bundle_reference = reference
 prepared_worker = PreparedWorker.resolve(
-    family, WorkerScope("run", "agent", "gpu-1", 0), bundle=reference
+    family, WorkerScope("run", "daemon", "gpu-1", 0), bundle=reference
 )
 controller_allowance = 1 << 30
 admission = NodeAdmission(
@@ -103,7 +103,7 @@ device = admission.capacity.devices[0]
 host_allowance = WorkerHost(2 << 30, 512 << 20)
 disk = BufferBudget(128 << 20, 100)
 execution = prepared_worker.bindings.setup.config.execution
-oracle = json.loads((root / "agent-oracle.json").read_text())
+oracle = json.loads((root / "daemon-oracle.json").read_text())
 observations = []
 published = []
 token = "integration-" + os.urandom(32).hex()
@@ -111,7 +111,7 @@ route = "/v1/runs/session/run"
 run_identity = RunIdentity("owner", "session", "run")
 
 
-def persistent_storage(memory, *, incarnation="agent"):
+def persistent_storage(memory, *, incarnation="daemon"):
     storage = ServiceStorage(
         directory / "service",
         cache_root=directory,
@@ -212,7 +212,7 @@ def serving(controller, storage, memory, client_memory):
 
     service = HTTPService(
         ("127.0.0.1", 0),
-        incarnation="agent",
+        incarnation="daemon",
         authentication=BearerTokens({token: "owner"}),
         runs=runs,
         artifacts=storage.artifacts,
@@ -281,7 +281,7 @@ with (
             lambda call, receipt, result: publishers[call.request.identity.request_id](
                 call, receipt, result
             ),
-            server_incarnation="agent",
+            server_incarnation="daemon",
             budget=uploads.budget,
             state=OperationState(history_id="history"),
         ) as controller,
@@ -307,7 +307,7 @@ with (
                     )
                     wire, count = b"".join(snapshot.chunks()), len(datums)
             request = OperationRequest(
-                RequestIdentity(name, "run", sequence, "writer", 1, "agent"),
+                RequestIdentity(name, "run", sequence, "writer", 1, "daemon"),
                 operation,
                 payload,
                 count,
@@ -454,7 +454,7 @@ def qualify_allocation_stop():
     identity = RunIdentity("owner", "session", "stopped")
     worker = PreparedWorker.resolve(
         family,
-        WorkerScope("stopped", "stop-agent", "gpu-2", 0),
+        WorkerScope("stopped", "stop-daemon", "gpu-2", 0),
         bundle=bundle_reference,
     )
     with (
@@ -466,7 +466,7 @@ def qualify_allocation_stop():
         HostArena(
             admission, execution.max_staging_bytes, execution.max_pending_requests
         ) as uploads,
-        persistent_storage(storage_arena.budget, incarnation="stop-agent") as storage,
+        persistent_storage(storage_arena.budget, incarnation="stop-daemon") as storage,
         storage.artifacts("owner") as artifacts,
         owned_node(transfers.budget, worker) as node,
     ):
@@ -515,7 +515,7 @@ def qualify_allocation_stop():
                 wire = b"".join(snapshot.chunks())
                 command = OperationRequest(
                     RequestIdentity(
-                        "backward", "stopped", 1, "writer", 1, "stop-agent"
+                        "backward", "stopped", 1, "writer", 1, "stop-daemon"
                     ),
                     "forward_backward",
                     payload,
@@ -817,7 +817,7 @@ qualify_public_server()
         {
             "worker_host_claim_bytes": lease.request.host_bytes,
             "controller_fixed_allowance_bytes": controller_allowance,
-            "agent_arena_claim_bytes": arena_bytes,
+            "daemon_arena_claim_bytes": arena_bytes,
             "observations": observations,
             "all_claims_released": admission.used.claims == 0,
         },
@@ -826,7 +826,7 @@ qualify_public_server()
     + "\n"
 )
 assert not any(name in sys.modules for name in ("torch", "triton", "pynvml"))
-print("Qualified installed agent-owned GPU bootstrap and binary publication")
+print("Qualified installed node-daemon-owned GPU bootstrap and binary publication")
 print("Qualified production worker request/file coordination")
 print("Qualified node-backed worker and input/artifact host accounting")
 print("Qualified pre-reserved worker logs and post-exit artifact transfer")

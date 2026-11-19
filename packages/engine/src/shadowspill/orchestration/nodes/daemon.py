@@ -28,7 +28,7 @@ from .protocol import Command, Join, Joined, NodeScope, Reconcile
 from .transport import NodeTransport
 
 
-class AgentAssignments:
+class DaemonAssignments:
     """Reserve/stop local resources; installed phase/worker adapters attach here."""
 
     def __init__(self, admission: NodeAdmission) -> None:
@@ -96,11 +96,11 @@ class AgentAssignments:
                     errors.append(error)
             if errors:
                 raise BaseExceptionGroup(
-                    "agent resources still require cleanup", errors
+                    "node daemon resources still require cleanup", errors
                 )
 
 
-class NodeAgent:
+class NodeDaemon:
     """One operator-supplied machine/step; discovery never uses SSH host lists.
 
     Construction is resource-free. ``serve`` holds node/device ownership locks,
@@ -126,7 +126,9 @@ class NodeAgent:
         self.root = Path(work_root).absolute()
         self.pool, self.worker_address = pool, worker_address
         self.packages = names(workload_packages, "definition packages")
-        self.host_bytes = integer(host_bytes, "agent host allowance", minimum=16 << 20)
+        self.host_bytes = integer(
+            host_bytes, "node daemon host allowance", minimum=16 << 20
+        )
         self.environment = dict(os.environ if environment is None else environment)
         credential = (
             self.environment.pop("SHADOWSPILL_NODE_TOKEN", "")
@@ -139,7 +141,7 @@ class NodeAgent:
             NodeTransport(service_url, credential, ssl_context=ssl_context)
         )
         self._locks: NodeOwnership | None = None
-        self._assignments: AgentAssignments | None = None
+        self._assignments: DaemonAssignments | None = None
         self._incarnation = uuid4().hex
         self._served = False
         self.closed = False
@@ -171,7 +173,7 @@ class NodeAgent:
 
     def serve(self) -> None:
         if self._served or self.closed:
-            raise RuntimeError("node agent can only serve once")
+            raise RuntimeError("node daemon can only serve once")
         self._served = True
         self._locks = NodeOwnership()
         try:
@@ -211,7 +213,7 @@ class NodeAgent:
                 replace(capacity, node_id=self.node_id),
                 guard_fds=self._locks.descriptors,
             )
-            self._assignments = AgentAssignments(admission)
+            self._assignments = DaemonAssignments(admission)
             load_registry(self.packages)
             self._membership.run(
                 Join(

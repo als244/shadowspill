@@ -35,7 +35,7 @@ def test_large_logs_are_drained_with_a_fixed_file_limit_and_no_child_deadlock(tm
     with start(tmp_path, code) as child:
         assert child.wait(timeout=5) == 0
         # Observation must not reap the leader: its PID still protects group
-        # ownership even if the agent delays its final descendant cleanup.
+        # ownership even if the node daemon delays its final descendant cleanup.
         status = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
         assert status.si_status == 0
     assert child.returncode == 0 and child.closed

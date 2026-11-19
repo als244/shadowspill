@@ -20,7 +20,7 @@ class Allocation:
     """A snapshot of the service's assigned environment, never a scheduler request.
 
     The current deployment adapter serves one local node or assigned single-node
-    Slurm step. Multi-node bootstrap must supply real agents and is not inferred
+    Slurm step. Multi-node bootstrap must supply real node daemons and is not inferred
     from a controller's visible devices. Construction performs no device probe.
     """
 
@@ -48,7 +48,7 @@ class Allocation:
 
     @classmethod
     def controller(cls) -> Allocation:
-        """Use this host only for service CPU/storage; agents supply all GPUs."""
+        """Use this host only for service CPU/storage; node daemons supply all GPUs."""
         return cls(os.environ, controller_only=True)
 
     def _local_node(self, root: Path, *, controller_host_bytes: int) -> NodeAdmission:
@@ -70,7 +70,7 @@ class Allocation:
             value = self.environment.get(key)
             if value is not None and (not value.isdecimal() or int(value) != 1):
                 raise NotImplementedError(
-                    "multi-node service requires allocation-agent bootstrap; "
+                    "multi-node service requires a node daemon on every node; "
                     "the local adapter cannot use only the controller node"
                 )
         return NodeAdmission(

@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 class PreparedWorker:
     """CPU description from an integrity-checked, strictly rechecked bundle.
 
-    The owning agent retains decoded artifacts and reserves node resources before
+    The owning node daemon retains decoded artifacts and reserves node resources before
     launching. The bundle reference identifies that immutable artifact, not a
     filesystem path. Rank assignment never changes the Plan's compiled ordinal.
     """
@@ -202,7 +202,7 @@ class PreparedWorker:
         traces: TraceFiles | None = None,
         capture_progress: Callable[[NsightWindow], None] | None = None,
     ) -> Iterator["RunningWorker"]:
-        # The agent must have isolated visibility before this import. Each saved
+        # The node daemon must have isolated visibility before this import. Each saved
         # process-local compiler ordinal is zero, independent of physical GPU ID.
         visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",")
         if len(visible) != 1 or not visible[0].strip() or visible[0].strip() == "-1":

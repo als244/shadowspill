@@ -1,4 +1,4 @@
-"""Agent delivery admits storage before copying and owns it through consumption."""
+"""A node daemon's delivery admits storage before copying and owns it until consumed."""
 
 import hashlib
 import io

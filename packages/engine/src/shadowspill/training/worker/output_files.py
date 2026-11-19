@@ -1,4 +1,4 @@
-"""Bind immutable worker invocations to the agent's pre-reserved output files."""
+"""Bind immutable worker invocations to the node daemon's pre-reserved output files."""
 
 from collections.abc import Mapping
 from pathlib import Path

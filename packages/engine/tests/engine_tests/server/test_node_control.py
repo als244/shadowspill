@@ -227,7 +227,9 @@ def test_lost_join_ack_retries_same_membership_and_cleans_up():
         assert cleaned.is_set() and not registry.inventory().nodes
 
 
-def test_agent_restart_reconciles_a_join_that_never_returned(tmp_path, monkeypatch):
+def test_node_daemon_restart_reconciles_a_join_that_never_returned(
+    tmp_path, monkeypatch
+):
     import json
     from uuid import uuid4
 
@@ -235,15 +237,15 @@ def test_agent_restart_reconciles_a_join_that_never_returned(tmp_path, monkeypat
         AssignedDevice,
         NodeCapacity,
     )
-    from shadowspill.orchestration.nodes import agent as agent_module
-    from shadowspill.orchestration.nodes.agent import NodeAgent
+    from shadowspill.orchestration.nodes import daemon as daemon_module
+    from shadowspill.orchestration.nodes.daemon import NodeDaemon
 
     capacity = NodeCapacity(
         "worker", (AssignedDevice("test-" + uuid4().hex, "0", 100),), 1000
     )
-    monkeypatch.setattr(agent_module, "discover_capacity", lambda **_: capacity)
+    monkeypatch.setattr(daemon_module, "discover_capacity", lambda **_: capacity)
     with endpoint() as (registry, _, url), ThreadPoolExecutor(max_workers=1) as pool:
-        first = NodeAgent(
+        first = NodeDaemon(
             url, node_id="worker", pool="lab", work_root=tmp_path, token=TOKEN
         )
         exchange = first._membership.transport.exchange
@@ -259,7 +261,7 @@ def test_agent_restart_reconciles_a_join_that_never_returned(tmp_path, monkeypat
             first.serve()
         journal = json.loads((tmp_path / "membership.json").read_text())
         assert journal["scope"] is None and registry.inventory().nodes
-        second = NodeAgent(
+        second = NodeDaemon(
             url, node_id="worker", pool="lab", work_root=tmp_path, token=TOKEN
         )
         joined = Event()

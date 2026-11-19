@@ -72,12 +72,12 @@ streams. Sources supply bounded reads and transport deadlines. Every file must
 match its declared length and checksum before the delivery becomes ready. It
 copies in 64 KiB chunks and releases scratch before exposing ready files.
 
-Consumers retain a `use()` context until workers finish or their agents confirm
+Consumers retain a `use()` context until workers finish or their node daemons confirm
 termination. Cleanup refuses to delete files still borrowed or owned by an active
 producer. Cancellation takes effect between reads and retains reservations while
 a read is blocked. A failed deletion retains its quotas until cleanup succeeds.
 Files are ephemeral and never establish durable completion or execution replay.
-Agent startup, supervision and allocation admission still belong to the caller.
+Node daemon startup, supervision and allocation admission still belong to the caller.
 
 `OwnedProcess` starts a trusted installed command in a fresh POSIX session with
 an explicit environment and working directory. Private worker control has its own
@@ -91,7 +91,7 @@ permits orderly worker/report finalization. Explicit process close waits for tha
 exit, then escalates TERM/KILL only for its owned process group if needed. Any
 remaining group descendants are removed before reaping the leader, preventing
 PID reuse from targeting unrelated work. Non-reaping observation is required on
-the worker host. Startup handshakes, assigned-device admission and agent/service
+the worker host. Startup handshakes, assigned-device admission and node-daemon/service
 authentication are separate integration responsibilities.
 
 `ConnectedProcess` composes that supervisor with a private inherited socket pair.
@@ -107,7 +107,7 @@ child tests cover startup, commands, log pressure, lost replies and timeout clea
 `NodeAdmission` accepts trusted `NodeCapacity` facts and complete `ResourceRequest`
 demands. Device slots are exclusive; host bytes and claim count are
 reserved atomically before launch. Host demand includes decoded artifacts,
-framework/process overhead, spill, initialization, input/output staging and agent
+framework/process overhead, spill, initialization, input/output staging and node daemon
 delivery. Disk is admitted by file/artifact owners and remains reserved until
 file cleanup or storage handoff; stopping workers alone cannot release it. These
 amounts must be computed by the caller, not copied from an untrusted capacity

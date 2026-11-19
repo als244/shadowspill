@@ -11,7 +11,8 @@ _CODEC = RecordCodec({"nsys.window": NsightWindow})
 
 
 def write_progress(path: Path, value: NsightWindow) -> None:
-    """Replace one private agent-assigned metadata file; retain at most two copies."""
+    """Replace one private node-daemon-assigned metadata file; retain at most two
+    copies."""
     raw = _CODEC.encode(value, max_bytes=WINDOW_BYTES)
     temporary = path.with_suffix(".pending")
     with temporary.open("wb", buffering=0) as stream:

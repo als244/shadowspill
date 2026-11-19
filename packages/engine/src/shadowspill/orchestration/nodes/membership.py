@@ -1,4 +1,4 @@
-"""Agent-side lease and command delivery; training semantics stay in handlers."""
+"""Node-daemon-side lease and command delivery; training semantics stay in handlers."""
 
 from __future__ import annotations
 

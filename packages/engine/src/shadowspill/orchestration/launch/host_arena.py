@@ -1,4 +1,5 @@
-"""Keep bounded agent/artifact memory charged to the node for its full lifetime."""
+"""Keep bounded node-daemon/artifact memory charged to the node for its full
+lifetime."""
 
 from __future__ import annotations
 

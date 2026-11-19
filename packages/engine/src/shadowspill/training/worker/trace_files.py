@@ -206,7 +206,7 @@ class TraceFiles:
             return reference, None
         except Exception as error:
             # Only called after required execution/terminal transfers succeeded.
-            # The failed partial file remains owned by the agent through cleanup.
+            # The failed partial file remains owned by the node daemon through cleanup.
             message = (str(error).strip() or type(error).__name__)[:1024].rstrip()
         return None, ArtifactIssue("runtime_trace_failed", message, spec.id)
 

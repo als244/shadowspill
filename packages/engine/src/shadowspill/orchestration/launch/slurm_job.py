@@ -36,7 +36,7 @@ class SlurmJob:
     """A current scheduler snapshot, not a new reservation or proof of free GPUs.
 
     Per-node memory is the scheduler's allocated value, not requested memory per
-    CPU times a CPU count. Agent admission must also apply local physical/cgroup
+    CPU times a CPU count. Node daemon admission must also apply local physical/cgroup
     limits and retain process/artifact overhead. GPU UUIDs come from the isolated
     probe inside each assigned step, never from these global Slurm GPU indices.
     """
@@ -112,7 +112,7 @@ def query_job(
     root: Path,
     timeout: float = 30,
 ) -> SlurmJob:
-    """Run only a bounded scontrol show for this agent's existing job and UID."""
+    """Run only a bounded scontrol show for this node daemon's existing job and UID."""
     integer(job_id, "existing Slurm job ID", minimum=1)
     if number(timeout, "Slurm query timeout", minimum=0) == 0:
         raise ValueError("Slurm query timeout must be positive")

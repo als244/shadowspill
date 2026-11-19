@@ -117,4 +117,4 @@ See [basic training](../examples/client-training.md),
 
 Previous: [Step structure and ordering](step.md) ·
 [Architecture index](README.md) ·
-Next: [Service and node agents](service/README.md)
+Next: [Service and node daemons](service/README.md)

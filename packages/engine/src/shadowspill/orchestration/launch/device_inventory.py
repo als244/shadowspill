@@ -68,7 +68,7 @@ def probe_devices(
 
     CUDA resolves visibility and ordering; NVML indexes are never substituted.
     Results are snapshots, not scheduler assignments or device reservations.
-    The trusted agent supplies its own environment, never request-supplied code.
+    The trusted node daemon supplies its own environment, never request-supplied code.
     """
     if number(timeout, "device probe timeout", minimum=0) == 0:
         raise ValueError("device probe timeout must be positive")

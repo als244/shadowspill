@@ -251,7 +251,7 @@ class Server:
         with self._lock:
             self._closing = True
             if self._nodes is not None and self._jobs is not None:
-                # Agents still need the listener to acknowledge worker cleanup.
+                # Node daemons still need the listener to acknowledge worker cleanup.
                 # A failed close retains both owners for a subsequent retry.
                 self._jobs.close(timeout=timeout)
                 self._jobs = None

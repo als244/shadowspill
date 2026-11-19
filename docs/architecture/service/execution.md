@@ -1,6 +1,6 @@
 # Assignments and recovery
 
-The service owns one ordered training run across its selected agents. Agents
+The service owns one ordered training run across its selected node daemons. Node daemons
 own local resources and processes. This division preserves the existing training
 state machine and [durable result semantics](../service-records.md).
 
@@ -17,7 +17,7 @@ state machine and [durable result semantics](../service-records.md).
 4. Stage verified Plans/inputs and launch owned processes. For distributed work,
    preflight actual peer connectivity and communicator startup with a deadline.
 5. Wait for all members to become ready, then release the phase. A receipt from
-   an agent is not proof that its worker is ready or that training completed.
+   a node daemon is not proof that its worker is ready or that training completed.
 
 Preview is advisory and makes no claims. Creation may fail if capacity has become
 busy; waiting is explicit. Exact-device selection never silently remaps devices.
@@ -82,7 +82,7 @@ node addresses, worker settings, workload ratios or Plan choices.
 ## Failure and recovery
 
 Heartbeats renew a membership lease using local monotonic clocks; synchronized
-wall clocks are unnecessary. Renewals are correlated, and the agent bounds an
+wall clocks are unnecessary. Renewals are correlated, and the node daemon bounds an
 extension from its request-send time so a delayed reply cannot grant authority
 indefinitely. An operator's allocation expiry bounds all leases.
 
@@ -91,13 +91,13 @@ indefinitely. An operator's allocation expiry bounds all leases.
 | Individual HTTP exchange fails | Retry transport with bounded backoff while membership is valid; reconcile receipts without recreating commands |
 | Heartbeats become stale | Exclude the node from new selection |
 | Membership lease expires | Fence the membership permanently and stop its owned workers |
-| Agent dies | Local supervision/watchdog stops owned children; restart confirms cleanup before offering resources |
+| Node daemon dies | Local supervision/watchdog stops owned children; restart confirms cleanup before offering resources |
 | Executing member is lost | Fail the group, stop peers and preserve durable completed outcomes |
 | Controller restarts | Use a new incarnation; interrupt active runs and reject old assignment messages |
 | Cleanup fails | Record the run's outcome, keep resources unavailable and retain owners for a cleanup retry |
 
 A lease timeout alone never proves that a worker stopped. The controller waits
-for confirmed cleanup before reusing resources. The agent's local ownership lock
+for confirmed cleanup before reusing resources. The node daemon's local ownership lock
 and supervisor must cover crashes as well as graceful shutdown.
 
 An uncertain optimizer update is never replayed. Recovery creates a fresh worker

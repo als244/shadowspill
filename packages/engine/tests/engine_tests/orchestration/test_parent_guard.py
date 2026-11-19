@@ -1,4 +1,4 @@
-"""Kill a real agent process and confirm even detached descendants are reaped."""
+"""Kill a real node daemon process and confirm even detached descendants are reaped."""
 
 import fcntl
 import json
@@ -14,7 +14,7 @@ import pytest
 from shadowspill.orchestration.launch.supervision import OwnedProcess
 
 pytestmark = pytest.mark.skipif(
-    sys.platform != "linux", reason="Linux agent supervisor"
+    sys.platform != "linux", reason="Linux node daemon supervisor"
 )
 
 
@@ -42,7 +42,7 @@ def test_guarded_worker_preserves_return_code_and_bounded_output(tmp_path):
     assert process.closed
 
 
-def test_agent_sigkill_reaps_session_escaped_descendant_before_unlock(tmp_path):
+def test_node_daemon_sigkill_reaps_session_escaped_descendant_before_unlock(tmp_path):
     worker = tmp_path / "worker.py"
     worker.write_text("""
 import json, os, signal, time
@@ -58,8 +58,8 @@ Path('worker-pids').write_text(json.dumps([os.getpid(), child]))
 while True:
     time.sleep(1)
 """)
-    agent = tmp_path / "agent.py"
-    agent.write_text("""
+    daemon = tmp_path / "daemon.py"
+    daemon.write_text("""
 import fcntl, os, sys, time
 from pathlib import Path
 from shadowspill.orchestration.launch.supervision import OwnedProcess
@@ -73,7 +73,7 @@ Path('guard-pid').write_text(str(process.pid))
 while True:
     time.sleep(1)
 """)
-    parent = subprocess.Popen([sys.executable, str(agent)], cwd=tmp_path)
+    parent = subprocess.Popen([sys.executable, str(daemon)], cwd=tmp_path)
     pids = []
     try:
         pids = json.loads(wait_file(tmp_path / "worker-pids", parent))

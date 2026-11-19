@@ -15,7 +15,7 @@ from .protocol import CODEC, WorkerBoot, WorkerStartup
 class WorkerStartupConnection:
     """A once-only owner, transferred to a command connection after readiness.
 
-    The allocation agent owns transport authentication, startup deadlines and
+    The allocation's node daemon owns transport authentication, startup deadlines and
     process termination. This endpoint never reconnects or resends a start.
     """
 
@@ -73,7 +73,7 @@ def start_workers(
 ) -> WorkerGroup:
     """Check every CPU preflight, release every start, then await all readiness.
 
-    ``stop`` terminates only the agent-owned processes. A partial startup failure
+    ``stop`` terminates only the node-daemon-owned processes. A partial startup failure
     closes every stream before that callback. No TrainingClient may be published
     until this barrier returns; there is no training state to resume on failure.
     """

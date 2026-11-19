@@ -1,4 +1,5 @@
-"""Agent identity/device locks retained by child supervisors across agent death."""
+"""A node daemon's identity and device locks, which its child supervisors keep
+after the node daemon dies."""
 
 import fcntl
 import hashlib
@@ -17,7 +18,7 @@ class NodeOwnership:
         return tuple(self._files)
 
     def acquire(self, *names: str) -> None:
-        root = Path("/tmp") / f"shadowspill-agents-{os.getuid()}"
+        root = Path("/tmp") / f"shadowspill-node-daemons-{os.getuid()}"
         root.mkdir(mode=0o700, exist_ok=True)
         info = root.lstat()
         if (
@@ -36,7 +37,7 @@ class NodeOwnership:
             except BaseException:
                 os.close(fd)
                 raise RuntimeError(
-                    "another agent or its children still own assigned resources"
+                    "another node daemon or its children still own assigned resources"
                 ) from None
             self._files.append(fd)
             self._names.add(name)

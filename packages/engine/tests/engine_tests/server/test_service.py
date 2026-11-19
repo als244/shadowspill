@@ -149,7 +149,7 @@ def test_allocation_snapshots_assignments_and_refuses_partial_multinode_deployme
         "discover_capacity",
         lambda **kwargs: pytest.fail("probed an unsupported deployment"),
     )
-    with pytest.raises(NotImplementedError, match="allocation-agent bootstrap"):
+    with pytest.raises(NotImplementedError, match="a node daemon on every node"):
         Allocation({"SLURM_JOB_NUM_NODES": "2"})._local_node(
             tmp_path, controller_host_bytes=1
         )

@@ -1,4 +1,4 @@
-"""Agent capacity uses actual local observations and explicit step assignment."""
+"""Node daemon capacity uses actual local observations and explicit step assignment."""
 
 import os
 

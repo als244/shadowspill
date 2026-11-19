@@ -107,5 +107,5 @@ clients. Omitting it enables the engine and supplied workloads when installed;
 it does not discover unrelated extension packages.
 
 The public training deployment uses GPUs assigned to one host. The separate
-[node-agent architecture](../../architecture/service/README.md) describes the
+[node-daemon architecture](../../architecture/service/README.md) describes the
 multi-node protocol; it is not an available public training deployment.

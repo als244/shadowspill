@@ -19,9 +19,10 @@ from .protocol import WorkerCall, WorkerReply
 
 
 class WorkerGroup:
-    """One exclusive set of live worker connections owned by allocation agents.
+    """One exclusive set of live worker connections, owned by the allocation's node
+    daemons.
 
-    Agents finish bounded file delivery before these commands and supply ``stop``
+    Node daemons finish bounded file delivery before these commands and supply ``stop``
     to terminate all owned children on close/uncertain failure. This controller
     does no packing, GPU work, training state transition or automatic retry.
     """
@@ -53,7 +54,7 @@ class WorkerGroup:
     def execute(
         self, call: PreparedCall, transition: Transition
     ) -> Mapping[int, WorkerReply]:
-        """Adapt an accepted prepared call after agents finish file delivery."""
+        """Adapt an accepted prepared call after node daemons finish file delivery."""
         return self.run(self.commands(call, transition))
 
     def commands(
@@ -63,7 +64,7 @@ class WorkerGroup:
         *,
         checkpoint: SaveInfo | None = None,
     ) -> Mapping[int, WorkerCall]:
-        """Resolve the next invocation before agents reserve/deliver its files."""
+        """Resolve the next invocation before node daemons reserve/deliver its files."""
         self._available()
         try:
             commands = {

@@ -102,11 +102,11 @@ class WorkerBoot(Record):
 
 @dataclass(frozen=True)
 class WorkerLaunch(Record):
-    """Trusted agent configuration on the inherited private channel only.
+    """Trusted node daemon configuration on the inherited private channel only.
 
     Definition packages are installed deployment configuration, never requested
     Python imports. Initialization references are granted by the artifact owner.
-    Filesystem roots remain local command arguments supplied by the node agent.
+    Filesystem roots remain local command arguments supplied by the node daemon.
     """
 
     startup: WorkerStartup

@@ -1,28 +1,28 @@
 # Node registration and control
 
 The [service architecture](README.md) uses node-initiated registration. The
-following protocol is the implementation contract for remote agents.
+following protocol is the implementation contract for remote node daemons.
 
 ## Join algorithm
 
-1. The agent acquires its local ownership lock, confirms that previous owned
+1. The node daemon acquires its local ownership lock, confirms that previous owned
    workers have stopped and probes its assigned resources.
 2. It authenticates to the configured service URL and sends a bounded `Join`
    record: supported protocol versions, stable node ID, fresh process incarnation,
    hardware, installed software capabilities and optional worker network addresses.
 3. The service checks the credential's allowed identity and pools, negotiates a
-   protocol version and rejects conflicting live incarnations. An agent cannot
+   protocol version and rejects conflicting live incarnations. A node daemon cannot
    evict another process by registering its name.
 4. `Joined` returns the controller incarnation, membership ID, authorized pool
    and heartbeat/lease durations. The node becomes an entry in the registry used
    by hardware inspection and selection. Joining reserves no training resources.
-5. The agent maintains an outbound command subscription and sends heartbeats
+5. The node daemon maintains an outbound command subscription and sends heartbeats
    and results. The service delivers work through that subscription; it opens no
-   incoming connection to an agent control port.
+   incoming connection to a node daemon control port.
 
 A hostname is display/contact information, not node identity. The service's
 trust policy binds credentials to identities. Client and node credentials have
-different permissions: a client cannot register hardware, and an agent cannot
+different permissions: a client cannot register hardware, and a node daemon cannot
 submit another user's training requests. TLS verifies the service identity;
 Internet connections do not use plaintext bearer credentials.
 
@@ -46,8 +46,8 @@ and Plans. Never infer measured bandwidth or performance from a network address.
 ## Outbound HTTP control
 
 Use authenticated HTTPS long polling with the existing bounded record codecs.
-The agent keeps a command request pending. The service replies immediately when
-work appears, and the agent immediately renews its request. This avoids a polling
+The node daemon keeps a command request pending. The service replies immediately when
+work appears, and the node daemon immediately renews its request. This avoids a polling
 sleep before delivering work. Heartbeats, replies and artifact streams use
 separate requests, so a long build or transfer cannot block membership renewal.
 
@@ -67,7 +67,7 @@ different public training API.
 | --- | --- |
 | `Join` / `Joined` | Authenticate and establish one versioned membership |
 | `Heartbeat` / acknowledgement | Renew authority and reconcile active assignment IDs |
-| `Poll` / assignment | Deliver bounded work over the agent's outbound request |
+| `Poll` / assignment | Deliver bounded work over the node daemon's outbound request |
 | `Claim` / accepted or rejected | Reserve a complete local resource subset |
 | `Stage` / ready | Verify artifacts, launch owned processes and reach their startup barrier |
 | Worker envelopes / replies | Preserve the existing ordered worker protocol |
@@ -92,7 +92,7 @@ Bulk data uses assignment-scoped artifact grants and admitted streams, separate
 from control messages. Existing length/content checks must complete before files
 become ready. Logs have explicit size bounds and drain independently of workers.
 
-Each agent has local working/cache paths and may locate frozen checkpoints under
+Each node daemon has local working/cache paths and may locate frozen checkpoints under
 its own model root. A common checkpoint identity need not have the same path on
 every machine. Registration does not rehash all model weights or copy them through
 the controller. Exact source/content validation belongs to preparation and
@@ -100,6 +100,6 @@ initialization, where verified identities can be reused.
 
 ---
 
-Previous: [Service and node agents](README.md) ·
+Previous: [Service and node daemons](README.md) ·
 [Architecture index](../README.md) ·
 Next: [Assignments and recovery](execution.md)

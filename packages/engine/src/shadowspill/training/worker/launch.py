@@ -42,7 +42,7 @@ def launch_worker(
 ) -> WorkerProcess:
     """Launch only inside an existing complete resource claim.
 
-    The agent owns filesystem roots, definition packages, rendezvous and all file
+    The node daemon owns filesystem roots, definition packages, rendezvous and all file
     grants. Its claim includes process/artifact overhead beyond these pool/staging
     lower bounds. This helper never discovers or invents allocation capacity.
     """
@@ -78,7 +78,7 @@ def launch_worker(
             or not 0 < int(environment["MASTER_PORT"]) < 65536
         )
     ):
-        raise ValueError("multiple workers require an explicit agent rendezvous")
+        raise ValueError("multiple workers require an explicit node daemon rendezvous")
 
     def command(descriptor: int) -> list[str]:
         extra = () if capture is None else ("--nsys-progress", capture.progress_path)

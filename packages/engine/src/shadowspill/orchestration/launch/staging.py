@@ -18,7 +18,7 @@ COPY_BYTES = 64 << 10
 
 
 class FileDelivery:
-    """An ephemeral agent-owned copy, independent of the sender's file lifetime.
+    """An ephemeral node-daemon-owned copy, independent of the sender's file lifetime.
 
     Disk and retained metadata/copy scratch are admitted before opening a source
     or creating files. Sources are authenticated artifact streams supplied by the

@@ -43,7 +43,8 @@ from .trace_files import TraceFiles
 
 @dataclass(frozen=True)
 class NodeFiles:
-    """Borrow one agent's live file services; its owner closes them after workers."""
+    """Borrow one node daemon's live file services; its owner closes them after
+    workers."""
 
     root: Path
     disk: BufferBudget
@@ -53,7 +54,7 @@ class NodeFiles:
 
 
 class WorkerRequests:
-    """Local agent composition; state transitions still belong to RequestDispatcher.
+    """Local node daemon composition; RequestDispatcher still owns state transitions.
 
     All participants' input delivery and output reservations precede any stage
     command. Confirmed results retain files for the publisher; verification and

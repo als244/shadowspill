@@ -4,7 +4,7 @@ Start with [basic training](../../examples/client-training.md). This reference c
 setup controls, saved Plans, recovery, artifact transfers and diagnostics.
 Hardware inventory, optional resource selection and planning before initialization
 are covered in [Compute resources](compute-resources.md).
-Operator setup, storage and the node-agent configuration contract are in
+Operator setup, storage and the node-daemon configuration contract are in
 [Service deployment](deployment.md).
 
 ## Contents

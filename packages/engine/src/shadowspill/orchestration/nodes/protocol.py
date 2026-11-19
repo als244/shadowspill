@@ -42,7 +42,7 @@ class Join(Record):
     version: int = VERSION
 
     def __post_init__(self) -> None:
-        identifier(self.incarnation, "agent incarnation")
+        identifier(self.incarnation, "node daemon incarnation")
         object.__setattr__(
             self, "hardware", record(HardwareNode, self.hardware, "node")
         )
@@ -117,7 +117,7 @@ class Command(Record):
         object.__setattr__(self, "scope", record(NodeScope, self.scope, "membership"))
         integer(self.sequence, "command sequence", minimum=1)
         identifier(self.assignment, "assignment")
-        # Dispatch is installed agent code. No shell command, module or callable
+        # Dispatch is installed node daemon code. No shell command, module or callable
         # can be selected by a client or deserialized from this record.
         if self.operation not in ("claim", "stop", "phase", "worker"):
             raise ValueError("unknown node operation")
@@ -161,7 +161,7 @@ class Leave(Record):
 class Reconcile(Record):
     """Confirm local cleanup of a journaled attempt, even if Join's reply was lost.
 
-    The agent must first acquire its node/device locks, which supervisors retain
+    The node daemon must first acquire its node/device locks, which supervisors retain
     until all old children exit. The identical reply acknowledges that cleanup;
     it grants no new membership or execution authority.
     """
@@ -169,7 +169,7 @@ class Reconcile(Record):
     incarnation: str
 
     def __post_init__(self) -> None:
-        identifier(self.incarnation, "previous agent incarnation")
+        identifier(self.incarnation, "previous node daemon incarnation")
 
 
 CODEC = RecordCodec(

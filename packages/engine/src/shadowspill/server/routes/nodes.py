@@ -1,4 +1,4 @@
-"""Agent-only routes on the service listener; never use client owner authority."""
+"""Node-daemon-only routes on the service listener; never use client owner authority."""
 
 from __future__ import annotations
 

@@ -264,7 +264,7 @@ def test_worker_launch_preserves_calibrated_nccl_error_handling(
     assert environment == original
 
 
-def test_agent_launch_imports_without_framework_provider_or_workloads():
+def test_node_daemon_launch_imports_without_framework_provider_or_workloads():
     result = subprocess.run(
         [
             sys.executable,
@@ -276,7 +276,7 @@ class Block(importlib.abc.MetaPathFinder):
     blocked = {'torch', 'triton', 'pynvml', 'shadowspill_workloads'}
     def find_spec(self, fullname, *args):
         if fullname.split('.')[0] in self.blocked:
-            raise AssertionError('unexpected agent import: ' + fullname)
+            raise AssertionError('unexpected node daemon import: ' + fullname)
 sys.meta_path.insert(0, Block())
 from shadowspill.training.worker.launch import launch_worker, start_processes
 from shadowspill.training.worker.bootstrap import serve

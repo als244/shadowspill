@@ -28,7 +28,7 @@ class WorkerHost:
     it is not the compressed file size. Neither value is inferred from idle RSS.
     The deployment must qualify these allowances for its installed definitions.
     Trace rings, owned copies and report scratch are included separately in the
-    startup's diagnostics allowance. Agent/controller arenas and retained files
+    startup's diagnostics allowance. Node-daemon/controller arenas and retained files
     are separately owned reservations.
     """
 

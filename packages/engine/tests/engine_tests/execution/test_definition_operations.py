@@ -326,7 +326,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
             after_converted_step = reference(
                 **binding.arguments(adapted, {"temperature": 1.0})[0]
             )
-    (tmp_path / "agent-oracle.json").write_text(
+    (tmp_path / "daemon-oracle.json").write_text(
         json.dumps(
             {
                 "loss": oracle["step_loss"].item(),
@@ -378,10 +378,10 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     assert (
         "Qualified ordered Executor close through the worker barrier" in worker.stdout
     )
-    agent = subprocess.run(
+    daemon = subprocess.run(
         [
             sys.executable,
-            str(Path(__file__).with_name("_agent_worker.py")),
+            str(Path(__file__).with_name("_daemon_worker.py")),
             str(tmp_path),
         ],
         env={**os.environ, "PYTHONHASHSEED": "4"},
@@ -389,51 +389,51 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         text=True,
         timeout=360,
     )
-    assert agent.returncode == 0, (
-        agent.stdout
-        + agent.stderr
-        + (tmp_path / "agent" / "worker" / "stderr.log").read_text()
-        if (tmp_path / "agent" / "worker" / "stderr.log").exists()
-        else agent.stdout + agent.stderr
+    assert daemon.returncode == 0, (
+        daemon.stdout
+        + daemon.stderr
+        + (tmp_path / "daemon" / "worker" / "stderr.log").read_text()
+        if (tmp_path / "daemon" / "worker" / "stderr.log").exists()
+        else daemon.stdout + daemon.stderr
     )
     assert (
         "Qualified configured fresh and saved creation through actual GPU retirement"
-        in agent.stdout
+        in daemon.stdout
     )
-    assert "Qualified installed agent-owned GPU bootstrap" in agent.stdout
-    assert "Qualified ordered GPU checkpoints and post-exit downloads" in agent.stdout
-    assert "Qualified production worker request/file coordination" in agent.stdout
-    assert "Qualified production node worker lifecycle" in agent.stdout
+    assert "Qualified installed node-daemon-owned GPU bootstrap" in daemon.stdout
+    assert "Qualified ordered GPU checkpoints and post-exit downloads" in daemon.stdout
+    assert "Qualified production worker request/file coordination" in daemon.stdout
+    assert "Qualified production node worker lifecycle" in daemon.stdout
     assert (
-        "Qualified connection-independent production controller queue" in agent.stdout
+        "Qualified connection-independent production controller queue" in daemon.stdout
     )
     assert "Qualified durable GPU artifacts after node and output-file cleanup" in (
-        agent.stdout
+        daemon.stdout
     )
     assert "Qualified production caller-order result and scalar publication" in (
-        agent.stdout
+        daemon.stdout
     )
     assert "Qualified ordered production discard followed by fresh backward/update" in (
-        agent.stdout
+        daemon.stdout
     )
     assert "Qualified ordered close with confirmed child exit and queryable result" in (
-        agent.stdout
+        daemon.stdout
     )
     assert (
         "Qualified allocation stop with unresolved GPU gradients and no implicit update"
-        in agent.stdout
+        in daemon.stdout
     )
     assert (
         "Qualified bounded service storage and original GPU outcomes after restart"
-        in agent.stdout
+        in daemon.stdout
     )
     assert (
         "Qualified pre-reserved worker logs and post-exit artifact transfer"
-        in agent.stdout
+        in daemon.stdout
     )
     assert (
         "Qualified node-backed worker and input/artifact host accounting"
-        in agent.stdout
+        in daemon.stdout
     )
     if provider:
         events = [json.loads(line) for line in event_path.read_text().splitlines()]

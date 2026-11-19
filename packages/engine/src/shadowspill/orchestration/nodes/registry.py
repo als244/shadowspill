@@ -150,7 +150,7 @@ class NodeRegistry:
             if request.sequence <= member.heartbeat:
                 raise NodeUnavailable("heartbeat renewal is stale")
             if set(request.assignments) - member.assignments:
-                raise NodeUnavailable("agent reports an unknown assignment")
+                raise NodeUnavailable("node daemon reports an unknown assignment")
             member.heartbeat = request.sequence
             member.expires = self._clock() + member.joined.lease_seconds
             return Acknowledged(request.scope, request.sequence)
@@ -329,7 +329,7 @@ class NodeRegistry:
             pending = member.pending.get(command.sequence)
             if pending is None or pending.command != command or pending.receipt is None:
                 raise ValueError("retirement requires a completed command")
-            # Ordered prefix retirement also bounds the agent's receipt cache.
+            # Ordered prefix retirement also bounds the node daemon's receipt cache.
             if command.sequence != member.retired + 1:
                 raise ValueError("retire commands in submission order")
             member.retired = command.sequence
@@ -352,7 +352,7 @@ class NodeRegistry:
             return Acknowledged(request.scope, member.retired)
 
     def reconcile(self, node: str, request: Reconcile) -> Reconcile:
-        """An authenticated agent has reaped its journaled predecessor locally.
+        """An authenticated node daemon has reaped its journaled predecessor locally.
 
         A dropped Join/reconciliation acknowledgement is safe to repeat. A stale
         journal never fences a different incarnation; a controller restart or an

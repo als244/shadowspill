@@ -1,6 +1,6 @@
 """Linux child supervisor: parent death closes a lifeline, then kills owned work.
 
-This small fresh process retains the agent's ownership locks until all descendants
+This small fresh process retains the node daemon's ownership locks until all descendants
 exit, including children that create a new session. It imports no engine runtime.
 The command and inherited descriptors come only from installed local launch code.
 """
@@ -44,7 +44,7 @@ def _kill_and_reap() -> None:
 
 def run(lifeline: int, inherited: tuple[int, ...], command: list[str]) -> int:
     if not sys.platform.startswith("linux"):
-        raise RuntimeError("agent process supervision requires Linux subreapers")
+        raise RuntimeError("node daemon process supervision requires Linux subreapers")
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(36, 1, 0, 0, 0):  # PR_SET_CHILD_SUBREAPER
         raise OSError(ctypes.get_errno(), "cannot establish child supervision")
@@ -58,7 +58,7 @@ def run(lifeline: int, inherited: tuple[int, ...], command: list[str]) -> int:
     signal.signal(signal.SIGINT, stop)
     process = subprocess.Popen(command, pass_fds=inherited, start_new_session=True)
     # The actual worker alone keeps its private control descriptors. The guard
-    # retains only its lifeline and the agent ownership-lock descriptors, which
+    # retains only its lifeline and the node daemon ownership-lock descriptors, which
     # are deliberately absent from `inherited`.
     for fd in inherited:
         os.close(fd)

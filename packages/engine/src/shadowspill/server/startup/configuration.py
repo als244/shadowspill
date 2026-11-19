@@ -77,8 +77,9 @@ class LocalCreationFactory:
     """Configuration comes from deployment; per-run choices come from storage.
 
     This adapter serves one assigned node. It neither discovers remote capacity
-    nor requests a scheduler allocation. Multi-node agents use the same lower
-    level phase/worker interfaces and require their own allocation integration.
+    nor requests a scheduler allocation. The node daemons of a run that spans
+    nodes use the same lower level phase/worker interfaces and require their
+    own allocation integration.
     """
 
     def __init__(
@@ -122,7 +123,9 @@ class LocalCreationFactory:
             return HardwareInventory((local,))
         remote = self.nodes.inventory().nodes
         if any(node.id == local.id for node in remote) and local.devices:
-            raise ValueError("local allocation and remote agent have the same node ID")
+            raise ValueError(
+                "local allocation and remote node daemon have the same node ID"
+            )
         return HardwareInventory((local, *remote) if local.devices else remote)
 
     def startable(self) -> HardwareInventory:

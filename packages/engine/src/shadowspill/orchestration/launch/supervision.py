@@ -111,7 +111,7 @@ class OwnedProcess:
             raise ValueError("provide a nonempty installed worker command")
         integer(log_limit_bytes, "per-stream log byte limit")
         if guard_fds is not None and not sys.platform.startswith("linux"):
-            raise RuntimeError("agent child supervision requires Linux")
+            raise RuntimeError("node daemon child supervision requires Linux")
         if guard_fds is not None and (
             not isinstance(guard_fds, (tuple, list))
             or len(guard_fds) > 1025
@@ -277,7 +277,7 @@ class OwnedProcess:
                     self.wait(timeout=5)
         finally:
             # A launcher may exit before a child that inherited its log pipes.
-            # No descendant of this owned group may outlive its agent owner.
+            # No descendant of this owned group may outlive its node daemon owner.
             self._signal(signal.SIGKILL)
             if not self._exited.wait(5):
                 raise RuntimeError("owned worker did not report termination")
