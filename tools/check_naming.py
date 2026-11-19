@@ -14,10 +14,8 @@ SOURCE_ROOTS = (
 NEUTRAL_ROOTS = (
     ROOT / "packages" / "engine" / "src" / "shadowspill" / "diagnostics",
     ROOT / "packages" / "engine" / "src" / "shadowspill" / "ir",
-    ROOT / "packages" / "engine" / "src" / "shadowspill" / "pipeline",
-    ROOT / "packages" / "engine" / "src" / "shadowspill" / "planner",
+    ROOT / "packages" / "engine" / "src" / "shadowspill" / "planning" / "memory_search",
     ROOT / "packages" / "engine" / "src" / "shadowspill" / "runtime",
-    ROOT / "packages" / "engine" / "src" / "shadowspill" / "search",
     ROOT / "packages" / "engine" / "src" / "shadowspill" / "simulator",
     ROOT / "packages" / "engine" / "src" / "shadowspill" / "step",
     ROOT / "packages" / "engine" / "src" / "shadowspill" / "store",
@@ -119,7 +117,14 @@ def collect_matches(
 
 def main() -> int:
     production = production_files()
-    failures = collect_matches(production, FORBIDDEN)
+    # A root that holds no source checks nothing; after a rename that would
+    # leave the moved package unchecked without a word.
+    failures = [
+        f"{root.relative_to(ROOT)}: listed root holds no source files"
+        for root in (*SOURCE_ROOTS, *NEUTRAL_ROOTS)
+        if not files_under((root,))
+    ]
+    failures.extend(collect_matches(production, FORBIDDEN))
     failures.extend(collect_matches(production, PRODUCTION_FORBIDDEN))
     failures.extend(collect_matches(files_under(NEUTRAL_ROOTS), NEUTRAL_FORBIDDEN))
     if failures:

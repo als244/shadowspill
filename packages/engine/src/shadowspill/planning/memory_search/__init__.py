@@ -1,4 +1,4 @@
-"""Search schedules and tensor residency within device and spill budgets."""
+"""Search schedules and object residency within device and spill budgets."""
 
 from importlib import import_module
 from typing import Any
