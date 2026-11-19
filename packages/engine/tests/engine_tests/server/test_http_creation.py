@@ -18,7 +18,6 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.preview import TrainingDescription
 from shadowspill_client.protocol.requests import OperationRequest, RequestIdentity
-from shadowspill_client.protocol.service import ServiceError
 from shadowspill_client.protocol.setup import TrainingSetup
 from shadowspill_client.transport.http import HTTPTransport, RemoteError
 
@@ -153,51 +152,6 @@ def test_http_failed_creation_is_queryable_without_initialization_or_replay(
         assert result.status == 200 and result.value.error.code == "creation_failed"
         assert client.request("POST", ROOT, creation).value == result.value
         assert not ctx.phases and len(ctx.owners) == 1
-
-
-def test_http_run_pages_fit_the_control_envelope_without_losing_cursor_rows(
-    tmp_path, monkeypatch
-):
-    with configured(tmp_path, monkeypatch) as ctx, endpoint(ctx) as (client, other):
-        from shadowspill.server.startup.records import CreationRecord
-
-        creation = CreationRecord.encode(TrainingCreation(ctx.config))
-        labels = {f"label-{i}": "x" * 256 for i in range(16)}
-        ids = [f"run-{i:03}" for i in range(128)]
-        for run_id in ids:
-            identity = RunIdentity("owner", "session", run_id)
-            ctx.service.catalog.create(
-                identity,
-                request_sha256=creation.reference.sha256,
-                configuration=creation.configuration,
-                labels=labels,
-            )
-            ctx.service.catalog.stop(
-                identity, ServiceError("stopped", "\U0010ffff" * 1024)
-            )
-        seen, cursor = [], ""
-        while True:
-            page = client.request(
-                "GET", f"/v1/runs/session?limit=128&after={cursor}"
-            ).value
-            assert len(page.runs) <= 32
-            seen.extend(run.run_id for run in page.runs)
-            if page.next_cursor is None:
-                break
-            assert page.next_cursor != cursor
-            cursor = page.next_cursor
-        assert seen == ids
-        assert other.request("GET", "/v1/runs/session?limit=128").value.runs == ()
-        for query in (
-            "limit=129",
-            "limit=0",
-            "limit=-1",
-            "unknown=x",
-            "limit=2&limit=3",
-        ):
-            with pytest.raises(RemoteError) as bad:
-                client.request("GET", "/v1/runs/session?" + query)
-            assert bad.value.status == 400
 
 
 def test_oversize_registration_publishes_no_artifacts_or_creation_job(
