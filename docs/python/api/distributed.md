@@ -363,6 +363,7 @@ Runtime commands and Executor do not build, profile or replan during execution.
 | --- | --- |
 | Weight fetch | Copy the owned host shard, then all-gather the full execution tensor |
 | Gradient eviction | Reduce-scatter, any corresponding-owner reduction, then copy the owned result to host |
+| Whole-gradient eviction, without an optimizer | All-reduce across the ranks holding copies, then copy the sum to host |
 | Optimizer | Ordered reduction/local update/publication sequence on the compute lane |
 
 Fetch/evict readiness and buffer retirement cover the complete compound transfer.
@@ -377,6 +378,12 @@ The reduction logic counts ranks holding the same logical parameter, including
 copies of model shards across repeated groups. When a reduced gradient is fetched
 for further accumulation, the previous contribution is injected once before the
 next reduction; it must not be multiplied by the number of participants.
+
+A parameter kept whole on every rank (under `min_shard_bytes`) reduces its
+gradient in the optimizer's update when there is one. A forward/backward-only
+Program has no update, so the gradient is summed across its copies as it
+leaves the device; on a reload one rank restores the sum and the others start
+from zero, so later contributions add to it once.
 
 A provider's private streams remain its responsibility. Its work must join the
 task's current stream before that task's completion event. Tensor/mutation and

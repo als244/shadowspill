@@ -58,14 +58,18 @@ def capture_gradient_operations(
                 )
             reduction = gradient_reduction(parameter, destination=destination)
             spill = gradient_reduction(parameter, destination="gradients")
-            if (
-                destination == "gradients"
-                and reduction.phases
-                and reduction.phases[0].operation != "reduce_scatter"
+            # A forward/backward-only call reduces gradients as they leave the
+            # device: split ones by reduce-scatter, whole ones by an all-reduce
+            # across their copies (see the lowering's gradient transfers).
+            operations = [phase.operation for phase in reduction.phases]
+            if destination == "gradients" and operations not in (
+                [],
+                ["all_reduce"],
+                ["reduce_scatter"],
+                ["reduce_scatter", "all_reduce"],
             ):
                 raise NotImplementedError(
-                    "forward/backward-only calls with replicated reduced gradients "
-                    "need a final reduction and accumulation injection contract"
+                    f"no gradient transfer performs the reduction {operations}"
                 )
             dtype = gradient_dtype or value.dtype
             gradient = torch.empty_like(value, dtype=dtype)

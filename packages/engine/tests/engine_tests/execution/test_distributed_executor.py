@@ -17,6 +17,10 @@ import torch
         ("forward", "auto", "sharded"),
         ("forward_backward", "save", "sharded"),
         ("forward_backward", "recompute", "sharded"),
+        # The default floor keeps this small model whole: its gradients are
+        # summed across ranks as they leave the device.
+        ("forward_backward", "save", "whole"),
+        ("forward_backward", "recompute", "whole"),
         ("step", "save", "sharded"),
         ("step", "recompute", "sharded"),
         ("step", "save", "replicated"),

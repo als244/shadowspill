@@ -16,14 +16,22 @@ class ShardedTransfers:
 
     def __init__(self, program: "Program", groups: "GroupBindings", device: int):
         self.descriptors: dict[str, int] = {}
-        cache: dict[tuple[str, int, int, torch.dtype | None, str | None], int] = {}
+        cache: dict[
+            tuple[str | None, int, int, torch.dtype | None, str | None], int
+        ] = {}
         try:
             shards = {
                 **program.bindings.get("weight_shards", {}),
                 **program.bindings.get("gradient_shards", {}),
             }
             for alias, description in shards.items():
-                group = groups.resolve(GroupRef(alias, description["groups"]))
+                # A gradient kept whole has no split group; it is only summed
+                # across its copies.
+                group_name = (
+                    groups.resolve(GroupRef(alias, description["groups"])).group_name
+                    if description["groups"]
+                    else None
+                )
                 gradient = alias in program.bindings.get("gradient_shards", {})
                 dtype = (
                     getattr(torch, description["dtype"].removeprefix("torch."))
@@ -37,7 +45,7 @@ class ShardedTransfers:
                     else None
                 )
                 key = (
-                    group.group_name,
+                    group_name,
                     description["padded_bytes"],
                     description["logical_bytes"],
                     dtype,
@@ -46,7 +54,7 @@ class ShardedTransfers:
                 if key not in cache:
                     cache[key] = int(
                         torch.ops.shadowspill._create_sharded_transfer(
-                            group.group_name,
+                            group_name,
                             device,
                             description["padded_bytes"],
                             dtype,

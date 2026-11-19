@@ -24,7 +24,7 @@ def build(path, kind, ownership="sharded"):
         build_step,
     )
 
-    masters = ownership in {"sharded", "fp16"}
+    masters = ownership in {"sharded", "fp16", "whole"}
     dtype = (
         torch.float16
         if ownership == "fp16"
@@ -32,7 +32,9 @@ def build(path, kind, ownership="sharded"):
     )
     fixture = oracle(kind, dtype) if masters else None
     template = Network(dtype=dtype, device="meta")
-    parallelism = Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0)
+    parallelism = Parallelism.dp(
+        ranks_per_replica=2, **({} if ownership == "whole" else {"min_shard_bytes": 0})
+    )
     if ownership in {"fp8", "fp8_cutoff"}:
         from engine_tests.execution import _fp8_fixture as quantized
 

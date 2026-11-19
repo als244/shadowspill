@@ -78,10 +78,14 @@ int enqueue_transfer(
       auto full = at::from_blob(mutable_source, {transfer->execution_bytes / width}, options);
       auto owned = at::from_blob(static_cast<char*>(mutable_source) + transfer->offset,
                                 {transfer->shard_bytes / width}, options);
-      c10d::ReduceScatterOptions reduce_options;
-      reduce_options.reduceOp = c10d::ReduceOp::SUM;
-      reduce_options.asyncOp = true;
-      transfer->group->reduce_scatter_single(owned, full, reduce_options)->blockCurrentStream();
+      // A gradient kept whole has no shard group: it is only summed across
+      // its copies below.
+      if (transfer->group) {
+        c10d::ReduceScatterOptions reduce_options;
+        reduce_options.reduceOp = c10d::ReduceOp::SUM;
+        reduce_options.asyncOp = true;
+        transfer->group->reduce_scatter_single(owned, full, reduce_options)->blockCurrentStream();
+      }
       if (transfer->replicas && transfer->replicas->getSize() > 1) {
         std::vector<at::Tensor> values{owned};
         c10d::AllreduceOptions options;
@@ -122,7 +126,8 @@ int enqueue_transfer(
   }
 }
 
-int64_t create_transfer(const std::string& group_name, int64_t device, int64_t bytes,
+int64_t create_transfer(const std::optional<std::string>& group_name, int64_t device,
+                       int64_t bytes,
                        std::optional<at::ScalarType> gradient_dtype,
                        const std::optional<std::string>& replica_group,
                        int64_t logical_bytes) {
@@ -130,14 +135,21 @@ int64_t create_transfer(const std::string& group_name, int64_t device, int64_t b
               "invalid sharded transfer device");
   TORCH_CHECK(bytes >= 0, "negative sharded transfer size");
   auto transfer = std::make_unique<ShardedTransfer>();
-  transfer->group = c10d::resolve_process_group(group_name);
   transfer->gradient_dtype = gradient_dtype;
   if (replica_group.has_value()) {
     transfer->replicas = c10d::resolve_process_group(*replica_group);
   }
-  TORCH_CHECK(transfer->group->getSize() > 0 && transfer->group->getRank() >= 0,
-              "sharded transfer requires membership in its process group");
-  const int64_t count = transfer->group->getSize();
+  if (group_name.has_value()) {
+    transfer->group = c10d::resolve_process_group(*group_name);
+    TORCH_CHECK(transfer->group->getSize() > 0 && transfer->group->getRank() >= 0,
+                "sharded transfer requires membership in its process group");
+  } else {
+    // Without a shard group the object is whole on every copy: only a
+    // gradient summed across those copies moves this way.
+    TORCH_CHECK(gradient_dtype.has_value() && transfer->replicas,
+                "a transfer without a shard group must sum a gradient across copies");
+  }
+  const int64_t count = transfer->group ? transfer->group->getSize() : 1;
   transfer->shard_bytes = bytes / count + (bytes % count != 0);
   TORCH_CHECK(transfer->shard_bytes <= std::numeric_limits<int64_t>::max() / count,
               "padded sharded transfer size overflows");
@@ -147,7 +159,7 @@ int64_t create_transfer(const std::string& group_name, int64_t device, int64_t b
               "logical gradient exceeds its padded allocation");
   TORCH_CHECK(!gradient_dtype || transfer->shard_bytes % c10::elementSize(*gradient_dtype) == 0,
               "gradient shards must contain whole elements");
-  transfer->offset = transfer->shard_bytes * transfer->group->getRank();
+  transfer->offset = transfer->group ? transfer->shard_bytes * transfer->group->getRank() : 0;
   transfer->device = static_cast<c10::DeviceIndex>(device);
   transfer->description = ShadowSpillObjectTransfer{
       static_cast<uint64_t>(transfer->shard_bytes),
@@ -167,7 +179,7 @@ void close_transfer(int64_t descriptor) {
 }  // namespace
 
 TORCH_LIBRARY_FRAGMENT(shadowspill, m) {
-  m.def("_create_sharded_transfer(str group_name, int device, int bytes, "
+  m.def("_create_sharded_transfer(str? group_name, int device, int bytes, "
         "ScalarType? gradient_dtype=None, str? replica_group=None, int logical_bytes=-1) -> int",
         &create_transfer);
   m.def("_close_sharded_transfer(int descriptor) -> ()", &close_transfer);

@@ -90,14 +90,17 @@ def _gradient_zero(
 ) -> TransferPhase:
     """Restore sparse ownership into an otherwise zeroed execution accumulator.
 
-    Calibration records the full-buffer zero separately from reduction timing.
-    Without that observation, use the host-fetch rate as an explicit conservative
-    bandwidth estimate, never silently model the initialization as free.
+    Calibration records the full-buffer zero separately from reduction timing,
+    beside a reduce-scatter. A gradient kept whole has only its all-reduce,
+    over the same full buffer. Without an observation, use the host-fetch rate
+    as an explicit conservative bandwidth estimate, never silently model the
+    initialization as free.
     """
     durations, measured = [], True
-    for request in requests:
-        if request.operation != "reduce_scatter":
-            continue
+    zeroed = [r for r in requests if r.operation == "reduce_scatter"] or [
+        r for r in requests if r.operation == "all_reduce"
+    ]
+    for request in zeroed:
         rows = matching_measurements(
             info,
             {

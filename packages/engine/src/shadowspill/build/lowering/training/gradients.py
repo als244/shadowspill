@@ -46,6 +46,20 @@ def gradient_templates(
                 "padded_bytes": spill.padded_elements * width,
                 "dtype": str(example.dtype),
             }
+        elif spill.phases and not for_optimizer:
+            # A gradient every copy keeps whole, in a call with no optimizer to
+            # reduce it: summed across its copies as it leaves the device, and
+            # reloaded on one copy only, so later contributions add to the sum
+            # once. With an optimizer it stays local and the update reduces it.
+            assert [phase.operation for phase in spill.phases] == ["all_reduce"]
+            shards[alias] = {
+                "groups": (),
+                "replica_groups": spill.phases[0].groups,
+                "shard_bytes": spill.padded_elements * width,
+                "logical_bytes": spill.source_elements * width,
+                "padded_bytes": spill.padded_elements * width,
+                "dtype": str(example.dtype),
+            }
         if not for_optimizer:
             persistent.append(
                 {

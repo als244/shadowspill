@@ -19,6 +19,7 @@ from shadowspill.execution.tensor_regions import tensor_regions
     "kind,ownership",
     [
         ("forward_backward", "sharded"),
+        ("forward_backward", "whole"),
         ("step", "sharded"),
         ("step", "matrix"),
         ("step", "fp16"),

@@ -25,6 +25,53 @@ from shadowspill.step.ordering import StepDataOrdering
 
 
 @pytest.mark.cuda
+def test_gradients_kept_whole_are_summed_across_copies_as_they_leave_the_device(
+    monkeypatch, tmp_path
+):
+    if not torch.cuda.is_available():
+        pytest.skip("requires representative CUDA GPU")
+    model = nn.Linear(7, 5, dtype=torch.bfloat16, device="meta")
+    # At the default floor every parameter of this model is kept whole.
+    source = build_forward_backward(
+        model,
+        objective=lambda m, x: m(x).float().square().mean(),
+        example_args=(torch.empty(2, 7, dtype=torch.bfloat16),),
+        num_examples=2,
+        partition="whole",
+        grad_dtype=torch.float32,
+        parallelism=Parallelism.dp(ranks_per_replica=2, num_replicas=2),
+    )
+    aliases = {item.object_id: item.alias_group_id for item in source.objects}
+    records = source.bindings["gradient_shards"]
+    for item in source.bindings["persistent_gradients"]:
+        record = records[aliases[item["gradient_object_id"]]]
+        assert record["groups"] == ()
+        assert tuple(map(tuple, record["replica_groups"])) == ((0, 1, 2, 3),)
+        assert (
+            record["shard_bytes"] == record["padded_bytes"] == record["logical_bytes"]
+        )
+    profiles = measure_program(source, warmup_seconds=0.001, measure_seconds=0.002)
+    profiled = apply_profiles(source, profiles)
+    from engine_tests.offline._communication import estimated_communication
+
+    info = estimated_communication(source, topology={"node0": (0, 1, 2, 3)})
+    budgets = MemoryBudgets(profiled.fixed_device_bytes + (8 << 20), 8 << 20)
+    plan = plan_program(profiled, memory_budgets=budgets, communication_info=info)
+    routes = transfer_collectives(plan.program.bindings)
+    for alias in records:
+        assert [r.operation for r in routes[alias]] == ["all_reduce"]
+        transfer = next(
+            a.transfer
+            for a in plan._costed_program.alias_groups
+            if a.alias_group_id == alias
+        )
+        assert [p.timing_class for p in transfer.evict if p.kind == "timed"] == [
+            timing_class(routes[alias], info)
+        ]
+        assert transfer.spill_size_bytes == records[alias]["padded_bytes"]
+
+
+@pytest.mark.cuda
 def test_one_gpu_build_profiles_compute_and_plans_sharded_gradient_spills(
     monkeypatch, tmp_path
 ):
