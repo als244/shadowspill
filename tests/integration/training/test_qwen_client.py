@@ -20,6 +20,7 @@ from shadowspill.parallelism import Parallelism
 from shadowspill.training.definitions import load_registry
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
+from shadowspill_client.parallelism import MIN_SHARD_BYTES
 from shadowspill_client.protocol.requests import ArtifactRef
 from shadowspill_workloads.definitions.expert_parallel import ownership
 from workload_tests.initialization.test_local_pretrained import checkpoint
@@ -126,7 +127,18 @@ def test_qwen3_full_defaults_preserve_global_update_and_existing_ownership(kind)
     assert request["model"].initialize.seed == 0
     assert request["model"].lora is None
     parallel = Parallelism.from_dict(request["parallelism"])
-    expected = Parallelism.dp(ranks_per_replica=8) if kind == "dp" else ownership(8, 1)
+    if kind == "dp":
+        expected = Parallelism.dp(ranks_per_replica=8)
+    else:
+        # The public declaration carries the default floor; the workloads' EP
+        # layout, which its tests exercise on small models, has none.
+        layout = ownership(8, 1)
+        expected = replace(
+            layout,
+            default_parameter_storage=replace(
+                layout.default_parameter_storage, min_shard_bytes=MIN_SHARD_BYTES
+            ),
+        )
     assert replace(parallel, inputs=None) == expected
     assert parallel.inputs.partitions.groups == tuple((r,) for r in range(8))
     registry = load_registry(["shadowspill-workloads"])

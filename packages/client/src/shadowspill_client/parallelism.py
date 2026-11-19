@@ -57,12 +57,21 @@ def expert_parallel(
     fields: Sequence[Sequence[str]] | None = None,
     experts: Sequence[str],
     outputs: Mapping[str, Any] | None = None,
+    min_shard_bytes: int = MIN_SHARD_BYTES,
 ) -> dict[str, Any]:
-    """Shard the caller-declared expert axis; keep independent input owners."""
-    result = data_parallel(ranks, fields=fields, outputs=outputs)
+    """Shard the caller-declared expert axis; keep independent input owners.
+
+    Each rank stores its own experts. Every other parameter keeps its weights
+    and gradients whole on every rank and shards its optimizer state over the
+    ranks, except a parameter whose weight storage is under
+    ``min_shard_bytes``, which keeps its optimizer state whole too; zero shards
+    every such optimizer state. The floor never merges different experts.
+    """
+    result = data_parallel(
+        ranks, fields=fields, outputs=outputs, min_shard_bytes=min_shard_bytes
+    )
     result["groups"]["local"] = [[r] for r in range(ranks)]
     storage = result["default_parameter_storage"]
-    del storage["min_shard_bytes"]
     storage.update(weights="replicated", gradients="replicated")
     result["parameter_placements"] = {
         name: {"kind": "Sharded", "group": "all_ranks", "dim": 0} for name in experts

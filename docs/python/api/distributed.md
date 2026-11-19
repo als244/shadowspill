@@ -83,10 +83,14 @@ only from `default_parameter_storage`.
 `optimizer` modes (`"sharded"` or `"replicated"`). Optional `weight_group`,
 `gradient_group` and `optimizer_group` override the common group. Optional
 `min_shard_bytes`, also an argument of `Parallelism.dp` and of the client's
-`data_parallel`, where it is 2 MiB by default, keeps every component of a
-parameter whose unpadded physical weight storage is smaller replicated: a shard
-of a small tensor saves little memory and costs a collective at every fetch.
-Zero shards every parameter. Masters follow optimizer ownership. A storage group may contain only
+`data_parallel` and `expert_parallel`, where it is 2 MiB by default, keeps
+every component of a parameter whose unpadded physical weight storage is
+smaller replicated: a shard of a small tensor saves little memory and costs a
+collective at every fetch. Zero shards every parameter. Under
+`expert_parallel`, which keeps non-expert weights and gradients whole on every
+rank, the floor decides whether a non-expert parameter's optimizer state is
+sharded; it never merges different experts. Masters follow optimizer
+ownership. A storage group may contain only
 ranks that compute with copies of the same logical parameter slice.
 
 The modes govern parameters. A buffer is stored whole on every rank: it has no

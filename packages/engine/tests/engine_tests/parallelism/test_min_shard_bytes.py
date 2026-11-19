@@ -9,7 +9,11 @@ from torch import nn
 from shadowspill import Parallelism, ParameterStorage, Sharded
 from shadowspill.build.parallelism import model_parallelism
 from shadowspill.parallelism.reductions import gradient_reduction
-from shadowspill_client.parallelism import MIN_SHARD_BYTES, data_parallel
+from shadowspill_client.parallelism import (
+    MIN_SHARD_BYTES,
+    data_parallel,
+    expert_parallel,
+)
 
 
 def test_cutoff_uses_physical_dtype_and_unpadded_bytes():
@@ -110,6 +114,31 @@ def test_cutoff_does_not_replicate_different_experts():
     assert weight.weights.capacity == 32
     assert weight.copy_groups == ((0, 2, 4, 6), (1, 3, 5, 7))
     assert gradient_reduction(weight).phases[0].groups == weight.copy_groups
+
+
+def test_expert_parallel_keeps_small_optimizer_state_whole_and_experts_apart():
+    model = nn.Module()
+    model.experts = nn.Parameter(
+        torch.empty(2, 16, dtype=torch.bfloat16, device="meta")
+    )
+    model.large = nn.Parameter(
+        torch.empty(1 << 20, dtype=torch.bfloat16, device="meta")
+    )
+    model.norm = nn.Parameter(torch.empty(64, dtype=torch.bfloat16, device="meta"))
+    wire = expert_parallel(4, experts=["experts"])
+    assert wire["default_parameter_storage"]["min_shard_bytes"] == MIN_SHARD_BYTES
+    _, (experts, large, norm) = model_parallelism(model, Parallelism.from_dict(wire))
+    # Each rank holds its own experts, however small they are.
+    assert experts.local_shape == (2, 16) and experts.global_shape == (8, 16)
+    assert experts.weights.capacity == 32
+    # Non-expert weights and gradients are whole on every rank; the optimizer
+    # state is sharded at the floor and above, and whole below it.
+    assert large.weights.capacity == large.gradients.capacity == 1 << 20
+    assert large.optimizer.capacity == (1 << 20) // 4
+    assert norm.weights.capacity == norm.optimizer.capacity == 64
+    zero = expert_parallel(4, experts=["experts"], min_shard_bytes=0)
+    _, (_, _, norm) = model_parallelism(model, Parallelism.from_dict(zero))
+    assert norm.optimizer.capacity == 16
 
 
 @pytest.mark.parametrize("invalid", [-1, 2.5, True])
