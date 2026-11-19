@@ -332,6 +332,15 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             self.rfile = original
 
+    def progressed(self) -> None:
+        """A streamed reply that keeps moving restarts its exchange deadline.
+
+        Each block then has the whole request timeout: a long download is not
+        cut, and a reader that stalls for that long still is.
+        """
+        self.deadline = monotonic() + self.server.request_timeout
+        self.connection.settimeout(self.server.request_timeout)
+
     def remaining_time(self) -> float:
         remaining = self.deadline - monotonic()
         if remaining <= 0:

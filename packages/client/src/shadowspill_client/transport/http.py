@@ -63,6 +63,22 @@ class TransportError(ConnectionError):
     """The exchange failed; query the original request ID before another mutation."""
 
 
+class _LocalFileError(Exception):
+    """Carries a destination file's failure past the transport error mapping."""
+
+    def __init__(self, error: OSError) -> None:
+        super().__init__(error)
+        self.error = error
+
+
+@contextmanager
+def _local() -> Iterator[None]:
+    try:
+        yield
+    except OSError as error:
+        raise _LocalFileError(error) from None
+
+
 class RemoteError(RuntimeError):
     def __init__(self, status: int, error: ServiceError) -> None:
         self.status, self.code, self.message = status, error.code, error.message
@@ -303,26 +319,52 @@ class HTTPTransport:
         integer(offset, "download offset")
         if offset > reference.size_bytes or (offset and prefix_sha256 is None):
             raise ValueError("download offset requires a bounded verified prefix")
+        try:
+            self._receive(path, reference, destination, offset, prefix_sha256, progress)
+        except _LocalFileError as local:
+            failure = local.error
+        else:
+            return
+        # A local file failure is the caller's to see as itself, not as a
+        # transfer failure; like those, it keeps no borrowed chunk alive.
+        failure.__traceback__ = None
+        failure.__cause__ = failure.__context__ = None
+        raise failure
+
+    def _receive(
+        self,
+        path: str,
+        reference: ArtifactRef,
+        destination: BinaryIO,
+        offset: int,
+        prefix_sha256: str | None,
+        progress: Callable[[int, str], None] | None,
+    ) -> None:
         with self._connection() as connection:
             digest = hashlib.sha256()
             if prefix_sha256 is not None:
-                destination.seek(0)
+                with _local():
+                    destination.seek(0)
                 remaining = offset
                 block = b""
                 try:
                     while remaining:
-                        block = destination.read(min(remaining, CHUNK_BYTES))
+                        with _local():
+                            block = destination.read(min(remaining, CHUNK_BYTES))
                         if not block or len(block) > min(remaining, CHUNK_BYTES):
                             raise ProtocolError("download prefix is truncated")
                         digest.update(block)
                         remaining -= len(block)
                 finally:
                     del block
-                if destination.read(1) or digest.hexdigest() != prefix_sha256:
+                with _local():
+                    trailing = destination.read(1)
+                if trailing or digest.hexdigest() != prefix_sha256:
                     raise ProtocolError(
                         "download prefix differs from retained verification"
                     )
-                destination.seek(offset)
+                with _local():
+                    destination.seek(offset)
                 if offset == reference.size_bytes:
                     if digest.hexdigest() != reference.sha256:
                         raise ProtocolError(
@@ -374,24 +416,25 @@ class HTTPTransport:
                                 if type(count) is not int or not 0 < count <= len(part):
                                     raise ProtocolError("binary download is truncated")
                                 written_bytes = 0
-                                while written_bytes < count:
-                                    with part[written_bytes:count] as write_view:
-                                        written = destination.write(write_view)
-                                    if (
-                                        type(written) is not int
-                                        or not 0 < written <= count - written_bytes
-                                    ):
-                                        raise OSError(
-                                            "download destination made no progress"
-                                        )
-                                    written_bytes += written
+                                with _local():
+                                    while written_bytes < count:
+                                        with part[written_bytes:count] as write_view:
+                                            written = destination.write(write_view)
+                                        if type(written) is not int or not (
+                                            0 < written <= count - written_bytes
+                                        ):
+                                            raise OSError(
+                                                "download destination made no progress"
+                                            )
+                                        written_bytes += written
                                 digest.update(part[:count])
                                 remaining -= count
                                 if progress is not None:
-                                    progress(
-                                        reference.size_bytes - remaining,
-                                        digest.hexdigest(),
-                                    )
+                                    with _local():
+                                        progress(
+                                            reference.size_bytes - remaining,
+                                            digest.hexdigest(),
+                                        )
                 finally:
                     del scratch
                 if digest.hexdigest() != reference.sha256:

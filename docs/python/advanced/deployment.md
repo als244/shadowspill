@@ -47,7 +47,7 @@ scripts work through either connection.
 | `service_root` | Mutable sessions, request outcomes, Plans, reports and checkpoints; preserve it across service restarts |
 | `model_root` | Optional existing frozen checkpoints; separate from mutable run storage |
 | `cache_root` | Temporary preparation/worker staging; defaults to `.cache` under `service_root`; use local SSD |
-| `workload_packages` | Installed definition packages; omission enables engine definitions and the supplied workloads when installed |
+| `workload_packages` | Installed definition packages; omission enables the supplied workloads when installed |
 | `allocation` | Already assigned environment and optional pool name |
 | `authentication` | Explicit owner credentials instead of the default `SHADOWSPILL_TOKEN` owner |
 | `limits` | `ServerLimits` for concurrency, host accounting, scratch, artifacts and request I/O |
@@ -59,6 +59,12 @@ changes to a client's execution/spill budget. Incomplete uploads expire after
 24 hours without a verified chunk by default (`ServerLimits.upload_ttl_seconds`);
 saved artifacts do not expire under this policy.
 
+`ServerLimits.request_timeout`, 120 seconds by default, bounds one HTTP
+exchange. An artifact download is the exception: each block it sends has
+the whole timeout, so a download of any size completes while it keeps
+moving, and one whose reader stalls that long is cut. Uploads are sent in
+chunks, one exchange each.
+
 `ServerLimits.creation` holds one creation's envelopes. Its
 `max_preparation_files`, 65,536 by default, bounds the entries of a
 preparation's working directory, profiling cache included: workers whose
@@ -66,10 +72,19 @@ programs differ keep one cache entry per worker and task, so the count grows
 with both. A preparation beyond an envelope fails with the envelope named, and
 its directory is removed without being published.
 
-`worker_startup_seconds`, 1,800 by default, is how long a started training
+Its `worker_startup_seconds`, 1,800 by default, is how long a started training
 worker may take to report ready. A worker binds its Plans and loads the run's
 model values in that time, so a large checkpoint on slow storage needs more.
 A worker that exits is reported at once; the wait bounds only one that hangs.
+To change either envelope, replace it on the default limits:
+
+```python
+from dataclasses import replace
+from shadowspill.server import ServerLimits
+
+defaults = ServerLimits()
+limits = ServerLimits(creation=replace(defaults.creation, worker_startup_seconds=3600))
+```
 
 For a directly reachable listener, pass a server TLS context:
 
@@ -103,8 +118,8 @@ directory for an explicitly pinned remote revision.
 
 An explicit `workload_packages` list replaces the defaults. List only installed
 packages and include any [custom definitions](custom-definitions.md) used by
-clients. Omitting it enables the engine and supplied workloads when installed;
-it does not discover unrelated extension packages.
+clients. Omitting it enables the supplied workloads when installed; it does not
+discover unrelated extension packages.
 
 The public training deployment uses GPUs assigned to one host. The separate
 [node-daemon architecture](../../architecture/service/README.md) describes the

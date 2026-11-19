@@ -4,8 +4,7 @@ Start with [basic training](../../examples/client-training.md). This reference c
 setup controls, saved Plans, recovery, artifact transfers and diagnostics.
 Hardware inventory, optional resource selection and planning before initialization
 are covered in [Compute resources](compute-resources.md).
-Operator setup, storage and the node-daemon configuration contract are in
-[Service deployment](deployment.md).
+Operator setup and storage are in [Service deployment](deployment.md).
 
 ## Contents
 
@@ -13,14 +12,19 @@ Operator setup, storage and the node-daemon configuration contract are in
 - [Saved Plans and reconnect](#saved-plans-and-reconnect)
 - [Preparation and local planning](#preparation-and-local-planning)
 - [Runtime operations](#runtime-operations)
+- [Results and saved metadata](#results-and-saved-metadata)
 - [Metrics and reports](#metrics-and-reports)
-- [Checkpoints and weight exports](#checkpoints)
+- [Downloads](#downloads)
+- [Checkpoints](#checkpoints)
+- [Weight exports](#weight-exports)
+- [Restore and state conversion](#restore-and-state-conversion)
 - [Uploads](#uploads)
 - [Tracing and Nsight](#tracing-and-nsight)
 
 ## Connection and setup
 
 Connect to a running endpoint with a client credential in `SHADOWSPILL_TOKEN`.
+Client and service exchange protocol version 2 and reject any other version.
 For listener setup, storage, definition packages and local checkpoint lookup, see
 [Service deployment](deployment.md). Those operator settings are separate from
 the training configuration below.
@@ -288,7 +292,7 @@ binaries. The server obtains code from the authenticated preparation, checks
 Program identity, schedule replay, input coverage and joint memory admission,
 then publishes the ordinary executable Plan bundle in `training.plans`. Timing
 edits and their measured values are retained as preparation evidence. That bundle
-uses the existing saved-Plan/checkpoint resume path. Local proposals currently
+uses the existing saved-Plan/checkpoint resume path. Local proposals
 require the same measured capture inventory and physical assignment in the same
 service allocation; new shapes/counts or target calibration need another export.
 
@@ -337,12 +341,21 @@ an accumulation with `optim_step` or `discard_gradients` before starting a compl
 Other runtime methods are `save_checkpoint`, `export_weights`, `load_checkpoint`
 and ordered `close`, all returning futures. Input arrays and controls are copied
 before the submission returns. Bounded staging/pending counts
-apply backpressure, and snapshots that cannot fit fail promptly. Earlier pending
+apply backpressure, and snapshots that cannot fit fail promptly. When earlier
+requests still hold the service's input staging, the service waits for room for
+up to half of the exchange's time and then refuses the upload as busy; the
+client checks that the request still waits for its input and sends the same
+input again. Earlier pending
 requests become explicit dependencies, so a rejected backward contribution cannot
-be silently omitted from an already submitted optimizer update. A transport error
-blocks new submissions on that handle: inspect the saved IDs and explicitly
-reattach. `training.requests.status(id).result()` queries lifecycle state;
+be silently omitted from an already submitted optimizer update. Any other
+transport error blocks new submissions on that handle: inspect the saved IDs and
+explicitly reattach. `training.requests.status(id).result()` queries lifecycle state;
 `.get(id).result()` retrieves the original outcome without resubmission.
+`.get(id, timeout=seconds)` bounds that wait, counted from the call: past it
+the future fails with `TimeoutError` and stops polling, while the request
+continues on the service. Without `timeout`, the wait lasts until the request
+ends; `result(timeout)` on the future only stops the caller's wait, not the
+poll behind it.
 
 ## Results and saved metadata
 
@@ -451,6 +464,9 @@ requesting the remaining bytes and checks the complete file checksum before
 publishing the destination. No exchange retries automatically. Changed references,
 corrupt prefixes and concurrent writers are rejected; existing destination files
 are preserved. The client removes its partial directory after success.
+A local file failure during a download, such as a full disk, is raised as
+that `OSError` rather than as a transfer failure; with `resume=True` the
+progress written before it is kept.
 
 ## Checkpoints
 
@@ -573,9 +589,8 @@ checkpoint identity and completed/partial rank files. Repeat the call explicitly
 after reconnecting. Completed ranks are verified locally and need no second
 download; partial ranks use the same verified suffix transfer. `manifest.json`
 appears only after every rank is complete. A directory with unrelated content or
-a completed manifest is preserved and rejected as a new destination. Default
-`resume=False` keeps the existing behavior of removing this attempt's incomplete
-copy. Resumable downloads use local file locking to prevent concurrent writers.
+a completed manifest is preserved and rejected as a new destination. With the
+default `resume=False`, a failed download removes this attempt's incomplete copy. Resumable downloads use local file locking to prevent concurrent writers.
 
 ## Uploads
 

@@ -1,9 +1,11 @@
 """Actual authenticated HTTP requests reuse the durable queue and binary store."""
 
+import errno
 import gc
 import hashlib
 import http.client
 import io
+import random
 import socket
 import ssl
 import subprocess
@@ -45,15 +47,16 @@ def controller_lifecycle(info, closed):
         storage=SimpleNamespace(
             catalog=SimpleNamespace(
                 get=lambda identity: (
-                    replace(info, state="closed") if closed() else info
+                    (replace(info, state="closed") if closed() else info)
+                    if (identity.owner_id, identity.session_id, identity.run_id)
+                    == (info.owner_id, info.session_id, info.run_id)
+                    else None
                 )
-                if (identity.owner_id, identity.session_id, identity.run_id)
-                == (info.owner_id, info.session_id, info.run_id)
-                else None
             )
         ),
         available=lambda _: not closed(),
         retired=lambda _: closed(),
+        cleanup_failure=lambda _: None,
     )
 
 
@@ -292,6 +295,39 @@ def test_owner_and_session_checks_cover_records_and_immutable_binary_downloads(
         assert error.value.status == 404
 
 
+@pytest.mark.parametrize("step", ["write", "progress"])
+def test_a_full_local_disk_is_reported_as_itself_not_as_a_transfer_failure(
+    tmp_path, step
+):
+    payload = bytes(range(256)) * 1025
+    reference = ArtifactRef("output", hashlib.sha256(payload).hexdigest(), len(payload))
+
+    class Full(io.BytesIO):
+        def write(self, data):
+            if step == "write" and self.tell() >= 64 << 10:
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return super().write(data)
+
+    def progress(offset, digest):
+        # A resumable download's progress checkpoint syncs local files.
+        if step == "progress" and offset >= 64 << 10:
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+    with endpoint(tmp_path) as ctx:
+        ctx.artifacts.put(reference, lambda _: io.BytesIO(payload))
+        with pytest.raises(OSError) as raised:
+            ctx.client.download(
+                "/v1/artifacts/output", reference, Full(), progress=progress
+            )
+        assert type(raised.value) is OSError
+        assert raised.value.errno == errno.ENOSPC
+        # Like a transfer failure, it keeps no borrowed chunk alive.
+        assert raised.value.__context__ is None and raised.value.__cause__ is None
+        output = io.BytesIO()
+        ctx.client.download("/v1/artifacts/output", reference, output)
+        assert output.getvalue() == payload
+
+
 def test_transport_checks_owner_scope_even_if_a_lookup_returns_the_wrong_owner(
     tmp_path,
 ):
@@ -406,6 +442,33 @@ def test_slow_partial_headers_cannot_extend_the_exchange_deadline(tmp_path):
                 done.set()
                 thread.join(timeout=2)
         assert not ctx.entered
+
+
+def test_a_download_that_keeps_moving_outlasts_the_exchange_deadline(tmp_path):
+    payload = random.Random(0).randbytes(12 << 20)
+    reference = ArtifactRef("output", hashlib.sha256(payload).hexdigest(), len(payload))
+    with endpoint(tmp_path, timeout=0.3, artifact_bytes=16 << 20) as ctx:
+        ctx.artifacts.put(reference, lambda _: io.BytesIO(payload))
+        with socket.socket() as connection:
+            # A small receive window makes the service wait on this reader.
+            connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 32 << 10)
+            connection.settimeout(5)
+            connection.connect(("127.0.0.1", ctx.service.server_port))
+            connection.sendall(
+                "GET /v1/artifacts/output HTTP/1.1\r\nHost: test\r\n"
+                f"{AUTH[0]}: {AUTH[1]}\r\nContent-Length: 0\r\n"
+                f"Content-Type: {CONTROL_MEDIA_TYPE}\r\n"
+                f"Accept: {CONTROL_MEDIA_TYPE}\r\nConnection: close\r\n\r\n".encode()
+            )
+            started, received = monotonic(), bytearray()
+            while block := connection.recv(64 << 10):
+                received += block
+                Event().wait(0.005)
+            elapsed = monotonic() - started
+        head, _, body = bytes(received).partition(b"\r\n\r\n")
+        assert head.startswith(b"HTTP/1.1 200")
+        # Far longer than one exchange deadline, yet every block came in time.
+        assert body == payload and elapsed > 1.0
 
 
 def test_truncated_upload_is_recorded_not_started_and_releases_input_capacity(tmp_path):

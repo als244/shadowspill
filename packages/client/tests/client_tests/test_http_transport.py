@@ -219,9 +219,10 @@ def test_destination_failure_releases_the_borrowed_view_even_with_retained_excep
             raise OSError("destination full")
 
     with endpoint() as ctx:
-        with pytest.raises(TransportError) as error:
+        with pytest.raises(OSError, match="destination full") as error:
             ctx.client.download("/v1/binary", REFERENCE, Destination())
-        assert error.value and ctx.memory.used == (0, 0)
+        # A local file failure is reported as itself, not as a transfer failure.
+        assert type(error.value) is OSError and ctx.memory.used == (0, 0)
         with pytest.raises(ValueError, match="released memoryview"):
             len(borrowed[0])
 

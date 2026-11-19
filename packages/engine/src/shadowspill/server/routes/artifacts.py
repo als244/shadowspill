@@ -79,7 +79,7 @@ def download(exchange: _Handler, owner: str, name: str) -> None:
             )
             remaining = reference.size_bytes - offset
             while remaining:
-                exchange.remaining_time()
+                exchange.progressed()
                 block = stream.read(min(_CHUNK, remaining))
                 if not block:
                     raise OSError("stored artifact became truncated")
