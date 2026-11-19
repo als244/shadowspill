@@ -6,7 +6,9 @@ training definitions, including the MLOps AdamW optimizer. Import them as
 installing this catalog.
 
 The catalog uses the MLOps operation library, which this package owns:
-`scripts/setup_mlops.sh --python PATH` installs it at the pinned revision.
+`scripts/setup_mlops.sh --python PATH` installs it from a checkout named `mlops`
+beside this repository when there is one, warning when that checkout is not at
+the pinned revision, and otherwise at the pinned revision.
 
 See the [built-in definitions](../../docs/python/catalog.md),
 [client guide](../../docs/python/client.md), and

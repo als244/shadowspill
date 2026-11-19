@@ -32,7 +32,7 @@ shadowspill_workloads/
   policies/                  # Chunking, retention and execution choices
   integrations/              # MLOps operator facts as generic build options
 scripts/
-  setup_mlops.sh             # Installs MLOps at the pinned revision the catalog uses
+  setup_mlops.sh             # Installs MLOps: a checkout beside the repository, else the pin
 ```
 
 The catalog's models and its AdamW definition use MLOps, so this package owns

@@ -2,8 +2,9 @@
 # Install mlops, the operation library the workloads models and their AdamW
 # definition use, with its implementation providers, into an environment that
 # already has PyTorch and ShadowSpill. A checkout named mlops beside this
-# repository is used as it is; otherwise the pinned revision below is cloned
-# into the cache and installed. mlops's own setup builds its providers.
+# repository is used as it is, with a warning when it is not at the pinned
+# revision below or has uncommitted changes; otherwise the pinned revision is
+# cloned into the cache and installed. mlops's own setup builds its providers.
 #
 #   setup_mlops.sh --python PATH [--torch-backend BACKEND] [--expert-parallel quack|te|both]
 set -euo pipefail
@@ -35,7 +36,16 @@ done
 [[ -x "${python_executable}" ]] || { echo "--python must name an executable interpreter" >&2; exit 2; }
 
 mlops_checkout="$(cd "${repository_root}/.." && pwd)/mlops"
-if [[ ! -x "${mlops_checkout}/scripts/setup.sh" ]]; then
+if [[ -x "${mlops_checkout}/scripts/setup.sh" ]]; then
+  # A developer's working copy is installed as it is; say when that is not
+  # the pinned revision, so an installation is never taken for the pin.
+  actual="$(git -C "${mlops_checkout}" rev-parse HEAD 2>/dev/null || echo unknown)"
+  if [[ "${actual}" != "${mlops_revision}" ]]; then
+    echo "warning: installing ${mlops_checkout} at ${actual}, not the pinned ${mlops_revision}" >&2
+  elif [[ -n "$(git -C "${mlops_checkout}" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+    echo "warning: installing ${mlops_checkout} at the pinned revision with uncommitted changes" >&2
+  fi
+else
   mlops_checkout="${XDG_CACHE_HOME:-$HOME/.cache}/shadowspill/sources/mlops-${mlops_revision}"
   if [[ ! -d "${mlops_checkout}/.git" ]]; then
     mkdir -p "$(dirname "${mlops_checkout}")"
