@@ -425,7 +425,9 @@ class RunController[Work: CompletedWork]:
                     self._stopping = False
                     return
                 with self._dispatcher.order.synchronized():
-                    self._error = "Allocation ownership ended."
+                    # An earlier failure keeps its own diagnostic.
+                    if self._error is None:
+                        self._error = "Allocation ownership ended."
                     self._state.invalidate()
                 self._workers.close()
                 with self._dispatcher.order.synchronized():

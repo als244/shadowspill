@@ -136,6 +136,10 @@ class LiveRun:
         self._publication, self._disk = publication, disk
         self._creating, self._retiring, self._mutex = Lock(), RLock(), RLock()
         self._started = self._closing = self._stopped = self.ready = self.closed = False
+        # The controller's own failure, read once, before the first stop ends
+        # ownership with a failure of its own.
+        self._failure: str | None = None
+        self._failure_read = False
         self._record_pin: AbstractContextManager[RequestRecords] | None = None
         self._artifact_pin: AbstractContextManager[ArtifactStore] | None = None
         self._records: RequestRecords | None = None
@@ -290,6 +294,12 @@ class LiveRun:
         if errors:
             raise BaseExceptionGroup("run workers have not confirmed exit", errors)
 
+    def _remember_failure(self) -> None:
+        """Read the controller's failure before the first stop, and only then."""
+        if not self._failure_read and self._controller is not None:
+            self._failure = self._controller.failure
+            self._failure_read = True
+
     def interrupt(self) -> None:
         """Quiesce owned workers, retaining files and records for existing borrows."""
         with self._retiring:
@@ -305,6 +315,7 @@ class LiveRun:
                 self._stop_nodes()
                 raise RuntimeError("join run initialization before retiring its files")
             if self._controller is not None:
+                self._remember_failure()
                 self._controller.stop(self._stop_nodes)
             else:
                 self._stop_nodes()
@@ -372,6 +383,7 @@ class LiveRun:
             try:
                 if self._controller is not None:
                     if self._stopped:
+                        self._remember_failure()
                         self._controller.stop(self._stop_nodes)
                     else:
                         self._controller.close()
@@ -401,6 +413,11 @@ class LiveRun:
                                 "idle_timeout",
                                 "Configured idle timeout released workers.",
                             ),
+                        )
+                    elif self._failure is not None:
+                        self.storage.catalog.stop(
+                            self.identity,
+                            ServiceError("controller_failed", self._failure),
                         )
                     elif self._stopped:
                         self.storage.catalog.stop(

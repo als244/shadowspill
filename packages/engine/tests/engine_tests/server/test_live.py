@@ -291,3 +291,18 @@ def test_failure_committing_readiness_keeps_workers_owned_for_stop(
         ctx.live.stop()
         assert ctx.live.closed and ctx.node.lease.closed
         assert ctx.storage.catalog.get(IDENTITY).state == "preparing"
+
+
+def test_a_controller_failure_is_recorded_on_the_stopped_run(tmp_path, monkeypatch):
+    with configured(tmp_path, monkeypatch) as ctx:
+        ctx.live.start()
+        controller = ctx.live.controller
+        controller._failed(OSError("request journal write failed"))
+        # Retired as the service retires a finished run: stop, then close.
+        ctx.live.interrupt()
+        assert controller.failure == "request journal write failed"
+        ctx.live.close()
+        info = ctx.storage.catalog.get(IDENTITY)
+        assert info.state == "stopped"
+        assert info.error.code == "controller_failed"
+        assert info.error.message == "request journal write failed"
