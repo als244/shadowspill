@@ -45,12 +45,24 @@ class ChunkRows:
 @pytest.mark.cuda
 @pytest.mark.parametrize(
     "network, with_optimizer, variant",
+    # Linear and residual, forward, backward and step, save and recompute each
+    # run in the default suite; the other three cases run with `-m slow`.
     [
         pytest.param(Network, None, "save", id="linear-forward"),
-        pytest.param(ResidualNetwork, None, "save", id="residual-forward"),
+        pytest.param(
+            ResidualNetwork, None, "save", id="residual-forward", marks=pytest.mark.slow
+        ),
         pytest.param(Network, False, "recompute", id="linear-backward-recompute"),
-        pytest.param(ResidualNetwork, False, "save", id="residual-backward-save"),
-        pytest.param(Network, True, "save", id="linear-step-save"),
+        pytest.param(
+            ResidualNetwork,
+            False,
+            "save",
+            id="residual-backward-save",
+            marks=pytest.mark.slow,
+        ),
+        pytest.param(
+            Network, True, "save", id="linear-step-save", marks=pytest.mark.slow
+        ),
         pytest.param(ResidualNetwork, True, "recompute", id="residual-step-recompute"),
     ],
 )

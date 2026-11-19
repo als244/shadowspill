@@ -25,20 +25,22 @@ from shadowspill.ir import ResourceKind
 @pytest.mark.cuda
 @pytest.mark.parametrize(
     "kind,variant,tied",
+    # One case of each form runs in the default suite; its second case runs
+    # with `-m slow`.
     [
-        ("forward", None, False),
+        pytest.param("forward", None, False, marks=pytest.mark.slow),
         ("forward", "streams", False),
-        ("forward_backward", "save", False),
+        pytest.param("forward_backward", "save", False, marks=pytest.mark.slow),
         ("forward_backward", "recompute", True),
         ("step", "save", True),
-        ("step", "recompute", False),
+        pytest.param("step", "recompute", False, marks=pytest.mark.slow),
         ("step_tensor_lr", "save", False),
         ("step_resume", "recompute", True),
-        ("backward_resume", "save", False),
-        ("step_residual", "save", True),
+        pytest.param("backward_resume", "save", False, marks=pytest.mark.slow),
+        pytest.param("step_residual", "save", True, marks=pytest.mark.slow),
         ("backward_residual", "recompute", True),
         ("step_mixed", "save", True),
-        ("backward_mixed", "recompute", False),
+        pytest.param("backward_mixed", "recompute", False, marks=pytest.mark.slow),
     ],
 )
 def test_saved_plan_executes_without_build_or_measurement(

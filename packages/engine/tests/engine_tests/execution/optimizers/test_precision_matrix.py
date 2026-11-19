@@ -9,16 +9,48 @@ from engine_tests.execution.helpers import run_worker, save_plan
 from engine_tests.execution.optimizers.reference import Network, objective, oracle
 from shadowspill import build_step
 
+_BF16, _FP32 = torch.bfloat16, torch.float32
+
 
 @pytest.mark.cuda
 @pytest.mark.parametrize(
-    "master_dtype", [None, torch.float32], ids=["no_master", "fp32_master"]
-)
-@pytest.mark.parametrize(
-    "gradient_dtype", [torch.bfloat16, torch.float32], ids=["bf16_grad", "fp32_grad"]
-)
-@pytest.mark.parametrize(
-    "state_dtype", [torch.bfloat16, torch.float32], ids=["bf16_moments", "fp32_moments"]
+    "state_dtype,gradient_dtype,master_dtype",
+    # Half of the matrix, in which every pair of settings takes all four
+    # combinations, runs in the default suite; the rest with `-m slow`.
+    [
+        pytest.param(_BF16, _BF16, None, id="bf16_moments-bf16_grad-no_master"),
+        pytest.param(_BF16, _FP32, _FP32, id="bf16_moments-fp32_grad-fp32_master"),
+        pytest.param(_FP32, _BF16, _FP32, id="fp32_moments-bf16_grad-fp32_master"),
+        pytest.param(_FP32, _FP32, None, id="fp32_moments-fp32_grad-no_master"),
+        pytest.param(
+            _BF16,
+            _BF16,
+            _FP32,
+            id="bf16_moments-bf16_grad-fp32_master",
+            marks=pytest.mark.slow,
+        ),
+        pytest.param(
+            _BF16,
+            _FP32,
+            None,
+            id="bf16_moments-fp32_grad-no_master",
+            marks=pytest.mark.slow,
+        ),
+        pytest.param(
+            _FP32,
+            _BF16,
+            None,
+            id="fp32_moments-bf16_grad-no_master",
+            marks=pytest.mark.slow,
+        ),
+        pytest.param(
+            _FP32,
+            _FP32,
+            _FP32,
+            id="fp32_moments-fp32_grad-fp32_master",
+            marks=pytest.mark.slow,
+        ),
+    ],
 )
 def test_saved_adam_precision_matrix(
     tmp_path, master_dtype, gradient_dtype, state_dtype

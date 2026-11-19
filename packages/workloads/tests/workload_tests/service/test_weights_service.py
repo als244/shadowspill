@@ -36,7 +36,7 @@ def test_weights_startup_oracle_keeps_exact_masters_and_uses_a_fresh_optimizer(p
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("policy", [False, True])
+@pytest.mark.parametrize("policy", [pytest.param(False, marks=pytest.mark.slow), True])
 def test_public_exported_weights_step_split_fresh_optimizer_and_checkpoint_resume(
     tmp_path, policy
 ):

@@ -21,8 +21,17 @@ from workload_tests.service.test_llama_service import options
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("policy", [False, True])
-@pytest.mark.parametrize("source_kind", ["hub", "local"])
+@pytest.mark.parametrize(
+    "source_kind,policy",
+    # Every setting's values run in the default suite; the remaining
+    # combinations run with `-m slow`.
+    [
+        ("hub", False),
+        pytest.param("hub", True, marks=pytest.mark.slow),
+        pytest.param("local", False, marks=pytest.mark.slow),
+        ("local", True),
+    ],
+)
 def test_public_pretrained_step_split_and_checkpoint_resume(
     tmp_path, monkeypatch, policy, source_kind
 ):

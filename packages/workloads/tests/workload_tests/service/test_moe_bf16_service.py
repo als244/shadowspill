@@ -277,6 +277,6 @@ def qualify(tmp_path, options, *, lora):
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("lora", [False, True])
+@pytest.mark.parametrize("lora", [False, pytest.param(True, marks=pytest.mark.slow)])
 def test_public_bf16_moe_provider_step_split_and_saved_plan_resume(tmp_path, lora):
     qualify(tmp_path, bf16_options(lora), lora=lora)

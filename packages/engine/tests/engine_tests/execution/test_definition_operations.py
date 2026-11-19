@@ -101,7 +101,15 @@ def prepare_owned(root, setup):
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("provider", [False, True], ids=["ordinary", "provider"])
+@pytest.mark.parametrize(
+    "provider",
+    # The ordinary operations also run inside the provider case; alone they
+    # run with `-m slow`.
+    [
+        pytest.param(False, id="ordinary", marks=pytest.mark.slow),
+        pytest.param(True, id="provider"),
+    ],
+)
 def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provider):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")

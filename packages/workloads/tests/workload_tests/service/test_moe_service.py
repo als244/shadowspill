@@ -197,8 +197,19 @@ def test_moe_service_oracles_preserve_frozen_weights_and_distinguish_geometries(
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("lora", [False, True])
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize(
+    "family,lora",
+    # Every setting's values run in the default suite; the remaining
+    # combinations run with `-m slow`.
+    [
+        ("qwen3moe", False),
+        pytest.param("qwen3moe", True, marks=pytest.mark.slow),
+        pytest.param("qwen35moe", False, marks=pytest.mark.slow),
+        ("qwen35moe", True),
+        pytest.param("olmoe", False, marks=pytest.mark.slow),
+        ("olmoe", True),
+    ],
+)
 def test_public_moe_step_split_and_checkpoint_resume_match_independent_oracles(
     tmp_path, monkeypatch, family, lora
 ):

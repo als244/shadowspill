@@ -73,8 +73,17 @@ class NormalizedPackedNetwork(RegionNetwork):
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("compact_views", [False, True])
-@pytest.mark.parametrize("lora,retain_sequence", [(False, False), (True, True)])
+@pytest.mark.parametrize(
+    "lora,retain_sequence,compact_views",
+    # Both forms and both view settings run in the default suite; the other
+    # two combinations run with `-m slow`.
+    [
+        pytest.param(False, False, False, marks=pytest.mark.slow),
+        (False, False, True),
+        (True, True, False),
+        pytest.param(True, True, True, marks=pytest.mark.slow),
+    ],
+)
 def test_public_lifetimes_profile_plan_and_train_without_serializing_selector(
     tmp_path, lora, retain_sequence, compact_views, replay_work=False
 ):

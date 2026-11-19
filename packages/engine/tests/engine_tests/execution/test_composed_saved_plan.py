@@ -62,8 +62,17 @@ class ComposedChunks:
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("variant", ["save", "recompute"])
-@pytest.mark.parametrize("lora", [False, True])
+@pytest.mark.parametrize(
+    "lora,variant",
+    # Both LoRA settings and both variants run in the default suite; the
+    # other two combinations run with `-m slow`.
+    [
+        (False, "recompute"),
+        pytest.param(False, "save", marks=pytest.mark.slow),
+        pytest.param(True, "recompute", marks=pytest.mark.slow),
+        (True, "save"),
+    ],
+)
 def test_nested_chunks_train_with_tied_weights_after_cold_reload(
     tmp_path, variant, lora
 ):

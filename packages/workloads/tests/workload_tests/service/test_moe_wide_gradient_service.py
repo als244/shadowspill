@@ -7,7 +7,7 @@ from workload_tests.service.test_moe_bf16_service import bf16_options, qualify
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("lora", [False, True])
+@pytest.mark.parametrize("lora", [False, pytest.param(True, marks=pytest.mark.slow)])
 def test_public_bf16_compute_fp32_gradients_step_split_and_resume(tmp_path, lora):
     options = bf16_options(lora, grad_dtype="float32")
     options["build"] = BuildOptions(

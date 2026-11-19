@@ -43,12 +43,30 @@ class RegionNetwork(torch.nn.Module):
 @pytest.mark.cuda
 @pytest.mark.parametrize(
     "variant, retain_sequence, lora, optimizer",
+    # Full and LoRA, step and backward, save, recompute and retained each run
+    # in the default suite; the other three cases run with `-m slow`.
     [
-        pytest.param("recompute", False, False, False, id="full-backward-recompute"),
+        pytest.param(
+            "recompute",
+            False,
+            False,
+            False,
+            id="full-backward-recompute",
+            marks=pytest.mark.slow,
+        ),
         pytest.param("save", False, False, True, id="full-step-save"),
-        pytest.param("recompute", True, False, True, id="full-step-retained"),
+        pytest.param(
+            "recompute",
+            True,
+            False,
+            True,
+            id="full-step-retained",
+            marks=pytest.mark.slow,
+        ),
         pytest.param("recompute", False, True, True, id="lora-step-recompute"),
-        pytest.param("save", False, True, False, id="lora-backward-save"),
+        pytest.param(
+            "save", False, True, False, id="lora-backward-save", marks=pytest.mark.slow
+        ),
         pytest.param("recompute", True, True, False, id="lora-backward-retained"),
     ],
 )

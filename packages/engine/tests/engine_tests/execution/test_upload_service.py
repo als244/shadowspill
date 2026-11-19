@@ -15,7 +15,13 @@ from shadowspill.training.worker.initialization import prepare_initialization
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("frozen", [False, True], ids=["full", "frozen"])
+@pytest.mark.parametrize(
+    "frozen",
+    [
+        pytest.param(False, id="full", marks=pytest.mark.slow),
+        pytest.param(True, id="frozen"),
+    ],
+)
 def test_public_uploaded_checkpoint_continues_step_and_split_training(
     tmp_path, monkeypatch, frozen
 ):

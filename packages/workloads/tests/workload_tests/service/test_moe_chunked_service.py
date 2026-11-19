@@ -9,7 +9,7 @@ from workload_tests.service.test_moe_bf16_service import bf16_options, qualify
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("lora", [False, True])
+@pytest.mark.parametrize("lora", [pytest.param(False, marks=pytest.mark.slow), True])
 def test_public_chunked_moe_step_split_and_saved_plan_resume(tmp_path, lora):
     options = bf16_options(lora)
     cases = build_candidates(

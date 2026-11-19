@@ -93,7 +93,7 @@ def test_independent_regression_adamw_oracle_matches_cpu_autograd(dtype):
 @pytest.mark.parametrize(
     "dtype,master_dtype",
     [
-        ("float32", None),
+        pytest.param("float32", None, marks=pytest.mark.slow),
         ("bfloat16", None),
         ("float32", "float32"),
     ],

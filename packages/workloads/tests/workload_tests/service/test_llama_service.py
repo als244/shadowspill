@@ -208,7 +208,7 @@ def test_llama_eager_oracle_changes_only_trainable_parameters_and_stays_finite(p
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize("policy", [False, True])
+@pytest.mark.parametrize("policy", [False, pytest.param(True, marks=pytest.mark.slow)])
 def test_supplied_llama_public_step_split_masters_and_resume(tmp_path, policy):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
