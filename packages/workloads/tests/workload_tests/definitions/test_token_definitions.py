@@ -306,7 +306,8 @@ def test_configuration_is_model_derived_and_reference_controls_are_structural():
 def test_installed_registration_and_resolution_do_not_import_frameworks():
     script = """
 import sys
-for name in ('torch', 'triton', 'mlops', 'transformers'):
+# MLOps is located for the AdamW definition, never imported.
+for name in ('torch', 'triton', 'transformers'):
     sys.modules[name] = None
 from shadowspill.training.definitions import load_registry, ModelDefinition
 from shadowspill_client.protocol.definitions import DefinitionSource
@@ -320,7 +321,7 @@ model = registry.resolve_model('external/token@1')
 for name in ('cross_entropy', 'clipped_policy'):
     objective = registry.resolve_objective('shadowspill/'+name+'@1', model=model)
     assert objective.config['vocab_size'] == 7
-assert 'mlops.objectives' not in sys.modules
+assert not any(name.split('.')[0] == 'mlops' for name in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30

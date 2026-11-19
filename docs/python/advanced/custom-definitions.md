@@ -199,9 +199,9 @@ server.serve(host="127.0.0.1", port=8000)
 
 Set the same `SHADOWSPILL_TOKEN` on the server and client. Start
 [`server.py`](../../../examples/extensions/custom_training/server.py) inside your
-GPU server. Adding `"shadowspill"` to `workload_packages` enables
-the built-in AdamW definition; adding `"shadowspill-workloads"` enables the
-optional model catalog. Neither is needed by this example.
+GPU server. Adding `"shadowspill-workloads"` to `workload_packages` enables the
+optional model catalog and its MLOps AdamW definition. This example needs
+neither.
 
 ## 7. Select the definitions and train
 

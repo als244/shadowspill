@@ -276,7 +276,7 @@ def text_execution_chunks(*, lifetimes: ExecutionLifetimes | None = None, **opti
     and checkpoint retention remain separate controls.
     """
     if lifetimes is None:
-        from shadowspill.integrations.mlops import fla_execution_lifetimes
+        from shadowspill_workloads.integrations.mlops import fla_execution_lifetimes
 
         lifetimes = fla_execution_lifetimes(select=compact_without_replay)
     chunks = TextExecutionChunks(**options)

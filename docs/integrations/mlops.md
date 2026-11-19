@@ -1,6 +1,6 @@
 # MLOps integration
 
-`shadowspill.integrations.mlops` translates standalone `mlops.operator_metadata`
+`shadowspill_workloads.integrations.mlops` translates standalone `mlops.operator_metadata`
 records into build options. It runs during configuration, performs no tensor
 computation and does not initialize CUDA. MLOps owns the operator semantics;
 this repository owns their translation and compiler integration tests.
@@ -28,7 +28,7 @@ chunk policy, and pass destination/preparation options to the builder:
 
 ```python
 import torch
-from shadowspill.integrations.mlops import (
+from shadowspill_workloads.integrations.mlops import (
     operator_chunk_rules,
     operator_preparations,
     sonicmoe_chunk_rules,
@@ -103,7 +103,7 @@ The helper supplies readonly/layout declarations; its rules select actual
 transformations. For example:
 
 ```python
-from shadowspill.integrations.mlops import fla_execution_lifetimes
+from shadowspill_workloads.integrations.mlops import fla_execution_lifetimes
 from shadowspill.pytorch import LifetimeRule
 
 lifetimes = fla_execution_lifetimes(rules=(

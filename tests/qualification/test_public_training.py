@@ -16,7 +16,7 @@ from shadowspill_client.protocol.setup import TrainingSetup
 @pytest.mark.parametrize("parallelism", ["dp", "ep"])
 def test_qwen_public_campaign_preserves_readme_batch_and_build_choices(parallelism):
     setup = resolve_training(
-        load_registry(["shadowspill", "shadowspill-workloads"]),
+        load_registry(["shadowspill-workloads"]),
         TrainingSetup(**settings(parallelism=parallelism)),
     )
     assert setup.context.parallelism.world_size == 8

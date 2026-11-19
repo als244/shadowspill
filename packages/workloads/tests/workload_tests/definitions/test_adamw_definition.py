@@ -1,4 +1,4 @@
-"""The installed optimizer factory preserves the existing captured AdamW ABI."""
+"""The MLOps AdamW definition workloads registers keeps the captured AdamW ABI."""
 
 import subprocess
 import sys
@@ -12,8 +12,9 @@ from engine_tests.pytorch.optimizer.test_optimizer import _install_declared_stat
 from shadowspill.build.optimizer_parameters import local_optimizer_parameters
 from shadowspill.pytorch.optimizer import capture_optimizer
 from shadowspill.pytorch.optimizer.sandbox import copy_optimizer_to_meta
-from shadowspill.training.definitions import Registry, adamw
+from shadowspill.training.definitions import Registry
 from shadowspill_client import Optimizer
+from shadowspill_workloads.definitions import adamw
 
 
 def resolve(**settings):
@@ -27,11 +28,13 @@ def resolve(**settings):
 def test_registration_and_configuration_do_not_import_framework_or_provider():
     script = """
 import sys
-for name in ('torch', 'triton', 'shadowspill_workloads'):
+for name in ('torch', 'triton'):
     sys.modules[name] = None
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.definitions import Registry
 from shadowspill_client import Optimizer
-registry = load_registry(['shadowspill'])
+from shadowspill_workloads.definitions import adamw
+registry = Registry()
+adamw.register(registry)
 resolved = registry.resolve_optimizer('mlops/adamw@1', settings=Optimizer(
     'mlops/adamw@1', precision={
         'opt_state_dtype': 'float32', 'master_dtype': 'float32'}))

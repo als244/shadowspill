@@ -5,12 +5,12 @@ import torch
 from torch.fx.experimental.proxy_tensor import make_fx
 
 from engine_tests.pytorch.chunking.test_axis_vjp import executable
-from shadowspill.integrations.mlops import operator_chunk_rules
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TensorGeometry
 from shadowspill.pytorch.chunking import AxisChunks, ChunkAxis, StageInfo
 from shadowspill.pytorch.chunking.transform import chunk_artifact
 from shadowspill.task.inputs import TaskInputRole
+from shadowspill_workloads.integrations.mlops import operator_chunk_rules
 from shadowspill_workloads.policies.text.chunking import TextAxisChunks, is_barrier
 
 

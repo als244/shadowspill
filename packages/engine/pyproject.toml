@@ -15,9 +15,6 @@ dependencies = [
   "shadowspill-client==0.1.0.dev0",
 ]
 
-[project.entry-points."shadowspill.definitions"]
-optimizers = "shadowspill.training.definitions.adamw:register"
-
 [project.optional-dependencies]
 pytorch = ["torch>=2.13,<2.14", "nvidia-ml-py>=13.580,<14"]
 training = ["wandb>=0.20"]

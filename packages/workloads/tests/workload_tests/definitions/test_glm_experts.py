@@ -34,7 +34,7 @@ from workload_tests.initialization.test_pretrained_initialization import fill
 
 
 def prepared(model, *, grad_dtype="float32"):
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     setup = resolve_training(
         registry,
         model=model,

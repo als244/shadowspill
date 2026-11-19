@@ -43,7 +43,7 @@ def test_public_glm_hopper_allocation_coverage(family, implementation):
         else data_parallel(8, min_shard_bytes=0)
     )
     setup = resolve_training(
-        load_registry(["shadowspill", "shadowspill-workloads"]),
+        load_registry(["shadowspill-workloads"]),
         model=Model(
             family,
             implementation=implementation,

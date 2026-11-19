@@ -49,7 +49,9 @@ DESTINATION_CONTRACTS = {
 def gradient_destination_rules(config):
     if config.compute_dtype != "bfloat16" or config.lora is None:
         return ()
-    from shadowspill.integrations.mlops import sonicmoe_gradient_destination_rules
+    from shadowspill_workloads.integrations.mlops import (
+        sonicmoe_gradient_destination_rules,
+    )
 
     # The provider mapper checks actual dtype, complete aligned shapes and
     # transforms. Crops, unsupported casts and unselected operators keep the

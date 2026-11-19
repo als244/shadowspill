@@ -59,7 +59,7 @@ def settings(family, *, grad_dtype="float32"):
 
 
 def prepared(family, *, parallelism=None, grad_dtype="float32"):
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     parallelism = ownership(2, 1) if parallelism is None else parallelism
     parallelism = replace(
         parallelism,
@@ -211,7 +211,7 @@ def test_a_seed_gives_expert_parallel_the_default_implementations_values(family)
     from shadowspill_workloads.initialization.expert_parallel import BANKS, Initialize
     from shadowspill_workloads.models.catalog import entry
 
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     requested = settings(family)
     architecture = entry(family + "-tiny").config(**requested.config["architecture"])
     experts, hidden, width = (
@@ -285,7 +285,7 @@ def test_initialization_preserves_replicas_expert_slices_and_payload_masters(
     from shadowspill_workloads.initialization.expert_parallel import BANKS, Initialize
     from shadowspill_workloads.models.catalog import entry
 
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     requested = settings(family)
     resolved = registry.resolve_model(requested.definition, settings=requested)
     architecture = entry(family + "-tiny").config(**requested.config["architecture"])
@@ -337,7 +337,7 @@ def test_initialization_preserves_replicas_expert_slices_and_payload_masters(
 
 @pytest.mark.parametrize("family", FAMILIES)
 def test_unsupported_ep_modes_fail_before_construction(family):
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     requested = settings(family)
     for model in (
         replace(requested, precision={"compute_dtype": "float32"}),
@@ -390,7 +390,7 @@ from shadowspill_client import *
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement
 from dataclasses import replace
 from shadowspill_workloads.definitions.expert_parallel import ownership
-registry = load_registry(['shadowspill', 'shadowspill-workloads'])
+registry = load_registry(['shadowspill-workloads'])
 for family in ('qwen3moe', 'qwen35moe', 'olmoe'):
     setup = resolve_training(registry,
         model=Model('shadowspill/'+family+'@1', implementation='mlops_ep',

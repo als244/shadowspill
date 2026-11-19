@@ -10,15 +10,14 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from shadowspill.training.definitions.optimizer import OptimizerDefinition
 from shadowspill_client import Optimizer
 from shadowspill_client._records import Value
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.definitions import DefinitionSource
 
-from .optimizer import OptimizerDefinition
-
 if TYPE_CHECKING:
-    from .registry import Registry
+    from shadowspill.training.definitions.registry import Registry
 
 
 @dataclass(frozen=True)
@@ -50,7 +49,7 @@ class AdamWConfig:
 
 def configure(settings: Optimizer) -> Mapping[str, Value]:
     if settings.groups:
-        raise ValueError("mlops/adamw@1 currently requires one parameter group")
+        raise ValueError("mlops/adamw@1 requires one parameter group")
     precision = {field.name for field in fields(AdamWConfig)} - {"maximize"}
     if unknown := settings.precision.keys() - precision:
         raise ValueError(f"unsupported AdamW precision: {sorted(unknown)}")
@@ -84,12 +83,11 @@ def create(model: Any, config: AdamWConfig, controls: Mapping[str, Any]) -> Any:
 
 
 def register(registry: Registry) -> None:
-    """Opt in with the engine's installed ``shadowspill.definitions`` hook.
+    """Registered by the workloads definitions hook, which owns MLOps.
 
-    Locate and hash the optional provider without importing its framework code.
-    Its Python closure includes dtype/rounding helpers and the opaque kernel's
+    Locate and hash the provider without importing its framework code. Its
+    Python closure includes dtype/rounding helpers and the opaque kernel's
     allocation behavior, so editing that dependency invalidates saved settings.
-    External definition packages do not need to load this optional integration.
     """
     spec = find_spec("mlops")
     if spec is None or spec.origin is None:
@@ -147,6 +145,8 @@ def register(registry: Registry) -> None:
             },
         ),
         source=DefinitionSource(
-            "shadowspill", version("shadowspill"), digest.hexdigest()
+            "shadowspill-workloads",
+            version("shadowspill-workloads"),
+            digest.hexdigest(),
         ),
     )

@@ -117,9 +117,7 @@ def test_expert_weight_product_is_retained_before_bf16_leaf_rounding():
 def test_explicit_oracle_groups_match_every_prepared_count_and_empty_owner(reference):
     requested = training_settings(reference)
     requested["parallelism"] = Parallelism.from_dict(requested["parallelism"])
-    setup = resolve_training(
-        load_registry(["shadowspill", "shadowspill-workloads"]), **requested
-    )
+    setup = resolve_training(load_registry(["shadowspill-workloads"]), **requested)
     layouts = prepare_layouts(setup)
     key = OperationKey("forward_backward", "metrics")
     budget = BufferBudget(8 << 20, 8)

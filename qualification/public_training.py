@@ -150,7 +150,7 @@ def preflight(data, output, requested, *, cache_root=None):
     assert all(np.max(d.inputs["tokens"]) < data.vocab_size for d in batch)
     with checksum_cache(None if cache_root is None else cache_root / "source-digests"):
         setup = resolve_training(
-            load_registry(["shadowspill", "shadowspill-workloads"]),
+            load_registry(["shadowspill-workloads"]),
             TrainingSetup(**requested),
         )
     layouts = prepare_layouts(setup)

@@ -120,7 +120,7 @@ with Server(
     ),
     service_root=root / "service",
     cache_root=root / "cache",
-    workload_packages=["shadowspill", "shadowspill-workloads"],
+    workload_packages=["shadowspill-workloads"],
     authentication=BearerTokens({token: "owner"}),
     limits=limits,
 ) as service:

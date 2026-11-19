@@ -133,22 +133,8 @@ print(Path(next(iter(spec.submodule_search_locations))) / "share" / "cmake")
   --editable "${project_root}/packages/client" \
   --editable "${project_root}/packages/workloads[training]"
 
-echo "[3/5] Installing mlops with its implementation providers"
-mlops_checkout="$(cd "${project_root}/.." && pwd)/mlops"
-if [[ ! -x "${mlops_checkout}/scripts/setup.sh" ]]; then
-  mlops_revision="e6882f4d39cd118284500bdca7ed07ecfa52d3a8"
-  mlops_checkout="${XDG_CACHE_HOME:-$HOME/.cache}/shadowspill/sources/mlops-${mlops_revision}"
-  if [[ ! -d "${mlops_checkout}/.git" ]]; then
-    mkdir -p "$(dirname "${mlops_checkout}")"
-    git clone --filter=blob:none --no-checkout \
-      https://github.com/als244/mlops.git "${mlops_checkout}"
-  fi
-  git -C "${mlops_checkout}" cat-file -e "${mlops_revision}^{commit}" 2>/dev/null || \
-    git -C "${mlops_checkout}" fetch origin "${mlops_revision}"
-  git -C "${mlops_checkout}" checkout --detach "${mlops_revision}"
-fi
-echo "  through ${mlops_checkout}/scripts/setup.sh, whose own steps follow"
-"${mlops_checkout}/scripts/setup.sh" \
+echo "[3/5] Installing mlops, which the workloads package owns"
+"${project_root}/packages/workloads/scripts/setup_mlops.sh" \
   --python "${python_executable}" \
   --torch-backend "${torch_backend}" \
   ${expert_parallel:+--expert-parallel "${expert_parallel}"}

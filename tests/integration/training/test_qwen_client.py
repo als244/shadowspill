@@ -65,7 +65,7 @@ def test_setup_keeps_exact_chunk_choices_global_capacity_and_checkpoint_coeffici
         family=family,
         lora_rank=32 if family == "qwen35moe" else None,
     )
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     requests = []
 
     def describe(**request):
@@ -129,7 +129,7 @@ def test_qwen3_full_defaults_preserve_global_update_and_existing_ownership(kind)
     expected = Parallelism.dp(ranks_per_replica=8) if kind == "dp" else ownership(8, 1)
     assert replace(parallel, inputs=None) == expected
     assert parallel.inputs.partitions.groups == tuple((r,) for r in range(8))
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     setup = resolve_training(registry, **{**request, "parallelism": parallel})
     assert setup.config.model.definition == "shadowspill/qwen3moe@1"
     assert setup.config.model.config["architecture"]["d_model"] == 2048

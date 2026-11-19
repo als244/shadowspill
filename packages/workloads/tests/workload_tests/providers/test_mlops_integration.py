@@ -8,17 +8,17 @@ pytest.importorskip("mlops")
 
 from mlops.providers.sonicmoe import lora
 
-from shadowspill.integrations.mlops import (
+from shadowspill.pytorch import AxisFrom, ChunkLocal
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.gradients import (
+    accumulate_gradient_outputs,
+)
+from shadowspill_workloads.integrations.mlops import (
     mhc_chunk_rules,
     operator_preparations,
     sonicmoe_chunk_rules,
     sonicmoe_gradient_destination_rules,
     sonicmoe_preparation,
-)
-from shadowspill.pytorch import AxisFrom, ChunkLocal
-from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.capture.gradients import (
-    accumulate_gradient_outputs,
 )
 
 

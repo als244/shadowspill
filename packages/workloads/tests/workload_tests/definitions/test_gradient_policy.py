@@ -14,7 +14,7 @@ from shadowspill_client import BatchConfig, Memory, Model, Objective, Optimizer,
 )
 @pytest.mark.parametrize("dtype", [None, "float32", "parameter"])
 def test_optimizer_gradient_precision_reaches_model_build_and_provider(family, dtype):
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     setup = resolve_training(
         registry,
         model=Model(family, initialize=Weights.random(seed=0)),

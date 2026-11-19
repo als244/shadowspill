@@ -54,7 +54,8 @@ def test_supplied_regression_definition_uses_existing_model_and_capture():
 def test_regression_description_and_initializer_preflight_are_framework_free():
     script = """
 import sys
-for name in ('torch', 'triton', 'mlops'):
+# MLOps is located for the AdamW definition, never imported.
+for name in ('torch', 'triton'):
     sys.modules[name] = None
 from shadowspill.training.definitions import load_registry, InitializationContext
 from shadowspill.parallelism import Parallelism
@@ -66,6 +67,7 @@ initialization = model.describe_initialization(InitializationContext(
     model.settings, model.settings.initialize, Parallelism(), 0))
 assert initialization.peak_bytes == 64 << 10
 assert initialization.chunk_bytes == 4096
+assert not any(name.split('.')[0] == 'mlops' for name in sys.modules)
 assert 'shadowspill_workloads.models.regression.model' not in sys.modules
 assert 'shadowspill_workloads.models.regression.initialization' not in sys.modules
 """

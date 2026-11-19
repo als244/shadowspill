@@ -19,7 +19,7 @@ def test_dp_fields_are_resolved_from_model_and_objective_before_build(family):
     from shadowspill_client import BatchConfig, Memory, Optimizer
 
     setup = resolve_training(
-        load_registry(["shadowspill", "shadowspill-workloads"]),
+        load_registry(["shadowspill-workloads"]),
         model=Model(family, config={"preset": "tiny"}),
         objective=Objective("cross_entropy"),
         optimizer=Optimizer("adamw"),
@@ -43,9 +43,7 @@ def test_dp_fields_are_resolved_from_model_and_objective_before_build(family):
     assert setup.config.origins["parallelism.inputs.fields"] == "engine_default"
     # Saved resolved settings have complete placement and survive re-resolution.
     assert (
-        resolve_training(
-            load_registry(["shadowspill", "shadowspill-workloads"]), setup.config
-        ).config
+        resolve_training(load_registry(["shadowspill-workloads"]), setup.config).config
         == setup.config
     )
 
@@ -76,7 +74,7 @@ def test_common_settings_prepare_multiple_models_with_the_same_scheduled_cap(fam
     )
     request = settings.request(model=model, objective=objective, parallelism=None)
     checkpoint_coefficient = family in {"qwen3moe", "qwen35moe"}
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     calls = []
 
     def describe(**options):

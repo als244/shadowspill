@@ -62,7 +62,8 @@ class Server:
         self.model_root = None if model_root is None else Path(model_root).absolute()
         self.cache = self.root / ".cache" if cache_root is None else Path(cache_root)
         if workload_packages is None:
-            workload_packages = ["shadowspill"]
+            # The supplied catalog, models and optimizer, when installed.
+            workload_packages = []
             try:
                 distribution("shadowspill-workloads")
             except PackageNotFoundError:

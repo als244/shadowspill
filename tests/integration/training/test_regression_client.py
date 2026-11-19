@@ -44,7 +44,7 @@ def test_settings_use_generic_dp_and_cover_the_global_scheduled_cap(ranks):
     generic = Parallelism.from_dict(record)
     assert generic == Parallelism.dp(ranks_per_replica=ranks, inputs=generic.inputs)
     setup = resolve_training(
-        load_registry(["shadowspill", "shadowspill-workloads"]),
+        load_registry(["shadowspill-workloads"]),
         TrainingSetup(**settings.request()),
     )
     layouts = prepare_layouts(setup)

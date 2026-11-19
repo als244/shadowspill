@@ -59,7 +59,8 @@ request submission/polling, and metrics/reports. These routes call the existing
 owners in `server/records/` and `training/`; they contain no model construction or
 training loop. Server startup remains separate from the live request path.
 
-`shadowspill.integrations` contains optional, caller-selected library adapters.
+A library adapter belongs to the package that uses the library: the workloads
+package's `shadowspill_workloads.integrations` translates MLOps operator facts.
 Operator libraries own their output-axis, reduction, mutation and layout facts;
 adapters translate those facts into generic build settings. Core compilation,
 planning and execution do not discover libraries or select policies by their
@@ -91,7 +92,6 @@ packages/engine/src/shadowspill/
 │       └── training/      boundaries, all backward forms and optimizer templates
 ├── communication/         calibration and reusable communication information
 │   └── binding/           resolve logical groups into calibration participants
-├── integrations/          explicit adapters from optional libraries to generic build APIs
 ├── execution/             saved-plan workers, initialization and bounded tensor export
 │   ├── diagnostics/       no-update startup calls, state preservation and reports
 │   ├── recording/         opt-in task/transfer recording for Executor
@@ -272,8 +272,10 @@ suite.
 
 The script creates `.venv`, installs PyTorch with the machine accelerator
 backend, builds and installs the library, its backends and the adapter,
-installs development dependencies and those of the training harness, installs
-the mlops operation library with its implementation providers, and verifies
+installs development dependencies and those of the training harness, runs the
+workloads package's `packages/workloads/scripts/setup_mlops.sh`, which installs
+the mlops operation library at its pinned revision with its implementation
+providers, and verifies
 the device backend, component libraries, ABI loading, and PyTorch storage
 adapter. To use an existing virtual or Conda environment:
 

@@ -6,7 +6,6 @@ their complete inputs unless an explicit provider contract permits splitting.
 
 from dataclasses import dataclass
 
-from shadowspill.integrations.mlops import operator_chunk_rules
 from shadowspill.pytorch.chunking import (
     AxisChunks,
     AxisFrom,
@@ -15,6 +14,7 @@ from shadowspill.pytorch.chunking import (
 )
 from shadowspill.pytorch.partition import IsolateOperations
 from shadowspill.task.inputs import TaskInputRole
+from shadowspill_workloads.integrations.mlops import operator_chunk_rules
 
 _LINEAR_ATTENTION = "mlops.linear_attention_fla_gated_delta_rule_fwd.default"
 

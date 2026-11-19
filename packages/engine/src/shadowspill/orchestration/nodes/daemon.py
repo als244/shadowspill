@@ -116,7 +116,7 @@ class NodeDaemon:
         work_root: str | Path,
         token: str | None = None,
         pool: str = "default",
-        workload_packages: Sequence[str] = ("shadowspill",),
+        workload_packages: Sequence[str] = ("shadowspill-workloads",),
         worker_address: str | None = None,
         environment: Mapping[str, str] | None = None,
         ssl_context: ssl.SSLContext | None = None,

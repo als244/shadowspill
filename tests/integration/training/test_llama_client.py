@@ -79,7 +79,7 @@ def test_setup_uses_installed_definitions_and_caps_scheduled_padding(tmp_path):
         backward_pieces=2,
     )
     resolved = resolve_training(
-        load_registry(["shadowspill", "shadowspill-workloads"]), **settings.request()
+        load_registry(["shadowspill-workloads"]), **settings.request()
     )
     assert resolved.config.optimizer.precision["master_dtype"] == "float32"
     layouts = prepare_layouts(resolved)

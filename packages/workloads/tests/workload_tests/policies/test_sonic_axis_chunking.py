@@ -12,7 +12,6 @@ from torch.utils._python_dispatch import TorchDispatchMode
 
 from engine_tests.pytorch.chunking.test_axis_vjp import executable
 from shadowspill.errors import CaptureError
-from shadowspill.integrations.mlops import operator_chunk_rules
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.chunking import (
@@ -21,11 +20,12 @@ from shadowspill.pytorch.chunking import (
 )
 from shadowspill.pytorch.chunking.geometry import LocalLayout
 from shadowspill.pytorch.chunking.transform import chunk_artifact
+from shadowspill_workloads.integrations.mlops import operator_chunk_rules
 
 
 def sonic_rules(batch):
     """Candidate contracts; no readonly, replay, or FP8 certification here."""
-    from shadowspill.integrations.mlops import sonicmoe_chunk_rules
+    from shadowspill_workloads.integrations.mlops import sonicmoe_chunk_rules
 
     return (*operator_chunk_rules(batch), *sonicmoe_chunk_rules())
 

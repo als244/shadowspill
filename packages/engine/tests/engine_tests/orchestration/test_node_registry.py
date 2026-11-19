@@ -37,7 +37,7 @@ def join_request(incarnation="daemon", previous=None):
             1000,
             1000,
         ),
-        ["shadowspill"],
+        ["shadowspill-workloads"],
         "10.0.0.2",
         previous,
     )

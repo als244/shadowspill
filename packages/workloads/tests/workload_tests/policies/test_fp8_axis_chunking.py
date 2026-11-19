@@ -10,10 +10,10 @@ from torch.fx.experimental.proxy_tensor import make_fx
 
 from engine_tests.pytorch.chunking.test_axis_vjp import executable
 from shadowspill.errors import CaptureError
-from shadowspill.integrations.mlops import operator_chunk_rules
 from shadowspill.pytorch import AxisChunks, ChunkAxis
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.chunking.transform import chunk_artifact
+from shadowspill_workloads.integrations.mlops import operator_chunk_rules
 from workload_tests.policies.test_sonic_axis_chunking import Calls, close
 
 
@@ -107,7 +107,7 @@ def captured(function, values, size, axes, rules, tangent_axes):
 
 
 def fp8_capture(values, batch, size):
-    from shadowspill.integrations.mlops import sonicmoe_chunk_rules
+    from shadowspill_workloads.integrations.mlops import sonicmoe_chunk_rules
 
     axis = ChunkAxis(1)
     return captured(
@@ -144,8 +144,8 @@ def test_block_fp8_capture_keeps_scales_shared_and_routes_retained(monkeypatch):
 def test_block_fp8_nested_regions_capture_both_variants(monkeypatch):
     from mlops.block_fp8 import BlockFP8Weight
 
-    from shadowspill.integrations.mlops import sonicmoe_chunk_rules
     from shadowspill.pytorch.chunking.regions import region_artifact
+    from shadowspill_workloads.integrations.mlops import sonicmoe_chunk_rules
     from shadowspill_workloads.policies.text.execution import text_execution_chunks
     from shadowspill_workloads.policies.text.retention import graph_pair_policy
 
@@ -319,7 +319,7 @@ def mhc_region(streams, projection, bias, scale):
 
 
 def mhc_capture(values, size):
-    from shadowspill.integrations.mlops import mhc_chunk_rules
+    from shadowspill_workloads.integrations.mlops import mhc_chunk_rules
 
     return captured(
         mhc_region,

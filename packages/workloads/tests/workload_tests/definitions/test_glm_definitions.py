@@ -36,7 +36,7 @@ from workload_tests.initialization.test_pretrained_initialization import fill
 
 @pytest.mark.parametrize("family", ["glm53", "glm53_flash"])
 def test_public_random_setup_prepares_runtime_packing(family):
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     setup = resolve_training(
         registry,
         model=Model(

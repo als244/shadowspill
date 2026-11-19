@@ -57,7 +57,7 @@ def test_readme_dp_candidates_keep_full_updates_and_independent_moe_geometry():
     from shadowspill_client.parallelism import data_parallel
     from shadowspill_client.text import build_candidates
 
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     setup = resolve_training(
         registry,
         model=Model(

@@ -30,7 +30,14 @@ shadowspill_workloads/
   initialization/            # Bounded weight loading and parameter generation
   lora/                      # Shared adapter application and targeting
   policies/                  # Chunking, retention and execution choices
+  integrations/              # MLOps operator facts as generic build options
+scripts/
+  setup_mlops.sh             # Installs MLOps at the pinned revision the catalog uses
 ```
+
+The catalog's models and its AdamW definition use MLOps, so this package owns
+MLOps: its revision is pinned in `scripts/setup_mlops.sh`, which the repository's
+setup runs. The engine neither imports nor installs it.
 
 Large modules can use a package instead of a single file. Keep architecture-specific
 computation, checkpoint mappings, initialization and setup hooks beside the model.

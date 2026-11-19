@@ -2,8 +2,8 @@
 
 
 def axis_rules(batch):
-    from shadowspill.integrations.mlops import sonicmoe_chunk_rules
     from shadowspill.pytorch import ChunkAxis, OperatorRule
+    from shadowspill_workloads.integrations.mlops import sonicmoe_chunk_rules
 
     flat = ChunkAxis(0, before=batch)
     routing = (

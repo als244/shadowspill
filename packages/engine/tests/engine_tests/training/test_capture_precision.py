@@ -10,12 +10,13 @@ from engine_tests.fixtures.definition_operations import definitions
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.build.optimizer import capture_update
 from shadowspill.build.training_capture import capture_training_model
-from shadowspill.training.definitions import ModelBuild, adamw
+from shadowspill.training.definitions import ModelBuild
 from shadowspill.training.preparation.capture.build import build_template
 from shadowspill.training.preparation.capture.templates import capture_inventory
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client import BuildCandidates, Optimizer, PlanningOptions, Preparation
+from shadowspill_workloads.definitions import adamw
 
 
 def create(config):

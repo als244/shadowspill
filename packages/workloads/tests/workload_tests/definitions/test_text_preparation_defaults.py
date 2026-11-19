@@ -51,7 +51,7 @@ def test_default_shapes_follow_sequence_bound_and_logical_input_partitions(
 
 
 def test_resolved_default_compares_full_steps_and_every_depth_breadth_ordering():
-    registry = load_registry(["shadowspill", "shadowspill-workloads"])
+    registry = load_registry(["shadowspill-workloads"])
     setup = resolve_training(
         registry,
         model=settings(capacity=8192),
@@ -98,7 +98,7 @@ def test_sequence_capacity_is_per_microbatch_and_kernel_bound_is_per_sequence(
     maximum, expected
 ):
     setup = resolve_training(
-        load_registry(["shadowspill", "shadowspill-workloads"]),
+        load_registry(["shadowspill-workloads"]),
         model=settings(capacity=131072),
         objective=Objective("cross_entropy"),
         optimizer=Optimizer("adamw"),
@@ -136,7 +136,7 @@ def test_distinct_sequence_bounds_do_not_reuse_the_same_capture():
         }
     )
     setup = resolve_training(
-        load_registry(["shadowspill", "shadowspill-workloads"]),
+        load_registry(["shadowspill-workloads"]),
         model=settings(capacity=16),
         objective=Objective("cross_entropy"),
         optimizer=Optimizer("adamw"),

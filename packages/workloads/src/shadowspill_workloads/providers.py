@@ -13,6 +13,8 @@ def operator_preparations(implementation, dtype):
         return ()
     import torch
 
-    from shadowspill.integrations.mlops import operator_preparations as descriptions
+    from shadowspill_workloads.integrations.mlops import (
+        operator_preparations as descriptions,
+    )
 
     return descriptions(dtype=getattr(torch, dtype))
