@@ -336,7 +336,14 @@ class RunJobs:
                 )
             )
         if owner is not None and interrupt:
-            owner.interrupt()
+            try:
+                owner.interrupt()
+            except BaseException:
+                # As for close below: a stop that stays blocked must not keep
+                # the caller of a creation that has already ended waiting.
+                if not running:
+                    self._conclude(identity, job)
+                raise
         if running:
             return False
         with self._mutex:

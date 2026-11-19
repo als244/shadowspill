@@ -51,6 +51,7 @@ class Job:
             self.release.set()
         self.failed = failed
         self.closing_error = self.stopping = self.closed = False
+        self.interrupt_error = False
         self.starts = self.interrupts = 0
         self.decoded = bytearray(32 << 10)
 
@@ -72,6 +73,8 @@ class Job:
         self.interrupts += 1
         self.stopping = True
         self.release.set()
+        if self.interrupt_error:
+            raise OSError("stop is blocked")
 
     def close(self):
         if self.closing_error:
@@ -254,6 +257,24 @@ def test_a_failed_creation_is_reported_while_its_cleanup_stays_blocked(tmp_path)
         # Reporting releases nothing: the owner still has to close.
         assert ctx.jobs.used == (1, 0) and not ctx.jobs.retired(IDENTITY)
         assert ctx.jobs.failures() == ((IDENTITY, "cleanup is blocked"),)
+
+
+def test_a_failed_creation_is_reported_while_its_stop_stays_blocked(tmp_path):
+    with configured(tmp_path, blocked=True, failed=True) as ctx:
+        create(ctx.jobs)
+        job = ctx.made[0]
+        job.interrupt_error = True
+        job.release.set()
+        until(ctx.jobs.failures)
+        info = ctx.service.catalog.get(IDENTITY)
+        assert info.state == "failed" and info.error.code == "creation_failed"
+        assert info.error.message == "stopped or failed preparation"
+        # The owner is neither stopped nor closed, so it keeps its slot.
+        assert ctx.jobs.used == (1, 0) and not ctx.jobs.retired(IDENTITY)
+        assert ctx.jobs.failures() == ((IDENTITY, "stop is blocked"),)
+        job.interrupt_error = False
+        until(lambda: ctx.jobs.retired(IDENTITY))
+        assert ctx.service.catalog.get(IDENTITY).state == "failed"
 
 
 @pytest.mark.parametrize("where", ["factory", "thread"])
