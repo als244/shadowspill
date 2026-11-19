@@ -40,6 +40,51 @@ class MetricAnnotation(Record):
 
 @dataclass(frozen=True)
 class MetricRecord(Record):
+    """One entry of a run's metric journal.
+
+    An engine entry records a finished request's outcome and scalars. A
+    caller entry records values logged with `TrainingClient.log_metrics`
+    against a finished request, under that request's identity, history and
+    update count.
+
+    Parameters
+    ----------
+    position : int
+        Journal position, from 1, increasing in completion order.
+    identity : RequestIdentity
+        The request the entry belongs to.
+    operation : str
+        The request's operation, such as ``"step"`` or ``"save"``.
+    outcome : str
+        ``"completed"``, ``"skipped"`` (an ``optim_step`` whose accumulation
+        has no participating contribution) or ``"failed"``.
+    history_id : str or None
+        Training history the request ran in; a restore starts a new one. None
+        for a failure without a confirmed history.
+    completed_updates : int or None
+        Optimizer updates the run had completed after the request. None for a
+        failure without a confirmed count.
+    state_valid : bool
+        Whether the run's training state was valid after the request.
+    execution_effect : str
+        Whether the request's work ran: ``"not_started"``, ``"completed"`` or
+        ``"unknown"``. Always ``"completed"`` unless the outcome is
+        ``"failed"``.
+    loss : float or int, optional
+        The objective's loss for the request, when it has one. None for a
+        caller entry.
+    metrics : mapping of str to float or int, default {}
+        Scalars by name: the objective's metrics for an engine entry, the
+        logged values for a caller entry.
+    failure_code : str, optional
+        Error code of a failed request. None otherwise.
+    source : str, default "engine"
+        ``"engine"`` for a request's own result, ``"caller"`` for logged
+        values.
+    annotation_id : str, optional
+        ID of a caller entry within its request. None for an engine entry.
+    """
+
     position: int
     identity: RequestIdentity
     operation: Operation
@@ -118,6 +163,24 @@ class MetricRecord(Record):
 
 @dataclass(frozen=True)
 class MetricSnapshot(Record):
+    """A fixed range of a run's metric journal.
+
+    The range holds the journal positions after ``after`` up to and including
+    ``through``. A `MetricQueries.export_jsonl` file starts with one, and
+    `ReportDocument.snapshot` is one.
+
+    Parameters
+    ----------
+    session_id : str
+        Session that owns the run.
+    run_id : str
+        The run.
+    after : int
+        Journal position the range starts after.
+    through : int
+        Last journal position in the range, at least ``after``.
+    """
+
     session_id: str
     run_id: str
     after: int
@@ -134,6 +197,29 @@ class MetricSnapshot(Record):
 
 @dataclass(frozen=True)
 class MetricPage(MetricSnapshot):
+    """One page of a run's metric journal.
+
+    `MetricQueries.query` returns it. Its records lie in the snapshot of
+    journal positions after ``after`` up to ``through``.
+
+    Parameters
+    ----------
+    session_id : str
+        Session that owns the run.
+    run_id : str
+        The run.
+    after : int
+        Journal position the page starts after.
+    through : int
+        Last journal position of the snapshot.
+    records : sequence of MetricRecord
+        At most 128 records, in increasing position.
+    next_cursor : int, optional
+        Position of the page's last record when more records remain in the
+        snapshot: pass it as ``after``, with the same ``through``, for the
+        next page. None when the snapshot is finished.
+    """
+
     records: Sequence[MetricRecord]
     next_cursor: int | None = None
 

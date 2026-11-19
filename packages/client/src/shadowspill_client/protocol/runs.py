@@ -44,13 +44,59 @@ def organization(name: str | None, labels: Mapping[str, str]) -> Mapping[str, st
 
 @dataclass(frozen=True)
 class RunInfo(Record):
-    """Durable lifecycle observations, not proof that GPU state is still valid.
+    """The service's record of one run: who created it, its state and its artifacts.
 
-    Configuration and Plans are immutable artifacts. The operation journal owns
-    update counters, accumulated gradients and execution/publication failures.
-    The initial history identifies creation; later restore segments belong to
-    operation results and do not rewrite creation provenance.
-    ``request_sha256`` pins the original creation request for deduplication.
+    The record describes the run's lifecycle, not its training progress: update
+    counts and gradients after creation belong to operation results. A ready
+    state says the workers initialized, not that they are still running.
+
+    Parameters
+    ----------
+    owner_id : str
+        Identity of the client that created the run.
+    session_id : str
+        Session the run belongs to.
+    run_id : str
+        The run's identifier within its session.
+    server_incarnation : str
+        Identity of the service process that created the run.
+    request_sha256 : str
+        SHA-256 digest of the creation request, so that a repeated request
+        finds this run instead of creating another.
+    configuration : ArtifactRef
+        The run's resolved training configuration.
+    state : str, default "preparing"
+        One of ``"preparing"``, ``"ready"``, ``"prepared"``, ``"planned"``,
+        ``"failed"``, ``"stopped"`` or ``"closed"``.
+    stage : str or None, default "queued"
+        While preparing, the current creation stage: ``"queued"``,
+        ``"build"``, ``"profile"``, ``"communicate"``, ``"plan"``,
+        ``"converting"`` or ``"initializing"``. None in any other state.
+    name : str, optional
+        A name the creator gave the run.
+    labels : mapping of str to str, default {}
+        Labels the creator gave the run; keys up to 64 characters, values up
+        to 256.
+    plans : ArtifactRef, optional
+        The run's execution Plans, once it has them.
+    initial_history_id : str, optional
+        Identity of the run's training history, once its workers initialized.
+    error : ServiceError, optional
+        Why the run failed or stopped; set exactly when `state` is
+        ``"failed"`` or ``"stopped"``.
+    parent_checkpoint : ArtifactRef, optional
+        The checkpoint the run was created from.
+    initial_completed_updates : int, default 0
+        Updates already completed when the run started, from its parent
+        checkpoint.
+    initial_checkpoint : ArtifactRef, optional
+        The checkpoint the workers loaded: the parent checkpoint, or the copy
+        converted from it for this run.
+    kind : str, default "training"
+        ``"training"``, or ``"preparation"`` or ``"planning"`` for a job that
+        only prepares or plans.
+    preparation_export : ArtifactRef, optional
+        The exported preparation of a completed preparation job.
     """
 
     owner_id: str

@@ -17,7 +17,29 @@ WEIGHTS_RANK_MEDIA_TYPE = "application/vnd.shadowspill.weights-rank"
 
 @dataclass(frozen=True)
 class CheckpointConversion(Record):
-    """Immutable source and transformation for a materialized target generation."""
+    """Where a converted checkpoint came from.
+
+    A run started from a checkpoint saved under other Plans loads a copy that
+    the service converts for the run's Plans and worker count; the copy's
+    `SaveInfo.conversion` records its source.
+
+    Parameters
+    ----------
+    source : ArtifactRef
+        The manifest of the checkpoint the copy was converted from.
+    source_plans : ArtifactRef
+        The Plans the source was saved under.
+    logical_state_sha256 : str
+        SHA-256 of the training state's logical description, which the source
+        and the copy share: each value's role, full shape, data type and ties,
+        whatever its division among workers.
+    version : int, default 1
+        Version of this record's format.
+    randomness : mapping of str to object, optional
+        How the source's random streams map onto the copy's workers: the root
+        seed, and each source and target stream with whether it is preserved
+        or derived. None when the source saved no random state.
+    """
 
     source: ArtifactRef
     source_plans: ArtifactRef
@@ -47,11 +69,53 @@ class CheckpointConversion(Record):
 
 @dataclass(frozen=True)
 class SaveInfo(Record):
-    """The completed boundary and fixed setup shared by every saved rank.
+    """The provenance and setup of a saved checkpoint or weights export.
 
-    Caller metadata is explicit JSON. Configuration retains setup defaults;
-    per-call optimizer or objective overrides never replace those defaults.
-    Frozen state is an exact external initialization identity, not a local path.
+    Every worker's file holds the same record.
+
+    Parameters
+    ----------
+    session_id : str
+        The session of the run that saved it.
+    run_id : str
+        The run that saved it.
+    history_id : str
+        The training history at the save.
+    request_id : str
+        ID of the save request. A copy the service converted for a run under
+        other Plans has an ID the service derived instead.
+    completed_updates : int
+        Optimizer updates completed at the save.
+    world_size : int
+        Number of workers, each with its own file.
+    configuration : ArtifactRef
+        The run's resolved training configuration, with its setup defaults;
+        per-call optimizer and objective controls do not replace them.
+    plans : ArtifactRef
+        The Plans the state was saved under.
+    byteorder : str
+        ``"little"`` or ``"big"``: the saving host's byte order. A run on a
+        host of the other order refuses the state.
+    weights : str, default "master"
+        ``"master"`` (the master weights) or ``"compute"`` (the weights at
+        compute precision), as chosen at the save.
+    frozen_state_id : str, optional
+        Identity of ``frozen_base``, when the files leave out frozen
+        parameters that no Plan changes; None otherwise.
+    metadata : mapping of str to object, default {}
+        The caller metadata given at the save.
+    conversion : CheckpointConversion, optional
+        For a checkpoint the service converted for a run under other Plans,
+        where it came from; None otherwise.
+    frozen_base : FrozenBase, optional
+        How a run re-creates the frozen parameters the files leave out: the
+        model settings with their initialization, the model definition's
+        source and, for weights initialized from an artifact, that artifact.
+        None when the files leave none out.
+    kind : str, default "checkpoint"
+        ``"checkpoint"``, or ``"weights"`` for a weights export.
+    format : str, default "shadowspill"
+        The file format, always ``"shadowspill"``.
     """
 
     session_id: str
@@ -107,7 +171,15 @@ class SaveInfo(Record):
                 raise ValueError("frozen state identity differs from its exact base")
 
     def rank_metadata(self) -> dict[str, object]:
-        """The same provenance travels inside each ordinary rank archive."""
+        """Return the provenance each worker's file holds.
+
+        Returns
+        -------
+        dict
+            This record's fields under its ``kind`` as the only key, without
+            ``conversion`` or ``frozen_base`` when they are None, and without
+            ``kind`` and ``format`` for a checkpoint.
+        """
         value = self.to_dict()
         if self.conversion is None:
             # Ordinary generations retain the existing rank metadata format.
@@ -121,17 +193,34 @@ class SaveInfo(Record):
 
     @property
     def media_type(self) -> str:
+        """The manifest's media type, which differs by ``kind``."""
         return (
             CHECKPOINT_MEDIA_TYPE if self.kind == "checkpoint" else WEIGHTS_MEDIA_TYPE
         )
 
     @property
     def rank_media_type(self) -> str:
+        """The media type of each worker's file, which differs by ``kind``."""
         return RANK_MEDIA_TYPE if self.kind == "checkpoint" else WEIGHTS_RANK_MEDIA_TYPE
 
 
 @dataclass(frozen=True)
 class SavedRank(Record):
+    """One worker's file in a saved checkpoint or weights export.
+
+    Parameters
+    ----------
+    rank : int
+        The worker's rank, from zero.
+    archive : ArtifactRef
+        The file.
+    state_sha256 : str
+        SHA-256 of the worker's state inventory: the name, shape, data type
+        and layout of each persistent tensor the worker holds, and the part
+        it owns. It identifies which state the file holds, not its values,
+        and is the same under any Plans that train that state.
+    """
+
     rank: int
     archive: ArtifactRef
     state_sha256: str
@@ -152,6 +241,19 @@ class SavedRank(Record):
 
 @dataclass(frozen=True)
 class CheckpointManifest(Record):
+    """The manifest of a saved checkpoint: its provenance and one file per worker.
+
+    `CheckpointHandle.manifest` returns it, and `GenerationHandle.download`
+    writes it as ``manifest.json``.
+
+    Parameters
+    ----------
+    info : SaveInfo
+        The save's provenance and setup.
+    ranks : sequence of SavedRank
+        One entry per worker, in rank order.
+    """
+
     info: SaveInfo
     ranks: Sequence[SavedRank]
 
@@ -163,7 +265,20 @@ class CheckpointManifest(Record):
 
 @dataclass(frozen=True)
 class WeightsManifest(Record):
-    """Inference model state and base dependencies; never optimizer-resume state."""
+    """The manifest of exported weights: their provenance and one file per worker.
+
+    `WeightsHandle.manifest` returns it, and `GenerationHandle.download`
+    writes it as ``manifest.json``. The files hold model weights and
+    persistent buffers, never optimizer state. When they leave out frozen
+    parameters, ``info.frozen_base`` is set.
+
+    Parameters
+    ----------
+    info : SaveInfo
+        The export's provenance and setup.
+    ranks : sequence of SavedRank
+        One entry per worker, in rank order.
+    """
 
     info: SaveInfo
     ranks: Sequence[SavedRank]

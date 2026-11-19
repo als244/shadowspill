@@ -11,6 +11,25 @@ from .requests import ArtifactRef
 
 @dataclass(frozen=True)
 class FrozenBase(Record):
+    """Where the frozen parameters a checkpoint leaves out come from.
+
+    A checkpoint that omits frozen parameters records this instead, so a load
+    can rebuild them exactly from the installed model and its pinned weights.
+
+    Parameters
+    ----------
+    model : Model
+        The model with its resolved definition and initialization; pretrained
+        weights carry a pinned revision.
+    source : DefinitionSource
+        The installed definition that resolved the model.
+    artifact : ArtifactRef, optional
+        The weights artifact, when the model initializes from one. Required in
+        exactly that case.
+    version : int, default 1
+        Record version.
+    """
+
     model: Model
     source: DefinitionSource
     artifact: ArtifactRef | None = None
@@ -40,6 +59,7 @@ class FrozenBase(Record):
 
     @property
     def identity(self) -> str:
+        """Content identity of this record, ``"base."`` followed by its digest."""
         from .codec import digest
 
         return "base." + digest(self)

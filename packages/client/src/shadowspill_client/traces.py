@@ -75,14 +75,49 @@ def _copy_report(stream: BinaryIO, destination: Path, max_bytes: int) -> Path:
 
 
 class TraceHandle(ArtifactHandle):
+    """One worker's runtime trace of a compute call.
+
+    A call made with ``runtime_trace=True`` lists one per participating
+    worker in `TrainingResult.traces`. The trace is a ZIP archive: as an
+    `ArtifactHandle`, its `ArtifactHandle.download` saves the raw archive,
+    and `download_report` saves only its HTML report.
+
+    Attributes
+    ----------
+    reference : ArtifactRef
+        The trace archive.
+    """
+
     def download_report(
         self, path: str | Path, *, max_bytes: int = 64 << 20
     ) -> CallFuture[Path]:
-        """Verify the trace and copy its standalone HTML into a new local file.
+        """Download the trace's standalone HTML report into a new local file.
 
-        The archive streams through a temporary disk file. No model, engine,
-        plotting library, or in-memory copy of the complete trace is needed.
-        ``download`` remains available for the original raw diagnostic archive.
+        The report compares the measured execution with the Plan's
+        prediction. The archive is downloaded and verified into a temporary
+        local file, then only its ``report.html`` is copied to ``path``; the
+        client needs no engine or plotting library. An existing file is never
+        overwritten.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The local file to create.
+        max_bytes : int, default 67108864
+            Largest report to copy, in bytes (64 MiB by default).
+
+        Returns
+        -------
+        CallFuture of pathlib.Path
+            ``path``, once the file is complete. It fails with `ValueError` if
+            the archive has no report, giving the service's reason when it
+            recorded one, or the report exceeds ``max_bytes``, and with
+            `FileExistsError` if ``path`` exists.
+
+        Raises
+        ------
+        ValueError
+            ``max_bytes`` is below one, or the handle is not a trace archive.
         """
         integer(max_bytes, "runtime report bytes", minimum=1)
         if self.reference.media_type != "application/zip":

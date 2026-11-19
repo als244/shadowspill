@@ -8,10 +8,32 @@ from typing import Any
 
 @dataclass(frozen=True)
 class Datum:
-    """Named model and objective inputs, with no implicit shifting or batching.
+    """One example: the model's inputs and the objective's inputs.
 
-    Arrays and nested values remain caller-owned until a training submission
-    snapshots them. Constructing this record does not copy large payloads.
+    Each mapping is a tree of named fields matching the model's or the
+    objective's input schema; a field's path is its keys, such as
+    ``("tokens",)``. A leaf is a NumPy array or scalar, a CPU PyTorch tensor,
+    a Python bool, int or float, or a nested list of them, with a dtype that
+    `TensorField` accepts. The client never shifts or batches fields.
+
+    Construction copies only the two top-level mappings, into read-only views.
+    A submission checks every value against the schemas and the run's limits,
+    and copies every array before it returns; the arrays may be changed or
+    reused afterwards.
+
+    Parameters
+    ----------
+    inputs : mapping of str to array or mapping
+        Model inputs, by field name.
+    loss_inputs : mapping of str to array or mapping, default {}
+        Objective inputs, by field name, such as targets, masks and weights.
+
+    Raises
+    ------
+    TypeError
+        ``inputs`` or ``loss_inputs`` is not a mapping.
+    ValueError
+        A top-level key is not a nonempty str.
     """
 
     inputs: Mapping[str, Any]

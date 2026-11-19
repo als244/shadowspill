@@ -8,6 +8,17 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Constant:
+    """A schedule that gives the same value at every step.
+
+    Calling it with a step number returns ``value``, for example
+    ``optim={"lr": schedule(step)}``.
+
+    Parameters
+    ----------
+    value : float
+        The value at every step.
+    """
+
     value: float
 
     def __call__(self, step: int) -> float:
@@ -16,6 +27,34 @@ class Constant:
 
 @dataclass(frozen=True)
 class WarmupCosine:
+    """A learning rate schedule with linear warmup and cosine decay.
+
+    Calling it with a zero-based step ``s`` returns
+    ``lr * (s + 1) / warmup_steps`` while ``s < warmup_steps``, and then
+    ``min_lr + (lr - min_lr) * (1 + cos(pi * p)) / 2`` with
+    ``p = min(1, (s - warmup_steps) / max(1, total_steps - warmup_steps - 1))``:
+    a rise to ``lr``, a half cosine down to ``min_lr``, then ``min_lr``.
+
+    Parameters
+    ----------
+    lr : float
+        Peak rate, reached at the end of warmup.
+    min_lr : float
+        Final rate, between 0 and ``lr`` inclusive.
+    warmup_steps : int
+        Number of warmup steps; zero starts the decay at ``lr``.
+    total_steps : int
+        Number of steps the warmup and decay span; more than
+        ``warmup_steps``.
+
+    Raises
+    ------
+    ValueError
+        If ``warmup_steps`` is negative or not less than ``total_steps``, or
+        ``min_lr`` is not between 0 and ``lr``; and from a call, if the step
+        is negative.
+    """
+
     lr: float
     min_lr: float
     warmup_steps: int

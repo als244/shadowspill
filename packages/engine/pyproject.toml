@@ -20,12 +20,16 @@ pytorch = ["torch>=2.13,<2.14", "nvidia-ml-py>=13.580,<14"]
 training = ["wandb>=0.20"]
 dev = [
   "cmake>=3.25",
+  "furo>=2025.12",
   "hypothesis>=6.130",
   "mypy>=1.15",
+  "myst-parser>=5.2",
   "numpy>=2.0",
+  "numpydoc>=1.11",
   "pytest>=8",
   "pytest-cov>=6",
   "ruff>=0.11",
+  "sphinx>=9.1,<10",
 ]
 
 [tool.scikit-build]

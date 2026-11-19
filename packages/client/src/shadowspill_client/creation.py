@@ -28,12 +28,41 @@ if TYPE_CHECKING:
 
 
 class CreationError(RuntimeError):
+    """A run or job that failed, stopped or closed before it was ready.
+
+    Raised by the futures of `ServiceClient.create_training_client`,
+    `ServiceClient.prepare_training`, `ServiceClient.plan_training` and
+    their reattaching counterparts. The service keeps the run's record and
+    logs.
+
+    Parameters
+    ----------
+    info : RunInfo
+        The run's record as last read, with its ``state`` and ``error``.
+    """
+
     def __init__(self, info: RunInfo) -> None:
         self.info = info
         super().__init__(f"training run {info.run_id} is {info.state}: {info.error}")
 
 
 class TrainingFuture(CallFuture[TrainingClient]):
+    """`CallFuture` of a `TrainingClient` being created or reattached.
+
+    `ServiceClient.create_training_client` and
+    `ServiceClient.get_training_client` return it. ``result()`` blocks until
+    the client is ready and returns it. A wait that times out raises
+    `TimeoutError` and leaves the work running.
+
+    Attributes
+    ----------
+    session_id : str
+        The session the run belongs to.
+    run_id : str
+        The run's ID, known before the run is ready. Pass it to
+        `ServiceClient.get_training_client` to reattach.
+    """
+
     def __init__(self, session_id: str, run_id: str) -> None:
         super().__init__()
         self.session_id, self.run_id = session_id, run_id

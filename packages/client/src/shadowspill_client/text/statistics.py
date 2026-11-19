@@ -21,11 +21,32 @@ def _vector(value: Any, name: str) -> NDArray[Any]:
 
 
 def text_batch_statistics(batch: Sequence[Datum]) -> BatchStatistics:
-    """Count model input positions and unmasked targets in an aligned text batch.
+    """Count the model positions and trained targets of a text batch.
 
-    Input-only forward calls have no supervised statistics. Masks count valid
-    targets independently of their objective weights. No input arrays are copied
-    into the returned statistics, and no packing, upload or service call occurs.
+    An example's length is the size of its ``inputs["tokens"]``. Its
+    supervised length is the number of true entries in
+    ``loss_inputs["loss_mask"]``, or of ``loss_inputs["target_tokens"]``
+    without a mask, whatever the weights; an example without targets has
+    none. No array is retained, and nothing is packed or sent to the service.
+
+    Parameters
+    ----------
+    batch : sequence of Datum
+        Examples with one-dimensional CPU fields, as `text_datum` makes them.
+
+    Returns
+    -------
+    BatchStatistics
+        The lengths, with ``supervised`` None when no example has targets.
+
+    Raises
+    ------
+    KeyError
+        An example has no ``inputs["tokens"]``.
+    ValueError
+        The batch is empty; a field is not on the CPU or not one-dimensional;
+        a mask comes without targets; the targets or mask differ in length
+        from the tokens; or a mask holds a value other than true or false.
     """
     lengths, supervised = [], []
     has_targets = False

@@ -16,12 +16,29 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class NsightCapture:
+    """One worker's Nsight Systems capture: its status and report.
+
+    `TrainingClient.nsys` and `ServiceClient.get_nsys` return it. Reports
+    finalize after the workers exit, so after closing the run, query again
+    until ``record.status`` is no longer ``"pending"``.
+
+    Attributes
+    ----------
+    record : NsightManifest
+        The capture's record: its ``status``, the ``window`` of updates it
+        covers and its ``report``.
+    """
+
     record: NsightManifest
     _service: ServiceClient = field(repr=False, compare=False)
 
     @property
     def report(self) -> ArtifactHandle | None:
-        """Verified native bytes when present, including explicitly partial reports."""
+        """The native report file, or None when the capture has none.
+
+        A ready capture has one, and a failed capture may keep a partial one.
+        Downloading it is explicit, with `ArtifactHandle.download`.
+        """
         return (
             None
             if self.record.report is None

@@ -10,6 +10,18 @@ from .protocol.codec import MAX_METADATA_BYTES, decode
 
 
 class GenerationHandle[Manifest: CheckpointManifest | WeightsManifest](ArtifactHandle):
+    """Saved per-worker state in service storage: a manifest and one file per worker.
+
+    Calls return one of its two kinds, `CheckpointHandle` and
+    `WeightsHandle`. Nothing is downloaded until `manifest` or `download` is
+    called.
+
+    Attributes
+    ----------
+    reference : ArtifactRef
+        The manifest's artifact reference.
+    """
+
     @property
     def _manifest_type(self) -> type[Manifest]:
         raise NotImplementedError
@@ -35,15 +47,44 @@ class GenerationHandle[Manifest: CheckpointManifest | WeightsManifest](ArtifactH
         return value, body
 
     def manifest(self) -> CallFuture[Manifest]:
-        """Verify the small generation manifest without downloading rank data."""
+        """Download and verify the manifest, without the worker files.
+
+        Returns
+        -------
+        CallFuture of CheckpointManifest or WeightsManifest
+            The decoded manifest, of this handle's kind. It fails with
+            `ValueError` if the artifact is not such a manifest.
+        """
         return self._service._work.submit(lambda: self._manifest()[0])
 
     def download(self, path: str | Path, *, resume: bool = False) -> CallFuture[Path]:
-        """Copy the manifest and rank files into a new directory, serially.
+        """Copy the manifest and every worker's file into a new local directory.
 
-        Existing destinations are never overwritten. Publish the local manifest
-        last; failure removes only files created by this call. Plans and frozen
-        base dependencies are separate artifacts, not implicit large downloads.
+        The worker files are copied one at a time into ``ranks/`` and verified;
+        ``manifest.json`` is written last, so its presence marks a complete
+        copy. An existing destination is never overwritten. The Plans and
+        frozen base weights the manifest names are separate artifacts and are
+        not copied.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The directory to create.
+        resume : bool, default False
+            Keep an interrupted copy, and continue one already at ``path``:
+            complete files are verified instead of downloaded again, and a
+            partial file continues where it stopped. Without it, a failed copy
+            removes what this call created.
+
+        Returns
+        -------
+        CallFuture of pathlib.Path
+            The directory, once the copy is complete.
+
+        Raises
+        ------
+        TypeError
+            If ``resume`` is not a bool.
         """
         if type(resume) is not bool:
             raise TypeError("download resume must be boolean")

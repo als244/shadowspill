@@ -103,7 +103,12 @@ _KINDS: Mapping[str, type[Record]] = {
 
 
 class ProtocolError(ValueError):
-    """Unsupported version or malformed bounded protocol metadata."""
+    """Protocol metadata that is malformed, too large or of another version.
+
+    Raised when a record cannot be encoded within the metadata bounds, and when
+    a reply is not what the request expects, including a download whose bytes
+    differ from their reference.
+    """
 
 
 def _object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

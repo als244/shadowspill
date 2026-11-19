@@ -15,15 +15,52 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ArtifactHandle:
+    """A stored artifact, reachable through one connection.
+
+    `ServiceClient.artifact` and the calls that return stored files, such as
+    `ArtifactTransfers.upload`, return one.
+
+    Attributes
+    ----------
+    reference : ArtifactRef
+        The artifact.
+    """
+
     reference: ArtifactRef
     _service: ServiceClient
 
     @property
     def id(self) -> str:
+        """The artifact's ID, as in ``reference``."""
         return self.reference.id
 
     def download(self, path: str | Path, *, resume: bool = False) -> CallFuture[Path]:
-        """Stream and verify into a new local file; never overwrite an existing one."""
+        """Download the artifact into a new local file.
+
+        The bytes are checked against the reference's size and SHA-256. An
+        existing file is never overwritten.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The local file to create.
+        resume : bool, default False
+            Keep the progress of a failed download beside ``path``, in
+            ``<path>.shadowspill-download``, and continue a download kept that
+            way. Without it, a failed download removes its partial file.
+
+        Returns
+        -------
+        CallFuture of pathlib.Path
+            ``path``, once the complete file is in place. It fails with
+            `FileExistsError` if ``path`` exists, and with `OSError` for a
+            local file failure.
+
+        Raises
+        ------
+        TypeError
+            ``resume`` is not a bool.
+        """
         if type(resume) is not bool:
             raise TypeError("download resume must be boolean")
         destination = Path(path)
@@ -52,7 +89,7 @@ class ArtifactHandle:
 
 
 class ArtifactTransfers:
-    """Explicit transfers into this authenticated service's artifact namespace."""
+    """Uploads into a service's artifact storage, as `ServiceClient.artifacts`."""
 
     def __init__(self, service: ServiceClient) -> None:
         self._service = service
@@ -60,12 +97,32 @@ class ArtifactTransfers:
     def upload(
         self, path: str | Path, *, reference: ArtifactRef | None = None
     ) -> CallFuture[ArtifactHandle]:
-        """Register a file, checkpoint or weights directory with verified resume.
+        """Upload a local file, or a downloaded checkpoint or weights directory.
 
-        Repeating this call explicitly resumes an incomplete transfer. Exchanges
-        are never retried automatically. Keep local files unchanged until the
-        future finishes. Supply ``reference`` to preserve an existing dependency
-        identity when copying between services. No workers start on upload.
+        Calling again with the same file continues an incomplete upload from
+        the part the service has verified; nothing is retried automatically.
+        Keep the local files unchanged until the future finishes.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The local file or directory.
+        reference : ArtifactRef, optional
+            The artifact's existing reference, kept so that settings or
+            manifests naming it still resolve, for example when copying
+            between services. By default, a file gets an ID derived from its
+            content.
+
+        Returns
+        -------
+        CallFuture of ArtifactHandle
+            The stored artifact: a `CheckpointHandle` or `WeightsHandle` for
+            those kinds.
+
+        Raises
+        ------
+        TypeError
+            ``reference`` is not an `ArtifactRef`.
         """
         from .uploads import upload
 

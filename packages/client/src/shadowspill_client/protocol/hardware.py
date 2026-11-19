@@ -13,6 +13,24 @@ def _name(value: str, name: str) -> None:
 
 @dataclass(frozen=True)
 class HardwareDevice(Record):
+    """A device assigned to a node.
+
+    Parameters
+    ----------
+    id : str
+        Stable device ID, accepted by `Resources` ``devices``.
+    index : int
+        Position in the node's assigned devices, from zero, accepted by
+        `Resources` ``devices`` together with ``node``.
+    gpu_type : str or None
+        GPU name the device reports, accepted by `Resources` ``gpu_type``.
+        None when unknown.
+    capacity_bytes : int
+        Device memory, in bytes.
+    available : bool
+        True unless one of the service's runs holds the device.
+    """
+
     id: str
     index: int
     gpu_type: str | None
@@ -31,6 +49,26 @@ class HardwareDevice(Record):
 
 @dataclass(frozen=True)
 class HardwareNode(Record):
+    """A machine the service can assign, with its devices and host memory.
+
+    Parameters
+    ----------
+    id : str
+        Node ID, accepted by `Resources` ``node``.
+    pool : str
+        Compute pool the node belongs to, accepted by `Resources` ``pool``.
+    devices : sequence of HardwareDevice
+        The node's assigned devices, in ``index`` order.
+    host_capacity_bytes : int
+        Host memory assigned to the node, in bytes.
+    host_available_bytes : int
+        Part of ``host_capacity_bytes`` the service has not claimed, in bytes.
+    cpu_count : int, optional
+        Number of CPUs assigned to the node. None when unknown.
+    driver : str, optional
+        GPU driver version. None when unknown.
+    """
+
     id: str
     pool: str
     devices: Sequence[HardwareDevice]
@@ -62,6 +100,14 @@ class HardwareNode(Record):
 
 @dataclass(frozen=True)
 class HardwareInventory(Record):
+    """The hardware a service can assign, from `ServiceClient.list_hardware`.
+
+    Parameters
+    ----------
+    nodes : sequence of HardwareNode
+        The nodes, each with a distinct ID.
+    """
+
     nodes: Sequence[HardwareNode]
 
     def __post_init__(self) -> None:
@@ -75,6 +121,15 @@ class HardwareInventory(Record):
         object.__setattr__(self, "nodes", nodes)
 
     def summary(self) -> str:
+        """Describe the inventory as a table for printing.
+
+        Returns
+        -------
+        str
+            One row per device with its pool, node, index, GPU, memory in GiB
+            and status, then one line per node with its CPUs, host memory and
+            driver.
+        """
         rows = [("Pool", "Node", "Device", "GPU", "GiB", "Status")]
         for node in self.nodes:
             rows.extend(
@@ -112,6 +167,18 @@ class HardwareInventory(Record):
 
 @dataclass(frozen=True)
 class WorkerPlacement(Record):
+    """The device proposed for one worker.
+
+    Parameters
+    ----------
+    rank : int
+        The worker's rank.
+    node : str
+        ID of the node holding the device.
+    device : HardwareDevice
+        The device.
+    """
+
     rank: int
     node: str
     device: HardwareDevice

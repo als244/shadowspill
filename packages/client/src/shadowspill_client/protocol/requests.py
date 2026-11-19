@@ -37,6 +37,20 @@ def scalars(value: Mapping[str, Scalar], name: str) -> Mapping[str, Scalar]:
 
 @dataclass(frozen=True)
 class ArtifactRef(Record):
+    """Reference to a stored artifact: its ID and the content it must have.
+
+    Parameters
+    ----------
+    id : str
+        The artifact's ID in its owner's storage.
+    sha256 : str
+        SHA-256 of the content, as 64 lowercase hexadecimal digits.
+    size_bytes : int
+        Size of the content, in bytes.
+    media_type : str, default "application/octet-stream"
+        Media type of the content.
+    """
+
     id: str
     sha256: str
     size_bytes: int
@@ -53,10 +67,17 @@ class ArtifactRef(Record):
         text(self.media_type, "media type")
 
     def same_content(self, other: ArtifactRef) -> bool:
-        """Compare immutable content, without granting access to either artifact.
+        """Check whether two references name the same content, whatever their IDs.
 
-        Uploads may name identical bytes differently. Storage authorization still
-        requires the complete reference, including its owner-scoped ID.
+        Parameters
+        ----------
+        other : ArtifactRef
+            The reference to compare with.
+
+        Returns
+        -------
+        bool
+            True when the checksum, size and media type are equal.
         """
         return (self.sha256, self.size_bytes, self.media_type) == (
             other.sha256,
@@ -67,6 +88,26 @@ class ArtifactRef(Record):
 
 @dataclass(frozen=True)
 class RequestIdentity(Record):
+    """Identity of one operation submitted to a training run.
+
+    Parameters
+    ----------
+    request_id : str
+        The request's ID, used to look it up again.
+    run_id : str
+        The run it was submitted to.
+    sequence : int
+        Its position in the run's submission order, from one.
+    writer_id : str
+        The writer that submitted it.
+    writer_epoch : int
+        The writer's attachment number in the run, from one. Each attachment
+        fences the writers before it.
+    server_incarnation : str
+        ID of the service process run that attached the writer, as in
+        `ServiceInfo`.
+    """
+
     request_id: str
     run_id: str
     sequence: int

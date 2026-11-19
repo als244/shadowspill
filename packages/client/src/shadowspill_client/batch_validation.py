@@ -31,6 +31,36 @@ MAX_VALIDATION_METADATA = 16 << 20
 
 @dataclass(frozen=True)
 class BatchValidation:
+    """The outcome of checking a batch against a run's prepared layouts.
+
+    `TrainingClient.validate_batch` returns it; the compute calls run the same
+    checks before they upload. Values and limits are always checked. Packing
+    is checked as well, unless the model groups inputs on the service before
+    packing.
+
+    Parameters
+    ----------
+    operation : OperationKey
+        The prepared operation the batch was checked for.
+    capacities : mapping of str to int
+        The batch's total for each capacity of the input schema, by name,
+        without padding.
+    packing_checked : bool
+        Whether the batch was packed into a prepared layout.
+    candidate : str or None
+        ID of the packing candidate selected: the first, in order of
+        simulated time, whose layout fits the batch. None when packing was not
+        checked.
+    scheduled_capacities : mapping of str to int
+        Totals of the selected candidate's scheduled capacities, padding
+        included. Empty when packing was not checked.
+    note : str, optional
+        Why packing was not checked. None when it was.
+    estimated_seconds : float, optional
+        Simulated execution time of the selected candidate, in seconds. None
+        when packing was not checked.
+    """
+
     operation: OperationKey
     capacities: Mapping[str, int | float]
     packing_checked: bool

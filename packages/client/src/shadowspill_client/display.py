@@ -22,6 +22,24 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class LengthStatistics:
+    """Summary statistics of a set of sequence lengths.
+
+    Parameters
+    ----------
+    count : int
+        Number of sequences.
+    total : int
+        Sum of the lengths.
+    minimum : int
+        Shortest length.
+    maximum : int
+        Longest length.
+    average : float
+        Mean length.
+    median : float
+        Median length.
+    """
+
     count: int
     total: int
     minimum: int
@@ -31,6 +49,24 @@ class LengthStatistics:
 
     @classmethod
     def from_lengths(cls, lengths: Sequence[int]) -> LengthStatistics:
+        """Compute the statistics of ``lengths``.
+
+        Parameters
+        ----------
+        lengths : sequence of int
+            One length per sequence.
+
+        Returns
+        -------
+        LengthStatistics
+            Their count, total, extremes, mean and median.
+
+        Raises
+        ------
+        ValueError
+            ``lengths`` is empty or holds a value that is not a nonnegative
+            Python int.
+        """
         values = tuple(integer(value, "sequence length") for value in lengths)
         if not values:
             raise ValueError("length statistics require at least one sequence")
@@ -44,7 +80,15 @@ class LengthStatistics:
         )
 
     def summary(self) -> str:
-        """Minimum/maximum, then average/median, with a space between pairs."""
+        """Format the statistics as ``"min/max mean/median"``.
+
+        Returns
+        -------
+        str
+            The minimum and maximum, then the mean and median rounded to whole
+            numbers, with thousands separators, for example
+            ``"345/3,507 1,126/1,013"``.
+        """
         return (
             f"{self.minimum:,}/{self.maximum:,} {self.average:,.0f}/{self.median:,.0f}"
         )
@@ -52,10 +96,18 @@ class LengthStatistics:
 
 @dataclass(frozen=True)
 class BatchStatistics:
-    """Logical input lengths before packing, with optional supervised lengths.
+    """Lengths of a batch's examples before packing, for `CommandTable`.
 
-    The caller chooses the counted axis. These facts do not include scheduled
-    padding or duplicated copies on cooperating workers, and retain no inputs.
+    Lengths count the examples' own positions, along an axis the caller
+    chooses: no packing padding, and no copies on cooperating workers. No
+    inputs are retained.
+
+    Parameters
+    ----------
+    lengths : LengthStatistics
+        Input length of each example.
+    supervised : LengthStatistics, optional
+        Trained positions of each example. None when they are not counted.
     """
 
     lengths: LengthStatistics
@@ -68,6 +120,28 @@ class BatchStatistics:
         *,
         supervised: Sequence[int] | None = None,
     ) -> BatchStatistics:
+        """Compute batch statistics from per-example lengths.
+
+        Parameters
+        ----------
+        lengths : sequence of int
+            Input length of each example.
+        supervised : sequence of int, optional
+            Trained positions of each example, in the same order, each at most
+            its input length. By default they are not counted.
+
+        Returns
+        -------
+        BatchStatistics
+            The statistics of both.
+
+        Raises
+        ------
+        ValueError
+            ``lengths`` or ``supervised`` is empty or holds a value that is not
+            a nonnegative Python int, or ``supervised`` differs from
+            ``lengths`` in count or exceeds a length.
+        """
         total = LengthStatistics.from_lengths(lengths)
         if supervised is None:
             return cls(total)
@@ -93,11 +167,33 @@ class _Row:
 
 
 class CommandTable:
-    """Display one row for each tracked compute command, updated on completion.
+    """A live table of compute calls, one row per tracked call.
 
-    ``track`` returns the same future. The display does not wait, upload, validate,
-    select Plans or change training. Terminals show recent rows in place; plain
-    logs append submission and completion lines with the same call number.
+    `track` adds a row when a call is submitted and fills it in when the call
+    completes. The table never waits, submits, validates or changes training.
+    On a terminal it repaints its recent rows in place; on any other stream
+    each submission and each completion appends a line, with the same call
+    number. Submission and completion times use the client's local clock;
+    durations and tokens per second use the service's execution time.
+
+    Parameters
+    ----------
+    stream : file-like, optional
+        Text stream the table writes to. Standard output by default.
+    max_rows : int, default 20
+        Number of recent rows kept and repainted on a terminal.
+
+    Attributes
+    ----------
+    error : Exception or None
+        The `OSError` or `ValueError` that stopped the table writing to its
+        stream, or None. Once it is set the table writes nothing more; the
+        tracked calls and their futures are unaffected.
+
+    Raises
+    ------
+    ValueError
+        ``max_rows`` is below one.
     """
 
     def __init__(self, *, stream: TextIO | None = None, max_rows: int = 20) -> None:
@@ -136,11 +232,41 @@ class CommandTable:
         batch: BatchStatistics | None = None,
         planned_seconds: float | None = None,
     ) -> OperationFuture[TrainingResult]:
-        """Add a pending row immediately after submission; observe its future.
+        """Add a row for a submitted compute call and fill it in on completion.
 
-        Timestamps use the client's local clock at registration/completion.
-        Time and throughput use only the result's server execution duration.
-        ``optim_step`` has no batch statistics; absent losses display a dash.
+        The row shows ``pending`` at once. When ``future`` completes, it shows
+        ``done``, ``skipped`` or ``failed``, the loss, and the result's
+        `TrainingResult.execution_seconds`; tokens per second divides
+        ``batch.lengths.total`` by that time. A value that is absent shows as
+        a dash.
+
+        Parameters
+        ----------
+        operation : str
+            The call: ``"step"``, ``"forward_backward"``, ``"optim_step"`` or
+            ``"forward"``.
+        future : OperationFuture of TrainingResult
+            The future the call returned.
+        batch : BatchStatistics, optional
+            Lengths of the submitted batch, for example from
+            `text_batch_statistics`. None for ``"optim_step"``.
+        planned_seconds : float, optional
+            Estimated execution time, in seconds, shown beside the measured
+            one, for example `BatchValidation.estimated_seconds`.
+
+        Returns
+        -------
+        OperationFuture of TrainingResult
+            ``future`` itself.
+
+        Raises
+        ------
+        ValueError
+            ``operation`` is not a compute call, ``batch`` is given for
+            ``"optim_step"``, or ``planned_seconds`` is negative or not a
+            finite number.
+        TypeError
+            ``batch`` is not a `BatchStatistics`.
         """
         if operation not in ("step", "forward_backward", "optim_step", "forward"):
             raise ValueError("the command table accepts compute operations only")

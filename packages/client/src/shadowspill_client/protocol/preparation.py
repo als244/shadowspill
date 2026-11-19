@@ -14,6 +14,36 @@ PREPARATION_MEDIA_TYPE = "application/vnd.shadowspill.operator_preparation+zip"
 
 @dataclass(frozen=True)
 class ResolvedPreparation(Record):
+    """A run's preparation settings with every default filled in.
+
+    Found as the ``preparation`` of `ResolvedTraining`.
+
+    Parameters
+    ----------
+    preset : str
+        The preparation preset that supplied the defaults.
+    source : DefinitionSource
+        The pinned source of that preset.
+    cases : sequence of BuildCase
+        Every build case, each with its ``partition``, ``chunking`` and
+        ``graph_pair_policy`` chosen.
+    profiling : ProfilingOptions
+        Profiling settings.
+    planning : PlanningOptions
+        Planning settings, with ``microbatch_counts``, ``search`` and
+        ``workers`` set.
+    origins : mapping of str to str
+        Where each setting came from, by dotted setting name such as
+        ``"planning.microbatch_counts"``: ``"explicit"``, ``"preset"`` or
+        ``"engine_default"``.
+    reuse : mapping, default {}
+        Earlier measurements to reuse, as from `PreparationHandle.reuse`.
+        Empty when none.
+    external_headroom_bytes : int, default 536870912
+        Device memory reserved on each worker outside its execution pool, in
+        bytes (512 MiB by default), as in `Preparation`.
+    """
+
     preset: str
     source: DefinitionSource
     cases: Sequence[BuildCase]

@@ -31,6 +31,22 @@ def _query(after: int, through: int | None, limit: int) -> None:
 
 
 class MetricQueries:
+    """Reads of a run's metric journal.
+
+    `TrainingClient.metrics` is one. The journal holds one record per
+    finished request, of any operation, in completion order, and the values
+    logged with `TrainingClient.log_metrics`. Reads need no workers and work
+    after the workers close or the service restarts; inputs and tensor
+    outputs are never read.
+
+    Attributes
+    ----------
+    session_id : str
+        Session that owns the run.
+    run_id : str
+        The run.
+    """
+
     def __init__(self, service: ServiceClient, session_id: str, run_id: str) -> None:
         self._service = service
         self.session_id = identifier(session_id, "metric session")
@@ -74,7 +90,36 @@ class MetricQueries:
     def query(
         self, *, after: int = 0, through: int | None = None, limit: int = 100
     ) -> CallFuture[MetricPage]:
-        """Read completion order; pin ``through`` when traversing a fixed snapshot."""
+        """Read one page of the run's metric journal.
+
+        Records come in journal position order, which is completion order.
+        To read a fixed snapshot, keep the first page's `MetricPage.through`
+        as ``through`` and pass each page's `MetricPage.next_cursor` as
+        ``after`` until it is None. To poll for later records, start after the
+        finished snapshot's ``through``.
+
+        Parameters
+        ----------
+        after : int, default 0
+            Journal position to start after.
+        through : int, optional
+            Last journal position to read. By default the journal's current
+            end.
+        limit : int, default 100
+            Most records in the page, from 1 to 128. The service may return
+            fewer to keep the page within its metadata size bound.
+
+        Returns
+        -------
+        CallFuture of MetricPage
+            The page.
+
+        Raises
+        ------
+        ValueError
+            ``after`` or ``through`` is not a nonnegative int below 2**63,
+            ``through`` is below ``after``, or ``limit`` is outside 1 to 128.
+        """
         _query(after, through, limit)
         return self._service._work.submit(lambda: self._read(after, through, limit))
 
@@ -107,11 +152,38 @@ class MetricQueries:
         through: int | None = None,
         limit: int = 100,
     ) -> CallFuture[Path]:
-        """Stream one explicit snapshot into a new file, with a portable header.
+        """Write one fixed snapshot of the metric journal to a new JSON Lines file.
 
-        Each JSON line is a bounded codec record: MetricSnapshot followed by
-        MetricRecords. The range stays fixed while later results arrive. Existing
-        paths are preserved; a failure removes only this call's incomplete file.
+        The first line is a `MetricSnapshot` record naming the session, the
+        run and the range ``after`` to ``through``; each further line is one
+        `MetricRecord`, in journal order; ``decode`` from
+        ``shadowspill_client.protocol.codec`` reads each line back. Pages are
+        read one at a time, and records finished later are not added. An
+        existing file is never overwritten, and a failure removes the partial
+        file.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The local file to create.
+        after : int, default 0
+            Journal position to start after.
+        through : int, optional
+            Last journal position to write. By default the journal's end when
+            the first page is read.
+        limit : int, default 100
+            Records per page read, from 1 to 128.
+
+        Returns
+        -------
+        CallFuture of pathlib.Path
+            ``path``, once the file is complete. It fails with
+            `FileExistsError` if ``path`` exists.
+
+        Raises
+        ------
+        ValueError
+            ``after``, ``through`` or ``limit`` is invalid, as in `query`.
         """
         _query(after, through, limit)
         destination = Path(path)

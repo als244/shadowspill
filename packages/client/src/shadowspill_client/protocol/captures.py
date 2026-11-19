@@ -19,6 +19,41 @@ def rank_name(rank: int) -> str:
 
 @dataclass(frozen=True)
 class NsightWindow(Record):
+    """The updates an Nsight Systems capture covers, and how far it got.
+
+    The capture starts with update ``start_step``'s first ``"step"`` or
+    ``"forward_backward"`` request and covers ``steps`` consecutive updates
+    of one training history. It never restarts once stopped.
+    `NsightManifest.window` holds it.
+
+    Parameters
+    ----------
+    start_step : int
+        One-based optimizer update the capture starts at.
+    steps : int
+        Number of consecutive updates to capture, at least one.
+    state : str, default "pending"
+        ``"pending"`` (not started), ``"running"`` (started, not yet
+        complete), ``"complete"`` (every selected update captured),
+        ``"incomplete"`` (stopped early, as when the training history changed
+        or the worker failed) or ``"missing"`` (never started, as when update
+        ``start_step`` ran without the capture or the worker reported no
+        progress).
+    completed_updates : int, default 0
+        Updates captured, at most ``steps``.
+    history_id : str, optional
+        Training history of the captured updates; None before the capture
+        starts.
+    first_request : str, optional
+        ID of the request that started the capture; None before it starts.
+    last_request : str, optional
+        ID of the request that completed the last captured update; None
+        before one completes.
+    error : str, optional
+        Why the window is incomplete or missing, at most 1024 characters; set
+        exactly when ``state`` is ``"incomplete"`` or ``"missing"``.
+    """
+
     start_step: int
     steps: int
     state: Literal["pending", "running", "complete", "incomplete", "missing"] = (
@@ -67,6 +102,39 @@ class NsightWindow(Record):
 
 @dataclass(frozen=True)
 class NsightManifest(Record):
+    """One worker's Nsight Systems capture record.
+
+    `NsightCapture.record` holds it. The service records it as
+    ``"pending"`` when the workers start and finalizes it after the worker
+    exits; until then ``window`` shows only the selected updates.
+
+    Parameters
+    ----------
+    session_id : str
+        Session that owns the run.
+    run_id : str
+        The run.
+    rank : int
+        The worker's rank, below 65536.
+    plans : ArtifactRef
+        The run's execution Plans.
+    window : NsightWindow
+        The selected updates and how far the capture got.
+    status : str, default "pending"
+        ``"pending"`` (not finalized), ``"ready"`` (``report`` holds the
+        complete window), ``"failed"`` (the collector failed, the window was
+        not completed, or the report could not be stored) or ``"missing"``
+        (no report was produced, or the run ended without finalizing the
+        capture).
+    report : ArtifactRef, optional
+        The native report file (``application/x-nsys-rep``), nonempty. Set
+        when ``status`` is ``"ready"`` and possibly when it is ``"failed"``;
+        None otherwise.
+    error : str, optional
+        Why the capture failed or is missing, at most 1024 characters; set
+        exactly when ``status`` is ``"failed"`` or ``"missing"``.
+    """
+
     session_id: str
     run_id: str
     rank: int

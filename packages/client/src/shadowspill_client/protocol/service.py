@@ -21,6 +21,16 @@ def bearer_token(value: object) -> str:
 
 @dataclass(frozen=True)
 class ServiceInfo(Record):
+    """Identity of a running service, as `ServiceClient.info`.
+
+    Parameters
+    ----------
+    server_incarnation : str
+        ID of this run of the service process, new each time it starts.
+    owner_id : str
+        The owner the connection's token authenticates as.
+    """
+
     server_incarnation: str
     owner_id: str
 
@@ -31,7 +41,19 @@ class ServiceInfo(Record):
 
 @dataclass(frozen=True)
 class ServiceError(Record):
-    """An HTTP failure, never evidence about a training operation's effects."""
+    """Error record the service sends with an unsuccessful reply.
+
+    It is a record, not an exception: `RemoteError` carries it, and a failed
+    run's record holds one as its ``error``. It says nothing about the effects
+    of a training operation.
+
+    Parameters
+    ----------
+    code : str
+        Error code, such as ``"not_found"``.
+    message : str
+        Description of the error, at most 1024 characters.
+    """
 
     code: str
     message: str

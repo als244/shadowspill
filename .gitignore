@@ -96,3 +96,6 @@ compile_commands.json
 /benchmarks/quickstart_reports
 /benchmarks/baselines/experiments/**/output
 !/benchmarks/baselines/experiments/**/results/figures/*.png
+
+# Built documentation.
+/docs/_build/

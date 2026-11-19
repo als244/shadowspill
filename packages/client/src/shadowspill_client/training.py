@@ -42,10 +42,34 @@ if TYPE_CHECKING:
 
 
 class RequestQueries:
+    """Lookups of a run's requests by ID, available as `TrainingClient.requests`.
+
+    They never resubmit a request, and work on a read-only handle.
+    """
+
     def __init__(self, training: TrainingClient) -> None:
         self._training = training
 
     def status(self, request_id: str) -> CallFuture[RequestStatus]:
+        """Read a request's current state.
+
+        Parameters
+        ----------
+        request_id : str
+            ID of a request in this run, such as an `OperationFuture`'s
+            ``request_id``.
+
+        Returns
+        -------
+        CallFuture of RequestStatus
+            The request's state when the service answers. It fails with
+            `RemoteError` if the run has no request with this ID.
+
+        Raises
+        ------
+        ValueError
+            If ``request_id`` is not a valid request ID.
+        """
         identifier(request_id, "request ID")
         training = self._training
         return training._service._work.submit(lambda: training._status(request_id))
@@ -53,11 +77,30 @@ class RequestQueries:
     def get(
         self, request_id: str, *, timeout: float | None = None
     ) -> CallFuture[TrainingResult]:
-        """Wait for a request's result.
+        """Wait for a request to finish and return its result.
 
-        ``timeout`` bounds the wait, counted from this call: past it the future
-        fails with ``TimeoutError`` and stops polling. The request itself
-        continues on the service and can be looked up again.
+        Parameters
+        ----------
+        request_id : str
+            ID of a request in this run, such as an `OperationFuture`'s
+            ``request_id``.
+        timeout : float, optional
+            Longest wait, in seconds, counted from this call. Past it the
+            future fails with `TimeoutError` and stops polling; the request
+            goes on and can be looked up again. By default the wait lasts
+            until the request finishes.
+
+        Returns
+        -------
+        CallFuture of TrainingResult
+            The request's outcome. It fails with `TrainingRequestError` if the
+            request failed.
+
+        Raises
+        ------
+        ValueError
+            If ``request_id`` is not a valid request ID, or ``timeout`` is
+            negative.
         """
         identifier(request_id, "request ID")
         deadline = (
@@ -72,11 +115,38 @@ class RequestQueries:
 
 
 class TrainingClient:
-    """A handle to ready workers; construction is owned by ServiceClient factories.
+    """A handle to one training run, for submitting operations and reading results.
 
-    Calls copy complete inputs before returning, then upload in submission order.
-    Local validation uses the saved layouts; the server rechecks and advances state.
-    A connection failure requires explicit lookup/reattachment, never replay.
+    `ServiceClient.create_training_client` and
+    `ServiceClient.get_training_client` return it, through a `TrainingFuture`.
+    Each operation call copies its batch and controls, checks the batch
+    locally against the prepared layouts, and returns an `OperationFuture`
+    before uploading. The service runs a handle's operations in submission
+    order, and checks them again. Each operation depends on the handle's
+    operations still unfinished when it was submitted, and fails without
+    running if one of them fails. A call blocks while
+    ``Execution.max_pending_requests`` operations are unfinished, or while
+    batch copies not yet uploaded fill ``Execution.max_staging_bytes``.
+
+    After an exchange with the service fails, the handle refuses further
+    operations and nothing is resubmitted: look up the saved request IDs and
+    reattach with `ServiceClient.get_training_client`. Attaching a new
+    writable handle fences this one, whose later operations then fail.
+
+    Attributes
+    ----------
+    session_id : str
+        The session the run belongs to.
+    run_id : str
+        The run's ID.
+    read_only : bool
+        True when the handle cannot submit operations.
+    plans : PlansHandle or None
+        The run's saved Plans; None when the run records none.
+    requests : RequestQueries
+        Lookups of the run's requests by ID.
+    metrics : MetricQueries
+        Queries of the run's recorded metrics.
     """
 
     def __init__(
@@ -110,6 +180,14 @@ class TrainingClient:
         service._retain_handle(self)
 
     def get_config(self) -> ResolvedTraining:
+        """Return the run's resolved configuration, without contacting the service.
+
+        Returns
+        -------
+        ResolvedTraining
+            The configuration the run was created with; pass it as
+            ``config=`` to create a run with the same settings.
+        """
         return self._config
 
     def validate_batch(
@@ -120,7 +198,40 @@ class TrainingClient:
         outputs: str | None = None,
         mode: str | None = None,
     ) -> CallFuture[BatchValidation]:
-        """Check values, limits and packing locally, without submitting a step."""
+        """Check a batch locally against the prepared layouts, without submitting it.
+
+        The checks are those `step`, `forward_backward` and `forward` make
+        before uploading: input values, batch limits, and packing into a
+        prepared layout, padding included. Packing is not checked for a model
+        that groups its inputs on the service.
+
+        Parameters
+        ----------
+        batch : sequence of Datum
+            The batch, as a list or tuple.
+        operation : str, default "step"
+            ``"step"``, ``"forward_backward"`` or ``"forward"``.
+        outputs : str, optional
+            Output set to check for; by default the first one prepared for
+            ``operation`` and ``mode``.
+        mode : str, optional
+            ``"training"`` or ``"evaluation"``; by default ``"evaluation"``
+            for ``"forward"`` and ``"training"`` otherwise.
+
+        Returns
+        -------
+        CallFuture of BatchValidation
+            The capacities the batch uses and the prepared layout it fits. It
+            fails with `ValueError` if the batch fails a check.
+
+        Raises
+        ------
+        TypeError
+            If ``batch`` is not a list or tuple of `Datum`.
+        ValueError
+            If ``operation``, ``outputs`` and ``mode`` name nothing prepared,
+            or the batch's copy needs more than ``Execution.max_staging_bytes``.
+        """
         self._service._work.check()
         snapshot = self._validator.snapshot(
             batch, self._snapshots, operation, outputs, mode
@@ -141,16 +252,60 @@ class TrainingClient:
         request_id: str,
         metric_id: str | None = None,
     ) -> CallFuture[MetricRecord]:
-        """Persist caller scalars against an explicit terminal request result.
+        """Record caller values, such as evaluation scores, for a finished request.
 
-        This metadata call neither uses a training sequence nor acquires a writer.
-        An explicit metric_id is immutable within that request; otherwise identical
-        values share a deterministic ID for safe explicit retry after reconnect.
+        The record keeps that request's history and update count, and is
+        stored apart from the engine's own metrics. It takes no place in the
+        training order and works on a read-only handle.
+
+        Parameters
+        ----------
+        values : mapping of str to float
+            One to 128 finite numbers, by name; each name has at most 256
+            characters.
+        request_id : str
+            ID of a request in this run that has completed, been skipped or
+            failed.
+        metric_id : str, optional
+            ID for this record within the request; reusing it with different
+            values is refused. By default it is derived from ``values``, so
+            repeating an identical call, as after a lost reply, records
+            nothing new.
+
+        Returns
+        -------
+        CallFuture of MetricRecord
+            The stored record.
+
+        Raises
+        ------
+        ValueError
+            If ``values``, ``request_id`` or ``metric_id`` is invalid.
         """
         return self.metrics._log(values, request_id=request_id, metric_id=metric_id)
 
     def nsys(self, *, rank: int = 0) -> CallFuture[NsightCapture]:
-        """Inspect a startup capture; native reports finalize after worker exit."""
+        """Read one worker's Nsight Systems capture, for a run created with one.
+
+        The capture is configured with ``Execution(nsys=...)``. Its report is
+        finalized after the worker exits, so it can stay pending until `close`
+        has finished.
+
+        Parameters
+        ----------
+        rank : int, default 0
+            The worker's rank.
+
+        Returns
+        -------
+        CallFuture of NsightCapture
+            The capture's status and, when present, its report.
+
+        Raises
+        ------
+        ValueError
+            If ``rank`` is negative or not below 65536.
+        """
         return self._service.get_nsys(self.run_id, rank=rank)
 
     def report(
@@ -162,7 +317,39 @@ class TrainingClient:
         max_records: int = 10000,
         max_bytes: int = 64 << 20,
     ) -> CallFuture[ReportHandle]:
-        """Render a bounded snapshot of recorded results without rerunning training."""
+        """Create a stored report of the run's recorded results.
+
+        The report covers losses, metrics, request outcomes and caller values
+        recorded after journal position ``after``, up to and including
+        ``through``. Making it runs no training and works after the workers
+        have closed. A report that would exceed a limit fails, and nothing is
+        stored.
+
+        Parameters
+        ----------
+        format : str, default "html"
+            ``"html"`` or ``"json"``.
+        after : int, default 0
+            Journal position after which records are included.
+        through : int, optional
+            Last journal position included; by default the latest one when the
+            service makes the report.
+        max_records : int, default 10000
+            Most records the report may hold, up to 100000.
+        max_bytes : int, default 67108864
+            Largest report size, in bytes (64 MiB by default), up to 1 GiB.
+
+        Returns
+        -------
+        CallFuture of ReportHandle
+            The stored report, for download.
+
+        Raises
+        ------
+        ValueError
+            If ``format`` is unknown, ``through`` is before ``after``, or a
+            limit is out of range.
+        """
         return report(
             self._service,
             self.session_id,
@@ -428,6 +615,58 @@ class TrainingClient:
         outputs: str | None = None,
         runtime_trace: bool = False,
     ) -> OperationFuture[TrainingResult]:
+        """Submit one complete update: forward, backward and an optimizer step.
+
+        No gradient accumulation may be open; finish one first with
+        `optim_step` or `discard_gradients`. A batch in which no position
+        takes part in the loss is rejected.
+
+        Parameters
+        ----------
+        global_batch : sequence of Datum
+            The whole batch for all workers, as a list or tuple. It is copied
+            before the call returns, so the caller may change it afterwards.
+        optim : mapping of str to scalar, optional
+            Optimizer controls for this update, such as ``{"lr": 3e-4}``.
+            Controls left out take the run's defaults; no value carries over
+            to later calls.
+        loss_params : mapping of str to scalar, optional
+            Objective controls for this call, resolved the same way.
+        grad_scale : float, default 1
+            Factor applied to every gradient before the update, such as
+            ``1 / len(global_batch)`` to average a loss summed over records.
+        outputs : str, optional
+            Output set to produce; by default the first one prepared for
+            ``"step"``.
+        runtime_trace : bool, default False
+            Record a runtime trace of this call, one per worker, in the
+            result's ``traces``.
+
+        Returns
+        -------
+        OperationFuture of TrainingResult
+            The outcome, with its ``loss``, ``metrics`` and the new
+            ``completed_updates``. It fails with `TrainingRequestError` if the
+            service rejects or fails the request, as for an unknown control or
+            an open accumulation.
+
+        Raises
+        ------
+        PermissionError
+            If the handle is read-only.
+        ConnectionError
+            If an earlier exchange on this handle failed, or the connection is
+            closed.
+        TypeError
+            If ``global_batch`` is not a list or tuple of `Datum`, or
+            ``optim`` or ``loss_params`` is not a mapping of plain Python
+            values.
+        ValueError
+            If the batch fails a local check or its copy needs more than
+            ``Execution.max_staging_bytes``, a control value is neither a bool
+            nor a finite number, ``grad_scale`` is not a finite number, or
+            ``"step"`` was not prepared with ``outputs``.
+        """
         return self._submit(
             "step",
             global_batch,
@@ -446,6 +685,51 @@ class TrainingClient:
         outputs: str | None = None,
         runtime_trace: bool = False,
     ) -> OperationFuture[TrainingResult]:
+        """Submit a forward and backward pass that adds to the gradient accumulation.
+
+        The first call opens an accumulation and later calls add to it, until
+        `optim_step` applies it or `discard_gradients` drops it. Gradients add
+        up unscaled; scale the update once with ``grad_scale`` on
+        `optim_step`. A batch in which no position takes part in the loss is
+        rejected.
+
+        Parameters
+        ----------
+        global_batch : sequence of Datum
+            The part of the update's batch to add, for all workers, as a list
+            or tuple. It is copied before the call returns.
+        loss_params : mapping of str to scalar, optional
+            Objective controls for this call, as in `step`.
+        outputs : str, optional
+            Output set to produce; by default the first one prepared for
+            ``"forward_backward"``.
+        runtime_trace : bool, default False
+            Record a runtime trace of this call, as in `step`.
+
+        Returns
+        -------
+        OperationFuture of TrainingResult
+            The outcome, with this part's ``loss`` and ``metrics`` and the
+            accumulation's ``contributions`` so far. It fails with
+            `TrainingRequestError` if the service rejects or fails the
+            request.
+
+        Raises
+        ------
+        PermissionError
+            If the handle is read-only.
+        ConnectionError
+            If an earlier exchange on this handle failed, or the connection is
+            closed.
+        TypeError
+            If ``global_batch`` is not a list or tuple of `Datum`, or
+            ``loss_params`` is not a mapping of plain Python values.
+        ValueError
+            If the batch fails a local check or its copy needs more than
+            ``Execution.max_staging_bytes``, a control value is neither a bool
+            nor a finite number, or ``"forward_backward"`` was not prepared
+            with ``outputs``.
+        """
         return self._submit(
             "forward_backward",
             global_batch,
@@ -461,6 +745,42 @@ class TrainingClient:
         grad_scale: float = 1,
         runtime_trace: bool = False,
     ) -> OperationFuture[TrainingResult]:
+        """Submit one optimizer update from the accumulated gradients.
+
+        It requires an accumulation opened by `forward_backward`, and closes
+        it.
+
+        Parameters
+        ----------
+        optim : mapping of str to scalar, optional
+            Optimizer controls for this update, as in `step`.
+        grad_scale : float, default 1
+            Factor applied to every accumulated gradient before the update,
+            such as ``1 / n`` to average a loss summed over ``n`` records in
+            all the parts.
+        runtime_trace : bool, default False
+            Record a runtime trace of this call, as in `step`.
+
+        Returns
+        -------
+        OperationFuture of TrainingResult
+            The outcome, with the new ``completed_updates``; it has no loss.
+            It fails with `TrainingRequestError` if the service rejects or
+            fails the request, as when no accumulation is open.
+
+        Raises
+        ------
+        PermissionError
+            If the handle is read-only.
+        ConnectionError
+            If an earlier exchange on this handle failed, or the connection is
+            closed.
+        TypeError
+            If ``optim`` is not a mapping of plain Python values.
+        ValueError
+            If a control value is neither a bool nor a finite number, or
+            ``grad_scale`` is not a finite number.
+        """
         return self._submit(
             "optim_step",
             optim=optim,
@@ -477,6 +797,51 @@ class TrainingClient:
         loss_params: Mapping[str, Scalar] | None = None,
         runtime_trace: bool = False,
     ) -> OperationFuture[TrainingResult]:
+        """Submit a forward pass, with no backward pass or update.
+
+        It can run while a gradient accumulation is open.
+
+        Parameters
+        ----------
+        global_batch : sequence of Datum
+            The whole batch for all workers, as a list or tuple. It is copied
+            before the call returns.
+        outputs : str, optional
+            Output set to produce, such as ``"predictions"``; by default the
+            first one prepared for ``"forward"`` in ``mode``.
+        mode : str, default "evaluation"
+            ``"evaluation"`` leaves training state unchanged; ``"training"``
+            runs the model as prepared for training. The mode must be
+            prepared with ``outputs``.
+        loss_params : mapping of str to scalar, optional
+            Objective controls for this call, as in `step`.
+        runtime_trace : bool, default False
+            Record a runtime trace of this call, as in `step`.
+
+        Returns
+        -------
+        OperationFuture of TrainingResult
+            The outcome: ``loss`` and ``metrics`` when the output set computes
+            them, and tensor ``outputs`` as handles. It fails with
+            `TrainingRequestError` if the service rejects or fails the
+            request.
+
+        Raises
+        ------
+        PermissionError
+            If the handle is read-only.
+        ConnectionError
+            If an earlier exchange on this handle failed, or the connection is
+            closed.
+        TypeError
+            If ``global_batch`` is not a list or tuple of `Datum`, or
+            ``loss_params`` is not a mapping of plain Python values.
+        ValueError
+            If the batch fails a local check or its copy needs more than
+            ``Execution.max_staging_bytes``, a control value is neither a bool
+            nor a finite number, or ``"forward"`` was not prepared with
+            ``outputs`` and ``mode``.
+        """
         return self._submit(
             "forward",
             global_batch,
@@ -487,6 +852,23 @@ class TrainingClient:
         )
 
     def discard_gradients(self) -> OperationFuture[TrainingResult]:
+        """Submit dropping the open gradient accumulation, if any, without an update.
+
+        Returns
+        -------
+        OperationFuture of TrainingResult
+            The outcome; ``completed_updates`` is unchanged. It fails with
+            `TrainingRequestError` if the service rejects or fails the
+            request.
+
+        Raises
+        ------
+        PermissionError
+            If the handle is read-only.
+        ConnectionError
+            If an earlier exchange on this handle failed, or the connection is
+            closed.
+        """
         return self._submit("discard")
 
     def save_checkpoint(
@@ -496,7 +878,47 @@ class TrainingClient:
         metadata: Mapping[str, Value] | None = None,
         weights: Literal["master", "compute"] = "master",
     ) -> OperationFuture[CheckpointHandle]:
-        """Save on the server at this ordered boundary; tensor download is explicit."""
+        """Submit saving a checkpoint of the training state in service storage.
+
+        The save runs in the training order, after the operations submitted
+        before it, and does not count as an update. No gradient accumulation
+        may be open. Nothing is downloaded until the checkpoint's ``download``
+        is called.
+
+        Parameters
+        ----------
+        name : str, optional
+            Name for the checkpoint within this run, at most 256 characters,
+            usable with `load_checkpoint`. Saving under a name again moves it
+            to the new checkpoint; the older one stays.
+        metadata : mapping of str to object, optional
+            JSON values saved with the checkpoint and returned when it is
+            loaded, such as a data position. They are copied at the call.
+        weights : str, default "master"
+            ``"master"`` saves the master weights; ``"compute"`` saves the
+            weights at compute precision.
+
+        Returns
+        -------
+        OperationFuture of CheckpointHandle
+            The saved checkpoint. It fails with `TrainingRequestError` if the
+            service rejects or fails the request, as when an accumulation is
+            open.
+
+        Raises
+        ------
+        PermissionError
+            If the handle is read-only.
+        ConnectionError
+            If an earlier exchange on this handle failed, or the connection is
+            closed.
+        TypeError
+            If ``metadata`` is not a mapping of JSON values.
+        ValueError
+            If ``name`` is empty, has surrounding spaces or is too long,
+            ``metadata`` holds a number that is not finite or a key that is not
+            a nonempty string, or ``weights`` is unknown.
+        """
         settings = SaveSettings(name, {} if metadata is None else metadata, weights)
 
         def checkpoint(result: TrainingResult) -> CheckpointHandle:
@@ -507,7 +929,40 @@ class TrainingClient:
         return self._submit("save", save=settings)._mapped(checkpoint)
 
     def load_checkpoint(self, checkpoint_id: str) -> OperationFuture[TrainingResult]:
-        """Restore an ID or run-local name in order; return saved caller metadata."""
+        """Submit loading a checkpoint into the run's training state.
+
+        The load runs in the training order. No gradient accumulation may be
+        open. A name is pinned to one checkpoint when the service accepts the
+        request, as `OperationFuture.accepted` reports; moving the name later
+        does not change it. The run continues at the saved update count, in a
+        new history.
+
+        Parameters
+        ----------
+        checkpoint_id : str
+            A checkpoint's ID, such as a `CheckpointHandle`'s ``id``, or a
+            name it was given by `save_checkpoint` in this run.
+
+        Returns
+        -------
+        OperationFuture of TrainingResult
+            The outcome: ``metadata`` holds the caller metadata saved with the
+            checkpoint, ``checkpoint`` the loaded checkpoint, and
+            ``completed_updates`` the saved count. It fails with
+            `TrainingRequestError` if the service rejects or fails the
+            request.
+
+        Raises
+        ------
+        PermissionError
+            If the handle is read-only.
+        ConnectionError
+            If an earlier exchange on this handle failed, or the connection is
+            closed.
+        ValueError
+            If ``checkpoint_id`` is empty, has surrounding spaces or is longer
+            than 256 characters.
+        """
         return self._submit("restore", restore=checkpoint_id)
 
     def export_weights(
@@ -518,7 +973,45 @@ class TrainingClient:
         weights: Literal["master", "compute"] = "master",
         metadata: Mapping[str, Value] | None = None,
     ) -> OperationFuture[WeightsHandle]:
-        """Save inference state at a completed update; copying it is explicit."""
+        """Submit exporting the model weights to service storage.
+
+        The export runs in the training order, like `save_checkpoint`, and
+        holds the model weights and persistent buffers only: no optimizer
+        state or gradients. No gradient accumulation may be open. Nothing is
+        downloaded until the export's ``download`` is called.
+
+        Parameters
+        ----------
+        name : str, optional
+            Name for the export within this run, at most 256 characters.
+        format : str, default "shadowspill"
+            Export format. The service supports ``"shadowspill"`` and fails
+            any other before running.
+        weights : str, default "master"
+            ``"master"`` or ``"compute"``, as in `save_checkpoint`.
+        metadata : mapping of str to object, optional
+            JSON values saved with the export, as in `save_checkpoint`.
+
+        Returns
+        -------
+        OperationFuture of WeightsHandle
+            The exported weights. It fails with `TrainingRequestError` if the
+            service rejects or fails the request.
+
+        Raises
+        ------
+        PermissionError
+            If the handle is read-only.
+        ConnectionError
+            If an earlier exchange on this handle failed, or the connection is
+            closed.
+        TypeError
+            If ``metadata`` is not a mapping of JSON values.
+        ValueError
+            If ``name`` or ``metadata`` is invalid as in `save_checkpoint`,
+            ``format`` is empty or longer than 128 characters, or ``weights``
+            is unknown.
+        """
         settings = SaveSettings(
             name, {} if metadata is None else metadata, weights, "weights", format
         )
@@ -531,5 +1024,27 @@ class TrainingClient:
         return self._submit("save", save=settings)._mapped(exported)
 
     def close(self) -> OperationFuture[TrainingResult]:
-        """Close in order and wait for this run's allocation resources to retire."""
+        """Submit closing the run, which releases its workers and resources.
+
+        The close runs in the training order, after the operations submitted
+        before it; operations submitted after it fail. No gradient
+        accumulation may be open, and pending gradients are never applied.
+        Results, metrics, reports and saved artifacts stay readable afterwards.
+
+        Returns
+        -------
+        OperationFuture of TrainingResult
+            The outcome, once the run's resources are released and a new run
+            can use them. The request's status can show it completed earlier.
+            It fails with `TrainingRequestError` if the service rejects the
+            close, and with `RemoteError` if releasing the resources fails.
+
+        Raises
+        ------
+        PermissionError
+            If the handle is read-only.
+        ConnectionError
+            If an earlier exchange on this handle failed, or the connection is
+            closed.
+        """
         return self._submit("close")

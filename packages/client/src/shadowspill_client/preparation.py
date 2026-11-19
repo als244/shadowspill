@@ -27,14 +27,27 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class PreparationHandle:
-    """Completed measured cases; this handle owns no mutable training state."""
+    """A completed measurement job and its measured cases.
+
+    The value of the `PreparationFuture` that `ServiceClient.prepare_training`
+    and `ServiceClient.get_preparation` return.
+
+    Attributes
+    ----------
+    info : RunInfo
+        The job's run record, in the ``"prepared"`` state.
+    """
 
     info: RunInfo
     _service: ServiceClient
 
     @property
     def reuse(self) -> Mapping[str, Value]:
-        """Portable provenance for ``Preparation(reuse=prepared.reuse)``."""
+        """Reference to these measurements, for ``Preparation(reuse=...)``.
+
+        A later preparation or training run given it reuses the compatible
+        measured cases instead of measuring them again.
+        """
         return mapping(
             {
                 "measurements": {
@@ -46,7 +59,21 @@ class PreparationHandle:
         )
 
     def export(self) -> CallFuture[ArtifactHandle]:
-        """Obtain the immutable ZIP containing all cases and their manifest."""
+        """Get the stored ZIP archive of the measured cases, for offline planning.
+
+        The archive holds each case's phase archives and a ``manifest.json``
+        naming every file, its checksum and the resolved settings.
+
+        Returns
+        -------
+        CallFuture of ArtifactHandle
+            The archive, downloaded with `ArtifactHandle.download`.
+
+        Raises
+        ------
+        ValueError
+            The job has no completed export.
+        """
         reference = self.info.preparation_export
         if self.info.state != "prepared" or reference is None:
             raise ValueError("preparation has no completed measurement export")
@@ -62,11 +89,38 @@ class _JobFuture[T](CallFuture[T]):
 
 
 class PreparationFuture(_JobFuture[PreparationHandle]):
-    """A measurement job whose result contains an export for offline planning."""
+    """`CallFuture` of a `PreparationHandle` for a measurement job.
+
+    `ServiceClient.prepare_training` and `ServiceClient.get_preparation`
+    return it. ``result()`` blocks until measurement finishes and returns the
+    handle. A wait that times out raises `TimeoutError` and leaves the job
+    running.
+
+    Attributes
+    ----------
+    session_id : str
+        The session the job belongs to.
+    run_id : str
+        The job's run ID, known at once. Pass it to
+        `ServiceClient.get_preparation` to rejoin the job.
+    """
 
 
 class PlanningFuture(_JobFuture[PlansHandle]):
-    """A planning job whose result contains Plans and their inspection report."""
+    """`CallFuture` of a `PlansHandle` for a planning job.
+
+    `ServiceClient.plan_training` and `ServiceClient.get_planning` return it.
+    ``result()`` blocks until planning finishes and returns the Plans. A wait
+    that times out raises `TimeoutError` and leaves the job running.
+
+    Attributes
+    ----------
+    session_id : str
+        The session the job belongs to.
+    run_id : str
+        The job's run ID, known at once. Pass it to
+        `ServiceClient.get_planning` to rejoin the job.
+    """
 
 
 def _completed(

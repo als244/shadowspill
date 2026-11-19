@@ -8,11 +8,31 @@ from .._records import Record, integer, text
 
 @dataclass(frozen=True)
 class Resources(Record):
-    """Select assigned hardware; omission permits equivalent compatible devices.
+    """Hardware a run's workers may use.
 
-    GPU names and node/device identities come from ``list_hardware``. Integer
-    devices are indexes within an explicitly named node's assigned inventory;
-    stable device IDs may be used instead. A selector is not a reservation.
+    Every field is optional; what is left out lets the service choose
+    equivalent compatible devices. Names and device IDs come from
+    `ServiceClient.list_hardware`. A selection reserves nothing.
+
+    Parameters
+    ----------
+    pool : str, optional
+        Compute pool, as the service operator names it.
+    node : str, optional
+        Node name. Required when ``devices`` holds indexes.
+    gpu_type : str, optional
+        GPU type, such as ``"NVIDIA GeForce RTX 5090"``. Any matching devices
+        may be chosen.
+    devices : sequence of str or int, optional
+        Exact devices, one per worker in rank order: stable device IDs, or
+        indexes into ``node``'s assigned inventory. Between 1 and 1024
+        entries, without duplicates.
+
+    Raises
+    ------
+    ValueError
+        If a name or ID is longer than 256 characters, ``devices`` is empty
+        or repeats a device, or it holds indexes without ``node``.
     """
 
     pool: str | None = None

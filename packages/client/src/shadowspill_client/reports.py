@@ -16,6 +16,23 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ReportHandle(ArtifactHandle):
+    """A stored report of a run's recorded results.
+
+    `TrainingClient.report` returns it. The report covers a fixed range of the
+    run's metric journal: losses, metrics, request outcomes, and the history
+    and update count of each request, with logged values kept apart from the
+    engine's. As an `ArtifactHandle`, its `ArtifactHandle.download` writes the
+    HTML or JSON to a local file.
+
+    Attributes
+    ----------
+    reference : ArtifactRef
+        The stored report.
+    document : ReportDocument
+        What the report covers: its journal range, its settings and the
+        run's Plans.
+    """
+
     document: ReportDocument
 
 

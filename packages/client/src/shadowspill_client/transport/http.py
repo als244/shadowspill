@@ -60,7 +60,11 @@ class _Response(http.client.HTTPResponse):
 
 
 class TransportError(ConnectionError):
-    """The exchange failed; query the original request ID before another mutation."""
+    """An HTTP exchange with the service that failed in transit.
+
+    The service may have acted on the request. Check its effect, for example
+    by its request or run ID, before repeating it.
+    """
 
 
 class _LocalFileError(Exception):
@@ -80,6 +84,24 @@ def _local() -> Iterator[None]:
 
 
 class RemoteError(RuntimeError):
+    """A request the service refused, with its HTTP status and error record.
+
+    Parameters
+    ----------
+    status : int
+        The HTTP status, such as 403, 404 or 409.
+    error : ServiceError
+        The service's error record.
+
+    Attributes
+    ----------
+    code : str
+        The error code, such as ``"not_authorized"``, ``"not_found"`` or
+        ``"invalid_request"``.
+    message : str
+        The service's description of the error.
+    """
+
     def __init__(self, status: int, error: ServiceError) -> None:
         self.status, self.code, self.message = status, error.code, error.message
         super().__init__(f"{error.code}: {error.message}")

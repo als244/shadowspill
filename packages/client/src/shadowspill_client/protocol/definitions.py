@@ -13,6 +13,28 @@ from .inputs import DTYPES, shape
 
 @dataclass(frozen=True)
 class DefinitionSource(Record):
+    """The installed package and source digest of a definition.
+
+    A run's resolved configuration records one for every definition it uses,
+    and for the engine and the client.
+
+    Parameters
+    ----------
+    distribution : str
+        Name of the installed distribution that provides the definition.
+    version : str
+        The distribution's version.
+    digest : str
+        SHA-256 digest of the definition's source files and dependencies, as
+        64 lowercase hexadecimal digits.
+
+    Raises
+    ------
+    ValueError
+        ``distribution`` or ``version`` is empty, or ``digest`` is not 64
+        lowercase hexadecimal digits.
+    """
+
     distribution: str
     version: str
     digest: str
@@ -28,6 +50,42 @@ class DefinitionSource(Record):
 
 @dataclass(frozen=True)
 class TensorOutput(Record):
+    """A tensor result an `OutputSet` declares.
+
+    Parameters
+    ----------
+    dtype : str
+        Element type, one of those `TensorField` accepts.
+    shape : sequence of int or str
+        For ``"datum"`` and ``"aligned"`` ordering, the shape of one example's
+        output, with symbolic dimensions sized from that example's inputs.
+        For ``"global"``, the fixed shape of the whole output.
+    ordering : str
+        How the output maps back to the batch: ``"datum"`` gives one value per
+        example, ``"aligned"`` follows the positions of an input field and is
+        split back per example, and ``"global"`` gives one value for the whole
+        batch.
+    alignment : str, optional
+        For ``"aligned"`` only, and required there: the symbolic dimension of
+        ``shape`` along which the output follows its input field.
+    source : sequence of str, optional
+        Path of the input field the output follows, starting with
+        ``"inputs"`` or ``"loss_inputs"``. Needed when more than one field
+        could be followed; only for an output with a symbolic dimension that
+        is not ``"global"``.
+    reduction : str, optional
+        For ``"global"`` only, and required there: how the values of the
+        batch's physical buffers combine: ``"sum"``, ``"min"``, ``"max"`` or
+        ``"identical"``, which requires them to be equal.
+
+    Raises
+    ------
+    ValueError
+        The dtype or ordering is unknown, a ``"global"`` shape has a symbolic
+        dimension, or ``alignment``, ``source`` or ``reduction`` does not suit
+        the ordering.
+    """
+
     dtype: str
     shape: Sequence[int | str]
     ordering: Literal["datum", "aligned", "global"]
@@ -70,13 +128,38 @@ class TensorOutput(Record):
 
 @dataclass(frozen=True)
 class OutputSet(Record):
-    """One prepared output combination and its required fields/controls.
+    """The inputs, controls and results of one named output selection.
 
-    Paths are explicit component tuples. Optional, known input fields may still
-    be submitted, but a selected set cannot silently depend on omitted fields.
-    Scalar metrics declare reductions; tensor outputs retain their inverse map.
-    An optional ``forward`` contract declares the fields, controls and results
-    needed without a training loss. It cannot itself contain another override.
+    An objective declares one for each name a call can pass as ``outputs``.
+    A call checks the fields listed here, filling omitted optional ones with
+    their defaults; other declared fields may be supplied and are checked
+    too. Paths are tuples of keys within `Datum.inputs` or
+    `Datum.loss_inputs`.
+
+    Parameters
+    ----------
+    model_inputs : sequence of sequence of str, default ()
+        Model input fields the computation reads.
+    loss_inputs : sequence of sequence of str, default ()
+        Objective input fields the computation reads.
+    controls : sequence of str, default ()
+        Names of the objective controls it reads.
+    tensors : mapping of str to TensorOutput, default {}
+        Tensor results, by name.
+    metrics : mapping of str to str, default {}
+        Scalar results, by name, each with the reduction that combines the
+        values of the batch's physical buffers: ``"sum"``, ``"min"``,
+        ``"max"`` or ``"identical"``, which requires them to be equal.
+    forward : OutputSet, optional
+        A separate selection that ``forward`` calls use under the same name,
+        without a training loss. It cannot have its own ``forward``.
+
+    Raises
+    ------
+    ValueError
+        A path is empty or repeated, a control is repeated, a tensor and a
+        metric share a name, a metric's reduction is unknown, or ``forward``
+        has its own ``forward``.
     """
 
     model_inputs: Sequence[Sequence[str]] = ()
@@ -119,7 +202,19 @@ class OutputSet(Record):
             object.__setattr__(self, "forward", forward)
 
     def select(self, *, forward: bool) -> OutputSet:
-        """Return the concrete contract used by one prepared operation."""
+        """Return the selection one prepared operation uses.
+
+        Parameters
+        ----------
+        forward : bool
+            Whether the operation is a ``forward`` call.
+
+        Returns
+        -------
+        OutputSet
+            For a ``forward`` call, the declared ``forward`` selection when
+            there is one; otherwise this selection, without its ``forward``.
+        """
         if forward and self.forward is not None:
             return self.forward
         return self if self.forward is None else replace(self, forward=None)
@@ -127,11 +222,25 @@ class OutputSet(Record):
 
 @dataclass(frozen=True)
 class Participation(Record):
-    """Validity, independent of numeric loss, weight, advantage or gradient scale.
+    """Which inputs take part in a training call's loss.
 
-    With a path, true entries in the declared boolean loss field contribute.
-    Without a path, each real Datum contributes. Padding never participates.
-    More elaborate custom participation is an installed CPU preparation hook.
+    An objective declares it. A ``step`` or ``forward_backward`` call whose
+    batch has no participating position is refused. Participation counts
+    validity only, whatever the loss values, weights, advantages or gradient
+    scale, and padding never participates.
+
+    Parameters
+    ----------
+    path : sequence of str, default ()
+        Path of a boolean field in `Datum.loss_inputs` whose true entries
+        participate. Empty means every example participates.
+
+    Raises
+    ------
+    TypeError
+        ``path`` is not a list or tuple.
+    ValueError
+        A path component is empty or has surrounding spaces.
     """
 
     path: Sequence[str] = ()

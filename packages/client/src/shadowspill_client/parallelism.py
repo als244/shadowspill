@@ -1,10 +1,11 @@
-"""Portable declarations for the existing generic DP/EP ownership contracts."""
+"""Parallelism declarations a run takes as its ``parallelism`` setting."""
 
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-#: Parameters whose weight storage is smaller stay whole on every rank: a
-#: shard of a small tensor saves little memory and costs a collective per fetch.
+#: Default shard floor, in bytes (2 MiB). A parameter whose weight storage is
+#: smaller stays whole on every rank: its shard would save little memory and
+#: cost a collective at every fetch.
 MIN_SHARD_BYTES = 2 << 20
 
 
@@ -15,14 +16,31 @@ def data_parallel(
     outputs: Mapping[str, Any] | None = None,
     min_shard_bytes: int = MIN_SHARD_BYTES,
 ) -> dict[str, Any]:
-    """Declare data parallelism before build/profile/plan.
+    """Declare data parallelism over ``ranks`` workers.
 
-    Each worker receives an independent input partition. Omitted ``fields``
-    are filled from the model/objective schema during setup. Explicit fields
-    and output assembly rules are available for custom definitions.
-    Weights, gradients and optimizer state are sharded over the workers,
-    except parameters whose weight storage is under ``min_shard_bytes``,
-    which every worker keeps whole; zero shards every parameter.
+    Each worker trains on its own part of every batch. Weights, gradients and
+    optimizer state are sharded over the workers, except parameters whose
+    weight storage is under ``min_shard_bytes``, which every worker keeps whole.
+
+    Parameters
+    ----------
+    ranks : int
+        Number of workers.
+    fields : sequence of sequence of str, optional
+        Input fields each worker receives, each as a path of keys such as
+        ``("inputs", "tokens")``. By default they come from the model and
+        objective during setup; custom definitions may list them.
+    outputs : mapping of str to mapping, optional
+        How each named output is assembled across workers, for example
+        ``{"prediction": {"mode": "leader", "axis": None}}``. None by default.
+    min_shard_bytes : int, default MIN_SHARD_BYTES
+        Weight storage size, in bytes, below which a parameter is kept whole
+        on every worker. Zero shards every parameter.
+
+    Returns
+    -------
+    dict
+        The declaration, passed as a run's ``parallelism`` setting.
     """
     return {
         "ranks_per_replica": ranks,
@@ -59,13 +77,35 @@ def expert_parallel(
     outputs: Mapping[str, Any] | None = None,
     min_shard_bytes: int = MIN_SHARD_BYTES,
 ) -> dict[str, Any]:
-    """Shard the caller-declared expert axis; keep independent input owners.
+    """Declare expert parallelism over ``ranks`` workers.
 
-    Each rank stores its own experts. Every other parameter keeps its weights
-    and gradients whole on every rank and shards its optimizer state over the
-    ranks, except a parameter whose weight storage is under
-    ``min_shard_bytes``, which keeps its optimizer state whole too; zero shards
-    every such optimizer state. The floor never merges different experts.
+    Each worker trains on its own part of every batch and stores its own
+    share of the experts. Every other parameter keeps its weights and
+    gradients whole on every worker and shards its optimizer state, unless its
+    weight storage is under ``min_shard_bytes``.
+
+    Parameters
+    ----------
+    ranks : int
+        Number of workers.
+    fields : sequence of sequence of str, optional
+        Input fields each worker receives, as in `data_parallel`.
+    experts : sequence of str
+        Name patterns of the expert parameters, such as
+        ``"layers.*.mlp.experts.*"``. Each is split across the workers along
+        its first dimension.
+    outputs : mapping of str to mapping, optional
+        How each named output is assembled across workers, as in
+        `data_parallel`.
+    min_shard_bytes : int, default MIN_SHARD_BYTES
+        Weight storage size, in bytes, below which a non-expert parameter
+        keeps its optimizer state whole on every worker. Zero shards every
+        one. Different experts are never merged.
+
+    Returns
+    -------
+    dict
+        The declaration, passed as a run's ``parallelism`` setting.
     """
     result = data_parallel(
         ranks, fields=fields, outputs=outputs, min_shard_bytes=min_shard_bytes

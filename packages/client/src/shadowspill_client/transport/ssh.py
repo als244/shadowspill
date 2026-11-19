@@ -23,12 +23,33 @@ _SERVER = re.compile(r"[A-Za-z0-9_.:%-]{1,253}")
 
 @dataclass(frozen=True)
 class SSH:
-    """Local OpenSSH settings, never saved training configuration or credentials.
+    """SSH settings for reaching a service, passed as ``ssh`` to `ServiceClient`.
 
-    ``server_port`` is the HTTP service port as reached from ``host``; ``ssh_port``
-    optionally overrides the SSH daemon port. Ordinary aliases, keys, agent and
-    jump routing otherwise come from OpenSSH configuration. Complete interactive
-    authentication in the normal SSH workflow before using this batch connection.
+    The client forwards a local port to the service with OpenSSH, which runs
+    without prompting, so authentication must already work non-interactively.
+    Aliases, keys, agent and jump settings come from the OpenSSH
+    configuration, and a configured control master for ``host`` is reused
+    while it runs. These settings stay local and are not saved with any run.
+
+    Parameters
+    ----------
+    host : str
+        OpenSSH destination or alias of the machine that reaches the service.
+    server_port : int
+        The service's port, as reached from ``host``.
+    server_host : str, default "127.0.0.1"
+        The service's host name or IP address, as reached from ``host``.
+    jump_host : str, optional
+        OpenSSH destination to jump through on the way to ``host``.
+    ssh_port : int, optional
+        SSH port of ``host``. By default, the OpenSSH configuration's.
+    config_file : str, optional
+        OpenSSH configuration file. By default, the user's.
+
+    Raises
+    ------
+    ValueError
+        A value is not a valid destination, host, port or path.
     """
 
     host: str

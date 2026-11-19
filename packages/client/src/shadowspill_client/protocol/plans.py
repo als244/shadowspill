@@ -120,6 +120,36 @@ def summary_id(plans: ArtifactRef, page: int) -> str:
 
 @dataclass(frozen=True)
 class PlanSummaryRow(Record):
+    """One fact from the metadata saved with a Plan bundle.
+
+    Parameters
+    ----------
+    kind : str
+        What the row describes:
+
+        - ``"configuration"``: the model, objective, memory budgets, preset,
+          engine and client sources, input grouping and the validation
+          workspace of each operation.
+        - ``"batch"``: one batch option of the run, with its index.
+        - ``"build_case"``: one build case of the preparation, with its index.
+        - ``"representative"``: the representative inputs of one build
+          template.
+        - ``"candidate"``: one packing candidate: its operation, batch
+          option, build case, microbatch count, packing schedule, ordering,
+          simulated seconds, scheduled capacities and the worker Plans it
+          uses.
+        - ``"worker_plan"``: one worker's Plan, with its simulated summary
+          and declared spill bytes.
+        - ``"rejected_candidate"``: a candidate preparation rejected, with
+          the stage and reason.
+        - ``"coverage"``: a geometry proof that batches within one batch
+          option's limits pack into a named schedule of one operation.
+        - ``"shared_memory"``: one worker's fixed slice, execution and spill
+          memory, in bytes.
+    values : mapping
+        The row's fields, by name, as read-only JSON values.
+    """
+
     kind: SummaryKind
     values: Mapping[str, Value]
 
@@ -131,6 +161,29 @@ class PlanSummaryRow(Record):
 
 @dataclass(frozen=True)
 class PlanSummaryPage(Record):
+    """One page of the metadata saved with a Plan bundle.
+
+    `PlansHandle.summary` returns it. Pages are immutable.
+
+    Parameters
+    ----------
+    plans : ArtifactRef
+        The Plan bundle described.
+    configuration_sha256 : str
+        SHA-256 digest of the resolved configuration the Plans were prepared
+        for.
+    page : int
+        The page number, from 0.
+    next_page : int or None
+        Number of the next page, or None on the last page.
+    candidate_count : int
+        Number of packing candidates in the bundle, over every operation.
+    plan_count : int
+        Number of worker Plans in the bundle, over every worker.
+    rows : sequence of PlanSummaryRow
+        The page's rows, from 1 to 32.
+    """
+
     plans: ArtifactRef
     configuration_sha256: str
     page: int

@@ -23,6 +23,27 @@ from .requests import (
 
 @dataclass(frozen=True)
 class Accumulation(Record):
+    """The state of a run's gradient accumulation.
+
+    `TrainingClient.forward_backward` opens an accumulation or adds to the
+    open one; `TrainingClient.optim_step` and
+    `TrainingClient.discard_gradients` close it.
+
+    Parameters
+    ----------
+    generation : int, default 0
+        Number of accumulations the run has opened; 0 before the first. A
+        checkpoint load does not reset it.
+    open : bool, default False
+        True while gradients wait for `TrainingClient.optim_step` or
+        `TrainingClient.discard_gradients`.
+    contributions : sequence of str, default ()
+        IDs of the requests whose gradients the open accumulation holds, in
+        the order they ran; empty when it is closed.
+    participating_contributions : int, default 0
+        How many of ``contributions`` took part in the loss.
+    """
+
     generation: int = 0
     open: bool = False
     contributions: Sequence[str] = ()
@@ -47,6 +68,20 @@ class Accumulation(Record):
 
 @dataclass(frozen=True)
 class Acceptance(Record):
+    """The service's durable acceptance of a request into its run's order.
+
+    Parameters
+    ----------
+    identity : RequestIdentity
+        The accepted request's identity.
+    journal_position : int
+        Position of the acceptance in the run's journal, counted from one.
+    checkpoint : ArtifactRef, optional
+        For a checkpoint load, the checkpoint its ID or name resolved to at
+        acceptance; moving the name later does not change it. None for other
+        operations.
+    """
+
     identity: RequestIdentity
     journal_position: int
     checkpoint: ArtifactRef | None = None
@@ -66,6 +101,46 @@ class Acceptance(Record):
 
 @dataclass(frozen=True)
 class Failure(Record):
+    """The service's record of a failed request: what failed and what it changed.
+
+    `RequestStatus.failure` and `TrainingRequestError.failure` hold it.
+
+    Parameters
+    ----------
+    code : str
+        Failure code, such as ``"operation_conflict"``,
+        ``"dependency_failed"`` or ``"execution_failed"``.
+    message : str
+        Description of the failure.
+    execution_effect : str
+        ``"not_started"`` (no worker ran it), ``"completed"`` (it ran and its
+        effect on the training state stands, but its result was not
+        published; do not submit it again) or ``"unknown"`` (it may have
+        partly run).
+    state_valid : bool
+        Whether the run's training state is still usable; always False when
+        ``execution_effect`` is ``"unknown"``. Once it is False the run
+        accepts only ``close``.
+    completed_updates : int, optional
+        Optimizer updates the run had completed after the failure, this
+        request included if its effect completed; None when not known.
+    accumulation : Accumulation, optional
+        The gradient accumulation after the failure; None when not known.
+    failed_dependencies : sequence of str, default ()
+        IDs of the earlier requests whose failure stopped this one. For code
+        ``"invalid_dependency"``, the dependencies that name no earlier
+        request of the run.
+    history_id : str, optional
+        The training history after the failure; None when not known.
+    loss : float, optional
+        The objective's loss, as in `TrainingResult.loss`, when the request
+        ran to completion and computed it before publication failed; None
+        otherwise.
+    metrics : mapping of str to float, default {}
+        The objective's named metrics, under the same condition as ``loss``;
+        empty otherwise.
+    """
+
     code: str
     message: str
     execution_effect: Literal["not_started", "completed", "unknown"]
@@ -119,6 +194,21 @@ class Failure(Record):
 
 @dataclass(frozen=True)
 class ArtifactIssue(Record):
+    """An optional artifact, such as a runtime trace, that was not produced.
+
+    The request itself succeeded and must not be submitted again.
+    `TrainingResult.artifact_issues` lists these.
+
+    Parameters
+    ----------
+    code : str
+        Issue code, such as ``"runtime_trace_failed"``.
+    message : str
+        Description of what went wrong.
+    artifact_id : str, optional
+        ID the artifact would have had; None when it was given none.
+    """
+
     code: str
     message: str
     artifact_id: str | None = None
@@ -182,6 +272,70 @@ class ExecutionReceipt(Record):
 
 @dataclass(frozen=True)
 class OperationResult(Record):
+    """The service's durable record of a finished request's outcome.
+
+    `TrainingResult` presents it, with handles in place of artifact
+    references, and keeps it as ``record``; `RequestStatus.result` holds it
+    too.
+
+    Parameters
+    ----------
+    identity : RequestIdentity
+        The request's identity.
+    operation : str
+        ``"step"``, ``"forward_backward"``, ``"optim_step"``, ``"forward"``,
+        ``"discard"``, ``"save"`` (a checkpoint save or weights export),
+        ``"restore"`` (a checkpoint load) or ``"close"``.
+    history_id : str
+        The training history the request belongs to. Loading a checkpoint
+        starts a new one.
+    outcome : str
+        ``"completed"``, or ``"skipped"`` for an update none of whose
+        accumulated contributions took part in the loss; nothing then ran.
+    completed_updates : int
+        Optimizer updates the run has completed, this request included; after
+        a checkpoint load, the saved count.
+    accumulation : Accumulation, default Accumulation()
+        The gradient accumulation after this request.
+    metrics : mapping of str to float, default {}
+        The objective's named metrics, each combined over the batch as the
+        objective declares.
+    outputs : mapping of str to ArtifactRef, default {}
+        The output set's tensor outputs, by name.
+    traces : sequence of ArtifactRef, default ()
+        Runtime traces, one per worker that produced one, when the call set
+        ``runtime_trace``.
+    artifact_issues : sequence of ArtifactIssue, default ()
+        Optional artifacts, such as traces, that were not produced.
+    optim : mapping of str to scalar, default {}
+        Every optimizer control the update used, defaults included; empty
+        unless the operation is ``"step"`` or ``"optim_step"``.
+    loss_params : mapping of str to scalar, default {}
+        Every objective control the operation used, defaults included; empty
+        for ``"optim_step"`` and state operations.
+    grad_scale : float, optional
+        The gradient scale the update applied; None unless the operation is
+        ``"step"`` or ``"optim_step"``.
+    loss : float, optional
+        The objective's loss, summed over the batch with no mean taken; None
+        when the operation computes none.
+    state_valid : bool, default True
+        Whether the run's training state is usable after this request. Only
+        ``"close"`` can finish with False.
+    checkpoint : ArtifactRef, optional
+        For ``"save"``, the saved checkpoint's manifest; for ``"restore"``,
+        the loaded one's. None otherwise, and for a weights export.
+    metadata : mapping of str to object, default {}
+        For ``"restore"``, the caller metadata saved with the checkpoint;
+        empty otherwise.
+    weights : ArtifactRef, optional
+        For a weights export, the export's manifest; None otherwise.
+    execution_seconds : float, optional
+        Execution time of the slowest worker, in seconds, from input staging
+        to the final synchronization. It excludes upload and queueing. None
+        for state operations, or when a worker reported no time.
+    """
+
     identity: RequestIdentity
     operation: Operation
     history_id: str
@@ -320,6 +474,27 @@ class OperationResult(Record):
 
 @dataclass(frozen=True)
 class RequestStatus(Record):
+    """A request's lifecycle state, as the service records it.
+
+    Parameters
+    ----------
+    identity : RequestIdentity
+        The request's identity.
+    state : str
+        ``"uploading"`` (registered, waiting for its input), ``"accepted"``
+        (queued in order), ``"running"``, ``"completed"``, ``"skipped"`` or
+        ``"failed"``.
+    acceptance : Acceptance, optional
+        The service's acceptance; set once the request is accepted, in
+        every later state.
+    result : OperationResult, optional
+        The outcome record, as `TrainingResult` presents it; set when
+        ``state`` is ``"completed"`` or ``"skipped"``.
+    failure : Failure, optional
+        The failure record, as in `TrainingRequestError`; set when ``state``
+        is ``"failed"``.
+    """
+
     identity: RequestIdentity
     state: Literal["uploading", "accepted", "running", "completed", "skipped", "failed"]
     acceptance: Acceptance | None = None

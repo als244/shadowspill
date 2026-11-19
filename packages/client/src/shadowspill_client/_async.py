@@ -12,33 +12,101 @@ TASK_BYTES = 32 << 20
 
 
 class ConnectionClosed(ConnectionError):
-    """Local connection ended; this says nothing about accepted server work."""
+    """The client connection closed before a call finished.
+
+    It says nothing about work the service accepted, which continues.
+    """
 
 
 class CallFuture[T]:
-    """Waiting never cancels or repeats a remote operation."""
+    """The pending value of a client call.
+
+    The client's calls to the service return one, or one of its subclasses
+    such as `OperationFuture`. Waiting, with or without a timeout, never
+    cancels or repeats the remote work. If the client connection closes first,
+    the future fails with `ConnectionClosed`, a `ConnectionError`; work the
+    service has accepted continues.
+    """
 
     def __init__(self) -> None:
         self._future: Future[T] = Future()
 
     def result(self, timeout: float | None = None) -> T:
+        """Wait for the call's value.
+
+        Parameters
+        ----------
+        timeout : float, optional
+            Longest wait, in seconds. By default the wait lasts until the call
+            finishes.
+
+        Returns
+        -------
+        object
+            The call's value: a `TrainingResult` for a
+            ``CallFuture of TrainingResult``.
+
+        Raises
+        ------
+        TimeoutError
+            If the call has not finished within ``timeout``. The call goes on.
+        Exception
+            The call's own error, if it failed.
+        """
         return self._future.result(timeout)
 
     def exception(self, timeout: float | None = None) -> BaseException | None:
+        """Wait for the call and return its error.
+
+        Parameters
+        ----------
+        timeout : float, optional
+            Longest wait, in seconds. By default the wait lasts until the call
+            finishes.
+
+        Returns
+        -------
+        BaseException or None
+            The call's error, or None if it succeeded.
+
+        Raises
+        ------
+        TimeoutError
+            If the call has not finished within ``timeout``. The call goes on.
+        """
         return self._future.exception(timeout)
 
     def done(self) -> bool:
+        """Return whether the call has finished.
+
+        Returns
+        -------
+        bool
+            True once the call has a value or an error.
+        """
         return self._future.done()
 
     def add_done_callback(self, callback: Callable[[Self], None]) -> None:
-        """Observe completion without waiting; callbacks should return promptly.
+        """Run ``callback`` when the call finishes, without waiting for it.
 
-        A callback receives this handle once, including on failure. Registration
-        after completion invokes it immediately, as with concurrent.futures.
+        The callback runs once, on success or failure. If the call has already
+        finished, it runs immediately. It should return promptly.
+
+        Parameters
+        ----------
+        callback : callable
+            Function that takes this future as its only argument.
         """
         self._future.add_done_callback(lambda _: callback(self))
 
     def cancel(self) -> bool:
+        """Return False: a client call is never cancelled.
+
+        Returns
+        -------
+        bool
+            Always False.
+        """
         return False
 
     def _set_result(self, value: T) -> None:

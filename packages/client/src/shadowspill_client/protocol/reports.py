@@ -14,6 +14,26 @@ REPORT_VERSION = 3
 
 @dataclass(frozen=True)
 class ReportSettings(Record):
+    """What a report of a run's metric journal covers, and its limits.
+
+    `TrainingClient.report` sends its arguments as one.
+
+    Parameters
+    ----------
+    format : str, default "html"
+        ``"html"`` or ``"json"``.
+    after : int, default 0
+        Journal position after which records are included.
+    through : int, optional
+        Last journal position included, at least ``after``. None for the
+        journal's end when the service makes the report; a `ReportDocument`
+        holds the position it resolved to.
+    max_records : int, default 10000
+        Most records the report may hold, from 1 to 100000.
+    max_bytes : int, default 67108864
+        Largest report size, in bytes (64 MiB by default), up to 1 GiB.
+    """
+
     format: Literal["html", "json"] = "html"
     after: int = 0
     through: int | None = None
@@ -37,6 +57,27 @@ class ReportSettings(Record):
 
 @dataclass(frozen=True)
 class ReportDocument(Record):
+    """A stored report and the journal range it covers.
+
+    `ReportHandle.document` holds it.
+
+    Parameters
+    ----------
+    snapshot : MetricSnapshot
+        The run and the journal range the report covers.
+    settings : ReportSettings
+        The settings the report was made with, ``through`` resolved to
+        ``snapshot.through``.
+    reference : ArtifactRef
+        The stored report: HTML (``text/html; charset=utf-8``) or JSON
+        (``application/json``), at most ``settings.max_bytes``.
+    plans : ArtifactRef, optional
+        The run's execution Plans; None when the service records none.
+    version : int, default 3
+        Version of the report's content and schema; the client accepts only
+        the current one, 3.
+    """
+
     snapshot: MetricSnapshot
     settings: ReportSettings
     reference: ArtifactRef

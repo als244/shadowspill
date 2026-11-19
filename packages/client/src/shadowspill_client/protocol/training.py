@@ -18,10 +18,63 @@ type Origin = Literal["explicit", "definition", "preset", "engine_default"]
 
 @dataclass(frozen=True)
 class ResolvedTraining(Record):
-    """Resolved computation settings; no allocation, weights or live state.
+    """A run's settings with every default filled in from the installed definitions.
 
-    An absent model initializer remains unselected. Creation must obtain initial
-    state from an explicit initializer or checkpoint before making a client ready.
+    Returned as the ``config`` of `TrainingPreview` and by
+    `TrainingClient.get_config`, and accepted as ``config`` by the
+    `ServiceClient` methods that describe or create a run. It holds no
+    hardware selection, weights or run state. A model without ``initialize``
+    stays without one; creating a training run from it then needs a
+    checkpoint.
+
+    Parameters
+    ----------
+    model : Model
+        The model, with its installed ``definition`` named.
+    objective : Objective
+        The objective, with its configuration and defaults filled in.
+    optimizer : Optimizer or None
+        The optimizer, or None for a run without one.
+    batches : sequence of BatchConfig
+        The batch options, at least one.
+    memory : Memory
+        Device and spill budgets of each worker.
+    parallelism : mapping
+        The parallelism declaration, with its input placement filled in.
+    execution : Execution
+        Run-time settings.
+    operations : sequence of OperationKey
+        The compute operations to prepare, in order. ``optim_step`` follows
+        when ``forward_backward`` is prepared with an optimizer.
+    preparation : ResolvedPreparation
+        Build, profiling and planning settings.
+    definition_sources : mapping of str to DefinitionSource
+        Pinned sources of the definitions, by role: ``"model"``,
+        ``"objective"``, and ``"optimizer"`` and ``"reference"`` when present.
+    policy_sources : mapping of str to DefinitionSource
+        Pinned sources of the build policies the cases use, by policy name.
+    engine_source : DefinitionSource
+        Pinned source of the service's engine.
+    client_source : DefinitionSource
+        Pinned source of the client package the service resolved with.
+    inputs : InputSchema
+        The input fields each datum provides, for the model and objective.
+    loss_controls : ControlSchema
+        Per-call objective controls, passed as ``loss_params``.
+    optimizer_controls : ControlSchema or None
+        Per-call optimizer controls, passed as ``optim``. None without an
+        optimizer.
+    outputs : mapping of str to OutputSet
+        The output sets the operations name, by name.
+    participation : Participation
+        How the objective marks the data that count toward the loss.
+    origins : mapping of str to str
+        Where each setting came from, by dotted setting name such as
+        ``"model.initialize"``: ``"explicit"``, ``"definition"``,
+        ``"preset"`` or ``"engine_default"``.
+    reference_definition : str, optional
+        The definition that resolved the model's pretrained weights. Set
+        exactly when the model initializes from pretrained weights.
     """
 
     model: Model

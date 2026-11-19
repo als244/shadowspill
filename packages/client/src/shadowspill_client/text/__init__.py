@@ -11,11 +11,44 @@ from .statistics import text_batch_statistics
 
 
 def text_datum(tokens: Any, *, loss_mask: Any = None, weights: Any = None) -> Datum:
-    """Shift a complete token sequence and original-token-aligned mask/weights.
+    """Make a next-token example from one token sequence.
 
-    The result has L-1 model positions and targets. Explicit Datum construction
-    instead takes already aligned fields. Tokenization and chat formatting stay
-    with the application. Views are caller-owned until the submission snapshot.
+    For ``L`` tokens, the example has ``L - 1`` model positions and targets:
+    ``inputs["tokens"]`` is ``tokens[:-1]`` and
+    ``loss_inputs["target_tokens"]`` is ``tokens[1:]``, both int64 of shape
+    ``(L - 1,)``. ``loss_mask`` and ``weights`` align with the original
+    tokens and drop their first entry the same way. Fields are views where no
+    conversion is needed: an int64 NumPy ``tokens`` array is shared, not
+    copied. Tokenization and chat formatting stay with the caller.
+
+    Parameters
+    ----------
+    tokens : array_like of int
+        Token IDs on the CPU: one-dimensional, at least two, each nonnegative
+        and within the int64 range.
+    loss_mask : array_like of bool, optional
+        Whether each original token is a trained target, with the shape of
+        ``tokens``. Stored as ``loss_inputs["loss_mask"]`` (bool). By default
+        no mask is stored and every target is trained.
+    weights : float or array_like of float, optional
+        Weight of each original token's loss: a scalar for all tokens, or one
+        value per token. Stored as ``loss_inputs["weights"]`` (float32), with no
+        normalization; `text_batch` makes weights for a batch mean. By default
+        no weights are stored.
+
+    Returns
+    -------
+    Datum
+        The shifted example.
+
+    Raises
+    ------
+    ValueError
+        ``tokens`` is not on the CPU, is not a one-dimensional integer
+        sequence of at least two IDs, or holds an ID outside the nonnegative
+        int64 range; ``loss_mask`` differs in shape from ``tokens`` or holds
+        a value other than true or false; or ``weights`` is not finite or is
+        neither a scalar nor shaped like ``tokens``.
     """
     device = getattr(tokens, "device", None)
     if device is not None and str(device) != "cpu":
@@ -51,18 +84,35 @@ def text_datum(tokens: Any, *, loss_mask: Any = None, weights: Any = None) -> Da
 def text_batch(
     sequences: Iterable[Any], *, loss_masks: Iterable[Any] | None = None
 ) -> list[Datum]:
-    """Next-token examples weighted by the whole batch's supervised token count.
+    """Make next-token examples whose weights average the loss over the batch.
 
-    Masks align with original tokens, just as in ``text_datum``. Masked targets
-    and the first token of each sequence do not enter the denominator. Packing,
-    microbatching and worker placement may subsequently divide this batch without
-    changing its weights. For split accumulation, construct the whole update's
-    batch once, then submit slices of the resulting list.
+    Each sequence becomes a `text_datum` example, and every target gets
+    ``loss_inputs["weights"]`` of ``1 / N`` (float32), where ``N`` counts the
+    trained targets of the whole batch. An objective that sums weighted
+    target losses, such as ``"cross_entropy"``, then gives the mean over every
+    trained target, whatever the sequence lengths. Packing, microbatches and
+    worker placement keep these weights; to split one update over several
+    calls, build the whole update's batch once and submit slices of the list.
 
-    Use ``text_datum`` for explicit weights or unnormalized objectives. This
-    helper does not change additive reductions. The built-in cross-entropy,
-    policy and MoE-balancing objectives consume these weights by default;
-    custom objectives declare their own weighting semantics.
+    Parameters
+    ----------
+    sequences : iterable of array_like of int
+        Token sequences, each as ``tokens`` in `text_datum`.
+    loss_masks : iterable of array_like of bool, optional
+        One mask per sequence, each as ``loss_mask`` in `text_datum`. By
+        default every target is trained.
+
+    Returns
+    -------
+    list of Datum
+        One example per sequence, in order.
+
+    Raises
+    ------
+    ValueError
+        A sequence or mask is invalid as in `text_datum`, the number of masks
+        differs from the number of sequences, or the batch has no trained
+        target, as when it is empty.
     """
     batch = (
         [text_datum(tokens) for tokens in sequences]

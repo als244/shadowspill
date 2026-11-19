@@ -42,6 +42,24 @@ class TrainingDescription(Record):
 
 @dataclass(frozen=True)
 class PreparationEstimate(Record):
+    """How much preparation one compute operation needs, counted before building.
+
+    A schedule is one batch option, build case and microbatch count.
+
+    Parameters
+    ----------
+    operation : OperationKey
+        The compute operation.
+    geometry_cases : int
+        Number of distinct batch option and build case pairs among the
+        candidate schedules: the physical input shapes to build. Capture can
+        expand or share them.
+    candidate_schedules : int
+        Number of schedules that fit the batch limits, padding included.
+    rejected_schedules : int
+        Number of schedules that exceed a batch limit once padded.
+    """
+
     operation: OperationKey
     geometry_cases: int
     candidate_schedules: int
@@ -65,6 +83,27 @@ class PreparationEstimate(Record):
 
 @dataclass(frozen=True)
 class TrainingPreview(Record):
+    """A run's resolved settings and proposed workers.
+
+    Returned by `ServiceClient.describe_training`. Pass ``config`` and
+    ``resources`` to `ServiceClient.create_training_client` to create the run
+    as described.
+
+    Parameters
+    ----------
+    config : ResolvedTraining
+        The resolved settings.
+    preparation : sequence of PreparationEstimate
+        One estimate per compute operation of ``config``, in order, except
+        ``optim_step``.
+    resources : Resources, optional
+        The hardware selection the service resolved, with ``pool`` and
+        ``gpu_type`` filled in and any requested devices named by ID.
+    hardware : sequence of WorkerPlacement, default ()
+        The device proposed for each worker, by rank. Empty exactly when
+        ``resources`` is None.
+    """
+
     config: ResolvedTraining
     preparation: Sequence[PreparationEstimate]
     resources: Resources | None = None
@@ -103,7 +142,14 @@ class TrainingPreview(Record):
         object.__setattr__(self, "hardware", hardware)
 
     def summary(self) -> str:
-        """Describe requested work without inventing task counts or fresh timings."""
+        """Describe the preview as text for printing.
+
+        Returns
+        -------
+        str
+            The model, objective and batch limits, each operation's estimate,
+            the proposed workers and their memory budgets.
+        """
         rows = [
             f"Model: {self.config.model.definition}",
             f"Objective: {self.config.objective.definition}",

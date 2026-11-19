@@ -37,16 +37,65 @@ def shape(value: Sequence[int | str]) -> tuple[int | str, ...]:
 
 @dataclass(frozen=True)
 class TensorField(Record):
-    """One leaf in a Datum tree, before adding any internal microbatch axes.
+    """One field of a `Datum` tree, as a model or objective declares it.
 
-    Repeated symbolic dimensions explicitly declare aligned positions, including
-    across model/loss trees. Matching numeric dimensions alone do not. A packed
-    field names its packing axis; stack adds an example axis, and shared requires
-    equal values within a physical batch. Defaults are broadcast only as declared.
-    ``validity`` names an identically aligned boolean field. When the operation
-    selects that mask, only active values require numeric validation; inactive
-    values become this field's padding before conversion. Without the mask in
-    the operation's input closure, every supplied position must be valid.
+    ``shape`` is the shape of one example's value. A symbolic dimension (a
+    str) takes its size from the data; the same name, in this field or any
+    other of the model's and the objective's schemas, must have the same size
+    within one example. Equal integer sizes alone imply no alignment.
+
+    Parameters
+    ----------
+    path : sequence of str
+        Keys from the top of the tree to the field, such as ``("tokens",)``.
+    dtype : str
+        Element type: ``"bool"``, ``"uint8"``, ``"int8"``, ``"int16"``,
+        ``"int32"``, ``"int64"``, ``"float16"``, ``"bfloat16"``,
+        ``"float32"`` or ``"float64"``. Supplied values must be representable
+        in it, and are converted to it when packed.
+    shape : sequence of int or str, default ()
+        Dimensions of one example's value, each fixed (int) or symbolic (str).
+    batching : str, default "stack"
+        How examples share a physical buffer: ``"stack"`` adds a leading
+        example axis, ``"pack"`` concatenates examples along ``pack_axis``,
+        and ``"shared"`` keeps one value per buffer, which every example in it
+        must supply equally.
+    pack_axis : int, optional
+        Axis of ``shape`` along which packed examples are concatenated.
+        Required for ``"pack"``, None otherwise.
+    required : bool, default True
+        Whether every example must supply the field when an operation reads
+        it.
+    default : bool, int or float, optional
+        Value of an omitted optional field, broadcast to its shape. Required
+        for an optional field, None for a required one.
+    padding : bool, int or float, default 0
+        Value that fills padding in a physical buffer, and the positions
+        ``validity`` marks inactive.
+    finite : bool, default True
+        Whether every value must be finite.
+    minimum : float, optional
+        Smallest allowed value, inclusive. None for no bound.
+    maximum : float, optional
+        Largest allowed value, inclusive. None for no bound.
+    validity : sequence of str, optional
+        Path of a boolean field in the same tree with the same shape and
+        batching. When the operation reads that mask, only the positions it
+        marks true have their values checked, and the others are replaced by
+        ``padding``; otherwise every position is checked.
+
+    Raises
+    ------
+    ValueError
+        The declaration is inconsistent: an empty path, an unknown dtype or
+        batching, a ``pack_axis`` missing for ``"pack"`` or given otherwise,
+        a default given for a required field or missing for an optional one,
+        a default or padding that is not a scalar of the dtype, ``minimum``
+        above ``maximum``, or ``padding`` outside the bounds of a masked
+        field.
+    TypeError
+        ``shape`` is not a list or tuple, or ``required`` or ``finite`` is not
+        a bool.
     """
 
     path: Sequence[str]
@@ -135,11 +184,40 @@ class TensorField(Record):
 
 @dataclass(frozen=True)
 class Capacity(Record):
-    """A schema-owned global limit, counted once per logical input partition.
+    """A limit on a batch, as an input schema declares it.
 
-    `count` counts Datum records. Other reductions measure a declared field axis.
-    Scheduled capacities count padding too; replicated physical copies do not
-    multiply the same logical positions. Actual routing/packing lives in engine.
+    A `BatchConfig` gives each limit's value under its name, in ``limits``.
+    The limit applies to the whole batch, over every input partition; copies
+    of the same examples on cooperating workers count once.
+
+    Parameters
+    ----------
+    name : str
+        The limit's name in ``BatchConfig.limits``, such as
+        ``"token_capacity"``.
+    unit : str
+        Unit of the counted quantity, such as ``"tokens"``. Plan reports
+        count tokens per second from the one scheduled capacity in
+        ``"tokens"``, when there is exactly one.
+    reduction : str
+        What is counted: ``"count"`` counts examples, ``"sum"`` adds the size
+        of ``axis`` over every example, and ``"max"`` takes its largest size.
+    path : sequence of str, default ()
+        Path of the measured field, in the same tree as the schema's fields.
+        Empty for ``"count"``.
+    axis : int, optional
+        Axis of the field's ``shape`` that is measured. None for ``"count"``.
+    scheduled : bool, default False
+        Whether the limit also bounds each prepared packing schedule, whose
+        totals include padding.
+
+    Raises
+    ------
+    ValueError
+        ``name`` or ``unit`` is empty, ``reduction`` is unknown, or ``path``
+        and ``axis`` are given for ``"count"`` or missing otherwise.
+    TypeError
+        ``path`` is not a list or tuple, or ``scheduled`` is not a bool.
     """
 
     name: str
@@ -170,6 +248,28 @@ class Capacity(Record):
 
 @dataclass(frozen=True)
 class InputSchema(Record):
+    """The input fields and limits a model or objective declares.
+
+    A model's schema describes `Datum.inputs`, and an objective's describes
+    `Datum.loss_inputs`. Each submission is checked against both before it
+    uploads.
+
+    Parameters
+    ----------
+    fields : sequence of TensorField
+        The fields.
+    capacities : sequence of Capacity, default ()
+        The limits.
+
+    Raises
+    ------
+    ValueError
+        Two fields share a path, one field's path extends another's, two
+        capacities share a name, a ``validity`` path does not name an
+        unmasked boolean field with the same shape and batching, or a
+        capacity measures an undeclared field or axis.
+    """
+
     fields: Sequence[TensorField]
     capacities: Sequence[Capacity] = ()
 
