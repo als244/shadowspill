@@ -115,8 +115,8 @@ SDPA backend selector or workspace API override, nor guarantee bitwise equality
 across different GEMM/chunk geometries. Such changes still require fresh build
 and measurement and the appropriate numerical qualification. CPU loading and
 planning carry these settings as plain data and never import PyTorch to check them.
-Artifacts without a snapshot remain readable; rebuild them to obtain
-configuration validation and distinct profile identities.
+An artifact without a snapshot is read without configuration validation;
+rebuilding it records one.
 
 ### Representative task inputs
 
@@ -265,8 +265,8 @@ Planning, physical memory admission and overlap calibration remain independent.
 `TaskProfileCache(root, mode="refresh")` ignores preexisting disk entries while
 reusing new measurements within that cache instance. `reuse` reads without
 writing; `require` refuses a miss. Default `contribute` reads hits and writes
-misses. Recipe `refresh_profiles=True` uses the refresh behavior for the entire
-candidate sweep. Distributed participants intersect their cache hits before
+misses. Pass one cache with `mode="refresh"` to remeasure a whole candidate
+sweep. Distributed participants intersect their cache hits before
 launching any task collectives. `Profiles.metadata["task_cache"]` records hits
 and misses; original sample counts and timing diagnostics stay with each task.
 Cache directories are optional; saved public Profiles remain self-contained.
@@ -288,7 +288,8 @@ profiled = apply_profiles(profiled.program, profiles)
 
 The overlay preserves isolated task durations, allocation contracts and fixed
 memory evidence. It restores saved code with ordinary allocations, measures each
-unique form against small/middle/large actual transfer sizes, and records paired
+unique form at up to ten of each route's actual transfer sizes, spread evenly in
+log bytes from its smallest to its largest, and records paired
 trial statistics in `TaskProfile.metadata["overlap_calibration"]`. It does not
 build, create execution pools, fit full-step timings or choose a Plan. Both save
 and recompute forms and complete composed/chunked tasks are measured as built.
@@ -331,7 +332,7 @@ Calibration excludes the first collective and tails after local compute when
 estimating collective progress; unsupported or unstable trials remain missing.
 Insufficient memory and tasks that communicate are explicitly reported as skipped.
 Programs with model-owned collective resources and heterogeneous task forms are
-outside this measurement's current scope. Host-copy interference is not inferred.
+not measured by this calibration. Host-copy interference is not inferred.
 No sharded collective transfers means an empty overlay requiring no GPU work.
 
 Service preparation performs this enrichment during communication measurement

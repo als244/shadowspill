@@ -14,7 +14,7 @@ For a local planner build without accelerator discovery or the PyTorch adapter:
 pip install ./packages/engine --config-setting cmake.define.SHADOWSPILL_CPU_ONLY=ON
 ```
 
-This installs the existing native CPU planner, simulator and mock runtime. It
+This installs the native CPU planner, simulator and mock runtime. It
 supports saved-artifact inspection and replanning; preparing models and executing
 their device kernels requires the qualified server build. The default source
 build retains automatic backend discovery. Explicit provider selections conflict

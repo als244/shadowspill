@@ -87,7 +87,8 @@ def measure_overlap(
     measurement/cache identities remain local. Merge with
     ``profiled_program.profiles``, then ``apply_profiles`` before planning.
     No build, runtime pool or training-step
-    timing is used. Small/middle/large actual transfer sizes bound each probe.
+    timing is used. Each route is probed at up to ten of its actual transfer
+    sizes, spread in log bytes (see ``overlap_routes``).
 
     Communicating model tasks, insufficient free device memory and statistically
     unsupported samples are reported as missing evidence, never invented rates.

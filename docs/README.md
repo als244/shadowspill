@@ -1,5 +1,7 @@
 # ShadowSpill documentation
 
+## Start here
+
 [Install ShadowSpill](development/repository.md#setup), then run the
 [text-training example](examples/client-training.md). The service prepares the
 model and workers; the client submits batches and reads results.
@@ -11,6 +13,8 @@ model and workers; the client submits batches and reads results.
   custom definitions, recovery and diagnostics.
 
 ## Reference
+
+Exact APIs, the engine's design, the C interface and contributor guides.
 
 - [Python API](python/README.md)
 - [Engine architecture](architecture/README.md)

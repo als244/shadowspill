@@ -66,7 +66,7 @@ The returned mapping must:
 - assign each label to one contiguous topological interval;
 - leave the supplied graph unchanged.
 
-Labels need not be contiguous; ShadowSpill normalizes them by first appearance.
+Labels need not be consecutive; ShadowSpill normalizes them by first appearance.
 Missing/extra nodes, noncontiguous reuse of a label, invalid values, graph
 mutation, or a policy exception becomes a `CaptureError` before compilation.
 

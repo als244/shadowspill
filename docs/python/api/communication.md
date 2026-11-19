@@ -60,7 +60,7 @@ profiled = apply_profiles(profiled.program, profiled.profiles.merge(overlap))
 | `cache` | `None` | Shared `OverlapProfileCache` for compatible paired measurements. |
 
 Call distributed probes on every participant after rendezvous. Overlap evidence
-currently covers supported sharded collective transfers; model-owned opaque
+covers supported sharded collective transfers; model-owned opaque
 communication is excluded and recorded as missing coverage. No relevant routes
 means an empty overlay. See the [distributed workflow](distributed.md).
 

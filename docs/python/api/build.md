@@ -146,7 +146,7 @@ support. Shared [resources](../../architecture/resources.md) likewise need saved
 descriptions and checked initialization. Model-owned collectives require all
 participants during build; see [distributed setup](distributed.md).
 
-Current compiled artifacts embed a **process-local CUDA ordinal**. Measurement
+Compiled artifacts embed a **process-local CUDA ordinal**. Measurement
 and execution must use the recorded binding: `device=1` cannot relocate code
 compiled for `cuda:0`. Set device visibility before CUDA initialization so each
 worker can see its assigned physical GPU at the compiled local ordinal. Logical

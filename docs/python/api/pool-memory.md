@@ -65,18 +65,17 @@ arena bytes = floor_to_2MiB(effective allowance
                            - reserved headroom)
 ```
 
-Reserved headroom includes the pool process increment once, alongside the existing
+Reserved headroom includes the pool process increment once, alongside the
 provider margin and communicator reservation. In-arena provider state stays
-inside the arena. The default provider margin remains 512 MiB and
-`reject_overbudget=False` remains unchanged. Physical allocation failures and
+inside the arena. The default provider margin is 512 MiB and
+`reject_overbudget` defaults to `False`. Physical allocation failures and
 saved-layout admission are enforced independently of that reporting policy.
 
 The native admission record reports the declared, saved, current and effective
 allowances separately. Reduced current availability can refuse a previously
 planned layout. Execution does not recalibrate, resize a saved layout or replan.
-The adapter's configuration and admission fields require **adapter ABI3**;
-rebuild Python and native libraries together. Runtime ABI3 and backend ABI1 are
-unchanged.
+The adapter's configuration and admission fields require **adapter ABI 3**
+(runtime ABI 3, backend ABI 1); rebuild Python and native libraries together.
 
 ## Identity, distributed use and limits
 

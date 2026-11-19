@@ -1,11 +1,10 @@
 # Examples
 
-Start with the [README training examples](../../README.md) or the
-[standalone client demos](../../examples/demos/README.md). Each demo keeps its
-model, batch limits and memory budget visible and saves predicted and measured
-HTML reports.
-
 ## Training through the service
+
+Start with the [README training examples](../../README.md) or the standalone
+client demos below. Each demo keeps its model, batch limits and memory budget
+visible and saves predicted and measured HTML reports.
 
 | Task | Example |
 | --- | --- |
@@ -21,7 +20,7 @@ The [catalog](../python/catalog.md) lists built-in models, optimizers and object
 
 ## Direct engine examples
 
-These examples use the preserved build/profile/plan/execute APIs:
+These examples call the build, profile, plan and execute APIs directly:
 
 - [Forward-only execution](forward-only.md): prediction and evaluation Plans.
 - [Reusable planning](reusable-planning.md): plan saved profiles without a GPU.

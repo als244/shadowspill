@@ -151,7 +151,7 @@ is never guessed from tensor names or element counts.
 Returned views of input or parameter storage become owned snapshots during build.
 Those copies are compiled and profiled as part of the task. Views sharing that
 storage still share their returned snapshot; changing it cannot change stored
-parameters. Mixed-dtype views of one returned input storage currently require
+parameters. Mixed-dtype views of one returned input storage require
 explicit model-side copies. TensorChunk includes stride and storage offset for
 loaders handling noncontiguous registrations; chunk offsets address physical
 storage rather than a flattened logical tensor.

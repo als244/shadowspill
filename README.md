@@ -187,7 +187,7 @@ training = service.create_training_client(
 
 `parallelism` enters preparation: it determines parameter storage, input placement
 and communication between workers. This DP configuration shards parameter storage
-across eight GPUs. Each `step()` submits **one global batch** of 512 × 4,096 =
+across eight GPUs; parameters under 2 MiB stay whole on every GPU. Each `step()` submits **one global batch** of 512 × 4,096 =
 2,097,152 tokens (2M); workers accumulate microbatches and apply one update.
 Scheduled padding counts toward that token cap. The execution budget is **20 GiB
 per GPU**; eight 96 GiB spill budgets require 768 GiB of spill capacity in total.

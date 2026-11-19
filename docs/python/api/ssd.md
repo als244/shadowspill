@@ -153,9 +153,8 @@ calibrated bandwidths and explicit request latency. The saved communication
 artifact records the probe sizes, raw rates and measurement method. Smaller probe sizes reduce calibration writes
 and can affect the estimate; they do not change production transfers.
 
-A Chicago RTX 5090 / Samsung 990 PRO validation measured about 7.09 GB/s for
-SSD-to-GPU fetches, close to standalone direct reads around 7.05–7.12 GB/s.
-These are machine-specific observations, not hard-coded planner bandwidths.
+Calibrated rates are machine-specific observations, not hard-coded planner
+bandwidths.
 
 For extension loading, exact C configuration and ownership, see the
 [C SSD API](../../c/ssd.md) and

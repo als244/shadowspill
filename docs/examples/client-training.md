@@ -80,7 +80,7 @@ The homepage passes this configuration to `create_training_client`:
 | Setting | Value |
 | --- | --- |
 | Architecture | Qwen3-30B-A3B, initialized from scratch |
-| Parallelism | Eight-way data parallelism with sharded parameter storage |
+| Parallelism | Eight-way data parallelism, sharding parameters of 2 MiB or more |
 | Sequence length | 4,096 positions |
 | Global batch | 512 sequences, or 2,097,152 scheduled tokens |
 | Microbatch | 64K tokens per rank; four microbatches per full update |
@@ -94,7 +94,7 @@ The allocation needs room beyond the execution and spill pools for staging,
 workers and profiling. These are requested budgets; inspect `plan.html` for actual
 planned occupancy and estimated time on your hardware.
 
-`data_parallel(...)` returns the existing portable parallelism configuration.
+`data_parallel(...)` returns a portable parallelism configuration.
 Setup infers input fields from the model and objective schemas, including optional
 defaulted masks and weights. The setting reaches
 preparation before graph capture, profiling or planning. Builds use the declared

@@ -1,11 +1,13 @@
 # Python guides and API
 
+## Guides
+
 Start with the [training client](client.md) and the
 [model, optimizer and objective catalog](catalog.md).
 
 | Goal | Guide |
 | --- | --- |
-| Train through the public service | [Complete client example](../examples/client-training.md), [client API](client.md) |
+| Train through the public service | [Complete client example](../examples/client-training.md) |
 | Run an editable training example | [Standalone demos](../../examples/demos/README.md) |
 | Use a command-line training loop | [Training applications](../../examples/training/README.md) |
 | Bring a custom model or control each phase | [Custom models](advanced/custom-definitions.md), [phase guide](phases.md) |
@@ -14,7 +16,7 @@ Start with the [training client](client.md) and the
 
 Setup and runtime are separate: `ServiceClient` describes and creates a run;
 `TrainingClient` submits batches to ready workers. The service owns preparation,
-initialization and execution. Direct phase entry points remain available from
+initialization and execution. Direct phase entry points are available from
 `shadowspill`, with PyTorch policies in `shadowspill.pytorch`.
 
 ## API reference
@@ -30,7 +32,6 @@ order of calls and a complete example.
 | Copy/collective measurement and overlap | [Communication](api/communication.md) |
 | Budgets, traversal, save/recompute search and candidate sweeps | [Planning](api/planning.md) |
 | Saved Programs, profiles and Plans | [Artifacts](api/artifacts.md) |
-| Global batches, complete/split updates, evaluation and checkpoints | [Training client](client.md#runtime-operations) |
 | Asynchronous calls and shared state across Plans | [Executor](api/executor.md) |
 | Logical ownership, calibration and multi-worker execution | [Distributed training](api/distributed.md) |
 | Pool capacities, calibration and external storage | [Pool memory](api/pool-memory.md), [SSD](api/ssd.md) |

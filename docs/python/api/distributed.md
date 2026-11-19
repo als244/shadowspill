@@ -42,7 +42,8 @@ and allocation requirements using the ordinary PyTorch allocator.
 A **model replica** collectively owns the complete model state. Eight ranks in
 one replica can each compute an ordinary DP batch while storing one eighth of
 the weights, gradients and optimizer data. `Parallelism.dp` shards all three by
-default. Optional masters follow optimizer ownership; scalar counters and
+default, except parameters smaller than `min_shard_bytes` (2 MiB), which every
+rank keeps whole. Optional masters follow optimizer ownership; scalar counters and
 hyperparameters are not parameter-sized shards.
 
 `Parallelism.dp(ranks_per_replica=8, num_replicas=2)` describes two copies of
@@ -144,7 +145,7 @@ storage or model-communication groups. Parameter placement alone cannot infer
 input-layout semantics.
 
 `Parallelism.inputs` can declare that relationship explicitly. It defaults to
-`None`, preserving existing rank-local callers and saved declarations. These
+`None`: callers supply rank-local inputs themselves. These
 framework-free records describe delivery and ownership; Executor still receives
 rank-local tensors and does not route a global batch itself.
 
@@ -169,7 +170,7 @@ assert inputs.scheduled_capacity([[65536], [65536]]) == 131072
 
 Input groups use global logical ranks and cover every worker exactly once.
 Their declared order determines the leader and contiguous slice order. Groups
-currently have equal size, following `GroupRef`. `InputPlacement.independent(4)`
+have equal size, following `GroupRef`. `InputPlacement.independent(4)`
 instead declares four distinct partitions, irrespective of parameter storage.
 Fields can be shared metadata, replicated payload or a balanced contiguous
 `"slice"` on an explicit axis. The definition must declare every routed field
@@ -196,8 +197,8 @@ Gradient contributions are **summed**, without implicit world-size division.
 For an additive objective, every rank/example can contribute
 `loss_sum / global_normalizer`, where the denominator counts the complete
 update's examples, valid tokens or weighted observations. A local mean needs
-the corresponding contribution weight. The simple baseline divides its
-rank-local normalized loss by world size.
+the corresponding contribution weight. For example, a rank-local mean loss
+divided by world size gives the global mean when every rank holds an equal share.
 
 Ranks on one kind of GPU run the same Program and input signatures. Unequal
 example shapes *within* that Program use `example_calls`; ranks on different GPUs

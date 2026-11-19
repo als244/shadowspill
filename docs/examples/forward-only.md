@@ -6,7 +6,7 @@ in a fresh execution worker. No optimizer or training objective is needed. The
 
 ## Prepare and save
 
-The current GPU builder finalizes kernels on a representative GPU. Build and
+The builder finalizes kernels on a representative GPU. Build and
 profiling use ordinary GPU allocations; planning opens no execution pools.
 
 ```python

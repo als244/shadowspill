@@ -97,7 +97,7 @@ task/NCCL interference to existing profiles after communication calibration.
 Service preparation runs it during its
 communication phase. Empty overlap evidence retains isolated timing and is
 reported as unmeasured, not a measured absence of interference. For calibration,
-see [distributed phases](distributed.md#ownership-and-setup).
+see [distributed phases](distributed.md#communication-calibration-and-cpu-planning).
 
 Indexed compiled projections:
 
@@ -189,7 +189,7 @@ buffer, a constant, a piece of optimizer state. `RepresentativeInputSummary` is
 the provenance of the value profiling materialized for one argument: its geometry,
 never its contents, so a profile artifact says what was measured and carries no
 data. `REPRESENTATIVE_VALUE_POLICY` is the policy it was generated under, and a
-profile recorded under an older one is not comparable.
+profile recorded under a different one is not comparable.
 
 ## `shadowspill.store`
 
@@ -596,10 +596,9 @@ plan = plan_program(
 #### `OptionRecord`
 
 The base every option record derives from. `to_dict()` and `from_dict()`
-come from the dataclass's own fields, so an option added later is keyed,
-archived and replayed without a second edit, and a stored record missing an
-option is refused rather than read as though the absent option held today's
-default. `record_from_value(value)` reads any record back as the type it was
+come from the dataclass's own fields, so every option is keyed, archived and
+replayed without a second edit, and a stored record missing an option is
+refused rather than read with a default. `record_from_value(value)` reads any record back as the type it was
 written as.
 
 Each subclass names a `KIND` and registers itself under it, so a record

@@ -31,10 +31,10 @@ Start with the [custom partitioning example](../../examples/custom-partitioning.
 shape, dtype, optional stride, `requires_grad`, and layout.
 
 An objective may return a scalar loss tensor, `(loss, metrics)`, or `ObjectiveResult`. A bare
-tensor becomes the corresponding `StepResult.losses` entry and has
+tensor becomes the corresponding `TrainingResult.losses` entry and has
 `metrics=None`. `ObjectiveResult` explicitly names the differentiable `loss`
 and arbitrary nondifferentiated `metrics`; each becomes the corresponding
-entry in the two per-round `StepResult` tuples. ShadowSpill validates this
+entry in the two per-round `TrainingResult` tuples. ShadowSpill validates this
 contract during capture rather than inferring a loss from model output names.
 
 | `ObjectiveResult` field | Contract |

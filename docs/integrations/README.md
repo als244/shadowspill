@@ -4,8 +4,14 @@ The core compiler accepts generic operator descriptions and build policies.
 An optional adapter translates a library's own metadata into those controls;
 it does not make the engine depend on a model architecture.
 
+## Adapters
+
+Each adapter has a page of its own.
+
 - [MLOps](mlops.md): independent axes, additive gradients, layout permissions
   and prepared external kernels.
+
+## Adding a library
 
 To integrate another library, start with [operator integration](../python/advanced/operator-integration.md)
 and [operator preparation](../python/advanced/operator-preparation.md). Provider semantics
