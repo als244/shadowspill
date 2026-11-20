@@ -74,7 +74,7 @@ def test_initial_device_capacity_failure_is_structured() -> None:
 
 def test_initial_spill_capacity_failure_is_structured() -> None:
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(AliasGroupSpec("spill_storage", "cuda_0", 128),),
         objects=(
             ObjectSpec("spill_object", "spill_storage", 0, 128, ObjectRole.INPUT),
@@ -120,7 +120,7 @@ def test_pending_evict_reports_spill_capacity_root_cause() -> None:
 def test_pending_fetch_reports_device_capacity_root_cause() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(
             AliasGroupSpec("resident_storage", "cuda_0", 64),
             AliasGroupSpec("spill_storage", "cuda_0", 128),
@@ -164,7 +164,7 @@ def test_pending_fetch_reports_device_capacity_root_cause() -> None:
 def test_fetch_reserves_capacity_at_trigger_before_lane_head() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(
             AliasGroupSpec("resident_storage", "cuda_0", 64),
             AliasGroupSpec("first_spill_storage", "cuda_0", 64),

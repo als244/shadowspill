@@ -68,13 +68,12 @@ def worker(events, *, steps=2, fault=None, publish=None):
     return execution, capture
 
 
-def call(operation, updates, *, skipped=False, history="history", name=None):
+def call(operation, updates, *, history="history", name=None):
     return SimpleNamespace(
         command=SimpleNamespace(
             scope=SCOPE,
             history_id=history,
             completed_updates=updates,
-            skipped=skipped,
             accumulate_gradients=False,
             request=SimpleNamespace(
                 operation=operation,
@@ -82,7 +81,7 @@ def call(operation, updates, *, skipped=False, history="history", name=None):
                 identity=SimpleNamespace(request_id=name or f"{operation}-{updates}"),
             ),
         ),
-        plan=None if skipped and operation == "optim_step" else "main",
+        plan="main",
         hyperparams={},
         input_loader=lambda _: None,
     )
@@ -90,19 +89,18 @@ def call(operation, updates, *, skipped=False, history="history", name=None):
 
 def test_window_spans_every_backward_contribution_and_terminal_optimizer(events):
     execution, capture = worker(events)
-    for operation, updates, skipped, name in (
-        ("step", 0, False, "warmup"),
-        ("optim_step", 1, True, "empty"),
-        ("forward", 1, False, "before"),
-        ("forward_backward", 1, False, "part-one"),
-        ("forward", 1, False, "evaluation"),
-        ("forward_backward", 1, False, "part-two"),
-        ("optim_step", 1, False, "optimizer"),
-        ("step", 2, False, "whole"),
-        ("step", 3, False, "after"),
-        ("step", 1, False, "rewound"),
+    for operation, updates, name in (
+        ("step", 0, "warmup"),
+        ("forward", 1, "before"),
+        ("forward_backward", 1, "part-one"),
+        ("forward", 1, "evaluation"),
+        ("forward_backward", 1, "part-two"),
+        ("optim_step", 1, "optimizer"),
+        ("step", 2, "whole"),
+        ("step", 3, "after"),
+        ("step", 1, "rewound"),
     ):
-        bound = call(operation, updates, skipped=skipped, name=name)
+        bound = call(operation, updates, name=name)
         execution.prepare(bound)
         execution(bound)
     assert events.count("start") == events.count("stop") == 1

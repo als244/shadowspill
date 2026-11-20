@@ -32,7 +32,7 @@ from ._example import options
 def test_capacity_forces_early_reduction_and_shard_only_spill(tmp_path):
     lane = ResourceSpec("gpu", ResourceKind.COMPUTE)
     source = Program(
-        devices=(DeviceSpec("gpu", "worker", "cuda", 0),),
+        devices=(DeviceSpec("gpu"),),
         alias_groups=(
             AliasGroupSpec("gradient", "gpu", 128),
             AliasGroupSpec("other", "gpu", 128),

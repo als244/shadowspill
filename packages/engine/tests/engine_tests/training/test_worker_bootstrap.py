@@ -57,7 +57,7 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
 
     def load(packages):
         assert packages == ("fixture",)
-        events.append("definitions")
+        events.append("components")
         return "registry"
 
     def verify(root, reference):
@@ -131,7 +131,7 @@ def test_bootstrap_validates_grants_and_preflight_before_opening_executor(
             assert not events
     else:
         bootstrap.serve(incoming, files=tmp_path, outputs=tmp_path, cache=tmp_path)
-        assert events == ["definitions", "integrity", "bundle", "preflight", "serve"]
+        assert events == ["components", "integrity", "bundle", "preflight", "serve"]
 
 
 def test_startup_artifact_content_is_rechecked_before_decoding(tmp_path):
@@ -179,7 +179,7 @@ def test_real_owned_bootstrap_failure_releases_no_claim_until_child_cleanup(tmp_
             start_processes({0: process}, stop=lease.close)
         assert process.child.closed and lease.closed and admission.used.claims == 0
         assert (
-            "definition package is not installed"
+            "component package is not installed"
             in (logs.directory / "stderr.log").read_text()
         )
         assert not process.child._ready

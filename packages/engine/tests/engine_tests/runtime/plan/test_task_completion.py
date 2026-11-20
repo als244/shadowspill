@@ -35,7 +35,7 @@ def test_fixed_arena_preserves_task_reuse_and_data_completion():
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     communication = ResourceSpec("cuda_0", ResourceKind.COMMUNICATION)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "worker", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(),
         objects=(),
         profiles=(

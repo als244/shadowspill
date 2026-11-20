@@ -7,7 +7,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from engine_tests.fixtures.definition_operations import records
+from engine_tests.fixtures.component_operations import records
 from engine_tests.training.test_input_staging import classifier_staging
 from shadowspill.training.inputs.adapters import InputBinding
 from shadowspill.training.inputs.frames import FRAME_CHUNK_BYTES, InputFrame

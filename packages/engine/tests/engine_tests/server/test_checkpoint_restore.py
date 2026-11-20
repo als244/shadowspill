@@ -307,7 +307,7 @@ def test_public_restore_reuses_startup_grant_without_copying_or_retiring_it(
 
 
 @pytest.mark.parametrize(
-    "difference", ["semantics", "definition", "source", "defaults", "objective"]
+    "difference", ["semantics", "component", "source", "defaults", "objective"]
 )
 def test_ordered_restore_checks_optimizer_interpretation_before_acceptance(
     tmp_path, difference
@@ -326,18 +326,18 @@ def test_ordered_restore_checks_optimizer_interpretation_before_acceptance(
                 config,
                 optimizer=replace(config.optimizer, config={"reinterpret": True}),
             )
-        elif difference == "definition":
+        elif difference == "component":
             changed = replace(
                 config,
-                optimizer=replace(config.optimizer, definition="other-optimizer"),
+                optimizer=replace(config.optimizer, name="other-optimizer"),
             )
         elif difference == "source":
             changed = replace(
                 config,
-                definition_sources={
-                    **config.definition_sources,
+                component_sources={
+                    **config.component_sources,
                     "optimizer": replace(
-                        config.definition_sources["optimizer"], version="different"
+                        config.component_sources["optimizer"], version="different"
                     ),
                 },
             )
@@ -348,12 +348,12 @@ def test_ordered_restore_checks_optimizer_interpretation_before_acceptance(
         else:
             changed = replace(
                 config,
-                objective=replace(config.objective, definition="another-objective"),
+                objective=replace(config.objective, name="another-objective"),
             )
         source, _ = generation(http.artifacts, count=1, config=changed)
         before = controller.boundary
         load = training.load_checkpoint(source.id)
-        if difference in ("semantics", "definition", "source"):
+        if difference in ("semantics", "component", "source"):
             with pytest.raises(TrainingRequestError, match="optimizer semantics"):
                 load.result(10)
             assert records.get(load.request_id)[1].acceptance is None

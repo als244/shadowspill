@@ -1,4 +1,4 @@
-"""Real CPU capture through the same external/supplied definition interface."""
+"""Real CPU capture through the same external/supplied component interface."""
 
 import subprocess
 import sys
@@ -7,11 +7,11 @@ from dataclasses import replace
 import pytest
 import torch
 
-from engine_tests.fixtures import external_definition
+from engine_tests.fixtures import external_component
 from shadowspill.pytorch.capture.objective import capture_training_objective
-from shadowspill.training.definitions import Registry, simple_loss
-from shadowspill_client.protocol.definitions import (
-    DefinitionSource,
+from shadowspill.training.components import Registry, simple_loss
+from shadowspill_client.protocol.components import (
+    ComponentSource,
     OutputSet,
     Participation,
 )
@@ -19,7 +19,7 @@ from shadowspill_client.protocol.definitions import (
 
 def external():
     registry = Registry()
-    external_definition.register(registry)
+    external_component.register(registry)
     model = registry.resolve_model("external/image_classifier@1")
     objective = registry.resolve_objective("external/classification@1", model=model)
     return registry, model, objective
@@ -28,29 +28,29 @@ def external():
 def test_description_is_portable_pinned_and_does_not_construct_models(monkeypatch):
     registry = Registry()
     monkeypatch.setattr(
-        external_definition,
+        external_component,
         "create",
         lambda _: pytest.fail("constructed during inspection"),
     )
-    external_definition.register(registry)
+    external_component.register(registry)
     description = registry.resolve_model("external/image_classifier@1")
     assert description.config == {"num_classes": 3}
     assert description.inputs.capacities[0].name == "max_examples"
-    assert description.source == external_definition.SOURCE
+    assert description.source == external_component.SOURCE
     with pytest.raises(TypeError):
         description.config["num_classes"] = 6
     with pytest.raises(ValueError, match="source changed"):
         registry.resolve_model(
-            description.definition.id,
-            source=DefinitionSource("external-classifier-fixture", "1", "b" * 64),
+            description.component.id,
+            source=ComponentSource("external-classifier-fixture", "1", "b" * 64),
         )
     with pytest.raises(ValueError, match="not installed"):
         registry.resolve_model("external/image_classifier@2")
     with pytest.raises(TypeError):
-        registry.resolve_model(description.definition.id, config={"misspelled": 3})
+        registry.resolve_model(description.component.id, config={"misspelled": 3})
 
 
-def test_external_definition_captures_weighted_masked_gradients_and_runtime_controls():
+def test_external_component_captures_weighted_masked_gradients_and_runtime_controls():
     _, description, objective = external()
     torch.manual_seed(82)
     model = description.create()
@@ -106,14 +106,14 @@ class Block(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] in {'shadowspill_workloads', 'mlops', 'transformers'}:
             raise AssertionError('forbidden catalog dependency: '+fullname)
 sys.meta_path.insert(0, Block())
-from engine_tests.fixtures.external_definition import register
-from shadowspill.training.definitions import Registry
+from engine_tests.fixtures.external_component import register
+from shadowspill.training.components import Registry
 registry = Registry()
 register(registry)
 model = registry.resolve_model('image_classifier')
 objective = registry.resolve_objective('classification', model=model)
-assert model.definition.id == 'external/image_classifier@1'
-assert objective.definition.id == 'external/classification@1'
+assert model.component.id == 'external/image_classifier@1'
+assert objective.component.id == 'external/classification@1'
 assert objective.defaults == {'temperature': 1.0}
 assert 'torch' not in sys.modules
 assert model.create().head.out_features == 3
@@ -126,18 +126,18 @@ assert model.create().head.out_features == 3
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_registry_rejects_duplicate_incompatible_and_misdeclared_definitions():
+def test_registry_rejects_duplicate_incompatible_and_misdeclared_components():
     registry, model, objective = external()
     with pytest.raises(ValueError, match="already registered"):
-        registry.add_model(model.definition, source=model.source)
+        registry.add_model(model.component, source=model.source)
     incompatible = replace(
-        objective.definition, id="external/requires_other@1", requires=("other",)
+        objective.component, id="external/requires_other@1", requires=("other",)
     )
     registry.add_objective(incompatible, source=objective.source)
     with pytest.raises(ValueError, match="lacks required"):
         registry.resolve_objective(incompatible.id, model=model)
     bad_validity = replace(
-        objective.definition,
+        objective.component,
         id="external/bad_validity@1",
         participation=Participation(("weights",)),
     )
@@ -145,7 +145,7 @@ def test_registry_rejects_duplicate_incompatible_and_misdeclared_definitions():
     with pytest.raises(ValueError, match="boolean loss field"):
         registry.resolve_objective(bad_validity.id, model=model)
     bad_outputs = replace(
-        objective.definition,
+        objective.component,
         id="external/bad_outputs@1",
         outputs={"metrics": OutputSet(model_inputs=(("tokens",),))},
     )

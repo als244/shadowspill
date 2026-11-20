@@ -5,13 +5,13 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions
-from engine_tests.fixtures.external_definition import SOURCE
-from engine_tests.training.test_input_adapters import sequence_definition
+from engine_tests.fixtures.component_operations import components
+from engine_tests.fixtures.external_component import SOURCE
+from engine_tests.training.test_input_adapters import sequence_component
 from engine_tests.training.test_preparation_templates import inventory
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement
-from shadowspill.training.definitions import (
+from shadowspill.training.components import (
     InputAdapter,
     InputLayout,
     Registry,
@@ -59,9 +59,9 @@ def test_fixed_stacked_samples_are_compact_owned_and_use_schema_defaults():
 
 def sequence_binding():
     registry = Registry()
-    definition = sequence_definition()
-    registry.add_model(definition, source=SOURCE)
-    resolved = registry.resolve_model(definition.id)
+    component = sequence_component()
+    registry.add_model(component, source=SOURCE)
+    resolved = registry.resolve_model(component.id)
     schema = combined_schema(
         resolved.inputs,
         InputSchema(
@@ -217,18 +217,18 @@ def test_missing_patterns_and_patterns_exceeding_logical_limits_fail_before_buil
     prepared = inventory().layouts
     no_pattern = replace(
         prepared.setup.preset,
-        definition=replace(prepared.setup.preset.definition, representative=None),
+        component=replace(prepared.setup.preset.component, representative=None),
     )
     with pytest.raises(ValueError, match="must declare a representative"):
         capture_inventory(
             replace(prepared, setup=replace(prepared.setup, preset=no_pattern))
         )
-    model, _, _ = definitions()
+    model, _, _ = components()
     schema = replace(
         model.inputs,
         capacities=[replace(c, scheduled=False) for c in model.inputs.capacities],
     )
-    registry = installed(model=replace(model.definition, inputs=schema))
+    registry = installed(model=replace(model.component, inputs=schema))
     # Four physical slots are legal under a one-record actual-input cap, but a
     # purported typical sample containing four real records is not.
     setup = resolve_training(

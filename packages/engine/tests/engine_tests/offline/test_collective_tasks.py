@@ -39,7 +39,7 @@ def collective_program(workspace=None):
     compute = ResourceSpec("rank0", ResourceKind.COMPUTE)
     communication = ResourceSpec("rank0", ResourceKind.COMMUNICATION)
     return Program(
-        devices=(DeviceSpec("rank0", "worker", "cuda", 0),),
+        devices=(DeviceSpec("rank0"),),
         alias_groups=tuple(
             AliasGroupSpec(name, "rank0", size)
             for name, size in (
@@ -104,7 +104,6 @@ def collective_program(workspace=None):
         initial_residency=(ResidencySpec("weight", MemoryLocation.SPILL),),
         parallelism=Parallelism.dp(ranks_per_replica=2, min_shard_bytes=0),
         setup={"hardware": "fixture"},
-        fixed_device_bytes=0,
         bindings={
             "kind": "forward",
             "weight_shards": {},
@@ -123,6 +122,8 @@ def collective_program(workspace=None):
 def compute_profiles():
     return Profiles(
         setup={"hardware": "fixture"},
+        fixed_device_bytes=0,
+        metadata={"memory_kind": "static"},
         tasks={
             "begin": TaskProfile(0),
             "projection": TaskProfile(2e-6),

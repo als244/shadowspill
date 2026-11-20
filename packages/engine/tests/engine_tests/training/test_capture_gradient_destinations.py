@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions
+from engine_tests.fixtures.component_operations import components
 from engine_tests.training.test_capture_precision import prepared
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.gradients import GradientDestinationRule
@@ -89,4 +89,4 @@ def test_invalid_installed_destination_contracts_fail_before_model_creation(
 
 def test_destination_hook_must_be_installed_callable():
     with pytest.raises(TypeError, match="installed factory"):
-        replace(definitions()[0].definition, gradient_destination_rules=[])
+        replace(components()[0].component, gradient_destination_rules=[])

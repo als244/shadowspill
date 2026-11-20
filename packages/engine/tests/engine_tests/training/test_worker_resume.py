@@ -22,7 +22,7 @@ from shadowspill.checkpoint.random_streams import (
     snapshot,
 )
 from shadowspill.checkpoint.state import PlanState
-from shadowspill.training.definitions import InitializationRuntime
+from shadowspill.training.components import InitializationRuntime
 from shadowspill.training.worker.channel import read_message, write_message
 from shadowspill.training.worker.checkpoint_reader import WorkerCheckpointReader
 from shadowspill.training.worker.checkpoint_records import RankRestore
@@ -194,7 +194,7 @@ def test_checkpoint_launch_grants_only_its_exact_artifact_backed_frozen_base(tmp
     artifact = ArtifactRef("frozen-base", "c" * 64, 100)
     base = FrozenBase(
         replace(config.model, initialize=Weights.artifact(artifact.id)),
-        config.definition_sources["model"],
+        config.component_sources["model"],
         artifact,
     )
     restored = replace(

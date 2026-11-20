@@ -96,7 +96,7 @@ def test_group_order_determines_slices_not_numeric_rank_order():
     spec = Parallelism(
         ranks_per_replica=4,
         groups={"reverse": [(3, 2, 1, 0)]},
-        default_parameter_placement=Replicated("reverse"),
+        default_parameter_placement=Replicated(),
         default_parameter_storage=ParameterStorage(
             group="reverse", weights="sharded", gradients="sharded", optimizer="sharded"
         ),

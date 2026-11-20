@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 import torch
 
-from engine_tests.fixtures.definition_operations import definitions, example, records
+from engine_tests.fixtures.component_operations import components, example, records
 from shadowspill.parallelism import GroupRef, InputFieldPlacement, InputPlacement
 from shadowspill.pytorch.capture.objective import capture_training_objective
 from shadowspill.training.preparation.capture.binding import control_tensors
@@ -25,7 +25,7 @@ from shadowspill_client.protocol.operations import OperationKey
 
 
 def test_operation_order_modes_defaults_and_optimizer_dependency():
-    _, objective, _ = definitions()
+    _, objective, _ = components()
     assert resolve_operations(objective, None, optimizer=True) == (
         OperationKey("step", "metrics"),
     )
@@ -71,7 +71,7 @@ def test_operation_order_modes_defaults_and_optimizer_dependency():
 
 
 def test_external_capture_uses_runtime_coefficients_and_preserves_weighted_sum():
-    resolved, objective, _ = definitions()
+    resolved, objective, _ = components()
     model = resolved.create()
     with example(resolved, objective, "forward_backward") as (binding, adapted):
         args = binding.arguments(adapted)
@@ -99,7 +99,7 @@ def test_external_capture_uses_runtime_coefficients_and_preserves_weighted_sum()
 
 
 def test_forward_outputs_require_only_their_own_fields_and_controls():
-    model, objective, _ = definitions()
+    model, objective, _ = components()
     key = OperationKey("forward", "predictions", "evaluation")
     contract = OperationContract(key, objective)
     assert contract.required_paths == (("inputs", "pixels"),)
@@ -117,7 +117,7 @@ def test_forward_outputs_require_only_their_own_fields_and_controls():
 
 
 def test_loss_ownership_zeroes_only_nonleaders_without_averaging():
-    resolved, objective, _ = definitions()
+    resolved, objective, _ = components()
     schema = combined_schema(resolved.inputs, objective.inputs)
     placement = InputPlacement(
         GroupRef("cooperate", ((0, 1),)),
@@ -145,9 +145,9 @@ def test_loss_ownership_zeroes_only_nonleaders_without_averaging():
 
 
 def test_padding_claims_and_output_shapes_fail_before_preparation():
-    model, objective, _ = definitions()
+    model, objective, _ = components()
     unsafe = replace(
-        objective, definition=replace(objective.definition, padding_safe=False)
+        objective, component=replace(objective.component, padding_safe=False)
     )
     with (
         pytest.raises(ValueError, match="declare padding safety"),
@@ -168,8 +168,8 @@ def test_padding_claims_and_output_shapes_fail_before_preparation():
 
 
 def test_physical_batch_loss_is_explicit_custom_semantics_and_source_pinned():
-    model, objective, _ = definitions()
-    definition = objective.definition
+    model, objective, _ = components()
+    component = objective.component
     for settings in (
         {"physical_batch_loss": True},
         {"physical_batch_loss": True, "padding_safe": False},
@@ -178,11 +178,11 @@ def test_physical_batch_loss_is_explicit_custom_semantics_and_source_pinned():
         with pytest.raises(
             (ValueError, TypeError), match=r"physical batch|physical_batch"
         ):
-            replace(definition, **settings)
+            replace(component, **settings)
     physical = replace(
         objective,
-        definition=replace(
-            definition,
+        component=replace(
+            component,
             padding_safe=False,
             reduction="custom",
             physical_batch_loss=True,
@@ -198,7 +198,7 @@ def test_physical_batch_loss_is_explicit_custom_semantics_and_source_pinned():
 
 
 def test_operation_builder_rejects_binding_overrides_before_gpu_access():
-    model, objective, _ = definitions()
+    model, objective, _ = components()
     with example(model, objective, "step") as (binding, adapted):
         with pytest.raises(ValueError, match="resolved optimizer"):
             build_operation(model.create(), binding, adapted)
@@ -216,10 +216,10 @@ def test_operation_inspection_imports_no_framework_or_catalog():
 import sys
 for name in ('torch', 'triton', 'shadowspill_workloads'):
     sys.modules[name] = None
-from engine_tests.fixtures.definition_operations import definitions
+from engine_tests.fixtures.component_operations import components
 from shadowspill.training.preparation.configuration.operations import resolve_operations
 from shadowspill.training.preparation.capture.operation_build import build_operation
-model, objective, optimizer = definitions()
+model, objective, optimizer = components()
 assert resolve_operations(objective, None, optimizer=True)[0].outputs == 'metrics'
 """
     subprocess.run(

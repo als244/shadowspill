@@ -11,7 +11,7 @@ import torch
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.parallelism import InputPlacement, Parallelism
-from shadowspill.training.definitions import (
+from shadowspill.training.components import (
     InitializationContext,
     InitializationRuntime,
     ModelInitialization,
@@ -29,8 +29,8 @@ from shadowspill_client.buffers import BufferBudget
 def preparation(hook=None, **options):
     registry = installed()
     if hook is not None:
-        model = registry.resolve_model(arguments()["model"].definition)
-        registry = installed(model=replace(model.definition, initialization=hook))
+        model = registry.resolve_model(arguments()["model"].name)
+        registry = installed(model=replace(model.component, initialization=hook))
     return resolve_training(registry, **{**arguments(), **options})
 
 
@@ -80,8 +80,8 @@ class Block(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] in {'torch', 'triton', 'shadowspill_workloads'}:
             raise AssertionError('forbidden description import: ' + fullname)
 sys.meta_path.insert(0, Block())
-from engine_tests.fixtures.installed_definition import install
-from shadowspill.training.definitions import load_registry
+from engine_tests.fixtures.installed_component import install
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.worker.initialization import prepare_initialization
 from shadowspill_client import Model, Weights, Objective, Optimizer, BatchConfig, Memory
@@ -109,7 +109,7 @@ with TemporaryDirectory() as path:
 
 def test_creation_requires_explicit_weights_and_a_bounded_installed_hook():
     registry = installed()
-    model = registry.resolve_model(arguments()["model"].definition)
+    model = registry.resolve_model(arguments()["model"].name)
     setup = resolve_training(
         registry,
         **{**arguments(), "model": replace(arguments()["model"], initialize=None)},
@@ -117,7 +117,7 @@ def test_creation_requires_explicit_weights_and_a_bounded_installed_hook():
     with pytest.raises(ValueError, match="explicit weights or a checkpoint"):
         prepare_initialization(setup)
     setup = resolve_training(
-        installed(model=replace(model.definition, initialization=None)), **arguments()
+        installed(model=replace(model.component, initialization=None)), **arguments()
     )
     with pytest.raises(ValueError, match="no bounded initialization hook"):
         prepare_initialization(setup)
@@ -126,7 +126,7 @@ def test_creation_requires_explicit_weights_and_a_bounded_installed_hook():
     with pytest.raises(ValueError, match="host staging limit"):
         prepare_initialization(preparation(execution=Execution(max_staging_bytes=128)))
     with pytest.raises(TypeError, match="CPU description function"):
-        replace(model.definition, initialization=32)
+        replace(model.component, initialization=32)
 
 
 def test_contexts_pin_rank_weights_revision_and_source():

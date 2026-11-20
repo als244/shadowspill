@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions
+from engine_tests.fixtures.component_operations import components
 from shadowspill.build.lowering.catalog import CompiledTasks
 from shadowspill.build.lowering.collectives import declare_collective
 from shadowspill.training.preparation.capture.validation import (
@@ -73,7 +73,7 @@ def capture(operation):
 
 @pytest.mark.parametrize("operation", ["all_gather", "reduce_scatter", "all_reduce"])
 def test_native_collectives_keep_compiled_optimizer_control_checks(operation):
-    _, _, optimizer = definitions()
+    _, _, optimizer = components()
     program = capture(operation)
     validate_optimizer_program(program, optimizer)
     for index, message in ((0, "not consumed"), (1, "final gradient scale")):

@@ -3,8 +3,8 @@
 from contextlib import contextmanager
 from dataclasses import replace
 
-from shadowspill.training.definitions import ModelInitialization
-from shadowspill_client.protocol.definitions import TensorOutput
+from shadowspill.training.components import ModelInitialization
+from shadowspill_client.protocol.components import TensorOutput
 
 
 def create(config):

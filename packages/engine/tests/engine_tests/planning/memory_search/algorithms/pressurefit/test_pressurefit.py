@@ -47,7 +47,7 @@ FEW_CANDIDATES = SearchOptions(
     ),
 )
 
-DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
+DEVICE = DeviceSpec("cuda_0")
 COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
 
 
@@ -371,3 +371,8 @@ def test_eligibility_threshold_is_validated() -> None:
     assert GenericPlanningOptions().minimum_object_bytes_evict_eligible == 1 << 20
     with pytest.raises(ValueError):
         GenericPlanningOptions(minimum_object_bytes_evict_eligible=-1)
+    # The planner reads it as a 64-bit count.
+    GenericPlanningOptions(minimum_object_bytes_evict_eligible=(1 << 64) - 1)
+    for value in (1 << 64, (1 << 64) + 9):
+        with pytest.raises(ValueError):
+            GenericPlanningOptions(minimum_object_bytes_evict_eligible=value)

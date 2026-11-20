@@ -74,7 +74,7 @@ def case(*, fetching=True, evicting=False, fetch_recipe=None, evict_recipe=None)
         )
         actions.append(MemoryAction("entry", name, direction))
     program = ShadowSpillProgram(
-        (DeviceSpec("gpu", "rank", "cuda", 0),),
+        (DeviceSpec("gpu"),),
         tuple(aliases),
         tuple(ObjectSpec(a.alias_group_id, a.alias_group_id, 0, 400) for a in aliases),
         (TaskProfile("empty", 0, 0, "v1"), TaskProfile("use", 10, 0, "v1")),

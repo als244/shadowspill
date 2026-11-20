@@ -15,8 +15,8 @@ from shadowspill.parallelism import (
     OutputPlacement,
     Parallelism,
 )
-from shadowspill.training.definitions import (
-    PreparationDefinition,
+from shadowspill.training.components import (
+    PreparationComponent,
     RepresentativePattern,
     RepresentativeSample,
 )
@@ -125,8 +125,8 @@ def test_optimizer_free_backward_and_rank_ownership_are_not_conflated():
 
 def test_same_geometry_with_distinct_timing_scenarios_keeps_distinct_templates():
     registry = installed()
-    source = next(iter(inventory().layouts.setup.config.definition_sources.values()))
-    preset = PreparationDefinition(
+    source = next(iter(inventory().layouts.setup.config.component_sources.values()))
+    preset = PreparationComponent(
         "external/scenarios@1",
         lambda context: Preparation(
             candidates=BuildCandidates(microbatch_sizes=[4]),

@@ -10,7 +10,7 @@ import torch
 
 from engine_tests.execution.test_rng_service import configured
 from shadowspill.artifacts.tensors import TensorChunk
-from shadowspill.training.definitions import InitializationRuntime
+from shadowspill.training.components import InitializationRuntime
 from shadowspill.training.worker.initialization import prepare_initialization
 
 

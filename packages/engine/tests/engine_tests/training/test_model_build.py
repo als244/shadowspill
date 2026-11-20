@@ -6,12 +6,12 @@ from dataclasses import asdict, dataclass, replace
 
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions
+from engine_tests.fixtures.component_operations import components
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.operator_preparation import OperatorPreparation
 from shadowspill.parallelism import GroupRef
 from shadowspill.resources import Resource
-from shadowspill.training.definitions import ComponentLayout, ModelBuild
+from shadowspill.training.components import ComponentLayout, ModelBuild
 from shadowspill.training.preparation.capture.templates import capture_inventory
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
@@ -38,8 +38,8 @@ def describe(config, context):
     )
 
 
-def prepare(definition):
-    registry = installed(model=definition)
+def prepare(component):
+    registry = installed(model=component)
     setup = resolve_training(
         registry,
         **arguments(),
@@ -55,7 +55,7 @@ def prepare(definition):
 def test_build_context_covers_the_requested_family_and_never_constructs_a_model():
     calls = []
     model = replace(
-        definitions()[0].definition,
+        components()[0].component,
         config=Config,
         create=lambda config: calls.append(config) or config,
         build=describe,
@@ -80,7 +80,7 @@ def test_build_context_covers_the_requested_family_and_never_constructs_a_model(
 
 
 def test_invalid_provider_groups_and_untyped_description_fail_before_construction():
-    model = definitions()[0].definition
+    model = components()[0].component
     for hook, error, message in (
         (lambda config, context: {}, TypeError, "must return ModelBuild"),
         (
@@ -103,7 +103,7 @@ def test_invalid_provider_groups_and_untyped_description_fail_before_constructio
 
 
 def test_changed_provider_descriptions_change_capture_identity():
-    model = replace(definitions()[0].definition, config=Config, build=describe)
+    model = replace(components()[0].component, config=Config, build=describe)
     _, first = prepare(model)
 
     def different(config, context):
@@ -120,7 +120,7 @@ def test_changed_provider_descriptions_change_capture_identity():
 
 
 def test_component_coordinates_are_source_bound_before_any_model_construction():
-    model = replace(definitions()[0].definition, config=Config, build=describe)
+    model = replace(components()[0].component, config=Config, build=describe)
     _, first = prepare(model)
     layout = ComponentLayout("weight", ("payload",), (0, 1), "external/encoded@1")
 
@@ -144,7 +144,7 @@ from dataclasses import replace
 from engine_tests.training import test_model_build as fixture
 def unexpected(config):
     raise AssertionError('compiler hook during CPU description')
-model = replace(fixture.definitions()[0].definition,
+model = replace(fixture.components()[0].component,
                 config=fixture.Config, build=fixture.describe,
                 gradient_destination_rules=unexpected)
 _, inventory = fixture.prepare(model)

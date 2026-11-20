@@ -15,7 +15,7 @@ from engine_tests.checkpoint.test_weights_load import HostExecutor, family
 from engine_tests.training.test_worker_startup import prepared_worker
 from shadowspill.checkpoint import write_weights
 from shadowspill.checkpoint.identity import state_identity
-from shadowspill.training.definitions import InitializationRuntime, ModelInitialization
+from shadowspill.training.components import InitializationRuntime, ModelInitialization
 from shadowspill.training.worker import runtime as module
 from shadowspill.training.worker.channel import read_message, write_message
 from shadowspill.training.worker.checkpoint_records import RankRestore, RankWeights

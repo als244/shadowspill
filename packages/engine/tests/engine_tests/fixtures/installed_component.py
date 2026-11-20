@@ -4,10 +4,10 @@ import inspect
 from pathlib import Path
 
 from engine_tests.fixtures import (
-    definition_operations,
-    definition_provider,
-    external_definition,
-    stochastic_definition,
+    component_operations,
+    component_provider,
+    external_component,
+    stochastic_component,
 )
 
 
@@ -16,71 +16,71 @@ def install(root: Path, *, provider: bool = False, stochastic: bool = False) -> 
         raise ValueError("select one external model fixture")
     package = root / "external_classifier_fixture"
     package.mkdir(parents=True)
-    (package / "base.py").write_text(inspect.getsource(external_definition))
+    (package / "base.py").write_text(inspect.getsource(external_component))
     imports = """from dataclasses import replace
-from shadowspill.training.definitions import OptimizerDefinition, Registry
+from shadowspill.training.components import OptimizerComponent, Registry
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
-from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
-from . import base as external_definition
+from shadowspill_client.protocol.components import OutputSet, TensorOutput
+from . import base as external_component
 """
-    definitions = "\n\n".join(
-        inspect.getsource(getattr(definition_operations, name))
+    components = "\n\n".join(
+        inspect.getsource(getattr(component_operations, name))
         for name in (
             "predictions",
             "objective_binding",
             "create_optimizer",
-            "definitions",
+            "components",
         )
     )
     hook = """
 def register(registry):
-    model, objective, optimizer = definitions()
-    registry.add_model(model.definition, source=model.source)
-    registry.add_objective(objective.definition, source=objective.source)
-    registry.add_optimizer(optimizer.definition, source=optimizer.source)
+    model, objective, optimizer = components()
+    registry.add_model(model.component, source=model.source)
+    registry.add_objective(objective.component, source=objective.source)
+    registry.add_optimizer(optimizer.component, source=optimizer.source)
 """
     if provider:
         source = (
-            inspect.getsource(definition_provider)
+            inspect.getsource(component_provider)
             .replace(
                 "engine_tests.resources._provider",
                 "external_classifier_fixture.provider",
             )
-            .replace("ss_resource_test", "ss_definition_resource_test")
+            .replace("ss_resource_test", "ss_component_resource_test")
         )
         (package / "model_provider.py").write_text(source)
         source = (Path(__file__).parents[1] / "resources" / "_provider.py").read_text()
         (package / "provider.py").write_text(
-            source.replace("ss_resource_test", "ss_definition_resource_test")
+            source.replace("ss_resource_test", "ss_component_resource_test")
         )
         hook = hook.replace(
-            "registry.add_model(model.definition, source=model.source)",
+            "registry.add_model(model.component, source=model.source)",
             "from . import model_provider\n"
-            "    registry.add_model(replace(model.definition, "
+            "    registry.add_model(replace(model.component, "
             "config=model_provider.Config, create=model_provider.create, "
             "build=model_provider.describe), source=model.source)",
         )
     if stochastic:
-        (package / "stochastic.py").write_text(inspect.getsource(stochastic_definition))
+        (package / "stochastic.py").write_text(inspect.getsource(stochastic_component))
         hook = hook.replace(
-            "registry.add_model(model.definition, source=model.source)",
+            "registry.add_model(model.component, source=model.source)",
             "from . import stochastic\n"
-            "    registry.add_model(replace(model.definition, "
+            "    registry.add_model(replace(model.component, "
             "create=stochastic.create, initialization=stochastic.initialization), "
             "source=model.source)",
         ).replace(
-            "registry.add_objective(objective.definition, source=objective.source)",
-            "registry.add_objective(replace(objective.definition, "
-            "outputs=stochastic.outputs(objective.definition.outputs), "
+            "registry.add_objective(objective.component, source=objective.source)",
+            "registry.add_objective(replace(objective.component, "
+            "outputs=stochastic.outputs(objective.component.outputs), "
             "bind=stochastic.bind), source=objective.source)",
         )
-    (package / "__init__.py").write_text(imports + "\n\n" + definitions + "\n" + hook)
+    (package / "__init__.py").write_text(imports + "\n\n" + components + "\n" + hook)
     metadata = root / "external_classifier_fixture-1.dist-info"
     metadata.mkdir()
     (metadata / "METADATA").write_text(
         "Metadata-Version: 2.1\nName: external-classifier-fixture\nVersion: 1\n"
     )
     (metadata / "entry_points.txt").write_text(
-        "[shadowspill.definitions]\nclassifier = external_classifier_fixture:register\n"
+        "[shadowspill.components]\nclassifier = external_classifier_fixture:register\n"
     )
     return root

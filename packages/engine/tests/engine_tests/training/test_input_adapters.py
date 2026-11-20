@@ -7,14 +7,14 @@ import numpy as np
 import pytest
 import torch
 
-from engine_tests.fixtures import external_definition
+from engine_tests.fixtures import external_component
 from shadowspill.parallelism import GroupRef, InputFieldPlacement, InputPlacement
 from shadowspill.pytorch.capture.objective import capture_training_objective
-from shadowspill.training.definitions import (
+from shadowspill.training.components import (
     InputAdapter,
     InputLayout,
     InputView,
-    ModelDefinition,
+    ModelComponent,
     Registry,
 )
 from shadowspill.training.inputs.adapters import InputBinding
@@ -47,7 +47,7 @@ def physical_inputs(schema, limits, shape, datums, *, placement=None):
 
 def test_default_external_classifier_adapter_preserves_masked_padding_and_gradients():
     registry = Registry()
-    external_definition.register(registry)
+    external_component.register(registry)
     resolved = registry.resolve_model("external/image_classifier@1")
     objective = registry.resolve_objective("external/classification@1", model=resolved)
     schema = combined_schema(resolved.inputs, objective.inputs)
@@ -122,7 +122,7 @@ def sequence_adapter(config, layout):
     )
 
 
-def sequence_definition(*, adapter=sequence_adapter):
+def sequence_component(*, adapter=sequence_adapter):
     def create(config):
         class Cumulative(torch.nn.Module):
             def __init__(self):
@@ -139,7 +139,7 @@ def sequence_definition(*, adapter=sequence_adapter):
 
         return Cumulative()
 
-    return ModelDefinition(
+    return ModelComponent(
         "external/cumulative@1",
         dict,
         create,
@@ -156,9 +156,9 @@ def sequence_definition(*, adapter=sequence_adapter):
 
 def test_custom_metadata_changes_boundaries_without_recapture_or_model_name_logic():
     registry = Registry()
-    definition = sequence_definition()
-    registry.add_model(definition, source=external_definition.SOURCE)
-    resolved = registry.resolve_model(definition.id)
+    component = sequence_component()
+    registry.add_model(component, source=external_component.SOURCE)
+    resolved = registry.resolve_model(component.id)
     schema = combined_schema(
         resolved.inputs,
         InputSchema(
@@ -226,9 +226,9 @@ def test_custom_metadata_changes_boundaries_without_recapture_or_model_name_logi
 
 def test_custom_adapter_required_for_packed_inputs_and_resolved_schema_is_pinned():
     registry = Registry()
-    definition = sequence_definition(adapter=None)
-    registry.add_model(definition, source=external_definition.SOURCE)
-    resolved = registry.resolve_model(definition.id)
+    component = sequence_component(adapter=None)
+    registry.add_model(component, source=external_component.SOURCE)
+    resolved = registry.resolve_model(component.id)
     schema = combined_schema(resolved.inputs, InputSchema([]))
     shape = BufferShape(2, {("inputs", "x"): (4,)})
     placement = InputPlacement.independent(

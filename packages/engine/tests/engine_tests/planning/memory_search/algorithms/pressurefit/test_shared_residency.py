@@ -31,7 +31,7 @@ from shadowspill.task.allocations.events import (
 
 def _program() -> ShadowSpillProgram:
     return ShadowSpillProgram(
-        devices=(DeviceSpec("device_0", "process_0", "device", 0),),
+        devices=(DeviceSpec("device_0"),),
         alias_groups=(
             AliasGroupSpec(
                 "shared_storage",

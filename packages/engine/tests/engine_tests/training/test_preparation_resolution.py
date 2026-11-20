@@ -6,8 +6,8 @@ from dataclasses import replace
 
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions
-from engine_tests.fixtures.external_definition import SOURCE
+from engine_tests.fixtures.component_operations import components
+from engine_tests.fixtures.external_component import SOURCE
 from shadowspill.parallelism import (
     GroupRef,
     InputFieldPlacement,
@@ -15,14 +15,14 @@ from shadowspill.parallelism import (
     Parallelism,
 )
 from shadowspill.planning.memory_search.algorithm import SearchOptions
-from shadowspill.training.definitions import (
-    ModelDefinition,
+from shadowspill.training.components import (
+    ModelComponent,
+    PreparationComponent,
     PreparationContext,
-    PreparationDefinition,
     Registry,
 )
-from shadowspill.training.definitions.preparation import ResolvedPreparationDefinition
-from shadowspill.training.definitions.stacked import STACKED_PRESET
+from shadowspill.training.components.preparation import ResolvedPreparationComponent
+from shadowspill.training.components.stacked import STACKED_PRESET
 from shadowspill.training.preparation.configuration.expansion import expand_schedules
 from shadowspill.training.preparation.configuration.resolution import (
     resolve_preparation,
@@ -44,7 +44,7 @@ from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorFiel
 
 
 def stacked_context():
-    model, objective, _ = definitions()
+    model, objective, _ = components()
     schema = combined_schema(model.inputs, objective.inputs)
     placement = InputPlacement.independent(
         1, fields=[InputFieldPlacement(tuple(f.path)) for f in schema.fields]
@@ -59,7 +59,7 @@ def stacked_context():
 
 def token_context(placement=None):
     registry = Registry()
-    definition = ModelDefinition(
+    component = ModelComponent(
         "external/sequence@1",
         dict,
         lambda _: pytest.fail("constructed during description"),
@@ -72,8 +72,8 @@ def token_context(placement=None):
             ],
         ),
     )
-    registry.add_model(definition, source=SOURCE)
-    model = registry.resolve_model(definition.id)
+    registry.add_model(component, source=SOURCE)
+    model = registry.resolve_model(component.id)
     schema = combined_schema(model.inputs, InputSchema([]))
     placement = placement or InputPlacement.independent(
         1, fields=[InputFieldPlacement(("inputs", "x"))]
@@ -95,8 +95,8 @@ def token_buffers(context, batch, paths, case):
 
 
 def preset(settings, *, buffers=token_buffers):
-    return ResolvedPreparationDefinition(
-        PreparationDefinition("external/preparation@1", lambda _: settings, buffers),
+    return ResolvedPreparationComponent(
+        PreparationComponent("external/preparation@1", lambda _: settings, buffers),
         SOURCE,
     )
 
@@ -301,7 +301,7 @@ def test_expansion_bounds_precede_callbacks_and_huge_counts_precede_allocation()
         pytest.fail("geometry evaluated despite case limit")
 
     installed = replace(
-        installed, definition=replace(installed.definition, buffers=broken)
+        installed, component=replace(installed.component, buffers=broken)
     )
     with pytest.raises(ValueError, match="schedule-case expansion"):
         expand_schedules(
@@ -320,38 +320,38 @@ def test_unknown_search_keys_and_unexpected_geometry_errors_are_not_silently_dro
         )
 
     def broken(*args):
-        raise RuntimeError("definition defect")
+        raise RuntimeError("component defect")
 
     resolved = resolve_preparation(installed, context)
     installed = replace(
-        installed, definition=replace(installed.definition, buffers=broken)
+        installed, component=replace(installed.component, buffers=broken)
     )
-    with pytest.raises(RuntimeError, match="definition defect"):
+    with pytest.raises(RuntimeError, match="component defect"):
         expand_schedules(resolved, installed, context, [("inputs", "x")])
 
 
 def test_preset_registry_rechecks_source_and_description_has_no_framework_import():
     registry = Registry()
     installed = preset(Preparation(candidates=BuildCandidates(microbatch_sizes=[1])))
-    registry.add_preparation(installed.definition, source=SOURCE)
-    assert registry.resolve_preparation(installed.definition.id) == installed
+    registry.add_preparation(installed.component, source=SOURCE)
+    assert registry.resolve_preparation(installed.component.id) == installed
     with pytest.raises(ValueError, match="already registered"):
-        registry.add_preparation(installed.definition, source=SOURCE)
+        registry.add_preparation(installed.component, source=SOURCE)
     script = """
 import sys
 for name in ('torch', 'triton', 'shadowspill_workloads'):
     sys.modules[name] = None
 from engine_tests.training.test_preparation_resolution import stacked_context
-from shadowspill.training.definitions import Registry
+from shadowspill.training.components import Registry
 from shadowspill.training.preparation.configuration.resolution import (
     resolve_preparation,
 )
 from shadowspill.training.preparation.configuration.expansion import expand_schedules
 context = stacked_context()
-definition = Registry().resolve_preparation('shadowspill/stacked@1')
-resolved = resolve_preparation(definition, context)
+component = Registry().resolve_preparation('shadowspill/stacked@1')
+resolved = resolve_preparation(component, context)
 paths = [tuple(f.path) for f in context.schema.fields]
-assert expand_schedules(resolved, definition, context, paths).coverage(context)
+assert expand_schedules(resolved, component, context, paths).coverage(context)
 """
     subprocess.run(
         [sys.executable, "-c", script], check=True, capture_output=True, text=True

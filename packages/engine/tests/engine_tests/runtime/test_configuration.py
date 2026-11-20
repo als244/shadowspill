@@ -19,6 +19,7 @@ from shadowspill.runtime.configuration import (
     Topology,
     validate_topology,
 )
+from shadowspill.ssd import SSDPool
 
 
 def test_pool_physical_limit_is_independent_of_process_budget():
@@ -163,3 +164,18 @@ def test_topology_admits_a_spill_pool_that_is_not_pinned_host() -> None:
         {"fetch": transfer_route(source="spill", destination="execution")},
     )
     assert not any(isinstance(value, PinnedHostPool) for value in pools.values())
+
+
+def test_ssd_pool_image_bytes_is_the_measured_image_size(tmp_path: Path) -> None:
+    """``image_bytes`` is read from the image on disk; no caller sets it."""
+
+    with pytest.raises(TypeError, match="image_bytes"):
+        SSDPool(1 << 20, directory=tmp_path, image_bytes=4096)  # type: ignore[call-arg]
+    assert SSDPool(1 << 20, directory=tmp_path).image_bytes == 0
+    image = tmp_path / "pool.image"
+    image.write_bytes(bytes(8192))
+    assert SSDPool(1 << 20, directory=tmp_path, image=image).image_bytes == 8192
+    created = SSDPool(
+        1 << 20, directory=tmp_path, image=tmp_path / "new.image", create_image=True
+    )
+    assert created.image_bytes == 0

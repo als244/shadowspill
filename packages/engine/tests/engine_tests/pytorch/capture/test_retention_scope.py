@@ -322,9 +322,11 @@ def test_scoped_override_cannot_hide_another_occurrences_changed_cost(monkeypatc
 
     from engine_tests.pytorch.capture.test_retention import _pass_over
 
-    graph = make_fx(lambda x, w: _pass_over(_pass_over(x, w), w), tracing_mode="fake")(
-        torch.randn(7, 5), torch.randn(5)
-    )
+    # Two calls of one overload over different rows: "operators" keeps the
+    # selected, later call's class, so only the occurrences see the first.
+    graph = make_fx(
+        lambda x, y, w: (_pass_over(x, w), _pass_over(y, w)), tracing_mode="fake"
+    )(torch.randn(7, 5), torch.randn(3, 5), torch.randn(5))
     nodes = [node for node in graph.graph.nodes if node.op == "call_function"]
     assert len(nodes) == 2
     for node, path in zip(nodes, ("model.first", "model.selected"), strict=True):
@@ -342,7 +344,7 @@ def test_scoped_override_cannot_hide_another_occurrences_changed_cost(monkeypatc
     monkeypatch.setitem(
         flop_registry,
         torch.ops.shadowspill_retention_test.pass_over,
-        lambda *args, **kwargs: 10**12,
+        lambda value, *args, **kwargs: 10**12 if value.shape[0] == 7 else value.numel(),
     )
     assert classes == policy.operator_classes(graph)
     assert before != policy.digest(graph)

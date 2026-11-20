@@ -11,14 +11,7 @@ from shadowspill.planning.memory_search.diagnostics.plan_summary import (
 
 
 def test_summary_parts_identify_to_the_simulated_step() -> None:
-    summary = summarize_selected_plan(
-        representative_result(),
-        phase_timings_ns=(("capture_lowering", 2_000_000_000), ("selection", 500)),
-    )
-    assert dict(summary.planning_phase_seconds) == {
-        "capture_lowering": 2.0,
-        "selection": 5e-7,
-    }
+    summary = summarize_selected_plan(representative_result())
     result = representative_result()
     fetched = sum(
         item.bytes
@@ -44,7 +37,6 @@ def test_summary_parts_identify_to_the_simulated_step() -> None:
         "placement_gap": None,
     }
     assert summary.as_dict()["selected_candidate"] == dict(summary.selected_candidate)
-    assert list(summary.planning_phase_seconds) == ["capture_lowering", "selection"]
     reassembled = (
         summary.unconstrained_step_seconds
         + summary.recomputation_overhead_seconds
@@ -100,7 +92,6 @@ def test_recompute_fraction_is_guarded_against_empty_selections() -> None:
         flexible_group_count=0,
     )
     assert empty.recomputing_group_fraction == 0.0
-    assert dict(empty.planning_phase_seconds) == {}
 
 
 def test_selected_candidate_is_read_from_the_selected_program() -> None:
@@ -146,9 +137,7 @@ def test_selected_candidate_is_read_from_the_selected_program() -> None:
             other,
         ),
     )
-    summary = summarize_selected_plan(
-        replace(result, diagnostics=diagnostics), phase_timings_ns=()
-    )
+    summary = summarize_selected_plan(replace(result, diagnostics=diagnostics))
     selected = dict(summary.selected_candidate)
     assert selected["repairs_at_best"] == 2
     assert selected["unplaced_plans"] == 3

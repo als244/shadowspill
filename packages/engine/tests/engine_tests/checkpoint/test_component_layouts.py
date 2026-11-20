@@ -25,7 +25,7 @@ from shadowspill.checkpoint.compatibility import describe_family, require_compat
 from shadowspill.checkpoint.conversion import convert_state
 from shadowspill.checkpoint.state import PlanState
 from shadowspill.checkpoint.weights_conversion import convert_weights
-from shadowspill.training.definitions import ModelBuild
+from shadowspill.training.components import ModelBuild
 
 
 def states(count, dim, *, mapped=True, axes=(0, 1), encoding="example/bf16@1"):

@@ -83,7 +83,7 @@ if sys.argv[2] == 'True':
                 streams = {row.stream: row for row in page.chunks}
                 assert streams["startup.stdout"].complete
                 assert (
-                    b"Resolve installed training definitions"
+                    b"Resolve installed training components"
                     in streams["startup.stdout"].bytes()
                 )
                 if not fail:

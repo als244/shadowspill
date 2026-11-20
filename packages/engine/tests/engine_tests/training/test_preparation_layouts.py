@@ -8,7 +8,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions
+from engine_tests.fixtures.component_operations import components
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.parallelism import (
     GroupRef,
@@ -25,7 +25,7 @@ from shadowspill.training.preparation.configuration.layouts import (
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client import BatchConfig, Execution
 from shadowspill_client.inputs.coverage_bounds import CoverageError
-from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
+from shadowspill_client.protocol.components import OutputSet, TensorOutput
 from shadowspill_client.protocol.inputs import TensorField
 
 
@@ -35,10 +35,10 @@ def test_complete_layout_family_uses_no_models_or_arrays_and_keeps_all_capabilit
     def forbidden(*args, **kwargs):
         pytest.fail("constructed tensors or models during layout admission")
 
-    model, _, optimizer = definitions()
+    model, _, optimizer = components()
     registry = installed(
-        model=replace(model.definition, create=forbidden),
-        optimizer=replace(optimizer.definition, create=forbidden),
+        model=replace(model.component, create=forbidden),
+        optimizer=replace(optimizer.component, create=forbidden),
     )
     setup = resolve_training(
         registry,
@@ -106,10 +106,10 @@ def metadata_adapter(expensive):
 
 
 def test_host_infeasible_alternatives_have_reasons_and_coverage_is_recomputed():
-    model, _, _ = definitions()
+    model, _, _ = components()
     registry = installed(
         model=replace(
-            model.definition, input_adapter=metadata_adapter(lambda size: size == 2)
+            model.component, input_adapter=metadata_adapter(lambda size: size == 2)
         )
     )
     setup = resolve_training(
@@ -133,10 +133,10 @@ def test_host_infeasible_alternatives_have_reasons_and_coverage_is_recomputed():
 
 
 def test_uncovered_batch_keeps_actual_candidates_and_empty_family_still_fails():
-    model, _, _ = definitions()
+    model, _, _ = components()
     registry = installed(
         model=replace(
-            model.definition, input_adapter=metadata_adapter(lambda size: size > 1)
+            model.component, input_adapter=metadata_adapter(lambda size: size > 1)
         )
     )
     setup = resolve_training(
@@ -154,7 +154,7 @@ def test_uncovered_batch_keeps_actual_candidates_and_empty_family_still_fails():
     assert layouts.setup.config.batches == setup.config.batches
     registry = installed(
         model=replace(
-            model.definition, input_adapter=metadata_adapter(lambda size: True)
+            model.component, input_adapter=metadata_adapter(lambda size: True)
         )
     )
     with pytest.raises(LayoutCoverageError) as caught:
@@ -173,14 +173,14 @@ def test_uncovered_batch_keeps_actual_candidates_and_empty_family_still_fails():
     )
 
 
-def test_unexpected_definition_failures_propagate_and_expansion_is_bounded():
-    model, _, _ = definitions()
+def test_unexpected_component_failures_propagate_and_expansion_is_bounded():
+    model, _, _ = components()
     failure = CoverageError("unexpected metadata factory failure")
 
     def broken(config, layout):
         raise failure
 
-    registry = installed(model=replace(model.definition, input_adapter=broken))
+    registry = installed(model=replace(model.component, input_adapter=broken))
     setup = resolve_training(registry, **arguments())
     with pytest.raises(ValueError, match="bindings exceed"):
         prepare_layouts(setup, max_bindings=1)
@@ -189,7 +189,7 @@ def test_unexpected_definition_failures_propagate_and_expansion_is_bounded():
     assert caught.value is failure
     registry = installed(
         model=replace(
-            model.definition, input_adapter=lambda config, layout: InputAdapter()
+            model.component, input_adapter=lambda config, layout: InputAdapter()
         )
     )
     with pytest.raises(ValueError, match="padding safety"):
@@ -233,11 +233,11 @@ def test_generic_partition_and_worker_order_controls_every_input_and_output_bind
 
 
 def test_global_output_reduction_is_carried_by_the_resolved_portable_contract():
-    _, objective, _ = definitions()
+    _, objective, _ = components()
     declared = replace(
-        objective.definition,
+        objective.component,
         outputs={
-            **objective.definition.outputs,
+            **objective.component.outputs,
             "predictions": OutputSet(
                 model_inputs=[("pixels",)],
                 tensors={

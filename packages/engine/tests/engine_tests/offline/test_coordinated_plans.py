@@ -75,7 +75,7 @@ def worker_plan(gpu, *, size, workspace, duration, order, serial=False, capacity
     compute = ResourceSpec("gpu", ResourceKind.COMPUTE)
     entries = tuple(ResidencySpec(name, MemoryLocation.SPILL) for name in ("a", "b"))
     program = Program(
-        devices=(DeviceSpec("gpu", "worker", "cuda", 0),),
+        devices=(DeviceSpec("gpu"),),
         alias_groups=tuple(
             AliasGroupSpec(name, "gpu", size, retain_spill_copy=True)
             for name in ("a", "b")

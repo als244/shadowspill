@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import torch
 
-from engine_tests.fixtures.definition_operations import definitions, records
+from engine_tests.fixtures.component_operations import components, records
 from engine_tests.training.test_prepared_requests import family, upload
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.parallelism import (
@@ -35,7 +35,7 @@ def test_worker_reconstructs_strides_storage_extents_bf16_and_empty_views(
     tmp_path, workers
 ):
     calls = []
-    model, _, _ = definitions()
+    model, _, _ = components()
 
     def adapter(config, layout):
         def fill(context, fields):
@@ -57,7 +57,7 @@ def test_worker_reconstructs_strides_storage_extents_bf16_and_empty_views(
         outputs={"prediction": OutputPlacement("leader")},
     )
     setup = resolve_training(
-        installed(model=replace(model.definition, input_adapter=adapter)),
+        installed(model=replace(model.component, input_adapter=adapter)),
         **arguments(),
         parallelism=Parallelism(ranks_per_replica=workers, inputs=placement),
         operations={"forward": ["predictions"]},

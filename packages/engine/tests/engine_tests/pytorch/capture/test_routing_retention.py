@@ -51,7 +51,9 @@ def capture(provider, policy, variant):
     def function(*args):
         return forward(provider, *args)
 
-    graph = make_fx(function)(*values)
+    # Traced under one fake mode, as an exported stage is: the capture identity
+    # prices the router's flop formula on these values.
+    graph = make_fx(function, tracing_mode="fake")(*values)
     pair = capture_graph_pair(
         graph,
         values,

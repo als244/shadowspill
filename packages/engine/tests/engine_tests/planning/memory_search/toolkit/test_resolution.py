@@ -33,7 +33,7 @@ from shadowspill.planning.memory_search.toolkit.resolution import (
 )
 from shadowspill.simulator import SimulationConfig
 
-DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
+DEVICE = DeviceSpec("cuda_0")
 COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
 
 

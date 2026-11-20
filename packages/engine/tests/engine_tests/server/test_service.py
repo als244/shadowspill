@@ -65,11 +65,7 @@ def test_public_server_creates_workers_and_recovers_read_only_records_after_reop
     with deployment(tmp_path, monkeypatch) as (server, ctx, nodes):
         server.start(port=0)
         with connect(server) as service:
-            assert (
-                service.describe_training(**arguments())
-                .result(5)
-                .config.model.definition
-            )
+            assert service.describe_training(**arguments()).result(5).config.model.name
             training = service.create_training_client(config=ctx.config).result(10)
             until(lambda: server._jobs.used == (1, 0))
             assert server._jobs.used == (1, 0) and nodes[0].used.devices

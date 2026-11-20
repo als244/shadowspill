@@ -27,7 +27,7 @@ from shadowspill.simulator import SimulationConfig
 
 def _program() -> ShadowSpillProgram:
     return ShadowSpillProgram(
-        devices=(DeviceSpec("device", "process", "test", 0),),
+        devices=(DeviceSpec("device"),),
         alias_groups=(
             AliasGroupSpec("value", "device", 100, retain_spill_copy=True),
             AliasGroupSpec("empty", "device", 0),

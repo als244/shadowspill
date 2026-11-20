@@ -13,7 +13,7 @@ from shadowspill.artifacts.tensors import public_tensor_geometry
 from shadowspill.execution.results import TrainingResult
 from shadowspill.training.worker.output_frame import WorkerOutputFrame
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
+from shadowspill_client.protocol.components import OutputSet, TensorOutput
 from shadowspill_client.protocol.payload_io import read_payload
 
 

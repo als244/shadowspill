@@ -10,9 +10,9 @@ from pathlib import Path
 import pytest
 import torch
 
-from engine_tests.fixtures import external_definition
-from engine_tests.fixtures.definition_operations import definitions, example
-from engine_tests.fixtures.installed_definition import install
+from engine_tests.fixtures import external_component
+from engine_tests.fixtures.component_operations import components, example
+from engine_tests.fixtures.installed_component import install
 from engine_tests.training.test_setup_resolution import arguments
 from shadowspill import ProfiledProgram, Program
 from shadowspill.artifacts.tensors import TensorChunk
@@ -20,7 +20,7 @@ from shadowspill.orchestration.launch.admission import NodeAdmission
 from shadowspill.orchestration.launch.host_arena import HostArena
 from shadowspill.orchestration.launch.node_capacity import discover_capacity
 from shadowspill.orchestration.launch.phases import NodePhases
-from shadowspill.training.definitions import InitializationRuntime, load_registry
+from shadowspill.training.components import InitializationRuntime, load_registry
 from shadowspill.training.preparation.capture.operation_build import (
     build_operation,
 )
@@ -110,7 +110,7 @@ def prepare_owned(root, setup):
         pytest.param(True, id="provider"),
     ],
 )
-def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provider):
+def test_component_bound_operations_in_cold_worker(tmp_path, monkeypatch, provider):
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     installed_root = install(tmp_path / "site-packages", provider=provider)
@@ -170,13 +170,13 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         assert behaviors and all(not value["unresolved"] for value in behaviors)
         opaque = {call for value in behaviors for call in value["opaque_calls"]}
         if provider:
-            assert "torch.ops.ss_definition_resource_test.scale.default" in opaque
+            assert "torch.ops.ss_component_resource_test.scale.default" in opaque
         proof = program.bindings["allocation_coverage"]
         assert proof["tasks"].keys() == program.executables.keys()
         if provider:
             assert any(
                 task["contracts"].get(
-                    "torch.ops.ss_definition_resource_test.scale.default"
+                    "torch.ops.ss_component_resource_test.scale.default"
                 )
                 == "fixture/shape-fixed-scale@1"
                 for task in proof["tasks"].values()
@@ -347,7 +347,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
     worker = subprocess.run(
         [
             sys.executable,
-            str(Path(__file__).with_name("_definition_operations.py")),
+            str(Path(__file__).with_name("_component_operations.py")),
             str(tmp_path),
         ],
         env={
@@ -366,7 +366,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
         timeout=120,
     )
     assert worker.returncode == 0, worker.stdout + worker.stderr
-    assert "Qualified definition-bound operations" in worker.stdout
+    assert "Qualified component-bound operations" in worker.stdout
     assert "Qualified durable request dispatcher" in worker.stdout
     assert "Qualified prepared binary request inputs" in worker.stdout
     assert "Qualified saved worker commands" in worker.stdout
@@ -457,7 +457,7 @@ def test_definition_bound_operations_in_cold_worker(tmp_path, monkeypatch, provi
 
 
 def ignore_temperature(model, inputs, loss_inputs, loss_params):
-    return external_definition.classification_loss(
+    return external_component.classification_loss(
         model, inputs, loss_inputs, {"temperature": 1.0}
     )
 
@@ -470,7 +470,7 @@ def ignore_lr(model, config, controls):
 def test_preparation_rejects_controls_without_real_captured_reads():
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    resolved, objective, optimizer = definitions()
+    resolved, objective, optimizer = components()
     with torch.device("meta"):
         model = resolved.create()
     with example(resolved, objective, "forward_backward") as (binding, adapted):
@@ -478,7 +478,7 @@ def test_preparation_rejects_controls_without_real_captured_reads():
         with pytest.raises(ValueError, match="objective control is not consumed"):
             build_operation(model, binding, adapted, options={"partition": "whole"})
     optimizer = replace(
-        optimizer, definition=replace(optimizer.definition, create=ignore_lr)
+        optimizer, component=replace(optimizer.component, create=ignore_lr)
     )
     with (
         example(resolved, objective, "step") as (binding, adapted),
@@ -509,7 +509,7 @@ class MutatingClassifier(torch.nn.Module):
 def test_evaluation_and_undeclared_buffer_mutations_fail_admission():
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
-    resolved, objective, _ = definitions()
+    resolved, objective, _ = components()
     with torch.device("meta"):
         model = MutatingClassifier()
     model.eval()
@@ -526,7 +526,7 @@ def test_evaluation_and_undeclared_buffer_mutations_fail_admission():
     ):
         build_operation(model, binding, adapted, options={"partition": "whole"})
     declared = replace(
-        resolved, definition=replace(resolved.definition, mutable_buffers=("calls",))
+        resolved, component=replace(resolved.component, mutable_buffers=("calls",))
     )
     with example(declared, objective, key) as (binding, adapted):
         program = build_operation(

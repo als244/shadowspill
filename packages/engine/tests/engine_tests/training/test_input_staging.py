@@ -11,7 +11,7 @@ from threading import Event
 import numpy as np
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions, records
+from engine_tests.fixtures.component_operations import components, records
 from shadowspill.parallelism import GroupRef, InputFieldPlacement, InputPlacement
 from shadowspill.training.inputs.adapters import InputAdapter, InputBinding, InputLayout
 from shadowspill.training.inputs.materialize import materialize_buffer
@@ -172,7 +172,7 @@ def test_unused_fixed_sum_does_not_bound_record_count_and_limits_reject_without_
 
 
 def classifier_staging(*, metadata=0):
-    model, objective, _ = definitions()
+    model, objective, _ = components()
     schema = combined_schema(model.inputs, objective.inputs)
     batch = BatchConfig(limits={"max_examples": 4})
     placement = InputPlacement(

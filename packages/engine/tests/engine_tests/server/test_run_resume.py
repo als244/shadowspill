@@ -244,7 +244,7 @@ def test_new_setup_preserves_optimizer_interpretation_but_not_old_defaults(
         elif change == "objective":
             config = replace(
                 config,
-                objective=replace(config.objective, definition="different-objective"),
+                objective=replace(config.objective, name="different-objective"),
             )
         elif change == "semantics":
             config = replace(
@@ -254,10 +254,10 @@ def test_new_setup_preserves_optimizer_interpretation_but_not_old_defaults(
         else:
             config = replace(
                 config,
-                definition_sources={
-                    **config.definition_sources,
+                component_sources={
+                    **config.component_sources,
                     "optimizer": replace(
-                        config.definition_sources["optimizer"], version="changed"
+                        config.component_sources["optimizer"], version="changed"
                     ),
                 },
             )

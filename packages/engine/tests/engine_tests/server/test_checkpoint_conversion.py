@@ -133,7 +133,7 @@ def configured(
             artifacts.put(ref, lambda _, path=path: path.open("rb"))
             plan_refs.append(ref)
         base = (
-            FrozenBase(config.model, config.definition_sources["model"])
+            FrozenBase(config.model, config.component_sources["model"])
             if frozen
             else None
         )

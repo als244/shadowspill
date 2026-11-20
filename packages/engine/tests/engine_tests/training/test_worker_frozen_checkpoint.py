@@ -14,7 +14,7 @@ from engine_tests.execution.test_partial_checkpoint import executor
 from engine_tests.training.test_worker_checkpoints import save_call
 from engine_tests.training.test_worker_initialization import preparation
 from engine_tests.training.test_worker_loop import SCOPE
-from shadowspill.training.definitions import InitializationRuntime, ModelInitialization
+from shadowspill.training.components import InitializationRuntime, ModelInitialization
 from shadowspill.training.session.controls import CallControls
 from shadowspill.training.worker.binary import receive_stream
 from shadowspill.training.worker.bindings import BoundWorkerCall
@@ -135,7 +135,7 @@ def save(tmp_path, reader, boundary, files):
         identity=replace(request.identity, request_id=boundary.request_id),
         save=SaveSettings(metadata=boundary.metadata, weights=boundary.weights),
     )
-    command = WorkerCall(SCOPE, 1, request, None, False, False, checkpoint=boundary)
+    command = WorkerCall(SCOPE, 1, request, None, False, checkpoint=boundary)
     bound = writer.prepare(BoundWorkerCall(command, None, CallControls(), {}, ()))
     saved = writer(bound)
     wire.seek(0)

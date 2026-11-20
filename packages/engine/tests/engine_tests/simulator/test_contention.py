@@ -44,7 +44,7 @@ def case(
         (TaskOverlapCost("gather", 100, task_rate, collective_rate),) if enabled else ()
     )
     program = ShadowSpillProgram(
-        (DeviceSpec("gpu", "rank", "cuda", 0),),
+        (DeviceSpec("gpu"),),
         (
             AliasGroupSpec(
                 "weight",

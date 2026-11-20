@@ -9,25 +9,25 @@ import torch
 
 from shadowspill.pytorch.capture.objective import capture_training_objective
 from shadowspill.pytorch.contracts import ObjectiveResult
-from shadowspill.training.definitions import (
-    ModelDefinition,
-    ObjectiveDefinition,
+from shadowspill.training.components import (
+    ModelComponent,
+    ObjectiveComponent,
     ObjectiveEvaluation,
     Registry,
 )
 from shadowspill.training.preparation.configuration.operations import OperationContract
 from shadowspill_client import Objective
-from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
-from shadowspill_client.protocol.definitions import (
-    DefinitionSource,
+from shadowspill_client.protocol.components import (
+    ComponentSource,
     OutputSet,
     Participation,
     TensorOutput,
 )
+from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.inputs import InputSchema, TensorField
 from shadowspill_client.protocol.operations import OperationKey
 
-SOURCE = DefinitionSource("external-composition", "1", "a" * 64)
+SOURCE = ComponentSource("external-composition", "1", "a" * 64)
 
 
 def evaluate(model, inputs, loss_inputs, requests):
@@ -67,7 +67,7 @@ def bind(config, key, *, absolute=False):
 def fixture(*, second=None):
     registry = Registry()
     registry.add_model(
-        ModelDefinition(
+        ModelComponent(
             "external/regression@1",
             dict,
             lambda _: torch.nn.Linear(2, 1),
@@ -89,7 +89,7 @@ def fixture(*, second=None):
     )
     tensor = {"prediction": TensorOutput("float32", (1,), "datum")}
     for name, absolute in (("squared", False), ("absolute", True)):
-        definition = ObjectiveDefinition(
+        component = ObjectiveComponent(
             f"external/{name}@1",
             partial(reduce, absolute=absolute),
             fields,
@@ -108,8 +108,8 @@ def fixture(*, second=None):
             padding_safe=True,
         )
         if absolute and second is not None:
-            definition = second(definition)
-        registry.add_objective(definition, source=SOURCE)
+            component = second(component)
+        registry.add_objective(component, source=SOURCE)
     model = registry.resolve_model("external/regression@1")
     settings = Objective.sum(
         {
@@ -119,7 +119,7 @@ def fixture(*, second=None):
         weights={"absolute": 0.3},
     )
     resolved = registry.resolve_objective(
-        settings.definition,
+        settings.name,
         model=model,
         config=settings.config,
         defaults=settings.defaults,
@@ -127,7 +127,7 @@ def fixture(*, second=None):
     return registry, model, settings, resolved
 
 
-def test_composed_short_objective_names_pin_every_child_definition():
+def test_composed_short_objective_names_pin_every_child_component():
     registry, model, settings, expected = fixture()
     short = Objective.sum(
         {
@@ -137,20 +137,20 @@ def test_composed_short_objective_names_pin_every_child_definition():
         weights={"absolute": 0.3},
     )
     actual = registry.resolve_objective(
-        short.definition, model=model, config=short.config, defaults=short.defaults
+        short.name, model=model, config=short.config, defaults=short.defaults
     )
     assert actual.config == expected.config
     assert actual.source == expected.source
     assert actual.defaults == expected.defaults
-    assert actual.config["terms"]["squared"]["definition"] == "external/squared@1"
+    assert actual.config["terms"]["squared"]["name"] == "external/squared@1"
     squared = registry.resolve_objective("squared", model=model)
     registry.add_objective(
-        replace(squared.definition, id="other/squared@1"), source=SOURCE
+        replace(squared.component, id="other/squared@1"), source=SOURCE
     )
     with pytest.raises(ValueError, match="ambiguous objective name"):
-        registry.resolve_objective(short.definition, model=model, config=short.config)
+        registry.resolve_objective(short.name, model=model, config=short.config)
     pinned = registry.resolve_objective(
-        settings.definition,
+        settings.name,
         model=model,
         config=actual.config,
         defaults=actual.defaults,
@@ -306,14 +306,14 @@ def test_forward_metrics_does_not_report_a_partial_loss_for_output_only_child():
     def prediction_metric(prediction, inputs, fields, controls):
         return {"mean": prediction.mean()}
 
-    def second(definition):
-        original = definition.bind
+    def second(component):
+        original = component.bind
         return replace(
-            definition,
+            component,
             outputs={
-                **definition.outputs,
+                **component.outputs,
                 "metrics": replace(
-                    definition.outputs["metrics"],
+                    component.outputs["metrics"],
                     forward=OutputSet(
                         model_inputs=(("features",),), metrics={"mean": "sum"}
                     ),
@@ -344,18 +344,18 @@ def test_normalized_setup_roundtrip_and_child_source_change_are_checked():
         Objective("shadowspill/sum@1", objective.config, objective.defaults).to_dict()
     )
     replay = registry.resolve_objective(
-        normalized.definition,
+        normalized.name,
         model=model,
         config=normalized.config,
         defaults=normalized.defaults,
         source=objective.source,
     )
     assert replay.config == objective.config and replay.defaults == objective.defaults
-    definition, _ = registry._objectives["external/absolute@1"]
-    registry._objectives[definition.id] = (definition, replace(SOURCE, digest="b" * 64))
+    component, _ = registry._objectives["external/absolute@1"]
+    registry._objectives[component.id] = (component, replace(SOURCE, digest="b" * 64))
     with pytest.raises(ValueError, match="source changed"):
         registry.resolve_objective(
-            normalized.definition,
+            normalized.name,
             model=model,
             config=normalized.config,
             source=objective.source,

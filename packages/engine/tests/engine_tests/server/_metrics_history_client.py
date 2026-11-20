@@ -8,8 +8,6 @@ from pathlib import Path
 from tempfile import mkdtemp
 
 from shadowspill_client import SSH, ServiceClient
-from shadowspill_client.protocol.codec import decode
-from shadowspill_client.protocol.metrics import MetricRecord, MetricSnapshot
 
 
 class Block(importlib.abc.MetaPathFinder):
@@ -90,11 +88,8 @@ with ServiceClient(
     training.metrics.export_jsonl(destination, through=first.through, limit=2).result(
         30
     )
-    lines = [decode(line) for line in destination.read_bytes().splitlines()]
-    assert lines[0] == MetricSnapshot(
-        "rng-session", options["run_id"], 0, first.through
-    )
-    assert lines[1:] == rows and all(isinstance(row, MetricRecord) for row in lines[1:])
+    lines = [json.loads(line) for line in destination.read_text().splitlines()]
+    assert lines == [row.to_dict() for row in rows]
     reports = {}
     if options.get("reports"):
         for format in ("html", "json"):

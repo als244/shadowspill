@@ -337,7 +337,7 @@ def test_completion_envelope_is_checked_before_worker_release():
         metadata=command.save.metadata,
     )
     scope = WorkerScope("run", "server", "process-0", 0)
-    wire = WorkerCall(scope, 1, command, None, False, False, checkpoint=info)
+    wire = WorkerCall(scope, 1, command, None, False, checkpoint=info)
     CODEC.encode(wire)
     description = RankSave(
         0, 1024, "c" * 64, "d" * 64, {f"p{i:04d}": "e" * 64 for i in range(8000)}

@@ -1,4 +1,4 @@
-"""Enforce the saved-worker boundary without importing any model definition."""
+"""Enforce the saved-worker boundary without importing any model component."""
 
 import importlib.abc
 import sys

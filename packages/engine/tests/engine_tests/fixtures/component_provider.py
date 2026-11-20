@@ -3,7 +3,7 @@
 from dataclasses import asdict, dataclass
 
 from shadowspill.resources import Resource
-from shadowspill.training.definitions import ModelBuild
+from shadowspill.training.components import ModelBuild
 
 
 @dataclass(frozen=True)

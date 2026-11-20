@@ -83,7 +83,7 @@ def prepared_program():
                 _captured.get()["selected"] = True
                 destination.add_(1)
         program = Program(
-            devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+            devices=(DeviceSpec("cuda_0"),),
             alias_groups=(),
             objects=(),
             tasks=(),
@@ -117,7 +117,7 @@ def test_archive_deduplicates_binary_and_loads_only_requested_tasks(tmp_path):
 
 def test_without_preparation_archive_shape_and_function_are_unchanged():
     program = Program(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(),
         objects=(),
         tasks=(),

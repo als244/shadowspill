@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+import stat
 import zipfile
 from dataclasses import replace
 from pathlib import Path
@@ -87,6 +89,43 @@ def test_bounded_archive_save_preserves_original_and_never_overwrites_allowance(
     assert list(tmp_path.iterdir()) == [path]
     source.save(path, max_bytes=len(original))
     assert type(source).load(path).to_dict() == source.to_dict()
+
+
+def test_save_syncs_the_file_and_then_its_directory(tmp_path, monkeypatch):
+    from shadowspill.artifacts import archive
+
+    events = []
+    real_open, real_fsync, real_replace = os.open, os.fsync, os.replace
+    opened_directories = {}
+
+    def opened(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags, *args, **kwargs)
+        opened_directories[descriptor] = Path(path)
+        return descriptor
+
+    def synced(descriptor):
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            events.append(("fsync directory", opened_directories[descriptor]))
+        else:
+            events.append(("fsync file", None))
+        real_fsync(descriptor)
+
+    def replaced(source, destination):
+        events.append(("replace", Path(destination)))
+        real_replace(source, destination)
+
+    monkeypatch.setattr(archive.os, "open", opened)
+    monkeypatch.setattr(archive.os, "fsync", synced)
+    monkeypatch.setattr(archive.os, "replace", replaced)
+    path = tmp_path / "nested" / "program.ssp"
+    program().save(path)
+    # The rename is durable once the directory naming the archive is synced.
+    assert events == [
+        ("fsync file", None),
+        ("replace", path),
+        ("fsync directory", path.parent),
+    ]
+    assert type(program()).load(path).to_dict() == program().to_dict()
 
 
 def test_archive_rejects_wrong_kind_and_corrupt_payload(tmp_path):

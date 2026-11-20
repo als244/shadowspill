@@ -31,10 +31,14 @@ def test_missing_memory_is_not_zero():
 
 
 def test_static_memory_requires_only_duration():
-    p = program(workspace=16, overhead=20)
+    p = program(workspace=16)
     result = apply_profiles(
         p,
-        Profiles(tasks={"update_impl": TaskProfile(1e-6), "boundary": TaskProfile(0)}),
+        Profiles(
+            tasks={"update_impl": TaskProfile(1e-6), "boundary": TaskProfile(0)},
+            fixed_device_bytes=20,
+            metadata={"memory_kind": "static"},
+        ),
     )
     assert result.estimated_memory == ()
     assert result.task_profiles["update_impl"].workspace_bytes == 16
@@ -44,7 +48,7 @@ def test_static_memory_requires_only_duration():
 
 def test_missing_durations_are_not_estimated_implicitly():
     with pytest.raises(ValueError, match="duration_seconds"):
-        apply_profiles(program(workspace=0, overhead=0), Profiles())
+        apply_profiles(program(workspace=0), Profiles(fixed_device_bytes=0))
 
 
 def test_profile_snapshot_and_metadata_are_independent():

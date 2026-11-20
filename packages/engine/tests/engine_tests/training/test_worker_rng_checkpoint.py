@@ -70,16 +70,15 @@ def runtime():
     return executor, streams, budget, execution, results
 
 
-def invoke(execution, operation, *, masked=False, plan=True):
+def invoke(execution, operation):
     execution(
         SimpleNamespace(
             command=SimpleNamespace(
                 scope=SCOPE,
-                skipped=masked,
                 accumulate_gradients=operation == "forward_backward",
                 request=SimpleNamespace(operation=operation, runtime_trace=False),
             ),
-            plan=("forward" if masked else operation) if plan else None,
+            plan=operation,
             hyperparams={},
             input_loader=lambda budget: None,
         )
@@ -104,9 +103,7 @@ def save(tmp_path, executor, streams, budget):
     writer = WorkerCheckpointWriter(
         executor, budget, wire, plans=plans, chunk_bytes=24, randomness=streams
     )
-    command = WorkerCall(
-        SCOPE, 1, save_call().request, None, False, False, checkpoint=info
-    )
+    command = WorkerCall(SCOPE, 1, save_call().request, None, False, checkpoint=info)
     call = writer.prepare(BoundWorkerCall(command, None, CallControls(), {}, ()))
     saved = writer(call)
     wire.seek(0)
@@ -201,12 +198,9 @@ def test_bad_rng_preflight_never_mutates_weights_or_default_streams(tmp_path, fa
     assert streams.capture() == saved and budget.used == (0, 0)
 
 
-def test_checkpoint_release_rechecks_rng_and_empty_calls_do_not_advance_it(tmp_path):
-    executor, streams, budget, execution, _ = runtime()
+def test_checkpoint_release_rechecks_rng(tmp_path):
+    executor, streams, budget, _, _ = runtime()
     _path, source = save(tmp_path, executor, streams, budget)
-    saved = streams.capture()
-    invoke(execution, "optim_step", masked=True, plan=False)
-    assert streams.capture() == saved
     writer = WorkerCheckpointWriter(
         executor,
         budget,
@@ -216,7 +210,7 @@ def test_checkpoint_release_rechecks_rng_and_empty_calls_do_not_advance_it(tmp_p
         randomness=streams,
     )
     command = WorkerCall(
-        SCOPE, 1, save_call().request, None, False, False, checkpoint=source.info
+        SCOPE, 1, save_call().request, None, False, checkpoint=source.info
     )
     call = writer.prepare(BoundWorkerCall(command, None, CallControls(), {}, ()))
     draw()

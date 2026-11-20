@@ -161,7 +161,6 @@ def check_trace(result, run, *, expected, accumulated=False):
             assert manifest["rank"] == 0 and manifest["history_id"] == result.history_id
             assert manifest["completed_updates_before"] == result.completed_updates - (
                 result.operation in ("step", "optim_step")
-                and result.outcome != "skipped"
             )
             assert manifest["accumulate_gradients"] == accumulated
             diagnostic = json.loads(archive.read("step.json"))

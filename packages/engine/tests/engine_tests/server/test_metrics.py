@@ -1,5 +1,6 @@
 """Scalar history survives completion races, disconnects and disposable indexes."""
 
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -10,8 +11,8 @@ from engine_tests.server.test_request_records import request, result, store
 from engine_tests.server.test_service_client import address
 from shadowspill_client import ServiceClient
 from shadowspill_client.metrics import MetricQueries
-from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, decode, encode
-from shadowspill_client.protocol.metrics import MetricRecord, MetricSnapshot
+from shadowspill_client.protocol.codec import MAX_METADATA_BYTES, encode
+from shadowspill_client.protocol.metrics import MetricRecord
 from shadowspill_client.protocol.results import ExecutionReceipt, Failure
 from shadowspill_client.transport.http import RemoteError
 
@@ -71,13 +72,13 @@ def test_completion_cursor_retains_late_results_and_fixed_snapshot_after_reopen(
         assert reopened.metrics(through=before.through) == before
 
 
-def test_query_includes_skipped_and_confirmed_failure_without_inventing_loss(tmp_path):
+def test_query_includes_confirmed_failure_without_inventing_loss(tmp_path):
     with store(tmp_path) as records:
         command = replace(request(), operation="forward_backward", mode="training")
         records.submit(command)
         records.accept("a")
         records.dispatch("a")
-        completed = replace(result(command), outcome="skipped")
+        completed = result(command)
         records.executed(ExecutionReceipt.from_result(completed))
         records.complete(completed)
         failed = request("failed", 2)
@@ -102,7 +103,7 @@ def test_query_includes_skipped_and_confirmed_failure_without_inventing_loss(tmp
             ),
         )
         rows = records.metrics().records
-        assert rows[0].outcome == "skipped" and rows[0].completed_updates == 0
+        assert rows[0].outcome == "completed" and rows[0].completed_updates == 0
         assert (
             rows[1].execution_effect == "completed"
             and rows[1].failure_code == "artifact_failed"
@@ -216,10 +217,10 @@ def test_jsonl_export_pins_its_range_while_later_results_arrive(tmp_path, monkey
         monkeypatch.setattr(service, "_request", read)
         metrics = MetricQueries(service, "session", "run")
         target = metrics.export_jsonl(tmp_path / "metrics.jsonl", limit=1).result(5)
-        rows = [decode(line) for line in target.read_bytes().splitlines()]
-        assert rows[0] == MetricSnapshot("session", "run", 0, expected.through)
-        assert tuple(rows[1:]) == expected.records
-        assert all(isinstance(row, MetricRecord) for row in rows[1:])
+        # Plain JSON objects, one per record, in the records' own field form.
+        rows = [json.loads(line) for line in target.read_text().splitlines()]
+        assert rows == [row.to_dict() for row in expected.records]
+        assert tuple(MetricRecord.from_dict(row) for row in rows) == expected.records
         assert len(calls) == 3 and all("/metrics?" in path for path in calls)
         assert all(f"through={expected.through}" in path for path in calls[1:])
         with pytest.raises(FileExistsError):
@@ -230,7 +231,7 @@ def test_jsonl_export_pins_its_range_while_later_results_arrive(tmp_path, monkey
         empty = metrics.export_jsonl(
             tmp_path / "empty.jsonl", after=later.through
         ).result(5)
-        assert len(empty.read_bytes().splitlines()) == 1
+        assert empty.read_bytes() == b""
     assert service._memory.used == service._work.pending.used == (0, 0)
 
 

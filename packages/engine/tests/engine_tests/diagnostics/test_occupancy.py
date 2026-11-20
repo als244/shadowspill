@@ -75,9 +75,7 @@ def _program() -> dict:
 
     return {
         "schema": artifact_schema("program"),
-        "devices": [
-            {"device_id": "cuda_0", "index": 0, "kind": "cuda", "process_id": "p"}
-        ],
+        "devices": [{"device_id": "cuda_0"}],
         "alias_groups": [
             {
                 "alias_group_id": "A_w",
@@ -678,7 +676,7 @@ def test_the_spill_peak_is_the_simulators_when_an_evict_waits_for_its_lane() -> 
 
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(
             AliasGroupSpec("a", "cuda_0", 1000),
             AliasGroupSpec("b", "cuda_0", 1000),

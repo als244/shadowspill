@@ -28,7 +28,7 @@ sys.meta_path.insert(0, Block())
 
 import numpy as np  # noqa: E402
 
-from engine_tests.fixtures.definition_operations import records  # noqa: E402
+from engine_tests.fixtures.component_operations import records  # noqa: E402
 from shadowspill.orchestration.launch.admission import NodeAdmission  # noqa: E402
 from shadowspill.orchestration.launch.host_arena import HostArena  # noqa: E402
 from shadowspill.orchestration.launch.node_capacity import discover_capacity  # noqa: E402
@@ -44,7 +44,7 @@ from shadowspill.server.results import ResultPublisher  # noqa: E402
 from shadowspill.server.startup.configuration import LocalCreationLimits  # noqa: E402
 from shadowspill.server.startup.logs import archived_chunks  # noqa: E402
 from shadowspill.server.storage import ServiceStorage  # noqa: E402
-from shadowspill.training.definitions import load_registry  # noqa: E402
+from shadowspill.training.components import load_registry  # noqa: E402
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle  # noqa: E402
 from shadowspill.training.preparation.phases.job import (  # noqa: E402
     JOB_NAME,
@@ -99,7 +99,7 @@ assert len(admission.capacity.devices) == 1
 device = admission.capacity.devices[0]
 # These explicit deployment allowances are qualified for this installed tiny
 # fixture only. Record kernel high-water observations without calling them a
-# maximum proof for arbitrary definitions or larger bundles.
+# maximum proof for arbitrary components or larger bundles.
 host_allowance = WorkerHost(2 << 30, 512 << 20)
 disk = BufferBudget(128 << 20, 100)
 execution = prepared_worker.bindings.setup.config.execution
@@ -354,7 +354,7 @@ with (
                 status = client.request(
                     "GET", route + "/requests/" + name + "?wait=completed&timeout=10"
                 ).value
-                if status.state in ("completed", "skipped", "failed"):
+                if status.state in ("completed", "failed"):
                     break
             else:
                 raise AssertionError("worker request exceeded the integration deadline")

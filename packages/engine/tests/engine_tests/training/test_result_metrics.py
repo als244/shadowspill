@@ -13,7 +13,7 @@ from shadowspill.training.outputs import OutputLayout
 from shadowspill.training.result_metrics import result_metrics
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.inputs.shapes import PackingSchedule
-from shadowspill_client.protocol.definitions import OutputSet
+from shadowspill_client.protocol.components import OutputSet
 
 
 def configured(*, ownership="replicated", broken=None):

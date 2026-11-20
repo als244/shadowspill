@@ -113,7 +113,7 @@ def test_partial_weights_require_the_exact_frozen_model_and_artifact(
         artifacts.put(artifact, lambda _: io.BytesIO(b"base"))
         base = FrozenBase(
             replace(config.model, initialize=Weights.artifact(artifact.id)),
-            config.definition_sources["model"],
+            config.component_sources["model"],
             artifact,
         )
         ref, manifest, _ = generation(artifacts, base=base)

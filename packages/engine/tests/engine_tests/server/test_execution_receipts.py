@@ -57,7 +57,6 @@ def test_final_outcome_cannot_invent_or_change_execution_facts(tmp_path):
         records.executed(receipt)
         for changed in (
             replace(result(command), completed_updates=1),
-            replace(result(command), outcome="skipped"),
             replace(result(command), history_id="other-history"),
         ):
             with pytest.raises(ValueError, match="differs from confirmed execution"):

@@ -36,7 +36,6 @@ def call(invocation=1, sequence=1):
         request(f"request-{sequence}", sequence),
         "candidate",
         False,
-        False,
     )
 
 

@@ -460,6 +460,25 @@ def test_layout_contract_versions_and_compact_conflicts_are_public():
         )
 
 
+def test_layout_contracts_capture_would_never_read_are_refused():
+    # Capture knows which ATen inputs are read by value.
+    with pytest.raises(ValueError, match="outside the aten namespace"):
+        LayoutIndependentOperator("aten.mul.Tensor", "values.v1", (0, 1))
+    # Without an effect contract the operator is a fence no changed layout reaches.
+    target = "lifetime_copy_test.logical_consumer.default"
+    layout = (LayoutIndependentOperator(target, "values.v1", (0,)),)
+    with pytest.raises(ValueError, match="need a readonly contract"):
+        ExecutionLifetimes(layout=layout)
+    with pytest.raises(ValueError, match="need a readonly contract"):
+        ExecutionLifetimes(
+            readonly=(ReadonlyOperator("other.op.default", "effects.v1"),),
+            layout=layout,
+        )
+    ExecutionLifetimes(
+        readonly=(ReadonlyOperator(target, "effects.v1"),), layout=layout
+    )
+
+
 @pytest.mark.parametrize("save", [False, True])
 @pytest.mark.parametrize("lora", [False, True])
 @pytest.mark.parametrize("batch", [1, 2])

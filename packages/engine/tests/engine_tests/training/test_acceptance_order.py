@@ -21,7 +21,7 @@ def finish(records, state, key, *, participates=None):
             command.identity,
             command.operation,
             boundary.history_id,
-            "skipped" if transition.skipped else "completed",
+            "completed",
             boundary.completed_updates,
             boundary.accumulation,
         )
@@ -31,7 +31,7 @@ def finish(records, state, key, *, participates=None):
             command.identity,
             command.operation,
             boundary.history_id,
-            "skipped" if transition.skipped else "completed",
+            "completed",
             boundary.completed_updates,
             boundary.accumulation,
             grad_scale=command.grad_scale,

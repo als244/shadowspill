@@ -1,4 +1,4 @@
-"""Only configured installed distributions can register server definitions."""
+"""Only configured installed distributions can register server components."""
 
 import os
 import subprocess
@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from engine_tests.fixtures import external_definition
-from shadowspill.training.definitions import load_registry
-from shadowspill.training.definitions import packages as loader
+from engine_tests.fixtures import external_component
+from shadowspill.training.components import load_registry
+from shadowspill.training.components import packages as loader
 
 
 def test_registration_uses_only_the_explicit_distribution_allowlist(monkeypatch):
@@ -85,10 +85,10 @@ def test_registration_errors_propagate_without_skipping_the_package(monkeypatch)
         load_registry(["invalid"])
 
     def failed(registry):
-        raise RuntimeError("installed definition failure")
+        raise RuntimeError("installed component failure")
 
     monkeypatch.setattr(EntryPoint, "load", lambda _: failed)
-    with pytest.raises(RuntimeError, match="installed definition failure"):
+    with pytest.raises(RuntimeError, match="installed component failure"):
         load_registry(["invalid"])
 
 
@@ -96,7 +96,7 @@ def test_external_installed_entry_point_loads_in_fresh_framework_free_process(tm
     # A temporary installed distribution provides actual importlib metadata and
     # source; no monkeypatch supplies the registration hook in the child.
     (tmp_path / "external_fixture.py").write_text(
-        Path(external_definition.__file__).read_text()
+        Path(external_component.__file__).read_text()
     )
     metadata = tmp_path / "external_classifier_fixture-1.dist-info"
     metadata.mkdir()
@@ -104,20 +104,20 @@ def test_external_installed_entry_point_loads_in_fresh_framework_free_process(tm
         "Metadata-Version: 2.1\nName: external-classifier-fixture\nVersion: 1\n"
     )
     (metadata / "entry_points.txt").write_text(
-        "[shadowspill.definitions]\nclassifier = external_fixture:register\n"
+        "[shadowspill.components]\nclassifier = external_fixture:register\n"
     )
     script = """
 import sys
 for name in ('torch', 'triton', 'mlops', 'shadowspill_workloads'):
     sys.modules[name] = None
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 registry = load_registry(['external-classifier-fixture'])
 model = registry.resolve_model('external/image_classifier@1')
 objective = registry.resolve_objective(
     'external/classification@1', model=model
 )
 assert model.inputs.fields[0].path == ('pixels',)
-assert objective.definition.padding_safe
+assert objective.component.padding_safe
 print('Installed external entry point resolved without frameworks or catalog')
 """
     result = subprocess.run(

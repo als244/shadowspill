@@ -10,7 +10,7 @@ import pytest
 
 from engine_tests.offline.test_shared_plans import registered
 from engine_tests.training.test_setup_resolution import arguments, installed
-from shadowspill.training.definitions import InitializationRuntime, ModelInitialization
+from shadowspill.training.components import InitializationRuntime, ModelInitialization
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.worker.initialization import (
     open_initialization,
@@ -22,7 +22,7 @@ from shadowspill_client import Weights
 
 def prepared(*, hook=True, persistent_alias=False):
     registry = installed()
-    definition = registry.resolve_model(arguments()["model"].definition).definition
+    component = registry.resolve_model(arguments()["model"].name).component
 
     def describe(config, context):
         assert context.weights.kind == "artifact"
@@ -34,14 +34,12 @@ def prepared(*, hook=True, persistent_alias=False):
 
         return ModelInitialization(peak_bytes=64, chunk_bytes=16, open=opened)
 
-    definition = replace(
-        definition, temporary_initialization=describe if hook else None
-    )
+    component = replace(component, temporary_initialization=describe if hook else None)
     settings = arguments()
     settings["model"] = replace(
         settings["model"], initialize=Weights.artifact("weights")
     )
-    setup = resolve_training(installed(model=definition), **settings)
+    setup = resolve_training(installed(model=component), **settings)
 
     def program(prefix):
         value = registered(prefix=prefix)

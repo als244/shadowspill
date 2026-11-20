@@ -16,9 +16,9 @@ from shadowspill.ir import (
 from shadowspill.planning.memory_search import GenericPlanningOptions, SearchOptions
 
 
-def program(*, workspace=None, overhead=None):
+def program(*, workspace=None):
     return Program(
-        devices=(DeviceSpec("rank0", "worker", "cuda", 0),),
+        devices=(DeviceSpec("rank0"),),
         alias_groups=(AliasGroupSpec("weight_storage", "rank0", 64),),
         objects=(ObjectSpec("weight", "weight_storage", 0, 64),),
         tasks=(
@@ -61,7 +61,6 @@ def program(*, workspace=None, overhead=None):
         final_residency=(ResidencySpec("weight_storage", MemoryLocation.SPILL),),
         name="Tiny update",
         sources={"weight_storage": ["linear.weight"]},
-        fixed_device_bytes=overhead,
     )
 
 

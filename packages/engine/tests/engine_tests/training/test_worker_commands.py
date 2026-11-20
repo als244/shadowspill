@@ -23,7 +23,7 @@ SCOPE = WorkerScope("run", "server", "process-1", 0)
 
 @contextmanager
 def invocation(root, operation="step", *, masked=False, accumulated=False):
-    from engine_tests.fixtures.definition_operations import records
+    from engine_tests.fixtures.component_operations import records
 
     prepared = PreparedRequests(family(), cache_root=root)
     datums = records(masked=masked)
@@ -125,7 +125,6 @@ def test_wire_rechecks_saved_forms_frames_and_controls(
     "change",
     [
         {"candidate": "saved-plan"},
-        {"skipped": True},
         {"accumulate_gradients": True},
     ],
 )

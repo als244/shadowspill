@@ -1,8 +1,25 @@
 import pytest
 
+from shadowspill.planning.memory_search import GenericPlanningOptions
+from shadowspill.planning.memory_search.algorithms.pressurefit.candidates import (
+    _problem_options,
+)
 from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
+
+
+@pytest.mark.parametrize(
+    ("field", "bound"),
+    [("max_repair_attempts", 1 << 32), ("capacity_refinement_bytes", 1 << 64)],
+)
+def test_fixed_width_options_stop_below_what_the_planner_can_read(field, bound):
+    largest = PressureFitOptions(**{field: bound - 1})
+    compiled, _ = _problem_options(GenericPlanningOptions(), largest)
+    assert getattr(compiled, field) == bound - 1
+    for value in (bound, bound + 5):
+        with pytest.raises(ValueError, match=field):
+            PressureFitOptions(**{field: value})
 
 
 def test_options_round_trip_and_default_portfolio():

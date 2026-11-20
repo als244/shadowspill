@@ -6,15 +6,15 @@ from dataclasses import dataclass, replace
 
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions
-from engine_tests.fixtures.external_definition import SOURCE
+from engine_tests.fixtures.component_operations import components
+from engine_tests.fixtures.external_component import SOURCE
 from shadowspill.parallelism import (
     GroupRef,
     InputFieldPlacement,
     InputPlacement,
     Parallelism,
 )
-from shadowspill.training.definitions import ModelReferenceDefinition, Registry
+from shadowspill.training.components import ModelReferenceComponent, Registry
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client import (
     BatchConfig,
@@ -36,11 +36,11 @@ from shadowspill_client.protocol.setup import TrainingSetup
 
 
 def installed(*, model=None, objective=None, optimizer=None, model_source=SOURCE):
-    m, o, p = definitions()
+    m, o, p = components()
     registry = Registry()
-    registry.add_model(model or m.definition, source=model_source)
-    registry.add_objective(objective or o.definition, source=o.source)
-    registry.add_optimizer(optimizer or p.definition, source=p.source)
+    registry.add_model(model or m.component, source=model_source)
+    registry.add_objective(objective or o.component, source=o.source)
+    registry.add_optimizer(optimizer or p.component, source=p.source)
     return registry
 
 
@@ -58,7 +58,7 @@ def short_arguments():
     args = arguments()
     for kind in ("model", "objective", "optimizer"):
         args[kind] = replace(
-            args[kind], definition=args[kind].definition.split("/")[-1].split("@")[0]
+            args[kind], name=args[kind].name.split("/")[-1].split("@")[0]
         )
     return args
 
@@ -79,14 +79,14 @@ def test_short_name_collisions_reject_new_requests_but_preserve_saved_pins(
     registry = installed()
     setup = resolve_training(registry, **short_arguments())
     resolved = getattr(setup, kind)
-    original = resolved.definition.id
+    original = resolved.component.id
     alternate = (
         "other/" + original.split("/")[-1]
         if collision == "other_package"
         else original.rsplit("@", 1)[0] + "@2"
     )
     getattr(registry, f"add_{kind}")(
-        replace(resolved.definition, id=alternate), source=resolved.source
+        replace(resolved.component, id=alternate), source=resolved.source
     )
     with pytest.raises(ValueError, match=f"ambiguous {kind} name") as error:
         resolve_training(registry, **short_arguments())
@@ -100,25 +100,21 @@ def test_saved_settings_require_canonical_ids_instead_of_new_name_lookups(kind):
     config = resolve_training(registry, **short_arguments()).config
     changed = replace(
         config,
-        **{
-            kind: replace(
-                getattr(config, kind), definition=short_arguments()[kind].definition
-            )
-        },
+        **{kind: replace(getattr(config, kind), name=short_arguments()[kind].name)},
     )
     with pytest.raises(ValueError, match="not fully resolved"):
         resolve_training(registry, config=changed)
 
 
 def test_inspection_and_creation_use_one_snapshot_without_model_construction():
-    m, _, p = definitions()
+    m, _, p = components()
 
     def no_model(*args, **kwargs):
         pytest.fail("constructed a model/optimizer during description")
 
     registry = installed(
-        model=replace(m.definition, create=no_model),
-        optimizer=replace(p.definition, create=no_model),
+        model=replace(m.component, create=no_model),
+        optimizer=replace(p.component, create=no_model),
     )
     requested = arguments()
     requested.update(
@@ -140,7 +136,7 @@ def test_inspection_and_creation_use_one_snapshot_without_model_construction():
         OperationKey("forward", "metrics", "training"),
         OperationKey("optim_step", None),
     )
-    assert config.origins["model.config.num_classes"] == "definition"
+    assert config.origins["model.config.num_classes"] == "component"
     assert config.origins["model.initialize"] == "explicit"
     assert config.origins["execution"] == "explicit"
     assert config.origins["operations"] == "explicit"
@@ -211,11 +207,11 @@ def test_changed_sources_missing_defaults_and_contracts_fail_recheck():
             resolve_training(registry, config=changed)
     with pytest.raises(ValueError, match="missing policy source"):
         resolve_training(registry, config=replace(config, policy_sources={}))
-    m, _, _ = definitions()
+    m, _, _ = components()
     schema = replace(m.inputs, fields=[replace(m.inputs.fields[0], dtype="float64")])
     with pytest.raises(ValueError, match="contract differs"):
         resolve_training(
-            installed(model=replace(m.definition, inputs=schema)), config=config
+            installed(model=replace(m.component, inputs=schema)), config=config
         )
     parallelism = dict(config.parallelism)
     parallelism.pop("inputs")
@@ -278,7 +274,7 @@ def test_pretrained_metadata_pins_revision_preserves_overrides_and_rechecks_that
         revisions.append(request.initialize.revision)
         return replace(
             request,
-            definition="external/image_classifier@1",
+            name="external/image_classifier@1",
             config={"num_classes": 3, **request.config},
             initialize=Weights.pretrained(
                 request.initialize.reference,
@@ -286,7 +282,7 @@ def test_pretrained_metadata_pins_revision_preserves_overrides_and_rechecks_that
             ),
         )
 
-    resolver = ModelReferenceDefinition(
+    resolver = ModelReferenceComponent(
         "external/metadata@1", lambda ref: ref.startswith("fixture://"), metadata
     )
     registry.add_model_reference(resolver, source=SOURCE)
@@ -294,19 +290,19 @@ def test_pretrained_metadata_pins_revision_preserves_overrides_and_rechecks_that
         **arguments(),
         "model": replace(
             Model.from_pretrained("fixture://classifier", config={"num_classes": 5}),
-            definition=name,
+            name=name,
         ),
     }
     prepared = resolve_training(registry, **args)
     assert prepared.config.model.config == {"num_classes": 5}
     assert prepared.config.model.initialize.revision == "b" * 40
-    assert prepared.config.reference_definition == resolver.id
+    assert prepared.config.reference_component == resolver.id
     assert resolve_training(registry, config=prepared.config).config == prepared.config
     assert revisions == [None, "b" * 40]
     missing = installed()
     with pytest.raises(ValueError, match="metadata resolver; found 0"):
         resolve_training(missing, **args)
-    with pytest.raises(ValueError, match="reference definition is not installed"):
+    with pytest.raises(ValueError, match="reference component is not installed"):
         resolve_training(missing, config=prepared.config)
     registry.add_model_reference(
         replace(resolver, id="external/ambiguous@1"), source=SOURCE
@@ -374,25 +370,25 @@ def configured_classifier(config):
 def test_installed_structural_settings_reach_the_ordinary_factory_and_are_stable():
     import torch
 
-    m, _, p = definitions()
-    definition = replace(
-        m.definition,
+    m, _, p = components()
+    component = replace(
+        m.component,
         config=ConfiguredClassifier,
         configure=model_settings,
         create=configured_classifier,
     )
-    registry = installed(model=definition)
+    registry = installed(model=component)
     request = Model(
-        definition.id,
+        component.id,
         implementation="linear",
         precision={"compute": "float64"},
         trainable=[],
     )
-    resolved = registry.resolve_model(definition.id, settings=request)
+    resolved = registry.resolve_model(component.id, settings=request)
     actual = resolved.create()
     assert actual.weight.dtype == torch.float64 and not actual.weight.requires_grad
     assert (
-        registry.resolve_model(definition.id, settings=resolved.settings).settings
+        registry.resolve_model(component.id, settings=resolved.settings).settings
         == resolved.settings
     )
     for unsupported in (
@@ -400,11 +396,11 @@ def test_installed_structural_settings_reach_the_ordinary_factory_and_are_stable
         replace(request, precision={"unknown": "float64"}),
     ):
         with pytest.raises(ValueError, match="unsupported"):
-            registry.resolve_model(definition.id, settings=unsupported)
+            registry.resolve_model(component.id, settings=unsupported)
     with pytest.raises(ValueError, match="no settings hook"):
-        installed().resolve_model(m.definition.id, settings=request)
+        installed().resolve_model(m.component.id, settings=request)
     unstable = replace(
-        definition,
+        component,
         configure=lambda r: {
             **r.config,
             "num_classes": int(r.config.get("num_classes", 3)) + 1,
@@ -429,9 +425,9 @@ def test_installed_structural_settings_reach_the_ordinary_factory_and_are_stable
         )
 
     optimizer = replace(
-        p.definition, configure=configure_optimizer, create=optimizer_factory
+        p.component, configure=configure_optimizer, create=optimizer_factory
     )
-    registry = installed(model=definition, optimizer=optimizer)
+    registry = installed(model=component, optimizer=optimizer)
     setup = resolve_training(
         registry,
         **{
@@ -448,8 +444,8 @@ def test_installed_structural_settings_reach_the_ordinary_factory_and_are_stable
     assert resolve_training(registry, config=setup.config).config == setup.config
     with pytest.raises(ValueError, match="no settings hook"):
         installed().resolve_optimizer(
-            p.definition.id,
-            settings=Optimizer(p.definition.id, precision={"state": "float64"}),
+            p.component.id,
+            settings=Optimizer(p.component.id, precision={"state": "float64"}),
         )
 
 
@@ -472,8 +468,8 @@ assert restored.config == setup.config
     assert run.returncode == 0, run.stdout + run.stderr
 
 
-def test_definition_supplies_generic_parallelism_and_initialization_stays_explicit():
-    model, _, _ = definitions()
+def test_component_supplies_generic_parallelism_and_initialization_stays_explicit():
+    model, _, _ = components()
 
     def default(config, schema):
         assert config.num_classes == 3
@@ -485,12 +481,12 @@ def test_definition_supplies_generic_parallelism_and_initialization_stays_explic
             ),
         )
 
-    registry = installed(model=replace(model.definition, default_parallelism=default))
+    registry = installed(model=replace(model.component, default_parallelism=default))
     args = arguments()
     args["model"] = replace(args["model"], initialize=None)
     described = resolve_training(registry, **args)
     assert described.config.model.initialize is None
-    assert described.config.origins["parallelism"] == "definition"
+    assert described.config.origins["parallelism"] == "component"
     assert described.context.parallelism.world_size == 2
     assert described.context.parallelism.inputs.partition_count == 1
     assert (

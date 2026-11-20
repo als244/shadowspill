@@ -12,7 +12,7 @@ from shadowspill.parallelism.views import owned_view_offsets
 
 def program():
     return Program(
-        devices=(DeviceSpec("device", "worker", "cuda", 0),),
+        devices=(DeviceSpec("device"),),
         alias_groups=(AliasGroupSpec("weight", "device", 72),),
         objects=(
             ObjectSpec("model_weight", "weight", 0, 70),

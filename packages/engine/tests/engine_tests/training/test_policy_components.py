@@ -6,9 +6,9 @@ from dataclasses import dataclass, replace
 
 import pytest
 
-from engine_tests.fixtures.external_definition import SOURCE
+from engine_tests.fixtures.external_component import SOURCE
 from engine_tests.training.test_preparation_resolution import preset, stacked_context
-from shadowspill.training.definitions import PolicyDefinition, Registry
+from shadowspill.training.components import PolicyComponent, Registry
 from shadowspill.training.preparation.configuration.policies import (
     materialize_build_options,
     resolve_build_policies,
@@ -43,8 +43,8 @@ def create_policy(config):
     )
 
 
-def definition(create=create_policy):
-    return PolicyDefinition(
+def component(create=create_policy):
+    return PolicyComponent(
         "external/retention@1", "graph_pair_policy", RetentionConfig, create
     )
 
@@ -69,7 +69,7 @@ def test_policy_resolution_pins_source_defaults_and_never_materializes():
         calls.append(config)
         pytest.fail("constructed a policy during inspection")
 
-    registry.add_policy(definition(forbidden), source=SOURCE)
+    registry.add_policy(component(forbidden), source=SOURCE)
     resolved = resolve_preparation(preset(settings()), stacked_context())
     bound, sources = resolve_build_policies(registry, resolved)
     assert not calls
@@ -99,7 +99,7 @@ def test_policy_resolution_pins_source_defaults_and_never_materializes():
 
 def test_materialization_returns_the_ordinary_existing_phase_policies():
     registry = Registry()
-    registry.add_policy(definition(), source=SOURCE)
+    registry.add_policy(component(), source=SOURCE)
     resolved = resolve_preparation(preset(settings()), stacked_context())
     bound, sources = resolve_build_policies(registry, resolved)
     first = materialize_build_options(registry, bound.cases[0].build, sources)
@@ -116,7 +116,7 @@ def test_materialization_returns_the_ordinary_existing_phase_policies():
 
 def test_unknown_policy_config_kind_or_request_module_names_fail_closed():
     registry = Registry()
-    registry.add_policy(definition(), source=SOURCE)
+    registry.add_policy(component(), source=SOURCE)
     with pytest.raises(ValueError, match="not installed"):
         registry.resolve_policy("os:system", kind="partition")
     with pytest.raises(ValueError, match="cannot configure"):
@@ -130,7 +130,7 @@ def test_unknown_policy_config_kind_or_request_module_names_fail_closed():
             "external/retention@1", kind="graph_pair_policy", config={"save": "guess"}
         )
     with pytest.raises(ValueError, match="already registered"):
-        registry.add_policy(definition(), source=SOURCE)
+        registry.add_policy(component(), source=SOURCE)
     with pytest.raises(ValueError, match="mode must"):
         registry.resolve_policy(
             "shadowspill/partition@1", kind="partition", config={"mode": None}
@@ -142,10 +142,10 @@ def test_policy_source_and_config_resolution_are_framework_free():
 import sys
 for name in ('torch', 'triton', 'shadowspill_workloads'):
     sys.modules[name] = None
-from engine_tests.training.test_policy_definitions import (
-    definition, settings, stacked_context, preset, SOURCE,
+from engine_tests.training.test_policy_components import (
+    component, settings, stacked_context, preset, SOURCE,
 )
-from shadowspill.training.definitions import Registry
+from shadowspill.training.components import Registry
 from shadowspill.training.preparation.configuration.resolution import (
     resolve_preparation,
 )
@@ -153,7 +153,7 @@ from shadowspill.training.preparation.configuration.policies import (
     resolve_build_policies,
 )
 registry = Registry()
-registry.add_policy(definition(), source=SOURCE)
+registry.add_policy(component(), source=SOURCE)
 resolved = resolve_preparation(preset(settings()), stacked_context())
 bound, sources = resolve_build_policies(registry, resolved)
 assert sources['external/retention@1'] == SOURCE

@@ -130,7 +130,7 @@ def test_validation_failure_preserves_completed_gradients_and_explicit_correctio
 @pytest.mark.parametrize(
     "command", ["step", "forward_backward", "forward", "optim_step", "restore"]
 )
-def test_partial_execution_invalidates_state_and_explicit_restore_recovers(command):
+def test_partial_execution_invalidates_state_and_leaves_only_close(command):
     state = OperationState(completed_updates=10)
     if command == "optim_step":
         finish(state, "forward_backward", "part", participates=True)
@@ -142,17 +142,12 @@ def test_partial_execution_invalidates_state_and_explicit_restore_recovers(comma
     state.fail(failed, execution_started=True)
     assert not state.boundary.valid
     assert state.boundary.completed_updates == 10
-    for blocked in ("forward", "optim_step", "discard", "save", "step"):
+    for blocked in ("forward", "optim_step", "discard", "save", "step", "restore"):
         with pytest.raises(RuntimeError, match="invalid"):
             state.begin(blocked, "blocked")
-    generation = state.boundary.accumulation.generation
-    # The coordinator must recreate failed workers and restore actual tensors
-    # before confirming this recovery; changing metadata alone cannot recover.
-    restored = state.begin("restore", "restore_checkpoint")
-    state.complete(restored, restored_updates=3)
-    assert state.boundary.valid and state.boundary.completed_updates == 3
-    assert state.boundary.accumulation.generation == generation
-    assert not state.boundary.accumulation.open
+    finish(state, "close", "close")
+    assert state.boundary.closed and not state.boundary.valid
+    assert state.boundary.completed_updates == 10
 
 
 def test_completion_is_once_and_publication_errors_cannot_roll_back_an_update():

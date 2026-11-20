@@ -7,7 +7,7 @@ from time import monotonic
 
 import pytest
 
-from engine_tests.fixtures.definition_operations import records
+from engine_tests.fixtures.component_operations import records
 from engine_tests.server.test_http import ROOT, TOKEN, controller_lifecycle, endpoint
 from engine_tests.server.test_http_creation import endpoint as creation_endpoint
 from engine_tests.server.test_jobs import until

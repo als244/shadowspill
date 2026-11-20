@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions, records
+from engine_tests.fixtures.component_operations import components, records
 from engine_tests.server.test_artifacts import store as artifact_store
 from engine_tests.server.test_http import ROOT, TOKEN, endpoint
 from engine_tests.server.test_request_records import request, store
@@ -25,7 +25,7 @@ from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.result_frames import ResultFrames
 from shadowspill_client import ServiceClient
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.definitions import TensorOutput
+from shadowspill_client.protocol.components import TensorOutput
 from shadowspill_client.protocol.payload_io import read_payload
 from shadowspill_client.protocol.requests import ArtifactRef, OperationRequest
 from shadowspill_client.protocol.results import ArtifactIssue
@@ -346,12 +346,12 @@ def test_verified_scalars_survive_required_output_failure_and_journal_reopen(
 ):
     # The same fixed-ABI CPU worker fixture declares both objective scalars and
     # a requested tensor, so failure occurs after collecting genuine frame data.
-    _, objective, _ = definitions()
-    definition = replace(
-        objective.definition,
+    _, objective, _ = components()
+    component = replace(
+        objective.component,
         outputs={
             "metrics": replace(
-                objective.definition.outputs["metrics"],
+                objective.component.outputs["metrics"],
                 tensors={"prediction": TensorOutput("float32", (3,), "datum")},
             )
         },
@@ -359,7 +359,7 @@ def test_verified_scalars_survive_required_output_failure_and_journal_reopen(
     inventory = capture_inventory(
         prepare_layouts(
             resolve_training(
-                installed(objective=definition),
+                installed(objective=component),
                 **arguments(),
                 operations={operation: ["metrics"]},
             )

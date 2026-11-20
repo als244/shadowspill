@@ -46,7 +46,7 @@ from tools.planning.evaluation.plan_artifacts import (
 
 def _pressurefit_program() -> ShadowSpillPlanningProblem:
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(AliasGroupSpec("state", "cuda_0", 64, retain_spill_copy=True),),
         objects=(ObjectSpec("state_object", "state", 0, 64),),
         profiles=(TaskProfile("profile", 10, 0, "abi"),),

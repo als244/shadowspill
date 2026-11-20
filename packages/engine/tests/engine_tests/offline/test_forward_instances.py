@@ -27,7 +27,7 @@ def captured_forward():
     names = ("weight", "counter", "input", "constant", "activation")
     geometry = {"shape": [4], "stride": [1], "dtype": "torch.float32"}
     return Program(
-        devices=(DeviceSpec("rank0", "worker", "cuda", 0),),
+        devices=(DeviceSpec("rank0"),),
         alias_groups=tuple(AliasGroupSpec(name, "rank0", 16) for name in names),
         objects=(
             *tuple(ObjectSpec(name, name, 0, 16) for name in names),

@@ -35,7 +35,7 @@ def representative_program() -> ShadowSpillProgram:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     control = ResourceSpec("cuda_0", ResourceKind.CONTROL)
     return ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(
             AliasGroupSpec("input_storage", "cuda_0", 64),
             AliasGroupSpec(
@@ -197,7 +197,7 @@ def write_back_program() -> ShadowSpillProgram:
 
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     return ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(
             AliasGroupSpec("state_storage", "cuda_0", 128, retain_spill_copy=True),
         ),

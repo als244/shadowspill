@@ -1,13 +1,13 @@
-"""Optimizer definitions declare controls on the existing captured update."""
+"""Optimizer components declare controls on the existing captured update."""
 
 from dataclasses import dataclass, replace
 
 import pytest
 import torch
 
-from engine_tests.fixtures.external_definition import SOURCE
+from engine_tests.fixtures.external_component import SOURCE
 from shadowspill.pytorch.optimizer import capture_optimizer
-from shadowspill.training.definitions import OptimizerDefinition, Registry
+from shadowspill.training.components import OptimizerComponent, Registry
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 
 
@@ -22,8 +22,8 @@ def create(model, config, controls):
     )
 
 
-def definition():
-    return OptimizerDefinition(
+def component():
+    return OptimizerComponent(
         "external/sgd@1",
         create,
         ControlSchema({"lr": ScalarControl(0.01, minimum=0)}),
@@ -34,7 +34,7 @@ def definition():
 
 def test_public_optimizer_factory_uses_existing_capture_and_validates_real_controls():
     registry = Registry()
-    spec = definition()
+    spec = component()
     registry.add_optimizer(spec, source=SOURCE)
     resolved = registry.resolve_optimizer(spec.id, defaults={"lr": 0.03})
     assert resolved.config == {"momentum": 0.0}
@@ -56,7 +56,7 @@ def test_public_optimizer_factory_uses_existing_capture_and_validates_real_contr
 
 
 def test_static_optimizer_option_cannot_be_advertised_as_runtime_control():
-    spec = definition()
+    spec = component()
     model = torch.nn.Linear(2, 1, bias=False)
     model.weight.grad = torch.ones_like(model.weight)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01, foreach=False)
@@ -73,7 +73,7 @@ def test_unused_tensor_option_cannot_be_advertised_as_runtime_control():
     captured = capture_optimizer(dict(model.named_parameters()), optimizer)
     name = "optimizer_group.0.unused"
     assert any(binding.name == name for binding in captured.bindings)
-    spec = OptimizerDefinition(
+    spec = OptimizerComponent(
         "external/unused@1",
         create,
         ControlSchema({"unused": ScalarControl(1.0)}),
@@ -85,7 +85,7 @@ def test_unused_tensor_option_cannot_be_advertised_as_runtime_control():
 
 def test_optimizer_default_overrides_are_nonsticky_and_unknowns_fail():
     registry = Registry()
-    spec = definition()
+    spec = component()
     registry.add_optimizer(spec, source=SOURCE)
     assert registry.resolve_optimizer(spec.id, defaults={"lr": 0}).defaults["lr"] == 0
     assert registry.resolve_optimizer(spec.id).defaults["lr"] == 0.01

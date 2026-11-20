@@ -32,7 +32,7 @@ def pairs(*, loss="leader", sliced=False):
                 "slice" if sliced else "replicate",
                 0 if sliced else None,
             ),
-            InputFieldPlacement(("inputs", "metadata"), "shared"),
+            InputFieldPlacement(("inputs", "metadata"), "replicate"),
         ),
         loss=loss,
         outputs={

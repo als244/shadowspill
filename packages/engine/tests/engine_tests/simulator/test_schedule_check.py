@@ -104,7 +104,7 @@ def _program(rng: random.Random) -> ShadowSpillProgram:
         if output:
             produced[output] = task_id
     return ShadowSpillProgram(
-        devices=(DeviceSpec("device_0", "process_0", "device", 0),),
+        devices=(DeviceSpec("device_0"),),
         alias_groups=tuple(groups),
         objects=tuple(objects),
         profiles=(TaskProfile("profile", 10, 0, "contract"),),

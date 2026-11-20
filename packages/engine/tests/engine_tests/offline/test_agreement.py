@@ -13,7 +13,6 @@ def test_agreement_ignores_each_ranks_own_build_and_keys_by_name():
         first,
         setup={"gpu": "another card"},
         executables={"k": b"other kernels"},
-        fixed_device_bytes=12345,
         bindings={**first.bindings, "num_examples": 7, "task_names": ["x"]},
     )
     assert agreement_digest(first) == agreement_digest(second)

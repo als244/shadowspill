@@ -6,14 +6,14 @@ from dataclasses import replace
 
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions
+from engine_tests.fixtures.component_operations import components
 from engine_tests.offline._example import program
 from engine_tests.training.test_model_build import prepare
 from engine_tests.training.test_preparation_templates import inventory
 from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.program import TaskDefinition
-from shadowspill.training.definitions import ModelBuild
-from shadowspill.training.definitions.allocations import allocation_invariants
+from shadowspill.training.components import ModelBuild
+from shadowspill.training.components.allocations import allocation_invariants
 from shadowspill.training.preparation.capture.allocation_coverage import (
     allocation_coverage,
     validate_allocation_coverage,
@@ -62,7 +62,7 @@ def model_contract(contract="fixture/allocate-like-input@1"):
             vars(config), allocation_invariants={"provider.call": contract}
         )
 
-    return replace(definitions()[0].definition, build=describe)
+    return replace(components()[0].component, build=describe)
 
 
 def test_measured_bytes_cannot_supply_missing_all_value_allocation_evidence():
@@ -188,18 +188,18 @@ def test_contracts_never_accept_wildcards_or_unversioned_claims(values):
 
 
 def test_objective_optimizer_and_model_contracts_are_immutable_and_conflicts_fail():
-    model, objective, optimizer = definitions()
+    model, objective, optimizer = components()
     contract = {"extern_kernels.mm": "unreviewed/replacement@1"}
     for item in (
-        replace(objective.definition, allocation_invariants=contract),
-        replace(optimizer.definition, allocation_invariants=contract),
+        replace(objective.component, allocation_invariants=contract),
+        replace(optimizer.component, allocation_invariants=contract),
         ModelBuild({}, allocation_invariants=contract),
     ):
         with pytest.raises(TypeError):
             item.allocation_invariants["added"] = "test@1"
     _, prepared = prepare(
         replace(
-            model.definition,
+            model.component,
             build=lambda config, context: ModelBuild(
                 vars(config), allocation_invariants=contract
             ),

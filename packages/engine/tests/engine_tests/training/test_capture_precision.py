@@ -1,4 +1,4 @@
-"""Definition precision reaches the existing real gradient/optimizer captures."""
+"""Component precision reaches the existing real gradient/optimizer captures."""
 
 from contextlib import contextmanager
 from dataclasses import asdict, replace
@@ -6,17 +6,17 @@ from dataclasses import asdict, replace
 import pytest
 import torch
 
-from engine_tests.fixtures.definition_operations import definitions
+from engine_tests.fixtures.component_operations import components
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.build.optimizer import capture_update
 from shadowspill.build.training_capture import capture_training_model
-from shadowspill.training.definitions import ModelBuild
+from shadowspill.training.components import ModelBuild
 from shadowspill.training.preparation.capture.build import build_template
 from shadowspill.training.preparation.capture.templates import capture_inventory
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client import BuildCandidates, Optimizer, PlanningOptions, Preparation
-from shadowspill_workloads.definitions import adamw
+from shadowspill_workloads.components import adamw
 
 
 def create(config):
@@ -39,7 +39,7 @@ def prepared(
     optimizer_grad="float32",
 ):
     model = replace(
-        definitions()[0].definition,
+        components()[0].component,
         create=create,
         build=lambda config, context: ModelBuild(asdict(config), grad_dtype=grad),
         capture_context=capture_context,
@@ -127,7 +127,7 @@ def test_bfloat16_model_fp32_gradients_and_optional_masters_reach_actual_capture
         assert all(b.tensor.dtype == torch.bfloat16 for b in copies)
         assert all(b.tensor.dtype == getattr(torch, gradient) for b in gradients)
         assert update.gradient_scale_control is not None
-        setup.optimizer.definition.validate_capture(update.captured)
+        setup.optimizer.component.validate_capture(update.captured)
         raise Captured
 
     monkeypatch.setattr("shadowspill.build_step", capture)
@@ -146,7 +146,7 @@ def test_precision_changes_capture_identity_and_invalid_choices_fail_on_cpu():
         with pytest.raises(ValueError, match="floating dtype"):
             ModelBuild({}, grad_dtype=dtype)
         with pytest.raises(ValueError, match="floating dtype"):
-            replace(definitions()[2].definition, master_dtype=dtype)
+            replace(components()[2].component, master_dtype=dtype)
 
 
 @pytest.mark.parametrize("fail_in", ["create", "capture"])
@@ -166,7 +166,7 @@ def test_provider_context_is_worker_only_and_restored_after_failure(
     registry, setup, inventory = prepared("float32", capture_context=context)
     assert opened == []  # Description and inventory never enter the provider.
     template = next(t for t in inventory.templates.values() if t.kind == "step")
-    factory = setup.model.definition.create
+    factory = setup.model.component.create
 
     def checked_create(config):
         assert weight_gradient_dtype() == torch.float32
@@ -182,7 +182,7 @@ def test_provider_context_is_worker_only_and_restored_after_failure(
         type(setup.model),
         "create",
         lambda self, **kw: checked_create(
-            self.definition.config(**dict(kw["build"].config))
+            self.component.config(**dict(kw["build"].config))
         ),
     )
     monkeypatch.setattr("shadowspill.build_step", checked_capture)

@@ -1,22 +1,22 @@
-"""A non-text integration using only public definition/capture interfaces."""
+"""A non-text integration using only public component/capture interfaces."""
 
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from shadowspill.training.definitions import (
-    ModelDefinition,
+from shadowspill.training.components import (
+    ModelComponent,
     ModelInitialization,
-    ObjectiveDefinition,
+    ObjectiveComponent,
 )
-from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
-from shadowspill_client.protocol.definitions import (
-    DefinitionSource,
+from shadowspill_client.protocol.components import (
+    ComponentSource,
     OutputSet,
     Participation,
 )
+from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 
-SOURCE = DefinitionSource("external-classifier-fixture", "1", "a" * 64)
+SOURCE = ComponentSource("external-classifier-fixture", "1", "a" * 64)
 
 
 @dataclass(frozen=True)
@@ -91,7 +91,7 @@ def classification_loss(model, inputs, loss_inputs, loss_params):
 
 def register(registry):
     registry.add_model(
-        ModelDefinition(
+        ModelComponent(
             id="external/image_classifier@1",
             config=ClassifierConfig,
             create=create,
@@ -107,7 +107,7 @@ def register(registry):
         source=SOURCE,
     )
     registry.add_objective(
-        ObjectiveDefinition(
+        ObjectiveComponent(
             id="external/classification@1",
             compute=classification_loss,
             inputs=InputSchema(

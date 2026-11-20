@@ -1,11 +1,12 @@
 """Caller annotations retain explicit request identity without changing execution."""
 
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 
-from engine_tests.fixtures.definition_operations import records as inputs
+from engine_tests.fixtures.component_operations import records as inputs
 from engine_tests.server.test_http import OTHER_TOKEN, ROOT, TOKEN, endpoint
 from engine_tests.server.test_metrics import finish
 from engine_tests.server.test_request_records import request, store
@@ -139,10 +140,9 @@ def test_public_log_metrics_does_not_submit_workers_or_change_training_counters(
         path = training.metrics.export_jsonl(
             tmp_path / "metrics.jsonl", limit=1
         ).result(5)
-        assert (
-            tuple(decode(line) for line in path.read_bytes().splitlines()[1:])
-            == rows.records
-        )
+        assert [json.loads(line) for line in path.read_text().splitlines()] == [
+            row.to_dict() for row in rows.records
+        ]
     assert service._memory.used == service._work.pending.used == (0, 0)
 
 

@@ -31,7 +31,7 @@ from shadowspill.simulator import (
 def _program() -> ShadowSpillProgram:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     return ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(
             AliasGroupSpec("resident_model_state", "cuda_0", 20),
             AliasGroupSpec("earlier_fetch", "cuda_0", 40),

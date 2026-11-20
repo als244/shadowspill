@@ -16,7 +16,7 @@ from engine_tests.training.test_prepared_requests import family
 from engine_tests.training.test_worker_group import commands
 from engine_tests.training.test_worker_loop import SCOPE, call
 from shadowspill.ir import ResourceKind, ResourceSpec, TaskSpec
-from shadowspill.training.definitions import InitializationRuntime
+from shadowspill.training.components import InitializationRuntime
 from shadowspill.training.worker.channel import read_message, write_message
 from shadowspill.training.worker.loop import WorkerLoop
 from shadowspill.training.worker.output_files import FileOutputs

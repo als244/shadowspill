@@ -30,7 +30,7 @@ from shadowspill.task.storage import (
     StorageRootKind,
     TaskStorageContract,
 )
-from shadowspill.training.definitions import ModelReferenceDefinition
+from shadowspill.training.components import ModelReferenceComponent
 from shadowspill.training.preparation.artifacts.cost_evidence import (
     communication_edits,
     profile_edits,
@@ -209,10 +209,10 @@ def test_local_planning_can_select_pretrained_weights_without_new_measurements(
 ):
     root, _, inputs, target = measured
     config = target.layouts.setup.config
-    source = config.definition_sources["model"]
+    source = config.component_sources["model"]
     registry = installed()
     registry.add_model_reference(
-        ModelReferenceDefinition("external/reference@1", lambda _: True, lambda m: m),
+        ModelReferenceComponent("external/reference@1", lambda _: True, lambda m: m),
         source=source,
     )
     config = replace(
@@ -221,8 +221,8 @@ def test_local_planning_can_select_pretrained_weights_without_new_measurements(
             config.model,
             initialize=Weights.pretrained("fixture/model", revision="a" * 40),
         ),
-        reference_definition="external/reference@1",
-        definition_sources={**config.definition_sources, "reference": source},
+        reference_component="external/reference@1",
+        component_sources={**config.component_sources, "reference": source},
     )
     proposal = inputs.plan(config=config)
     inventory = capture_inventory(
@@ -378,7 +378,7 @@ def test_server_rejects_tampered_local_proposals_before_worker_admission(
         bundle.recheck(installed())
 
 
-def test_cpu_planning_needs_no_framework_catalog_or_definition_factory(
+def test_cpu_planning_needs_no_framework_catalog_or_component_factory(
     measured, tmp_path
 ):
     _, path, _inputs, target = measured

@@ -9,15 +9,15 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from engine_tests.fixtures.definition_operations import definitions, records
-from engine_tests.fixtures.external_definition import SOURCE
+from engine_tests.fixtures.component_operations import components, records
+from engine_tests.fixtures.external_component import SOURCE
 from engine_tests.server.test_request_records import request, store
 from engine_tests.training.test_preparation_templates import inventory
 from engine_tests.training.test_setup_resolution import arguments, installed
-from shadowspill.training.definitions import (
-    ModelDefinition,
-    ObjectiveDefinition,
-    PreparationDefinition,
+from shadowspill.training.components import (
+    ModelComponent,
+    ObjectiveComponent,
+    PreparationComponent,
     Registry,
     RepresentativePattern,
     RepresentativeSample,
@@ -59,8 +59,8 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.inputs import selection as selection_module
 from shadowspill_client.inputs.packing import PackingError
 from shadowspill_client.inputs.shapes import BufferShape
+from shadowspill_client.protocol.components import OutputSet
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
-from shadowspill_client.protocol.definitions import OutputSet
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import MEDIA_TYPE, snapshot_batch
 from shadowspill_client.protocol.payload_sizes import PayloadSize
@@ -318,7 +318,7 @@ def test_no_participation_rejects_before_spooling_or_execution(
 def test_complete_preexecution_failure_preserves_prior_contribution_and_rejects_suffix(
     tmp_path, failure
 ):
-    model, _, _ = definitions()
+    model, _, _ = components()
     calls = []
 
     def adapter(config, layout):
@@ -332,7 +332,7 @@ def test_complete_preexecution_failure_preserves_prior_contribution_and_rejects_
     inv = capture_inventory(
         prepare_layouts(
             resolve_training(
-                installed(model=replace(model.definition, input_adapter=adapter)),
+                installed(model=replace(model.component, input_adapter=adapter)),
                 **arguments(),
                 operations={"forward_backward": ["metrics"]},
             )
@@ -383,7 +383,7 @@ def variable_inventory(batches, *, groups=None):
         ]
         + [Capacity("records", "records", "count")],
     )
-    model = ModelDefinition(
+    model = ModelComponent(
         "external/two_axes@1",
         dict,
         lambda _: None,
@@ -393,7 +393,7 @@ def variable_inventory(batches, *, groups=None):
         input_adapter=lambda config, layout: InputAdapter(padding_safe=True),
         preparation="external/two_axes_shapes@1",
     )
-    objective = ObjectiveDefinition(
+    objective = ObjectiveComponent(
         "external/no_loss@1",
         lambda *args: {},
         InputSchema([]),
@@ -413,7 +413,7 @@ def variable_inventory(batches, *, groups=None):
             )
         ]
 
-    preset = PreparationDefinition(
+    preset = PreparationComponent(
         model.preparation,
         lambda _: Preparation(
             candidates=BuildCandidates(microbatch_sizes=[1, 2]),
@@ -526,11 +526,11 @@ def test_three_40k_datums_need_the_admitted_128k_buffer(tmp_path):
 
 
 def test_grouping_hook_is_explicit_and_must_cover_every_datum_once(tmp_path):
-    model, _, _ = definitions()
+    model, _, _ = components()
     with pytest.raises(TypeError, match="input_groups hook"):
-        replace(model.definition, batching="grouped")
+        replace(model.component, batching="grouped")
     with pytest.raises(ValueError, match="requires grouped"):
-        replace(model.definition, input_groups=lambda config, batch: [])
+        replace(model.component, input_groups=lambda config, batch: [])
     inv = variable_inventory(
         [BatchConfig(limits={"x": 8, "y": 8, "records": 3})],
         groups=lambda config, batch: [[0, 0, 2]],

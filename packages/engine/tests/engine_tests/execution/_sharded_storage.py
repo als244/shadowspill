@@ -15,7 +15,7 @@ def program(shard_ranks=2, world_size=4):
         groups={"all_ranks": (tuple(reversed(range(shard_ranks))),)},
     )
     return Program(
-        devices=(DeviceSpec("cuda_0", "worker", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(AliasGroupSpec("alias_000001", "cuda_0", 32),),
         objects=(ObjectSpec("object_000001", "alias_000001", 0, 30),),
         tasks=(),

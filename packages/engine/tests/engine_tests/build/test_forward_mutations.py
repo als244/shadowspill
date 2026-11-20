@@ -39,7 +39,7 @@ def test_rank_local_buffer_views_keep_their_mutation_contract():
     value = program()
     _validate_distributed_mutations(value)
     binding = SimpleNamespace(
-        model=SimpleNamespace(definition=SimpleNamespace(mutable_buffers=("calls",))),
+        model=SimpleNamespace(component=SimpleNamespace(mutable_buffers=("calls",))),
         contract=SimpleNamespace(key=SimpleNamespace(mode="training")),
     )
     _validate_mutations(value, binding, {"x"})

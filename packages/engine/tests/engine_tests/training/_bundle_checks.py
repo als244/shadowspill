@@ -15,7 +15,7 @@ for name in (
 ):
     sys.modules[name] = None
 
-from shadowspill.training.definitions import load_registry  # noqa: E402
+from shadowspill.training.components import load_registry  # noqa: E402
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle  # noqa: E402
 from shadowspill.training.preparation.phases.job import (  # noqa: E402
     JOB_NAME,

@@ -18,7 +18,7 @@ from shadowspill.artifacts._values import plain
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
 from shadowspill.planning.shared import SharedMemory
 from shadowspill.step.ordering import StepDataOrdering
-from shadowspill.training.definitions import ModelReferenceDefinition
+from shadowspill.training.components import ModelReferenceComponent
 from shadowspill.training.preparation.artifacts import validation as bundle_validation
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.preparation.artifacts.manifest import manifest
@@ -215,20 +215,20 @@ def test_saved_bundle_reuses_computation_with_different_initial_weights(
         "artifact": Weights.artifact("uploaded-weights"),
         "checkpoint": None,
     }[kind]
-    sources = dict(bundle.config.definition_sources)
+    sources = dict(bundle.config.component_sources)
     reference = None
     if kind == "pretrained":
         reference = "external/reference@1"
         sources["reference"] = sources["model"]
         registry.add_model_reference(
-            ModelReferenceDefinition(reference, lambda _: True, lambda model: model),
+            ModelReferenceComponent(reference, lambda _: True, lambda model: model),
             source=sources["reference"],
         )
     config = replace(
         bundle.config,
         model=replace(bundle.config.model, initialize=weights),
-        reference_definition=reference,
-        definition_sources=sources,
+        reference_component=reference,
+        component_sources=sources,
         origins={**bundle.config.origins, "model.config.num_classes": "explicit"},
     )
     rebound = bundle.with_initialization(config)
@@ -257,9 +257,9 @@ def test_saved_bundle_reuses_computation_with_different_initial_weights(
         lambda c: replace(c, client_source=replace(c.client_source, digest="b" * 64)),
         lambda c: replace(
             c,
-            definition_sources={
-                **c.definition_sources,
-                "model": replace(c.definition_sources["model"], digest="c" * 64),
+            component_sources={
+                **c.component_sources,
+                "model": replace(c.component_sources["model"], digest="c" * 64),
             },
         ),
     ],

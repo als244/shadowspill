@@ -12,9 +12,16 @@ from engine_tests.server.test_local_creation import configured
 from engine_tests.server.test_service_client import address
 from engine_tests.training.test_setup_resolution import arguments
 from shadowspill.orchestration.launch.admission import ResourceRequest
-from shadowspill_client import Resources, ServiceClient
+from shadowspill.server.startup import creation as creation_module
+from shadowspill.server.startup.memory import resolve_memory
+from shadowspill_client import Memory, Resources, ServiceClient
 from shadowspill_client.creation import CreationError
-from shadowspill_client.protocol.hardware import HardwareInventory
+from shadowspill_client.protocol.hardware import (
+    HardwareDevice,
+    HardwareInventory,
+    HardwareNode,
+    WorkerPlacement,
+)
 from shadowspill_client.transport.http import RemoteError
 
 
@@ -154,3 +161,88 @@ def test_plan_then_create_keeps_selection_outside_portable_plans(tmp_path, monke
         training.close().result(5)
         until(lambda: ctx.jobs.used == (0, 0))
         assert ctx.phases == ["build", "profile", "communicate", "plan"]
+
+
+def test_automatic_budgets_are_sized_on_the_selected_workers_and_recorded(
+    tmp_path, monkeypatch
+):
+    # 90% of a 4 GiB GPU, and of the 16 GiB node's share for each of its two
+    # GPUs, in whole MiB.
+    sized = Memory(device_gib=3686 / 1024, spill_gib=7372 / 1024)
+    requested = {}
+
+    def change(config):
+        # The fixture's prepared Plans hold the settings creation must record.
+        requested["config"] = config
+        return replace(
+            config,
+            memory=sized,
+            origins={
+                **config.origins,
+                "memory.device_gib": "engine_default",
+                "memory.spill_gib": "engine_default",
+            },
+        )
+
+    with (
+        configured(tmp_path, monkeypatch, ranks=2, change=change) as ctx,
+        endpoint(ctx) as (server, _),
+        ServiceClient(address(server), token=TOKEN) as client,
+    ):
+        prepared = []
+        prepare = creation_module.prepare_job
+        monkeypatch.setattr(
+            creation_module,
+            "prepare_job",
+            lambda root, **options: (
+                prepared.append(options["config"]),
+                prepare(root, **options),
+            )[1],
+        )
+        automatic = replace(requested["config"], memory=Memory(0, 0))
+        preview = client.describe_training(config=automatic).result(5)
+        assert preview.config == ctx.config
+        assert "3.59961 GiB device, 7.19922 GiB spill" in preview.summary()
+        # A set budget is kept.
+        partial = client.describe_training(
+            config=replace(requested["config"], memory=Memory(2, 0))
+        ).result(5)
+        assert partial.config.memory == Memory(device_gib=2, spill_gib=sized.spill_gib)
+        assert "memory.device_gib" not in partial.config.origins
+        assert partial.config.origins["memory.spill_gib"] == "engine_default"
+        # Created from automatic settings, the run records and plans the sizes.
+        training = client.create_training_client(config=automatic).result(10)
+        assert training.get_config() == ctx.config
+        assert prepared == [ctx.config]
+        training.close().result(5)
+        until(lambda: ctx.jobs.used == (0, 0))
+
+
+def test_an_automatic_budget_takes_the_smallest_workers_share():
+    def node(name, host_bytes, devices):
+        return HardwareNode(
+            name,
+            "default",
+            tuple(
+                HardwareDevice(f"{name}-{index}", index, None, 8 << 30, True)
+                for index in range(devices)
+            ),
+            host_bytes,
+            host_bytes,
+        )
+
+    small, large = node("small", 8 << 30, 4), node("large", 64 << 30, 2)
+    workers = (
+        WorkerPlacement(0, "large", large.devices[0]),
+        WorkerPlacement(1, "small", small.devices[0]),
+    )
+    inventory = HardwareInventory((small, large))
+    resolved = resolve_memory(Memory(device_gib=1, spill_gib=0), workers, inventory)
+    # The small node's 2 GiB per GPU, not the large node's 32 GiB.
+    assert resolved == Memory(device_gib=1, spill_gib=1843 / 1024)
+    with pytest.raises(ValueError, match="no memory for a spill budget"):
+        resolve_memory(
+            Memory(device_gib=1, spill_gib=0),
+            workers,
+            HardwareInventory((node("small", 1 << 20, 4), large)),
+        )

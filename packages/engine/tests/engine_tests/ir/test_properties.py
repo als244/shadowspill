@@ -70,7 +70,7 @@ def test_linear_programs_round_trip_with_stable_plan_indexs(
         for index in range(count)
     )
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=aliases,
         objects=objects,
         profiles=profiles,

@@ -5,21 +5,21 @@ from dataclasses import dataclass, replace
 import pytest
 import torch
 
-from engine_tests.fixtures.definition_operations import (
-    definitions,
+from engine_tests.fixtures.component_operations import (
+    components,
     example,
     predictions,
 )
-from engine_tests.fixtures.external_definition import classification_loss
+from engine_tests.fixtures.external_component import classification_loss
 from engine_tests.training.test_setup_resolution import arguments, installed
 from shadowspill.pytorch.capture.objective import capture_training_objective
 from shadowspill.pytorch.contracts import ObjectiveResult
-from shadowspill.training.definitions import Registry
+from shadowspill.training.components import Registry
 from shadowspill.training.preparation.configuration.operations import OperationContract
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client.protocol.codec import decode, encode
+from shadowspill_client.protocol.components import OutputSet, TensorOutput
 from shadowspill_client.protocol.controls import ControlSchema
-from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
 from shadowspill_client.protocol.operations import OperationKey
 
 
@@ -34,12 +34,12 @@ def operation_binding(config, key):
     return predictions if key.operation == "forward" else training_predictions
 
 
-def contract_definition():
-    _, objective, _ = definitions()
+def contract_component():
+    _, objective, _ = components()
     metrics = objective.outputs["metrics"]
     tensor = {"prediction": TensorOutput("float32", (3,), "datum")}
     return replace(
-        objective.definition,
+        objective.component,
         outputs={
             "metrics": replace(
                 metrics,
@@ -52,7 +52,7 @@ def contract_definition():
 
 
 def test_same_output_name_has_distinct_saved_forward_and_training_requirements():
-    registry = installed(objective=contract_definition())
+    registry = installed(objective=contract_component())
     setup = resolve_training(
         registry,
         **arguments(),
@@ -78,18 +78,18 @@ def test_same_output_name_has_distinct_saved_forward_and_training_requirements()
     )
     assert decode(encode(setup.config)) == setup.config
     assert resolve_training(registry, setup.config).config == setup.config
-    changed = replace(contract_definition(), outputs={"metrics": backward.outputs})
+    changed = replace(contract_component(), outputs={"metrics": backward.outputs})
     with pytest.raises(ValueError, match="contract differs"):
         resolve_training(installed(objective=changed), setup.config)
 
 
 def test_bound_forward_omits_targets_but_backward_captures_loss_and_predictions():
-    model, objective, _ = definitions()
+    model, objective, _ = components()
     registry = Registry()
-    registry.add_objective(contract_definition(), source=objective.source)
-    objective = registry.resolve_objective(objective.definition.id, model=model)
+    registry.add_objective(contract_component(), source=objective.source)
+    objective = registry.resolve_objective(objective.component.id, model=model)
     created = model.create()
-    from engine_tests.fixtures.definition_operations import records
+    from engine_tests.fixtures.component_operations import records
 
     forward = OperationKey("forward", "metrics", "evaluation")
     with example(model, objective, forward, datums=records(targets=False)) as data:
@@ -122,7 +122,7 @@ class Configuration:
 
 
 def test_model_dependent_configuration_resolves_conditional_contracts_on_cpu():
-    model, objective, _ = definitions()
+    model, objective, _ = components()
 
     def configure(values, resolved_model):
         size = resolved_model.config["num_classes"]
@@ -130,8 +130,8 @@ def test_model_dependent_configuration_resolves_conditional_contracts_on_cpu():
             raise ValueError("class count differs from model")
         return {**values, "num_classes": size}
 
-    definition = replace(
-        objective.definition,
+    component = replace(
+        objective.component,
         config=Configuration,
         configure=configure,
         inputs=lambda config: objective.inputs,
@@ -146,32 +146,30 @@ def test_model_dependent_configuration_resolves_conditional_contracts_on_cpu():
         },
     )
     registry = Registry()
-    registry.add_objective(definition, source=objective.source)
+    registry.add_objective(component, source=objective.source)
     for scaled in (True, False):
         resolved = registry.resolve_objective(
-            definition.id, model=model, config={"scaled": scaled}
+            component.id, model=model, config={"scaled": scaled}
         )
         assert resolved.config == {"num_classes": 3, "scaled": scaled}
         assert resolved.defaults == ({"temperature": 1.0} if scaled else {})
         assert (
             registry.resolve_objective(
-                definition.id, model=model, config=resolved.config
+                component.id, model=model, config=resolved.config
             ).outputs
             == resolved.outputs
         )
     with pytest.raises(ValueError, match="differs from model"):
-        registry.resolve_objective(
-            definition.id, model=model, config={"num_classes": 4}
-        )
+        registry.resolve_objective(component.id, model=model, config={"num_classes": 4})
     with pytest.raises(ValueError, match="unknown"):
         registry.resolve_objective(
-            definition.id,
+            component.id,
             model=model,
             config={"scaled": False},
             defaults={"temperature": 2.0},
         )
     unstable = replace(
-        definition,
+        component,
         id="external/unstable_objective@1",
         configure=lambda values, model: {
             "num_classes": values.get("num_classes", 0) + 1
@@ -183,18 +181,18 @@ def test_model_dependent_configuration_resolves_conditional_contracts_on_cpu():
 
 
 def test_forward_contract_is_validated_even_if_not_requested():
-    model, objective, _ = definitions()
+    model, objective, _ = components()
     registry = Registry()
-    definition = replace(
-        objective.definition,
+    component = replace(
+        objective.component,
         outputs={"metrics": OutputSet(forward=OutputSet(loss_inputs=[("typo",)]))},
     )
-    registry.add_objective(definition, source=objective.source)
+    registry.add_objective(component, source=objective.source)
     with pytest.raises(ValueError, match="undeclared input"):
-        registry.resolve_objective(definition.id, model=model)
+        registry.resolve_objective(component.id, model=model)
     with pytest.raises(ValueError, match="undeclared control"):
         replace(
-            definition,
+            component,
             outputs={"metrics": OutputSet(forward=OutputSet(controls=["typo"]))},
         )
     with pytest.raises(ValueError, match="cannot be nested"):

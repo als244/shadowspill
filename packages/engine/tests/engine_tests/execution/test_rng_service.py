@@ -13,14 +13,14 @@ import pytest
 import torch
 
 from engine_tests.execution._rng_service_client import PIXELS, WEIGHTS, Oracle
-from engine_tests.fixtures import stochastic_definition
-from engine_tests.fixtures.definition_operations import example
-from engine_tests.fixtures.installed_definition import install
+from engine_tests.fixtures import stochastic_component
+from engine_tests.fixtures.component_operations import example
+from engine_tests.fixtures.installed_component import install
 from engine_tests.training.test_setup_resolution import arguments
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.pytorch._rng import preserve_rng
 from shadowspill.pytorch.capture.objective import capture_training_objective
-from shadowspill.training.definitions import InitializationRuntime, load_registry
+from shadowspill.training.components import InitializationRuntime, load_registry
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.worker.initialization import prepare_initialization
 from shadowspill_client import (
@@ -37,7 +37,7 @@ from shadowspill_client import (
 def test_independent_numpy_oracle_matches_autograd_for_weighted_split_updates(frozen):
     with preserve_rng(torch.device("cpu")):
         torch.manual_seed(203)
-        model = stochastic_definition.create(SimpleNamespace(num_classes=3))
+        model = stochastic_component.create(SimpleNamespace(num_classes=3))
         if frozen:
             for value in model.encoder.parameters():
                 value.requires_grad_(False)

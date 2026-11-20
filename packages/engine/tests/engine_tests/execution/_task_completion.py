@@ -49,7 +49,7 @@ def new_plan(runtime):
         execution_device=0,
     )
     ir = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "worker", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(),
         objects=(),
         tasks=(),

@@ -40,7 +40,7 @@ def calibrated_config(
 def overlap_program() -> ShadowSpillProgram:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     return ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(
             AliasGroupSpec("input_storage", "cuda_0", 64),
             AliasGroupSpec("activation_storage", "cuda_0", 128),
@@ -125,7 +125,7 @@ def concurrent_lane_program() -> ShadowSpillProgram:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     communication = ResourceSpec("cuda_0", ResourceKind.COMMUNICATION)
     return ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(AliasGroupSpec("input_storage", "cuda_0", 64),),
         objects=(ObjectSpec("input", "input_storage", 0, 64, ObjectRole.INPUT),),
         profiles=(
@@ -160,7 +160,7 @@ def ordered_action_program() -> ShadowSpillProgram:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     communication = ResourceSpec("cuda_0", ResourceKind.COMMUNICATION)
     return ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(
             AliasGroupSpec("long_storage", "cuda_0", 64),
             AliasGroupSpec("short_storage", "cuda_0", 32),

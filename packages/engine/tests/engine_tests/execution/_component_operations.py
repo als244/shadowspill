@@ -21,7 +21,7 @@ def compilation_finished(**event):
 triton.knobs.compilation.listener = compilation_finished
 forbid_preparation()
 
-from engine_tests.fixtures.definition_operations import records  # noqa: E402
+from engine_tests.fixtures.component_operations import records  # noqa: E402
 from shadowspill.artifacts.state_inventory import program_state  # noqa: E402
 from shadowspill.execution.results import TrainingResult  # noqa: E402
 from shadowspill.orchestration.launch.publication import (  # noqa: E402
@@ -29,7 +29,7 @@ from shadowspill.orchestration.launch.publication import (  # noqa: E402
     require_output,
 )
 from shadowspill.server.records.requests import RequestRecords, RunIdentity  # noqa: E402
-from shadowspill.training.definitions import (  # noqa: E402
+from shadowspill.training.components import (  # noqa: E402
     InitializationRuntime,
     load_registry,
 )
@@ -263,9 +263,7 @@ def invoke(
 
             assert dispatcher.run(name, forbidden, publish) == status
         else:
-            assert status.state == (
-                "skipped" if data.participates is False else "completed"
-            ), status
+            assert status.state == "completed", status
     finally:
         inputs.finish(name)
     assert inputs.staging.used == (0, 0)
@@ -413,7 +411,7 @@ with (
     assert state.boundary.closed and executor._closed and not worker_loop.valid
 
 assert output_disk.used == output_memory.used == (0, 0)
-print("Qualified definition-bound operations")
+print("Qualified component-bound operations")
 print("Qualified durable request dispatcher")
 print("Qualified prepared binary request inputs")
 print("Qualified saved worker commands")

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from engine_tests.fixtures.definition_operations import records
+from engine_tests.fixtures.component_operations import records
 from engine_tests.server.test_training_client import runtime
 from engine_tests.training.test_prepared_requests import family, variable_inventory
 from shadowspill.training.preparation.artifacts.inspection import summary_rows

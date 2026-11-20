@@ -4,17 +4,17 @@ from dataclasses import replace
 
 import pytest
 
-from shadowspill.training.definitions import ModelReferenceDefinition
+from shadowspill.training.components import ModelReferenceComponent
 from shadowspill_client import Model, Weights
 
 
 def resolver(field, values):
-    return ModelReferenceDefinition(
+    return ModelReferenceComponent(
         "external/metadata@1",
         lambda reference: reference.startswith("fixture://"),
         lambda requested: replace(
             requested,
-            definition="external/classifier@1",
+            name="external/classifier@1",
             initialize=Weights.pretrained("fixture://classifier", revision="b" * 40),
             **{field: values},
         ),
@@ -70,18 +70,18 @@ def test_metadata_cannot_replace_remove_or_extend_explicit_values(
 def test_reference_resolution_pins_and_rechecks_weight_metadata():
     requested = Model.from_pretrained("fixture://classifier")
     metadata = {"files": [{"name": "weights", "checksum": "abc"}]}
-    definition = ModelReferenceDefinition(
+    component = ModelReferenceComponent(
         "external/metadata@1",
         lambda _: True,
         lambda model: replace(
             model,
-            definition="external/classifier@1",
+            name="external/classifier@1",
             initialize=replace(model.initialize, revision="b" * 40, metadata=metadata),
         ),
     )
-    pinned = definition.pin(requested)
+    pinned = component.pin(requested)
     assert pinned.initialize.to_dict()["metadata"] == metadata
-    assert definition.pin(Model.from_dict(pinned.to_dict())) == pinned
+    assert component.pin(Model.from_dict(pinned.to_dict())) == pinned
     metadata["files"][0]["checksum"] = "changed"
     with pytest.raises(ValueError, match="changed explicit weight metadata"):
-        definition.pin(pinned)
+        component.pin(pinned)

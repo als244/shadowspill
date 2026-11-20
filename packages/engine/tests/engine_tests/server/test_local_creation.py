@@ -46,7 +46,7 @@ from shadowspill.training.preparation.phases.job import (
 from shadowspill.training.worker import launch as launch_module
 from shadowspill.training.worker.node import WorkerNode
 from shadowspill.training.worker.resources import WorkerHost
-from shadowspill_client import BatchConfig, Weights
+from shadowspill_client import BatchConfig, Memory, Weights
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.creation import TrainingCreation
 from shadowspill_client.protocol.requests import (
@@ -449,3 +449,17 @@ def test_failed_preparation_publication_keeps_artifacts_and_retries_cleanup_only
         assert len(ctx.phases) == 4  # Cleanup never restarts preparation or execution.
         with ctx.service.artifacts("owner") as artifacts:
             assert any(ref.id.startswith("preparation.") for ref in artifacts.page())
+
+
+def test_a_creation_with_an_unsized_automatic_budget_fails_before_any_phase(
+    tmp_path, monkeypatch
+):
+    def change(config):
+        return replace(config, memory=Memory(device_gib=0, spill_gib=1))
+
+    with configured(tmp_path, monkeypatch, change=change) as ctx:
+        submit(ctx)
+        until(lambda: ctx.jobs.used == (0, 0))
+        error = ctx.service.catalog.get(IDENTITY).error.message
+        assert "automatic (zero) budget" in error
+        assert not ctx.phases

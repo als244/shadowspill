@@ -1,11 +1,11 @@
-"""External definitions and owned examples shared by CPU/GPU operation checks."""
+"""External components and owned examples shared by CPU/GPU operation checks."""
 
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 
-from engine_tests.fixtures import external_definition
+from engine_tests.fixtures import external_component
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement
-from shadowspill.training.definitions import OptimizerDefinition, Registry
+from shadowspill.training.components import OptimizerComponent, Registry
 from shadowspill.training.inputs.adapters import InputLayout
 from shadowspill.training.inputs.materialize import materialize_buffer
 from shadowspill.training.inputs.routing import route_buffer
@@ -17,8 +17,8 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.inputs.packing import pack_batch
 from shadowspill_client.inputs.shapes import BufferShape, PackingSchedule
 from shadowspill_client.inputs.validation import combined_schema, validate_batch
+from shadowspill_client.protocol.components import OutputSet, TensorOutput
 from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
-from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.payload import snapshot_batch
 
@@ -30,7 +30,7 @@ def predictions(model, inputs, loss_inputs, loss_params):
 
 def objective_binding(config, key):
     return (
-        external_definition.classification_loss
+        external_component.classification_loss
         if key.outputs == "metrics"
         else predictions
     )
@@ -42,16 +42,16 @@ def create_optimizer(model, config, controls):
     return torch.optim.SGD(model.parameters(), lr=controls["lr"], foreach=False)
 
 
-def definitions():
+def components():
     registry = Registry()
-    external_definition.register(registry)
+    external_component.register(registry)
     model = registry.resolve_model("external/image_classifier@1")
     objective = registry.resolve_objective("external/classification@1", model=model)
     spec = replace(
-        objective.definition,
+        objective.component,
         id="external/classification_outputs@1",
         outputs={
-            **objective.definition.outputs,
+            **objective.component.outputs,
             "predictions": OutputSet(
                 model_inputs=[("pixels",)],
                 tensors={"prediction": TensorOutput("float32", (3,), "datum")},
@@ -59,15 +59,15 @@ def definitions():
         },
         bind=objective_binding,
     )
-    registry.add_objective(spec, source=external_definition.SOURCE)
+    registry.add_objective(spec, source=external_component.SOURCE)
     objective = registry.resolve_objective(spec.id, model=model)
-    optimizer = OptimizerDefinition(
+    optimizer = OptimizerComponent(
         "external/operation_sgd@1",
         create_optimizer,
         ControlSchema({"lr": ScalarControl(0.01, minimum=0)}),
         {"lr": ["optimizer_group.0.lr"]},
     )
-    registry.add_optimizer(optimizer, source=external_definition.SOURCE)
+    registry.add_optimizer(optimizer, source=external_component.SOURCE)
     return model, objective, registry.resolve_optimizer(optimizer.id)
 
 

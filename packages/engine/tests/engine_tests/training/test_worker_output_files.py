@@ -83,7 +83,7 @@ def test_missing_output_permit_fails_before_collection(outputs):
         sink.collect(bound, result(), BufferBudget(1 << 20))
 
 
-def test_skipped_optimizer_has_no_plan_output_or_storage_permit(outputs):
+def test_state_command_has_no_plan_output_or_storage_permit(outputs):
     _, sink, _, bound = outputs
     bound.plan = None
     assert sink.spec(bound) is None

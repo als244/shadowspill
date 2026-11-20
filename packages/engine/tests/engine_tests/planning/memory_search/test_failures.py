@@ -30,7 +30,7 @@ from shadowspill.planning.memory_search.algorithms.pressurefit.options import (
 def test_missing_initial_residency_uses_semantic_diagnostic() -> None:
     resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(AliasGroupSpec("input_storage", "cuda_0", 61),),
         objects=(ObjectSpec("input", "input_storage", 0, 61),),
         profiles=(TaskProfile("profile", 10, 0, "abi"),),
@@ -49,7 +49,7 @@ def test_missing_initial_residency_uses_semantic_diagnostic() -> None:
 def test_required_task_geometry_reports_the_exact_capacity_constraint() -> None:
     resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(
             AliasGroupSpec("left_storage", "cuda_0", 61),
             AliasGroupSpec("right_storage", "cuda_0", 61),
@@ -107,7 +107,7 @@ def test_required_task_geometry_reports_the_exact_capacity_constraint() -> None:
 
 def test_workspace_larger_than_the_device_is_rejected_before_search() -> None:
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(),
         objects=(),
         profiles=(TaskProfile("profile", 10, 123, "abi"),),
@@ -136,7 +136,7 @@ def test_workspace_larger_than_the_device_is_rejected_before_search() -> None:
 def test_non_overlapping_workspace_and_object_maxima_are_not_combined() -> None:
     resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(AliasGroupSpec("state_storage", "cuda_0", 80),),
         objects=(ObjectSpec("state", "state_storage", 0, 80),),
         profiles=(
@@ -174,7 +174,7 @@ def test_non_overlapping_workspace_and_object_maxima_are_not_combined() -> None:
 def test_same_task_workspace_and_objects_remain_jointly_required() -> None:
     resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(AliasGroupSpec("state_storage", "cuda_0", 80),),
         objects=(ObjectSpec("state", "state_storage", 0, 80),),
         profiles=(TaskProfile("profile", 10, 30, "abi"),),

@@ -104,7 +104,7 @@ def fixture(elements=15, kind="step"):
             "dtype": "torch.float32",
         }
     return Program(
-        devices=(DeviceSpec("device", "worker", "cuda", 0),),
+        devices=(DeviceSpec("device"),),
         alias_groups=tuple(aliases),
         objects=tuple(objects),
         tasks=(),
@@ -181,7 +181,7 @@ def columns_program(optimizer_groups):
         "optimizer_bindings": rows,
     }
     return Program(
-        devices=(DeviceSpec("device", "worker", "cuda", 0),),
+        devices=(DeviceSpec("device"),),
         alias_groups=(
             AliasGroupSpec("weight", "device", elements * 2),
             AliasGroupSpec("columns", "device", 12),
