@@ -47,7 +47,7 @@ from .setup import TrainingSetup
 from .training import ResolvedTraining
 from .uploads import ArtifactUpload, UploadStatus
 
-VERSION = 2
+VERSION = 1
 MAX_METADATA_BYTES = 1024 * 1024
 MAX_METADATA_NODES = 16384
 _KINDS: Mapping[str, type[Record]] = {

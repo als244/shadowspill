@@ -40,14 +40,11 @@ class Accumulation(Record):
     contributions : sequence of str, default ()
         IDs of the requests whose gradients the open accumulation holds, in
         the order they ran; empty when it is closed.
-    participating_contributions : int, default 0
-        How many of ``contributions`` took part in the loss.
     """
 
     generation: int = 0
     open: bool = False
     contributions: Sequence[str] = ()
-    participating_contributions: int = 0
 
     def __post_init__(self) -> None:
         integer(self.generation, "generation")
@@ -57,11 +54,6 @@ class Accumulation(Record):
         for value in contributions:
             identifier(value, "contribution request ID")
         object.__setattr__(self, "contributions", contributions)
-        integer(self.participating_contributions, "participating_contributions")
-        if self.participating_contributions > len(contributions):
-            raise ValueError(
-                "participating contributions exceed completed contributions"
-            )
         if (self.open or contributions) and self.generation == 0:
             raise ValueError("an accumulation requires a positive generation")
 

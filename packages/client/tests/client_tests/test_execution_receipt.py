@@ -20,7 +20,7 @@ def receipt():
         "history",
         "completed",
         2,
-        Accumulation(3, True, ("a",), 1),
+        Accumulation(3, True, ("a",)),
     )
 
 

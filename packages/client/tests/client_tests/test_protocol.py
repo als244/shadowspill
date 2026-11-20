@@ -81,7 +81,7 @@ def result():
             "history_1",
             "completed",
             3,
-            accumulation=Accumulation(1, True, ("old",), 1),
+            accumulation=Accumulation(1, True, ("old",)),
             state_valid=False,
         ),
         Acceptance(IDENTITY, 3),
@@ -95,7 +95,7 @@ def result():
                 "Invalid input",
                 "not_started",
                 True,
-                accumulation=Accumulation(1, True, ["request_1"], 1),
+                accumulation=Accumulation(1, True, ["request_1"]),
             ),
         ),
         RequestStatus(
@@ -171,7 +171,7 @@ def test_state_commands_reject_compute_inputs_and_controls(options, operation):
         {"grad_scale": 1},
         {"optim": {"lr": 1}},
         {"loss_params": {"temperature": 1}},
-        {"accumulation": Accumulation(1, True, ("old",), 1)},
+        {"accumulation": Accumulation(1, True, ("old",))},
         {"execution_seconds": 1.25},
     ],
 )
@@ -197,7 +197,7 @@ def test_state_command_result_records_only_resolved_state(options, operation):
         lambda: OperationRequest(IDENTITY, "step", dependencies=[IDENTITY.request_id]),
         lambda: replace(IDENTITY, writer_epoch=0),
         lambda: replace(PAYLOAD, id="../../server/file"),
-        lambda: Accumulation(1, True, ["request_1"], 2),
+        lambda: Accumulation(0, True, ["request_1"]),
         lambda: Failure("worker_lost", "Unknown effect", "unknown", True),
         lambda: Failure("output_failed", "Known completed effect", "completed", True),
         lambda: RequestStatus(IDENTITY, "accepted"),
@@ -227,8 +227,8 @@ def test_objective_loss_and_custom_metric_named_loss_remain_distinct():
 
 def test_decoder_rejects_unknown_versions_types_fields_and_duplicate_keys():
     for patch, match in (
-        ({"version": 1}, "unsupported protocol version"),
-        ({"version": 3}, "unsupported protocol version"),
+        ({"version": 2}, "unsupported protocol version"),
+        ({"version": 0}, "unsupported protocol version"),
         ({"version": True}, "unsupported protocol version"),
         ({"kind": "os.system"}, "unknown protocol record"),
         ({"value": {"name": "x", "unknown": 1}}, "unknown fields"),
@@ -238,10 +238,10 @@ def test_decoder_rejects_unknown_versions_types_fields_and_duplicate_keys():
         with pytest.raises(ProtocolError, match=match):
             decode(json.dumps(encoded).encode())
     with pytest.raises(ProtocolError, match="duplicate JSON field"):
-        decode(b'{"version":2,"version":2,"kind":"config.model","value":{}}')
+        decode(b'{"version":1,"version":1,"kind":"config.model","value":{}}')
     with pytest.raises(ProtocolError, match="nonfinite"):
         decode(
-            b'{"version":2,"kind":"config.model","value":{"name":"x","config":{"x":NaN}}}'
+            b'{"version":1,"kind":"config.model","value":{"name":"x","config":{"x":NaN}}}'
         )
     with pytest.raises(ProtocolError, match="unregistered"):
         encode(Datum(inputs={"pixels": [[1, 2]]}))
@@ -257,7 +257,7 @@ def test_metadata_is_bounded_and_does_not_expand_binary_payloads():
     with pytest.raises(ProtocolError, match="exceeds 10 bytes"):
         encode(request, max_bytes=10)
     nested = (
-        b'{"version":2,"kind":"config.model","value":'
+        b'{"version":1,"kind":"config.model","value":'
         + b"[" * 70
         + b"0"
         + b"]" * 70
@@ -330,7 +330,7 @@ def test_private_codec_owns_its_allowlist_and_uses_the_same_strict_envelope():
     with pytest.raises(ProtocolError, match="exceeds 10"):
         codec.decode(encoded, max_bytes=10)
     with pytest.raises(ProtocolError, match="duplicate JSON"):
-        codec.decode(encoded.replace(b'"version":2', b'"version":2,"version":2'))
+        codec.decode(encoded.replace(b'"version":1', b'"version":1,"version":1'))
 
 
 @pytest.mark.parametrize(

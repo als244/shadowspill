@@ -9,7 +9,7 @@ from .requests import ArtifactRef
 
 REPORT_MEDIA = {"html": "text/html; charset=utf-8", "json": "application/json"}
 # Increment when rendered bytes or schema change; stored reports are immutable.
-REPORT_VERSION = 3
+REPORT_VERSION = 1
 
 
 @dataclass(frozen=True)

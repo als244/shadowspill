@@ -35,7 +35,7 @@ SUMMARY_KINDS = frozenset(
 MAX_SUMMARY_ROWS = 32
 # Inspection rows now include immutable rich-view references. Old pages stay
 # immutable when an existing bundle is prepared under this inspection schema.
-SUMMARY_VERSION = 3
+SUMMARY_VERSION = 1
 PLAN_REPORT_VERSION = 1
 PLAN_REPORT_MEDIA_TYPE = "text/html; charset=utf-8"
 
