@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from shadowspill.training.definitions.registry import ResolvedObjective
+from shadowspill.training.components.registry import ResolvedObjective
 from shadowspill_client.config.operations import Operation
 from shadowspill_client.inputs.validation import Path
+from shadowspill_client.protocol.components import OutputSet
 from shadowspill_client.protocol.controls import ControlSchema, Scalar
-from shadowspill_client.protocol.definitions import OutputSet
 from shadowspill_client.protocol.operations import OperationKey
 
 
@@ -21,7 +21,7 @@ def resolve_operations(
 ) -> tuple[OperationKey, ...]:
     """Keep caller order/defaults and make optimizer dependencies inspectable."""
     selected = (
-        {"step": [objective.definition.default_outputs]}
+        {"step": [objective.component.default_outputs]}
         if operations is None
         else operations
     )

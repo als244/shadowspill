@@ -20,19 +20,50 @@ from shadowspill.runtime.core import Runtime as NeutralRuntime
 
 
 class Runtime(NeutralRuntime):
-    """The neutral runtime, driven by PyTorch.
+    """The process's runtime, opened with PyTorch as its frontend.
 
-    Accelerator allocator selection is process-global and irreversible after
-    PyTorch initializes the accelerator, so construct exactly one of these
-    before any accelerator tensor allocation when using the low-level runtime
-    API. The public Executor handles this setup itself.
+    It is the neutral `~shadowspill.runtime.Runtime` with PyTorch's frontend
+    supplied, for callers that drive the runtime themselves; `Executor` opens
+    its own. Opening it makes the runtime PyTorch's device allocator for the
+    rest of the process, so a process opens one, before PyTorch allocates any
+    device memory.
 
-    By default, initialization discovers the device's host NUMA node, narrows
-    existing process-thread CPU masks to permitted local CPUs, and prefers
-    local pages before pinning spill pools. Remote-page fallback warns.
-    ``numa_binding=False`` preserves the caller's placement. Affinity and the
-    initializing thread's memory policy remain in effect for the process;
-    existing allocations are not migrated.
+    Parameters
+    ----------
+    pools : mapping of str to DevicePool or SpillPool
+        The pools, by name: one device pool and at least one spill pool.
+    routes : mapping of str to TransferRoute
+        The directed routes between the device pool and the spill pools, by
+        name; at least one.
+    library_path : str or path-like, optional
+        The framework adapter library to load. By default, the one installed
+        beside the package.
+    calibrate : bool, default True
+        Whether to measure every route before returning.
+    numa_binding : bool, default True
+        Whether to place the process on the device's NUMA node. False leaves
+        the caller's placement alone.
+    worker_poll_nanoseconds : int, default 1000
+        How long the transfer worker waits before asking again whether a
+        pending completion has finished, in nanoseconds. At least zero.
+    background_transfer_window_bytes : int, default DEFAULT_BACKGROUND_WINDOW_BYTES
+        Bytes of transfers the plan did not schedule that a route may have in
+        flight at once (64 MiB by default). Zero removes the bound.
+    backend : str, optional
+        The backend library the adapter loads, by name or path. By default,
+        the one accelerator backend installed beside the libraries.
+
+    Raises
+    ------
+    RuntimeConfigurationError
+        If the pools or routes are invalid, the adapter library is not found, a
+        runtime has already been opened in this process, a pool's image cannot
+        be reserved, or calibration fails.
+    TypeError
+        If ``pools`` or ``routes`` is not a mapping, or holds something other
+        than a pool or route configuration.
+    RuntimeError
+        If the allocator cannot be installed.
     """
 
     def __init__(

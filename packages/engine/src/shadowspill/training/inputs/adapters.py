@@ -1,4 +1,4 @@
-"""Definition-owned fixed input views and bounded generated CPU metadata."""
+"""Component-owned fixed input views and bounded generated CPU metadata."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ class InputAdapter:
     """Small functions and descriptions, without an adapter base class.
 
     Views borrow routed inputs. Generated tensors have fixed, declared host
-    storage allocated before ``fill`` runs. The installed definition owns
+    storage allocated before ``fill`` runs. The installed component owns
     sequence/group/media semantics and declares whether padding preserves its
     model computation; objective masking is a separate preparation requirement.
     """

@@ -17,7 +17,31 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class ChunkAxis:
-    """One dimension contains ``before * extent * after`` ordered elements."""
+    """A dimension that holds a chunked axis between two fixed factors.
+
+    The dimension's length is ``before * extent * after`` for an axis of
+    ``extent`` positions, ordered with ``before`` outermost and ``after``
+    innermost. A chunk of the axis takes the same positions from each of the
+    ``before`` groups. Flattening a batch of ``B`` sequences into one
+    dimension and chunking along the sequence uses ``ChunkAxis(0, before=B)``.
+
+    Parameters
+    ----------
+    dim : int
+        The dimension's index. A policy may give a negative index, which
+        counts from the last dimension.
+    before : int, default 1
+        Factor outside the axis. Positive.
+    after : int, default 1
+        Factor inside the axis. Positive.
+
+    Raises
+    ------
+    TypeError
+        If any argument is not an int.
+    ValueError
+        If ``before`` or ``after`` is less than one.
+    """
 
     dim: int
     before: int = 1
@@ -33,11 +57,42 @@ class ChunkAxis:
             raise ValueError("chunk axis factors must be positive")
 
     def shape(self, shape: tuple[int, ...], extent: int) -> tuple[int, ...]:
+        """Return ``shape`` with this dimension sized for an axis of ``extent``.
+
+        Parameters
+        ----------
+        shape : tuple of int
+            A shape.
+        extent : int
+            Positions along the axis.
+
+        Returns
+        -------
+        tuple of int
+            ``shape`` with dimension ``dim`` set to
+            ``before * extent * after``.
+        """
         result = list(shape)
         result[self.dim] = self.before * extent * self.after
         return tuple(result)
 
     def view(self, value: torch.Tensor, extent: int) -> torch.Tensor:
+        """Return a view of ``value`` with this dimension split in three.
+
+        Parameters
+        ----------
+        value : torch.Tensor
+            A value whose dimension ``dim`` holds an axis of ``extent``
+            positions.
+        extent : int
+            Positions along the axis.
+
+        Returns
+        -------
+        torch.Tensor
+            A view in which dimension ``dim`` becomes the three dimensions
+            ``before``, ``extent`` and ``after``.
+        """
         shape = list(value.shape)
         shape[self.dim : self.dim + 1] = [self.before, extent, self.after]
         strides = list(value.stride())
@@ -52,6 +107,27 @@ class ChunkAxis:
     def slice(
         self, value: torch.Tensor, extent: int, start: int, count: int
     ) -> torch.Tensor:
+        """Return ``count`` positions of the axis, starting at ``start``.
+
+        Parameters
+        ----------
+        value : torch.Tensor
+            A value whose dimension ``dim`` holds an axis of ``extent``
+            positions.
+        extent : int
+            Positions along the axis.
+        start : int
+            First position taken.
+        count : int
+            Positions taken.
+
+        Returns
+        -------
+        torch.Tensor
+            The slice, with dimension ``dim`` of length
+            ``before * count * after``: a view when the layout allows one,
+            otherwise a copy.
+        """
         return (
             self.view(value, extent)
             .narrow(self.dim + 1, start, count)

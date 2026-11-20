@@ -35,7 +35,7 @@ def fail_interrupted_requests(
     state: OperationState,
     *,
     code: str = "server_restarted",
-    message: str = "Server restarted; recover live worker state from a checkpoint.",
+    message: str = "Server restarted; resume from a checkpoint in a new run.",
 ) -> RecoverySummary:
     """After controller loss, invalidate live state and commit explicit failures.
 

@@ -41,29 +41,73 @@ def measure_communication(
     spill: SpillPool | None = None,
     numa_binding: bool = True,
 ) -> CommunicationInfo:
-    """Calibrate spill copies and optionally a Program's lowered collectives.
+    """Measure spill copy rates, and the collectives a Program issues.
 
-    Without Program/overrides/rank_map, measure only this GPU's host copies.
-    Distributed calls run on every worker after caller-owned rendezvous, with
-    the same full worker-to-logical rank_map. Workers concurrently measure host
-    copies, then each requested group separately. Every worker receives the same
-    result. Collective allocation evidence and retained communicator bytes are
-    recorded separately from timing. NCCL-owned temporary allocations use the
-    worker's external headroom; execution warms groups before memory admission.
+    Pass the result to `plan_program`. Called with no ``program``,
+    ``collectives`` or ``rank_map``, it times this GPU's spill copies alone.
+    Otherwise every worker calls it after the caller's process-group
+    rendezvous, with the same complete ``rank_map``: the workers time their
+    copies together, then each collective group in turn, and all receive the
+    same result, with the slowest worker's rates, the largest latencies and
+    every observation. Communicator memory is recorded apart from timing.
 
-    collectives replaces derived requests; [] selects host copies only. Each
-    entry has operation, ordered logical ranks, tensor_bytes and dtype. Bytes
-    mean full gathered output/scatter input, or each all-reduce tensor.
-    spill selects an existing pool configuration; None uses ordinary pinned-host
-    copies. External backends use bounded native probe pools without installing
-    the execution allocator. Build and compute profiling need no spill setting.
+    By default the process first takes the host placement an execution worker
+    takes: thread affinity narrowed to the device's NUMA node, and that node's
+    memory preferred for pinned buffers, for the rest of the process. The
+    result records it in ``metadata["host_placement"]``.
 
-    By default the measuring process first takes the host placement a runtime
-    gives an execution worker: thread affinity narrowed to the device's host
-    NUMA node, and that node's memory preferred for the buffers it pins. These
-    are process-lifetime changes. ``numa_binding=False`` keeps the caller's
-    placement, for execution that also runs with ``numa_binding=False``. The
-    result records the placement it measured under as ``host_placement``.
+    Parameters
+    ----------
+    program : Program, optional
+        A Program whose collectives to measure, built for this GPU and
+        toolchain.
+    rank_map : mapping of int to int, optional
+        Launcher rank to logical rank, for every worker.
+    collectives : sequence of mapping, optional
+        Collectives to measure instead of the Program's, each with an
+        ``operation`` (``"all_gather"``, ``"reduce_scatter"`` or
+        ``"all_reduce"``), ordered logical ``ranks``, ``tensor_bytes`` and
+        ``dtype``, and optionally ``inplace``. ``tensor_bytes`` is the whole
+        gathered output or scattered input, or each rank's all-reduce tensor.
+        An empty sequence times copies only.
+    device : str or torch.device, default "cuda"
+        This worker's device.
+    sizes_bytes : sequence of int, default (1024, 1 << 20, 16 << 20, 64 << 20)
+        Copy sizes, in bytes, from which latency and rate are fitted; at
+        least two distinct positive sizes.
+    options : ProfilingOptions, optional
+        Timing bounds. By default ``ProfilingOptions()``.
+    warmup_seconds : float, optional
+        Shortcut for ``conditioning_seconds`` of ``options``; not with
+        ``options``.
+    measure_seconds : float, optional
+        Shortcut for ``measurement_seconds`` of ``options``; not with
+        ``options``.
+    spill : SpillPool, optional
+        The spill pool configuration execution will use. By default ordinary
+        pinned host copies.
+    numa_binding : bool, default True
+        Whether to take an execution worker's host placement first. False keeps the
+        caller's, for execution that also runs with ``numa_binding=False``.
+
+    Returns
+    -------
+    CommunicationInfo
+        The measured copy rates and latencies, collective measurements and
+        communicator memory.
+
+    Raises
+    ------
+    ValueError
+        If ``sizes_bytes`` has fewer than two distinct positive sizes,
+        ``options`` comes with a shortcut, ``rank_map`` is incomplete, the
+        rendezvous world size differs from the Program's, or the Program was
+        built for another GPU or toolchain.
+    RuntimeError
+        If PyTorch's native allocator is not in use.
+    TypeError
+        If ``numa_binding`` is not a bool, ``spill`` is not a `SpillPool`, or
+        ``options`` is not `ProfilingOptions`.
     """
     coordinated = program is not None or collectives is not None or rank_map is not None
     distributed = coordinated and dist.is_initialized() and dist.get_world_size() > 1

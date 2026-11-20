@@ -13,13 +13,30 @@ from .operations import _persistent_gradients
 
 
 def backward_program(step: Program) -> Program:
-    """Retain captured model/backward forms and persistent producer gradients.
+    """Derive a forward/backward Program from a complete-step Program.
 
-    Optimizer state, controls, reductions and publications belong to the derived
-    optimizer-only path. Gradient spill/fetch transfer declarations stay on the
-    original producer aliases. This uses the existing training binder and never
-    captures or compiles another model. The result still needs planning and
-    joint admission with its optimizer and other operation Plans.
+    The result keeps every fresh and accumulating forward and backward form
+    of the step and its model state, and keeps the gradients in spill after
+    each run; the optimizer state, controls, reductions and publications
+    belong to `optimizer_program`'s result. Nothing is captured or compiled,
+    so the step's profiles apply. Its Plan is admitted in one `Executor` with
+    the optimizer Plan.
+
+    Parameters
+    ----------
+    step : Program
+        A complete-step Program, from `build_step`.
+
+    Returns
+    -------
+    Program
+        The forward/backward Program.
+
+    Raises
+    ------
+    ValueError
+        If ``step`` is not a complete-step Program with saved training and
+        optimizer forms.
     """
     saved = step.bindings
     if (

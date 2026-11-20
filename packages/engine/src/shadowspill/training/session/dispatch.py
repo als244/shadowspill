@@ -169,7 +169,7 @@ class RequestDispatcher:
         if row is None:
             raise KeyError(f"unknown request: {request_id}")
         request, status = row
-        if status.state in ("completed", "skipped", "failed"):
+        if status.state in ("completed", "failed"):
             return status
         if (request.operation == "restore") != (restore is not None) or (
             restore is not None
@@ -189,7 +189,7 @@ class RequestDispatcher:
         # An accepted predecessor can fail after this request was accepted.
         for dependency in request.dependencies:
             prior = self._records.get(dependency)
-            if prior is None or prior[1].state not in ("completed", "skipped"):
+            if prior is None or prior[1].state != "completed":
                 return self.order.reject(
                     request_id,
                     code="dependency_failed",
@@ -245,7 +245,7 @@ class RequestDispatcher:
             request.identity,
             request.operation,
             "h" * 128,
-            "skipped" if transition.skipped else "completed",
+            "completed",
             after.completed_updates,
             after.accumulation,
             optim=request.optim,
@@ -287,7 +287,7 @@ class RequestDispatcher:
                 request.identity,
                 request.operation,
                 boundary.history_id,
-                "skipped" if transition.skipped else "completed",
+                "completed",
                 boundary.completed_updates,
                 boundary.accumulation,
                 state_valid=boundary.valid,

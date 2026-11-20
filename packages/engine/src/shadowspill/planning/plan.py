@@ -32,10 +32,57 @@ def plan_program(
     ordering: StepDataOrdering | None = None,
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
 ) -> Plan:
-    """Plan a fully supplied candidate without compilation, measurement or CUDA.
+    """Choose a Plan for a profiled Program within memory budgets.
 
-    The existing search raises diagnostic PlanInfeasibleError or
-    PlanSearchExhaustedError. No cache directory or allocator is created.
+    The search chooses each stage's save or recompute form, where each object
+    resides and when it moves, and then places every allocation in a fixed
+    device layout when the memory evidence allows. It runs on the CPU: no
+    compilation, measurement, GPU or pools.
+
+    Parameters
+    ----------
+    program : ProfiledProgram
+        The Program and its profiles, from `apply_profiles`.
+    memory_budgets : MemoryBudgets
+        The worker's budgets. The device budget covers the fixed overhead as
+        well as the execution pool.
+    communication_info : CommunicationInfo
+        Transfer and collective costs.
+    pool_memory : PoolMemoryProfile, optional
+        Measured spill pool memory for each of the Program's logical ranks,
+        at the spill budget's capacity. It caps the device budget at the
+        memory observed available, and adds the pool's process memory to the
+        fixed overhead.
+    search_options : SearchOptions, optional
+        Search settings. By default ``SearchOptions()``.
+    ordering : StepDataOrdering, optional
+        Traversal of a training Program's examples. By default depth-first.
+    optimizer_ordering : str, default "stage_interleaved"
+        When each optimizer update runs: ``"stage_interleaved"``, once the
+        gradients it needs are written and the old weights it changes are
+        read; or ``"tail"``, after the whole backward.
+
+    Returns
+    -------
+    Plan
+        The chosen Plan.
+
+    Raises
+    ------
+    PlanInfeasibleError
+        If no schedule or layout fits the budgets, the fixed overhead alone
+        exceeds the device budget, or ``ordering`` breaks the Program's
+        ordering constraints.
+    PlanSearchExhaustedError
+        If the bounded search stops without a Plan or a proof that none
+        exists.
+    TypeError
+        If ``program`` is not a `ProfiledProgram`, or ``search_options`` or
+        ``ordering`` has another type.
+    ValueError
+        If ``ordering`` is given for a Program without training examples, or
+        ``pool_memory`` differs from the budgets, ranks, device or spill
+        backend.
     """
     from shadowspill.planning.memory_search.algorithm import SearchOptions
 

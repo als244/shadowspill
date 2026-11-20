@@ -29,15 +29,24 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class ResidentSlice:
-    """The slice reserved for the objects the planner kept resident.
+    """The part of the fixed layout reserved for objects that stay resident.
 
-    Objects under `minimum_object_bytes_evict_eligible` are never cut, so
-    every lease of theirs gets a static home in a slice at the end of the
-    fixed layout rather than a place among the leases that come and go.
-    `bytes` is what the planner reserved for it -- the sum of those homes,
-    sized before the search and taken out of the capacity the search plans
-    against -- and `aliases` names the alias groups whose leases it holds.
-    An empty slice has no bytes and no aliases.
+    Objects under `GenericPlanningOptions.minimum_object_bytes_evict_eligible`
+    are never evicted, so each of their leases gets a fixed home in a slice
+    at the end of the layout. The planner sizes the slice before the search
+    and takes it out of the capacity the search plans against.
+
+    Parameters
+    ----------
+    bytes : int
+        Bytes reserved: the sum of those homes. At least zero.
+    aliases : tuple of str
+        The alias groups whose leases the slice holds, sorted and distinct.
+
+    Raises
+    ------
+    ValueError
+        If ``bytes`` is negative, or ``aliases`` is not sorted and distinct.
     """
 
     bytes: int
@@ -50,17 +59,38 @@ class ResidentSlice:
             raise ValueError("resident slice aliases must be sorted and distinct")
 
     def to_dict(self) -> dict[str, object]:
+        """Write the slice as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            ``bytes``, and ``aliases`` as a list.
+        """
         return {"bytes": self.bytes, "aliases": list(self.aliases)}
 
 
 @dataclass(frozen=True, slots=True)
 class ResolutionPlan:
-    """The best plan one resolved program reached, beside the answer.
+    """The best plan one resolved program reached, kept beside the answer.
 
     A search fixes the program's alternatives several ways and answers with
-    one; this is what each way found, decoded and simulated like the
-    answer, so the plans can be set side by side. Kept only when asked,
-    since each is as large as the answer.
+    one plan. When asked, it keeps what each way found, decoded and
+    simulated like the answer, in `ProgramPlanResult.resolutions`.
+
+    Parameters
+    ----------
+    selection_id : str
+        The resolved program, as the diagnostics name it.
+    selections : tuple of TaskAlternativeChoice
+        The option it chose for each task-alternative group.
+    candidate_id : str
+        The candidate policy whose plan this is.
+    schedule : MemorySchedule
+        The plan's schedule.
+    simulation : SimulationResult
+        Its simulation.
+    resident_slice : ResidentSlice, default ResidentSlice(0, ())
+        The objects it kept resident throughout.
     """
 
     selection_id: str
@@ -73,7 +103,43 @@ class ResolutionPlan:
 
 @dataclass(frozen=True, slots=True)
 class ProgramPlanResult:
-    """Selected logical schedule plus exact simulator evidence."""
+    """What a search answers with: a schedule and the simulation that priced it.
+
+    A `SearchAlgorithm` returns one, which `answer_no_worse_than` may
+    replace with the plan the search was handed.
+
+    Parameters
+    ----------
+    program : ShadowSpillProgram
+        The program planned, its task alternatives open.
+    search_options : SearchOptions
+        Everything the search was told: the generic options, the search and
+        its own options.
+    initial_residency : tuple of ResidencySpec
+        Where each alias group is before the first task.
+    final_residency : tuple of ResidencySpec
+        Where each alias group must be after the last task.
+    simulation_config : SimulationConfig
+        The machine the schedule was priced on.
+    schedule : MemorySchedule
+        The chosen memory actions and residency boundaries.
+    selections : tuple of TaskAlternativeChoice
+        The option chosen for each task-alternative group.
+    simulation : SimulationResult
+        The simulation that priced the schedule.
+    diagnostics : PlanningDiagnostics
+        What the search did, and which candidate answered.
+    resident_slice : ResidentSlice, default ResidentSlice(0, ())
+        The objects kept resident throughout, and the bytes reserved for
+        them.
+    admission_facts : AdmissionFacts, optional
+        The physical facts the plan was planned or admitted under, if any.
+    placement_facts : AdmissionFacts, optional
+        The pool the plan's layout was measured against, if any.
+    resolutions : tuple of ResolutionPlan, default ()
+        Every resolved program's best plan, the answer's among them, when
+        the search was asked to keep them; empty otherwise.
+    """
 
     program: ShadowSpillProgram
     #: Everything the search was told: the generic options, the algorithm
@@ -102,7 +168,33 @@ class ProgramPlanResult:
         entrypoints: tuple[EntrypointSpec, ...],
         admission: PhysicalAdmission | None = None,
     ) -> ExecutionPlan:
-        """Bind frontend entrypoints and physical admission to this result."""
+        """Bind entry points and a physical admission to this result.
+
+        Parameters
+        ----------
+        entrypoints : tuple of EntrypointSpec
+            The frontend's entry points into the plan.
+        admission : PhysicalAdmission, optional
+            The physical budgets the plan runs under. None builds one from
+            the single device's configuration: its capacity as the device
+            budget and slab, the spill capacity as the spill budget, the
+            simulated spill peak as the spill reservation, the largest task
+            workspace as the workspace reserve, and no baseline or external
+            headroom.
+
+        Returns
+        -------
+        ExecutionPlan
+            The program, schedule, selections, entry points and admission.
+            Its prediction is the simulated makespan and spill peak, and a
+            device peak of the admission's baseline, headroom and slab.
+
+        Raises
+        ------
+        ValueError
+            If ``admission`` is None for more than one device, or the simulated
+            device or spill peak exceeds what ``admission`` reserves.
+        """
 
         if admission is None:
             if len(self.simulation_config.devices) != 1:

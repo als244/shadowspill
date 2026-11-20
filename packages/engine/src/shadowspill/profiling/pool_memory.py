@@ -15,7 +15,16 @@ from .pool_probe import PoolProbe
 
 
 class PoolMemoryMeasurementError(RuntimeError):
-    """Unresolved measurements preserve partial raw evidence for inspection."""
+    """Raised when a pool memory measurement fails or cannot be resolved.
+
+    Parameters
+    ----------
+    message : str
+        What failed.
+    observations : dict
+        The raw observations made before the failure, kept as
+        ``observations``.
+    """
 
     def __init__(self, message: str, observations: dict[str, Any]):
         super().__init__(message)
@@ -25,14 +34,41 @@ class PoolMemoryMeasurementError(RuntimeError):
 def measure_pool_memory(
     *, spill: SpillPool, device: int = 0, logical_rank: int = 0
 ) -> PoolMemoryProfile:
-    """Acquire the exact spill pool and real lanes twice on an otherwise idle GPU.
+    """Measure the device memory a spill pool costs one worker.
 
-    A separate 4 MiB execution control keeps device allocation independent of
-    spill capacity. Synchronous observations establish retained costs only;
-    startup peaks, physical pinned pages and remote host usage remain unknown.
-    Use a disposable measurement process before starting a cold Executor.
-    Reuse this artifact across chunk/policy/sequence candidates, then combine
-    rank artifacts for DP on distinct GPUs. No distributed collectives run here.
+    It acquires the exact pool and its transfer lanes, then releases them,
+    twice, on an otherwise idle GPU, sampling device memory before, while
+    live, after warming and after release. A separate 4 MiB execution
+    control keeps the device pool independent of the spill capacity. The
+    samples establish retained costs only: startup peaks, physical pinned
+    pages and remote host use stay unknown. Run it in a disposable process
+    before any Executor starts. It runs no collectives: measure each logical
+    rank on its own GPU and join the results with `PoolMemoryProfile.combine`.
+    The result serves every candidate with the same pool configuration on
+    compatible GPUs.
+
+    Parameters
+    ----------
+    spill : SpillPool
+        The pool configuration, at the capacity planning will budget.
+    device : int, default 0
+        Process-local GPU ordinal.
+    logical_rank : int, default 0
+        The logical rank the measurement is for.
+
+    Returns
+    -------
+    PoolMemoryProfile
+        The measurement, for one rank.
+
+    Raises
+    ------
+    ValueError
+        If an execution runtime is already installed in the process, or
+        ``logical_rank`` is not a nonnegative integer.
+    PoolMemoryMeasurementError
+        If the measurement fails or cannot be resolved, for example because
+        another process uses the GPU; it keeps the partial observations.
     """
     import pynvml  # type: ignore[import-untyped]
 

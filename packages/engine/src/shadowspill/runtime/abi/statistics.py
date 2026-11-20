@@ -40,11 +40,58 @@ class PlanSliceRecord(ctypes.Structure):
 
 
 class MemoryPoolStatistics(ctypes.Structure):
-    """What one pool holds, mirroring `ShadowSpillMemoryPoolStatistics`.
+    """What one pool holds, as `Runtime.pool_statistics` reads it.
 
-    Per pool rather than flattened into named fields for two of them: a runtime
-    may own any number of pools, and which of them a plan uses as its execution
-    and spill pools is the plan's choice.
+    Mirrors ``ShadowSpillMemoryPoolStatistics``.
+
+    Attributes
+    ----------
+    pool_id : int
+        The pool's id.
+    kind : int
+        The pool's kind number, as its configuration declares it.
+    capacity_bytes : int
+        Bytes the pool can lease.
+    requested_allocated_bytes : int
+        Bytes the pool's live allocations asked for.
+    peak_requested_allocated_bytes : int
+        The most ``requested_allocated_bytes`` has been.
+    allocated_bytes : int
+        Bytes the pool's held ranges occupy, the ranges reserved for plan
+        layouts included.
+    peak_allocated_bytes : int
+        The most ``allocated_bytes`` has been.
+    free_bytes : int
+        Bytes in free ranges.
+    free_prefix_bytes : int
+        Size of the free range at offset zero; zero when offset zero is held.
+    largest_free_range_bytes : int
+        Size of the largest free range, in bytes.
+    external_fragmentation_bytes : int
+        ``free_bytes`` less ``largest_free_range_bytes``: free bytes no single
+        request can use.
+    live_allocations : int
+        Allocations live in the pool.
+    blocked_allocators : int
+        Allocation requests waiting now for the pool to free a range.
+    memory_lease_record_capacity : int
+        Lease records the pool owns, in use or free. The reserve grows past
+        its initial size when a new peak needs it.
+    memory_lease_record_in_use : int
+        Lease records in use.
+    memory_lease_record_peak_in_use : int
+        The most lease records in use at once.
+    memory_lease_record_growth_rejections : int
+        Times the pool needed another lease record and could not make one.
+    lease_use_record_capacity : int
+        Use records the pool owns, in use or free; each records a stream a
+        lease is used on, which its retirement waits for.
+    lease_use_record_in_use : int
+        Use records in use.
+    lease_use_record_peak_in_use : int
+        The most use records in use at once.
+    lease_use_record_growth_rejections : int
+        Times the pool needed another use record and could not make one.
     """
 
     _fields_ = [

@@ -10,17 +10,15 @@ the runtime, the diagnostics -- reads them and no framework.
 outputs, and the mutations it declares. `allocations` is what it promised about
 its allocations, and what the profiled run observed. `profiles` is one
 measurement and the key it is filed under. `inputs` is the vocabulary for a task
-argument and the provenance of the value profiled for it.
+argument.
 """
 
 from .inputs import (
     REPRESENTATIVE_VALUE_POLICY,
-    RepresentativeInputSummary,
     TaskInputRole,
 )
 
 __all__ = [
     "REPRESENTATIVE_VALUE_POLICY",
-    "RepresentativeInputSummary",
     "TaskInputRole",
 ]

@@ -36,20 +36,68 @@ class SSDConfiguration(ctypes.Structure):
 
 @dataclass(frozen=True, slots=True)
 class SSDPool(SpillPool):
-    """Reserve a direct-I/O file on the specified filesystem.
+    """A spill pool in a direct-I/O file on a local drive.
 
-    ``capacity`` bounds SSD storage. ``staging_bytes`` separately bounds host
-    payload buffers shared by imports and transfer routes. Each direction uses
-    at most ``queue_depth`` chunks; increasing that depth needs more staging.
-    The directory must exist and holds the temporary file, which has no
-    persistent name and is released by normal runtime close, including after
-    process termination.
+    `ssd` returns one. Constructing it checks the settings and allocates
+    nothing: the runtime creates the file when it opens and releases it when
+    it closes. By default the file is temporary, created unlinked in
+    ``directory``, so it outlives neither the runtime nor the process. Bytes
+    move through host staging, which the pool and each route's lane reserve
+    from ``staging_bytes`` when the runtime opens. `Executor`,
+    `measure_communication` and `measure_pool_memory` refuse a pool with an
+    ``image``.
 
-    ``image`` names a pool image. With ``create_image`` the pool is that file,
-    created here and kept at release, for a conversion that imports frozen
-    state once. Without it the existing image is the pool's first
-    ``image_bytes`` bytes, read in place and never written, and the rest of
-    the capacity is the temporary file. Checkpoints are stored separately.
+    Parameters
+    ----------
+    capacity : int
+        Pool size, in bytes. Positive; with an existing ``image``, at least
+        its size.
+    kind : int, default 3
+        The runtime's ``ShadowSpillPoolKind`` value for the SSD kind.
+    kind_name : str, default "ssd"
+        The kind's name, as the runtime's pool registry reports it.
+    directory : str or path
+        Existing directory for the temporary file, on a filesystem that
+        supports direct I/O and preallocation, such as ext4 on an NVMe drive.
+        Stored as an absolute path. Required: the empty default is refused.
+    staging_bytes : int, default 256 MiB
+        Host memory the pool's staging may take, in bytes: one chunk for
+        reading and writing state, and for each route ``queue_depth`` chunks
+        plus one alignment unit. Opening fails if the routes need more. At
+        least ``chunk_bytes`` and below 2**63.
+    chunk_bytes : int, default 2 MiB
+        Size of each staged piece of a transfer, in bytes: a multiple of
+        4096 and of the filesystem's direct-I/O alignment, at most 1 GiB.
+    queue_depth : int, default 16
+        Chunks each route's lane stages at once, from 1 to 1024.
+    image : str or path, optional
+        A pool image file, stored as an absolute path. With ``create_image``,
+        the file to create, which is then the whole pool and is kept after
+        the runtime closes, so state imported into it persists. Otherwise an
+        existing image, a positive multiple of 4096 bytes, which the pool
+        reads in place as its first bytes and never writes; the rest of the
+        pool is the temporary file. None by default: no image.
+    create_image : bool, default False
+        Whether to create ``image`` rather than open it. The file must not
+        exist yet, and its directory must.
+
+    Attributes
+    ----------
+    image_bytes : int
+        The size of the existing ``image`` the pool opens, in bytes; zero
+        without one or when the image is created.
+
+    Raises
+    ------
+    TypeError
+        If ``capacity``, ``staging_bytes``, ``chunk_bytes`` or
+        ``queue_depth`` is not an integer.
+    ValueError
+        If a size or count is out of range, ``directory`` is not an existing
+        directory, ``create_image`` is set without ``image``, the image to
+        create exists or its directory does not, or the image to open is
+        missing, not a positive multiple of 4096 bytes or larger than
+        ``capacity``.
     """
 
     directory: str | Path = ""
@@ -58,9 +106,13 @@ class SSDPool(SpillPool):
     queue_depth: int = 16
     image: str | Path | None = None
     create_image: bool = False
-    image_bytes: int = 0
+    image_bytes: int = field(default=0, init=False)
     kind: int = SSD_POOL_KIND
     kind_name: str = "ssd"
+
+    #: Always False: a lease's address stands for an offset in the pool's
+    #: file and maps no memory. The kind's ``write`` and ``read``, and the
+    #: pool's lanes, move its bytes.
     addressable: ClassVar[bool] = False
     _configuration: SSDConfiguration = field(
         default_factory=SSDConfiguration, repr=False, compare=False
@@ -129,15 +181,43 @@ class SSDPool(SpillPool):
 
     @property
     def library(self) -> Path:
+        """The SSD extension library, ``libshadowspill_ssd.so``.
+
+        Raises
+        ------
+        RuntimeError
+            If this build does not include it.
+        """
         path = resolve_library("libshadowspill_ssd.so")
         if path is None:
             raise RuntimeError("This build does not include the Linux SSD extension")
         return path
 
     def configuration(self) -> ctypes.Structure:
+        """Return what the SSD kind is told about this pool.
+
+        Returns
+        -------
+        ctypes.Structure
+            The ``ShadowSpillSSDConfiguration`` filled from the pool's fields.
+            It lives as long as the pool.
+        """
         return self._configuration
 
     def calibration_identity(self) -> dict[str, Any]:
+        """Return the pool's configuration as stable JSON, for pool memory evidence.
+
+        Returns
+        -------
+        dict
+            ``directory``, ``staging_bytes``, ``chunk_bytes`` and
+            ``queue_depth``.
+
+        Raises
+        ------
+        ValueError
+            If the pool has an ``image``.
+        """
         if self.image is not None:
             raise ValueError("pool calibration requires a scratch SSD configuration")
         return {
@@ -158,7 +238,39 @@ def ssd(
     image: str | Path | None = None,
     create_image: bool = False,
 ) -> SSDPool:
-    """Configure an SSD pool; allocation and cleanup belong to Runtime."""
+    """Return an SSD spill pool configuration.
+
+    Parameters
+    ----------
+    capacity : int
+        Pool size, in bytes. Positive.
+    directory : str or path
+        Existing directory for the pool's temporary file, as in `SSDPool`.
+    staging_bytes : int, default 256 MiB
+        Host memory the pool's staging may take, in bytes.
+    chunk_bytes : int, default 2 MiB
+        Size of each staged piece of a transfer, in bytes.
+    queue_depth : int, default 16
+        Chunks each route's lane stages at once.
+    image : str or path, optional
+        A pool image file to create or open, as in `SSDPool`. None by
+        default.
+    create_image : bool, default False
+        Whether to create ``image`` rather than open it.
+
+    Returns
+    -------
+    SSDPool
+        The configuration.
+
+    Raises
+    ------
+    TypeError
+        If a size or count is not an integer.
+    ValueError
+        If an argument is out of range or names a missing file, as `SSDPool`
+        describes.
+    """
     return SSDPool(
         capacity=capacity,
         directory=directory,

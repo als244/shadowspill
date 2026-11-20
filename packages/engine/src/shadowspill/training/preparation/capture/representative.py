@@ -9,7 +9,7 @@ from types import MappingProxyType
 
 import numpy as np
 
-from shadowspill.training.definitions.samples import (
+from shadowspill.training.components.samples import (
     RepresentativePattern,
     UniformIntegers,
 )

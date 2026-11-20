@@ -26,11 +26,30 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class PlanningInputs:
-    """All exported viable captures and operation variants, with original costs.
+    """A preparation's exported measurements, for planning without the service.
 
-    Edit copies from ``source.profiles`` and CommunicationInfo using ``replace``.
-    ``plan`` returns selected schedules; server submission still rechecks every
-    capture, coverage witness and shared-state memory requirement.
+    ``PlanningInputs.load`` reads the archive `PreparationHandle.export`
+    gives. `sweep` replans a grid of budgets and transfer rates; `plan` plans
+    selected candidates into a proposal for the service, which still checks
+    every capture, input coverage and joint memory admission. Neither needs a
+    GPU, the model package or the service.
+
+    Attributes
+    ----------
+    config : ResolvedTraining
+        The preparation's resolved settings.
+    sources : mapping of str to ProfiledProgram
+        The measured Program of each capture template, by template ID;
+        ``sources[key].profiles`` gives an editable copy of its profiles.
+    communication : mapping of str to CommunicationInfo
+        Each template's communication costs, by template ID.
+    requests : mapping of str to PlanningRequest
+        Every rank-local planning request, by request ID.
+    candidates : mapping of str to tuple of str
+        Each candidate's request IDs, by candidate ID.
+    descriptions : mapping of str to mapping
+        Each candidate's operation, batch, scheduled capacities, build case,
+        microbatch count and ordering, by candidate ID.
     """
 
     config: ResolvedTraining
@@ -42,6 +61,27 @@ class PlanningInputs:
 
     @classmethod
     def load(cls, path: str | Path) -> PlanningInputs:
+        """Read an exported measurement archive.
+
+        Each file in it is checked against the manifest's size and SHA-256
+        before it is read.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The archive `PreparationHandle.export` gives.
+
+        Returns
+        -------
+        PlanningInputs
+            The exported measurements.
+
+        Raises
+        ------
+        ValueError
+            If the archive is not a supported measurement export, or a file
+            differs from the manifest.
+        """
         with zipfile.ZipFile(path) as archive:
             entries = archive.infolist()
             files = {row.filename: row for row in entries}
@@ -112,12 +152,36 @@ class PlanningInputs:
         spill_gib: float | Sequence[float] | None = None,
         transfer_scale: float | Sequence[float] = 1.0,
     ) -> PlanningSweep:
-        """Replan a budget/bandwidth grid using the exported measurements.
+        """Replan every exported candidate over a grid of budgets and transfer rates.
 
-        Omitted budgets inherit their measured setup. Transfer scale multiplies
-        fetch/evict bandwidths, including concurrent rates; compute, latency and
-        collective costs stay unchanged. All results are predictions. Empty
-        feasible sets remain inspectable, and no training run is started.
+        Each point of the grid runs the ordinary planner again. A transfer
+        scale multiplies the fetch and eviction rates, concurrent rates
+        included, and leaves compute, latency and collective costs unchanged.
+        The results are predictions: an infeasible point stays in the result
+        with its reason, and no training runs.
+
+        Parameters
+        ----------
+        device_gib : float or sequence of float, optional
+            Device budgets per worker, in GiB, each positive. By default the
+            preparation's.
+        spill_gib : float or sequence of float, optional
+            Spill budgets per worker, in GiB, each at least zero. By default
+            the preparation's.
+        transfer_scale : float or sequence of float, default 1.0
+            Factors on the measured transfer rates, each positive.
+
+        Returns
+        -------
+        PlanningSweep
+            One row per grid point and candidate, with its predicted time and
+            peaks; its ``write_report`` writes an HTML comparison.
+
+        Raises
+        ------
+        ValueError
+            If a list of values is empty, repeats a value, or holds a value
+            out of range.
         """
         from shadowspill.training.preparation.offline.sweep import sweep
 
@@ -136,12 +200,43 @@ class PlanningInputs:
         communication: Mapping[str, CommunicationInfo] | None = None,
         candidates: Sequence[str] | None = None,
     ) -> LocalPlans:
-        """Plan selected exported alternatives; never invent missing measurements.
+        """Plan exported candidates into a proposal for the service.
 
-        Budgets, initialization, execution settings and planner search controls
-        may change. New build forms/operations/counts need another export. Known
-        infeasible searches are retained as diagnostics; no runtime fallback is
-        produced. The server makes the final joint admission decision.
+        Budgets, initialization, execution settings and the planner's search
+        settings may differ from the preparation's; anything else needs a new
+        export. A request with no feasible Plan is kept as rejected, and a
+        candidate is selected only when every request it needs has a Plan.
+        Nothing missing is measured or estimated.
+
+        Parameters
+        ----------
+        config : ResolvedTraining
+            The resolved settings to plan for, whose preparation reuses the
+            exported one.
+        profiles : mapping of str to Profiles, optional
+            Edited profiles by template ID, instead of ``sources[key].profiles``.
+            Only timings may change, marked ``duration_kind="estimated"`` in
+            their metadata.
+        communication : mapping of str to CommunicationInfo, optional
+            Edited communication costs by template ID. Only rates, latencies
+            and collective durations may change, marked
+            ``timing_kind="estimated"`` in the metadata.
+        candidates : sequence of str, optional
+            The candidates to plan, without repeats. By default all.
+
+        Returns
+        -------
+        LocalPlans
+            The selected schedules, without executable code.
+
+        Raises
+        ------
+        ValueError
+            If ``config`` differs from the export beyond those settings, an
+            edit names an unexported template or changes anything else,
+            ``candidates`` names an unknown candidate or repeats one, a Plan
+            lacks physical memory admission, or no candidate has every Plan
+            it needs.
         """
         from shadowspill.training.preparation.offline.search import search
 

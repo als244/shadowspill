@@ -135,9 +135,7 @@ class RequestIndex:
             (
                 encode(status),
                 status.state,
-                position
-                if status.state in ("completed", "skipped", "failed")
-                else None,
+                position if status.state in ("completed", "failed") else None,
                 status.identity.request_id,
             ),
         )

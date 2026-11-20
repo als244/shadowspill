@@ -79,27 +79,57 @@ def measure_overlap(
     trials: int | None = None,
     cache: OverlapProfileCache | None = None,
 ) -> Profiles:
-    """Return a Profiles overlay; original timing/memory evidence stays intact.
+    """Measure each task's progress while sharded collectives overlap it.
 
-    Call on every participant after communication calibration. Saved task forms
-    and their probe order must agree for paired measurements; differing worker
-    shapes/targets return an explicit unmeasured overlay. Finalized binaries and
-    measurement/cache identities remain local. Merge with
-    ``profiled_program.profiles``, then ``apply_profiles`` before planning.
-    No build, runtime pool or training-step
-    timing is used. Each route is probed at up to ten of its actual transfer
-    sizes, spread in log bytes (see ``overlap_routes``).
+    For each task form and each collective transfer route of the Program, it
+    times the task alone, the transfer alone and both together, at up to ten
+    of the route's transfer sizes spread evenly in log bytes. The result is
+    an overlay: merge it into ``profiled_program.profiles`` and apply that
+    with `apply_profiles` before planning; the isolated timings and memory
+    stay as they were. Every worker calls it after `measure_communication`,
+    following rendezvous at the Program's world size. Tasks that communicate,
+    routes that do not fit in free device memory and unsupported samples are
+    recorded as missing, never estimated. A Program without sharded
+    collective transfers, or with model-owned communication resources, gets
+    an empty overlay without GPU work; workers whose task forms differ get an
+    unmeasured one.
 
-    Communicating model tasks, insufficient free device memory and statistically
-    unsupported samples are reported as missing evidence, never invented rates.
-    Programs with model-owned communication resources are currently excluded:
-    their opaque collective sequences cannot safely be interleaved by this probe.
-    No sharded transfers means an empty overlay and needs no GPU/rendezvous.
-    Default sampling uses three trials when their predicted work fits 100 ms,
-    otherwise one. ``trials`` overrides this with a positive fixed count. A
-    single conditioned pair estimates progress, not statistical repeatability.
-    Reuse one ``OverlapProfileCache`` across candidates to skip compatible paired
-    measurements. Explicit task inputs disable cache reuse on every participant.
+    Parameters
+    ----------
+    profiled_program : ProfiledProgram
+        The Program with its isolated task profiles.
+    communication_info : CommunicationInfo
+        The collective calibration, measured with this backend setup.
+    device : str or torch.device, default "cuda"
+        This worker's GPU, the one the Program was compiled for.
+    rank_map : mapping of int to int, optional
+        Launcher rank to logical rank, for every worker.
+    stages : sequence of int, optional
+        Indices of the stages to measure. By default every task form.
+    inputs : mapping of str to sequence, optional
+        Flat task arguments by profile key, instead of generated ones.
+        Disables cache reuse on every worker.
+    trials : int, optional
+        Paired trials per measurement. By default three when their predicted
+        work fits in 100 ms, otherwise one; one trial estimates progress, not
+        its repeatability.
+    cache : OverlapProfileCache, optional
+        Overlap measurements shared across candidates and processes.
+
+    Returns
+    -------
+    Profiles
+        The overlay: ``overlap_costs`` for each measured task form, with the
+        evidence in each profile's and the collection's
+        ``metadata["overlap_calibration"]``.
+
+    Raises
+    ------
+    ValueError
+        If ``trials`` is not a positive integer, the Program was built for
+        another GPU or toolchain, PyTorch's native allocator is not in use,
+        the rendezvous world size differs from the Program's, or the backend
+        setup differs from ``communication_info``'s.
     """
     program = profiled_program.program
     result = Profiles(setup=plain(program.setup))

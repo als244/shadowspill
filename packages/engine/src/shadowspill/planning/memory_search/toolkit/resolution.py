@@ -63,12 +63,28 @@ _WITHIN_GROUP_MEMORY_QUANTILES = (0, 1, 2, 3, 4)
 def validate_resolution_options(
     values: Iterable[ShareValue],
 ) -> tuple[Fraction, ...]:
-    """Return the options as exact fractions in ``[0, 1]``, sorted and unique.
+    """Check resolution options and return them as exact, sorted fractions.
 
-    Each option is a share of the flexible groups to recompute. Floats are
-    refused rather than converted: ``0.1`` is not one tenth, and an option is
-    part of a planned program's identity, so it is spelled as a `Fraction`,
-    an integer or a string such as ``"1/8"``.
+    Each option is a share of the flexible task-alternative groups to
+    recompute. A float is refused rather than converted, since ``0.1`` is
+    not one tenth and an option is part of the plan key.
+
+    Parameters
+    ----------
+    values : iterable of Fraction, int or str
+        The shares, each a ``Fraction``, an integer or a string such as
+        ``"3/8"``, in ``[0, 1]``. At least one.
+
+    Returns
+    -------
+    tuple of Fraction
+        The distinct shares, ascending.
+
+    Raises
+    ------
+    ValueError
+        If ``values`` is a single string or empty, or a share is a float, a
+        bool, not a fraction, or outside ``[0, 1]``.
     """
 
     if isinstance(values, str):
@@ -95,13 +111,28 @@ def validate_resolution_options(
 
 
 def named_resolution_options(value: str | Iterable[ShareValue]) -> tuple[str, ...]:
-    """The shares a name in :data:`NAMED_RESOLUTION_OPTIONS` stands for, or the
-    shares given -- as a comma-separated string or a sequence -- validated and
-    returned as strings in ascending order.
+    """Resolve a named or listed set of resolution options to strings.
 
-    Strings, because that is how a request records the options and how a
-    command line or a config spells them; :func:`validate_resolution_options`
-    turns them into the fractions a search plans with.
+    Strings are how a request records the options and how a command line or
+    a config spells them; `validate_resolution_options` turns them into the
+    fractions a search plans with.
+
+    Parameters
+    ----------
+    value : str or iterable of Fraction, int or str
+        A name in ``NAMED_RESOLUTION_OPTIONS`` (``"quarters"``,
+        ``"eighths"`` or ``"halves"``), the shares as a comma-separated
+        string such as ``"0, 1/2, 1"``, or a sequence of shares.
+
+    Returns
+    -------
+    tuple of str
+        The distinct shares, ascending, such as ``("0", "1/2", "1")``.
+
+    Raises
+    ------
+    ValueError
+        If a share is invalid, as `validate_resolution_options` checks.
     """
 
     if isinstance(value, str):
@@ -116,7 +147,27 @@ def named_resolution_options(value: str | Iterable[ShareValue]) -> tuple[str, ..
 
 
 def validate_tail_save_counts(values: Iterable[int]) -> tuple[int, ...]:
-    """Normalize explicit per-pass tail counts; zero keeps the original policy."""
+    """Check tail save counts and return them sorted and distinct.
+
+    A tail count is how many final eligible forward invocations of each
+    forward/backward pass are saved; zero saves none.
+
+    Parameters
+    ----------
+    values : iterable of int
+        The counts, each a non-negative integer. At least one.
+
+    Returns
+    -------
+    tuple of int
+        The distinct counts, ascending.
+
+    Raises
+    ------
+    ValueError
+        If ``values`` is a string, not iterable or empty, or a count is not a
+        non-negative integer.
+    """
     if isinstance(values, str) or not isinstance(values, Iterable):
         raise ValueError("tail save counts must be a sequence of nonnegative integers")
     counts = tuple(values)
@@ -133,18 +184,44 @@ def resolutions(
     *,
     tail_save_counts: Iterable[int] = (0,),
 ) -> tuple[Resolution, ...]:
-    """Return a small deterministic set of legal resolutions.
+    """Choose a small, deterministic set of resolutions of a program to plan.
 
-    ``resolution_options`` names the fractions of flexible groups to
-    recompute when the inventory is too large to enumerate. It is required:
-    a search that wants the usual set asks for
-    `DEFAULT_RESOLUTION_OPTIONS` by name, so there is no reading of this
-    call that silently plans something other than what was asked for.
+    A resolution fixes one option for every task-alternative group. A group
+    with no real choice keeps its one option. When the remaining
+    combinations are few (64 or fewer), every one is returned. Otherwise,
+    when every group is a save-or-recompute pair, each tail count is
+    crossed with each share: the tail saves the final eligible forward
+    invocations of each forward/backward pass, and the share recomputes
+    evenly spaced groups among the remaining flexible ones, rounded to the
+    nearer whole group. Groups of other shapes, with no nonzero tail, are
+    walked through their own options from least retained to most.
+    Duplicates are returned once.
 
-    Each tail count crosses every share. A tail saves the final eligible
-    forward invocations in each forward/backward pass; the share recomputes
-    evenly spaced groups among the remaining flexible invocations. Zero
-    gives the original distribution. This changes neither graphs nor profiles.
+    Parameters
+    ----------
+    program : ShadowSpillProgram
+        The program, its task alternatives open.
+    resolution_options : iterable of Fraction, int or str
+        Shares of the flexible groups to recompute, as
+        `validate_resolution_options` takes them, such as
+        ``DEFAULT_RESOLUTION_OPTIONS``.
+    tail_save_counts : iterable of int, default (0,)
+        Counts of final forward invocations to save in each pass, as
+        `validate_tail_save_counts` takes them.
+
+    Returns
+    -------
+    tuple of tuple of TaskAlternativeChoice
+        The resolutions, each one choice per group; a single empty
+        resolution for a program without alternatives.
+
+    Raises
+    ------
+    ValueError
+        If an option or count is invalid, a forward-sink group lacks a single
+        ``save`` option, or a nonzero tail is asked of a large inventory whose
+        groups are not all save-or-recompute pairs or whose passes cannot be
+        told apart.
     """
 
     chosen = validate_resolution_options(resolution_options)
@@ -328,7 +405,20 @@ _RECOMPUTE = "recompute"
 
 @dataclass(frozen=True, slots=True)
 class CostedOption:
-    """One alternative a group exposes, with what choosing it costs."""
+    """One option of a task-alternative group, with what choosing it costs.
+
+    `CostedGroup.options` holds these.
+
+    Attributes
+    ----------
+    option_id : str
+        The option, as the program names it.
+    retained_bytes : int
+        Bytes of the alias groups the option keeps rather than recomputing.
+    runtime_ns : int
+        Profiled runtime of every task the option activates, in
+        nanoseconds.
+    """
 
     option_id: str
     #: Bytes this option keeps resident rather than recomputing.
@@ -339,7 +429,22 @@ class CostedOption:
 
 @dataclass(frozen=True, slots=True)
 class CostedGroup:
-    """Every alternative one group exposes, in the ShadowSpillProgram's order."""
+    """One task-alternative group, its options costed.
+
+    `CostedAlternatives.groups` holds these.
+
+    Attributes
+    ----------
+    group_id : str
+        The group, as the program names it.
+    options : tuple of CostedOption
+        Its options, in the program's order.
+    forced_index : int or None
+        The option a forced group must take, or None when the group is a
+        real choice. A group whose forward tasks are sinks of the forward
+        phase is forced to its ``save`` option; one whose options all retain
+        the same bytes, to its fastest.
+    """
 
     group_id: str
     options: tuple[CostedOption, ...]
@@ -351,7 +456,10 @@ class CostedGroup:
 
     @property
     def binary_endpoints(self) -> tuple[int, int] | None:
-        """Return ``(save, recompute)`` when this group offers exactly those."""
+        """The indices of ``save`` and ``recompute``, if they are its only options.
+
+        None for any other set of options.
+        """
 
         by_id = {option.option_id: index for index, option in enumerate(self.options)}
         if len(self.options) != 2 or set(by_id) != {_SAVE, _RECOMPUTE}:
@@ -359,7 +467,13 @@ class CostedGroup:
         return (by_id[_SAVE], by_id[_RECOMPUTE])
 
     def by_retained_bytes(self) -> tuple[int, ...]:
-        """Option indices from least to most retained, ties broken by runtime."""
+        """Order the options from least retained bytes to most.
+
+        Returns
+        -------
+        tuple of int
+            Option indices, ties broken by runtime and then by index.
+        """
 
         return tuple(
             index
@@ -374,7 +488,13 @@ class CostedGroup:
         )
 
     def fastest_index(self) -> int:
-        """The option with the least measured runtime, ties broken by bytes."""
+        """Find the option with the least profiled runtime.
+
+        Returns
+        -------
+        int
+            Its index, ties broken by retained bytes and then by index.
+        """
 
         return min(
             range(len(self.options)),
@@ -388,13 +508,39 @@ class CostedGroup:
 
 @dataclass(frozen=True, slots=True)
 class CostedAlternatives:
-    """Every task-alternative group in one ShadowSpillProgram, costed."""
+    """Every task-alternative group of one program, costed.
+
+    `CostedAlternatives.from_program` builds one. Its length is the number
+    of groups.
+
+    Attributes
+    ----------
+    groups : tuple of CostedGroup
+        One per group, in the program's order.
+    """
 
     groups: tuple[CostedGroup, ...]
 
     @classmethod
     def from_program(cls, program: ShadowSpillProgram) -> Self:
-        """Cost every option against the program's alias sizes and profiles."""
+        """Cost every option against the program's alias sizes and profiles.
+
+        Parameters
+        ----------
+        program : ShadowSpillProgram
+            The program, its task alternatives open.
+
+        Returns
+        -------
+        CostedAlternatives
+            Its groups, costed and with forced groups marked.
+
+        Raises
+        ------
+        ValueError
+            If a group whose forward tasks are forward-phase sinks does not
+            offer exactly one ``save`` option.
+        """
 
         alias_bytes = {
             alias.alias_group_id: alias.size_bytes for alias in program.alias_groups
@@ -435,7 +581,7 @@ class CostedAlternatives:
 
     @property
     def forced(self) -> dict[int, int]:
-        """Group index to the one option index left, for groups with no choice."""
+        """The forced groups: group index to the index of its one option."""
 
         return {
             index: group.forced_index
@@ -445,17 +591,17 @@ class CostedAlternatives:
 
     @property
     def flexible_count(self) -> int:
-        """How many groups are a real decision.
+        """How many groups are a real choice.
 
-        This is the population a resolution share is taken of, so it is also
-        the honest denominator for reporting how many groups recompute.
+        A resolution option's share is taken of these, so it is also the
+        denominator for reporting how many groups recompute.
         """
 
         return sum(1 for group in self.groups if group.forced_index is None)
 
     @property
     def combination_count(self) -> int:
-        """How many distinct selections exist once forced groups are settled."""
+        """How many distinct resolutions exist once forced groups are settled."""
 
         total = 1
         for group in self.groups:
@@ -464,7 +610,7 @@ class CostedAlternatives:
 
     @property
     def binary_endpoints(self) -> tuple[tuple[int, int], ...] | None:
-        """Every group's ``(save, recompute)`` indices, or None if any is not."""
+        """Every group's `CostedGroup.binary_endpoints`, or None if any has none."""
 
         endpoints: list[tuple[int, int]] = []
         for group in self.groups:

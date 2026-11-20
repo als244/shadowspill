@@ -36,12 +36,33 @@ from .progress import read_progress
 
 @dataclass(frozen=True)
 class CollectorLimits:
-    """Deployment allowances for the external profiler, as for phase processes.
+    """Envelope of the Nsight Systems collector, as `LocalCreationLimits.nsys`.
 
-    Host/work-directory bounds need qualification for the installed Nsight
-    version and workload; reservations are not OS quotas. Final file count/size
-    and report checksum checks reject excess before publication. Report storage
-    is also reserved through the existing OutputFiles owner before launch.
+    A run that captures wraps each worker in a collector. A deployment
+    qualifies these bounds for its installed Nsight version and workload;
+    they are accounting reservations, not operating-system quotas. A capture
+    whose files exceed them is reported failed rather than published.
+
+    Parameters
+    ----------
+    host_bytes : int, default 1 GiB
+        Host memory, in bytes, reserved for each worker's collector.
+    disk_bytes : int, default 2 GiB
+        Disk space, in bytes, of each collector's working directory; also the
+        largest report published.
+    max_files : int, default 1024
+        Entries each collector's working directory may hold.
+    finish_seconds : float, default 120
+        How long a captured worker may take to exit, in seconds, while the
+        collector writes its report. From 1 to 3600.
+    executable : str, default "nsys"
+        The collector executable, as a path or a name looked up on ``PATH``.
+
+    Raises
+    ------
+    ValueError
+        If a size or count is not an int of at least 1, ``finish_seconds``
+        is outside its range, or ``executable`` is empty.
     """
 
     host_bytes: int = 1 << 30

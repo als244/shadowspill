@@ -14,7 +14,8 @@ def select[T](names: Sequence[str], entries: Mapping[str, T], default: T) -> T:
     if not values:
         return default
     if any(value != values[0] for value in values[1:]):
-        raise ValueError(f"conflicting declarations for tied names {tuple(names)}")
+        subject = f"tied names {tuple(names)}" if len(names) > 1 else repr(names[0])
+        raise ValueError(f"conflicting declarations for {subject}")
     return values[0]
 
 

@@ -94,13 +94,10 @@ class PreparedCall:
         assert self.key is not None
         result = {}
         for rank, worker in self.candidate.workers.items():
-            if self.key.operation == "optim_step":
-                plan = None if transition.skipped else worker.optimizer
-            else:
-                plan = worker.main
-            if plan is None and not (
-                self.key.operation == "optim_step" and transition.skipped
-            ):
+            plan = (
+                worker.optimizer if self.key.operation == "optim_step" else worker.main
+            )
+            if plan is None:
                 raise ValueError("prepared family is missing its required worker form")
             result[rank] = plan
         return MappingProxyType(result)

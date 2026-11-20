@@ -12,7 +12,7 @@ from shadowspill_client.protocol.training import ResolvedTraining
 
 def validate_base(base: FrozenBase, configuration: ResolvedTraining) -> None:
     if (
-        base.source != configuration.definition_sources["model"]
+        base.source != configuration.component_sources["model"]
         or replace(configuration.model, initialize=base.model.initialize) != base.model
     ):
         raise ValueError("checkpoint frozen base differs from the resolved model")

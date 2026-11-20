@@ -2,26 +2,30 @@
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
-
-from shadowspill.ir.program.timing import (
-    TaskOverlapCost,
-    TaskResourcePhase,
-    validate_task_timing,
-)
+from dataclasses import dataclass
 
 from .allocations.contract import TaskAllocationContract
 from .allocations.events import TaskAllocationEvent, TaskAllocationOperation
-from .inputs import (
-    RepresentativeInputSummary,
-)
-from .profiling import ProfilingOptions, TimingWindow
 
 
 @dataclass(frozen=True, slots=True)
 class TaskOutputInputBinding:
-    """Physical evidence that one output is served by a task input."""
+    """Evidence that one output of a task is stored in one of its inputs.
+
+    Parameters
+    ----------
+    output_leaf_index : int
+        The output's position among the task's flattened outputs.
+    input_position : int
+        The position of the input whose storage holds it.
+    output_offset_bytes : int
+        Where the output starts in that storage, in bytes.
+
+    Raises
+    ------
+    ValueError
+        If a field is negative.
+    """
 
     output_leaf_index: int
     input_position: int
@@ -39,6 +43,13 @@ class TaskOutputInputBinding:
             raise ValueError("task output/input binding fields must be non-negative")
 
     def to_dict(self) -> dict[str, int]:
+        """Return the binding as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "output_leaf_index": self.output_leaf_index,
             "input_position": self.input_position,
@@ -47,6 +58,23 @@ class TaskOutputInputBinding:
 
     @classmethod
     def from_dict(cls, value: object) -> TaskOutputInputBinding:
+        """Read a binding from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : dict
+            The decoded JSON value.
+
+        Returns
+        -------
+        TaskOutputInputBinding
+            The binding.
+
+        Raises
+        ------
+        ValueError
+            If ``value`` is not a dict, lacks a field, or holds a negative one.
+        """
         if not isinstance(value, dict):
             raise ValueError("cached output/input binding must be an object")
         try:
@@ -63,13 +91,49 @@ class TaskOutputInputBinding:
 
 @dataclass(frozen=True, slots=True)
 class TaskMeasurement:
-    """Calibrated task time and allocator behavior for one structural contract.
+    """Calibrated time and allocator behavior of one task.
 
-    ``persistent_extent_bytes`` is the incremental slab growth attributable to
-    bounded provider or custom-operation state first observed by this profile.
-    It excludes profiler-owned task arguments and task-local workspace.  Since
-    profiles run serially against one live provider inventory, a shared cache
-    allocation is charged only by the first structural contract that creates it.
+    Profiling produces it, and the allocation evidence in it is what physical
+    admission checks a task against.
+
+    Parameters
+    ----------
+    runtime_ns : int
+        The task's duration, in nanoseconds; the median sample when profiled.
+    workspace_requested_bytes : int
+        Peak bytes the task's temporary allocations requested at once.
+    workspace_charged_bytes : int
+        Peak bytes the allocator charged for them.
+    workspace_extent_bytes : tuple of int
+        Charged size of each temporary allocation live at that peak; empty when
+        not recorded.
+    samples_ns : tuple of int
+        Each timed run, in nanoseconds. At least one.
+    provenance : str
+        What took the measurement. Not empty.
+    allocation_trace : tuple of TaskAllocationEvent, default ()
+        The task's allocations and frees, in order, without the frees of its
+        outputs' storage.
+    output_input_bindings : tuple of TaskOutputInputBinding, default ()
+        The outputs stored in inputs, at most one binding per output.
+    persistent_extent_bytes : tuple of int, default ()
+        Sizes of the allocations this profile first observed outliving the
+        task as bounded state, excluding task arguments and workspace. Profiles
+        run one at a time, so a shared allocation is charged to the first.
+    allocation_contract : TaskAllocationContract, optional
+        The contract the trace satisfies: its allocations and temporary frees
+        match the trace's.
+    off_device_output_leaves : tuple of int, default ()
+        Outputs observed off the execution device, such as a scalar the task
+        returns to the caller's process. No device allocation accounts for
+        them.
+
+    Raises
+    ------
+    ValueError
+        If a measurement is negative, there is no sample, ``provenance`` is
+        empty, an off-device leaf repeats, or the allocation trace is
+        inconsistent or disagrees with ``allocation_contract``.
     """
 
     runtime_ns: int
@@ -81,15 +145,6 @@ class TaskMeasurement:
     allocation_trace: tuple[TaskAllocationEvent, ...] = ()
     output_input_bindings: tuple[TaskOutputInputBinding, ...] = ()
     persistent_extent_bytes: tuple[int, ...] = ()
-    profiling_wall_time_ns: int = 0
-    representative_inputs: tuple[RepresentativeInputSummary, ...] = ()
-    phase_timings_ns: tuple[tuple[str, int], ...] = ()
-    timing_relative_mad: float = 0.0
-    timing_half_drift: float = 0.0
-    timing_unstable: bool = False
-    profiling_options: ProfilingOptions = field(default_factory=ProfilingOptions)
-    conditioning: TimingWindow = field(default_factory=TimingWindow)
-    sampling: TimingWindow = field(default_factory=TimingWindow)
     allocation_contract: TaskAllocationContract | None = None
     #: Output leaves this task was observed to produce off the execution
     #: device. A storage contract is traced, and a trace can claim device
@@ -98,11 +153,8 @@ class TaskMeasurement:
     #: the contract gives up its span rather than an allocation being
     #: looked for that was never made.
     off_device_output_leaves: tuple[int, ...] = ()
-    resource_phases: tuple[TaskResourcePhase, ...] = ()
-    overlap_costs: tuple[TaskOverlapCost, ...] = ()
 
     def __post_init__(self) -> None:
-        validate_task_timing(self.runtime_ns, self.resource_phases, self.overlap_costs)
         values = (
             self.runtime_ns,
             self.workspace_requested_bytes,
@@ -110,8 +162,6 @@ class TaskMeasurement:
             *self.workspace_extent_bytes,
             *self.samples_ns,
             *self.persistent_extent_bytes,
-            self.profiling_wall_time_ns,
-            *(duration for _name, duration in self.phase_timings_ns),
         )
         if any(value < 0 for value in values):
             raise ValueError("profile measurements must be non-negative")
@@ -119,18 +169,12 @@ class TaskMeasurement:
             raise ValueError("profile measurement requires at least one sample")
         if not self.provenance:
             raise ValueError("profile provenance must be non-empty")
-        if any(not name for name, _duration in self.phase_timings_ns):
-            raise ValueError("profile phase names must be non-empty")
         if any(index < 0 for index in self.off_device_output_leaves):
             raise ValueError("profile host output leaves must be non-negative")
         if len(set(self.off_device_output_leaves)) != len(
             self.off_device_output_leaves
         ):
             raise ValueError("profile names one host output leaf twice")
-        if not math.isfinite(self.timing_relative_mad) or self.timing_relative_mad < 0:
-            raise ValueError("profile relative MAD must be finite and non-negative")
-        if not math.isfinite(self.timing_half_drift) or self.timing_half_drift < 0:
-            raise ValueError("profile half drift must be finite and non-negative")
         self._validate_allocation_trace()
         if self.allocation_contract is not None:
             trace_geometry = tuple(

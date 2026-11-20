@@ -40,7 +40,35 @@ def _nonnegative(name: str, value: int) -> None:
 
 @dataclass(frozen=True, slots=True)
 class PlanningRepairDiagnostics:
-    """Categorized monotonic changes made while repairing one search path."""
+    """A search's repairs, by what refused the plan and what the repair did.
+
+    Two of these add with ``+``, field by field.
+
+    Parameters
+    ----------
+    unclassified_attempts : int, default 0
+        Repairs the search did not attribute to a category below.
+    admission_fetch_advance_attempts : int, default 0
+        Admission refused the plan, and a fetch was moved earlier.
+    admission_fetch_delay_attempts : int, default 0
+        Admission refused the plan, and a fetch was moved later.
+    admission_pressure_boundary_attempts : int, default 0
+        Admission refused the plan, and room was made at a pressure
+        boundary.
+    simulation_fetch_delay_attempts : int, default 0
+        Simulation refused the plan, and a fetch was moved later.
+    simulation_pressure_boundary_attempts : int, default 0
+        Simulation refused the plan, and room was made at a pressure
+        boundary.
+    layout_fetch_delay_attempts : int, default 0
+        The plan's layout overran the pool, and a fetch was moved later so
+        it could fit.
+
+    Raises
+    ------
+    ValueError
+        If a count is negative or not an integer.
+    """
 
     unclassified_attempts: int = 0
     admission_fetch_advance_attempts: int = 0
@@ -57,10 +85,12 @@ class PlanningRepairDiagnostics:
 
     @property
     def total_attempts(self) -> int:
+        """Every repair, of every category."""
         return sum(getattr(self, name) for name in self.__dataclass_fields__)
 
     @property
     def pressure_boundary_attempts(self) -> int:
+        """Repairs that made room at a pressure boundary, whatever refused."""
         return (
             self.admission_pressure_boundary_attempts
             + self.simulation_pressure_boundary_attempts
@@ -77,6 +107,15 @@ class PlanningRepairDiagnostics:
         )
 
     def to_dict(self) -> dict[str, object]:
+        """Write the counts as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            The two totals, ``unclassified_attempts``, and the categories
+            grouped under ``admission_failure``, ``simulation_failure`` and
+            ``layout_miss``.
+        """
         return {
             "total_attempts": self.total_attempts,
             "pressure_boundary_attempts": self.pressure_boundary_attempts,
@@ -103,6 +142,28 @@ class PlanningRepairDiagnostics:
     def from_value(
         cls, value: object, path: str = "search_repairs"
     ) -> PlanningRepairDiagnostics:
+        """Read counts back from what `PlanningRepairDiagnostics.to_dict` wrote.
+
+        A missing count reads as zero.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str, default "search_repairs"
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        PlanningRepairDiagnostics
+            The counts.
+
+        Raises
+        ------
+        ValueError
+            If a field is malformed, or a written total disagrees with the
+            counts.
+        """
         data = _mapping(value, path)
         admission = _mapping(data.get("admission_failure"), f"{path}.admission_failure")
         simulation = _mapping(
@@ -156,20 +217,50 @@ class PlanningRepairDiagnostics:
 
 @dataclass(frozen=True, slots=True)
 class PlanningSectionTiming:
-    """Disjoint spans of one planning step, as its orchestrator measured them.
+    """Where a search's time went, in disjoint sections, in nanoseconds.
 
-    Sections do not overlap: exactly one is open at a time, and the function
-    that opens it is the one that names it. ``total_ns`` is the whole span the
-    orchestrator covered, and ``residual_ns`` is whatever part of it no named
-    section claimed, so
+    Exactly one section is open at a time, so ``total_ns`` equals ``named_ns``
+    plus ``residual_ns`` for a candidate, a resolved program and a whole call
+    alike. ``admit_ns`` is the exception: admission runs inside simulation, so
+    it is part of ``simulate_ns`` and outside that sum. Sections measure work,
+    so with several workers a total can exceed the elapsed time. Two of these
+    add with ``+``, field by field.
 
-        total_ns == named_ns + residual_ns
+    Parameters
+    ----------
+    total_ns : int, default 0
+        The whole span measured.
+    prepare_ns : int, default 0
+        Deriving the residency problem from the program; zero for a
+        candidate.
+    setup_ns : int, default 0
+        Schedule facts and the candidate workspace.
+    reduce_ns : int, default 0
+        Choosing what stays resident, before any repair.
+    emit_ns : int, default 0
+        Turning residency gaps into an ordered schedule.
+    simulate_ns : int, default 0
+        Simulating the schedule, admission included.
+    repair_ns : int, default 0
+        Moving a transfer or making room for one, and reducing again when
+        that is what it took.
+    digest_ns : int, default 0
+        Naming the schedule.
+    place_ns : int, default 0
+        Measuring whether the plan has a layout that fits.
+    select_ns : int, default 0
+        Deciding what to answer with, and materializing it.
+    teardown_ns : int, default 0
+        Releasing what the evaluation held.
+    admit_ns : int, default 0
+        Admitting the schedule into the pool, within ``simulate_ns``.
+    residual_ns : int, default 0
+        ``total_ns`` less every named section.
 
-    holds at every level -- which is the point of the shape. ``admit_ns`` is
-    the exception: admission runs as part of simulating, so it is nested
-    inside ``simulate_ns`` rather than beside it, and stands outside that sum.
-
-    ``prepare_ns`` is problem-level only; a candidate never prepares anything.
+    Raises
+    ------
+    ValueError
+        If a time is negative or not an integer.
     """
 
     total_ns: int = 0
@@ -205,7 +296,7 @@ class PlanningSectionTiming:
 
     @property
     def named_ns(self) -> int:
-        """Time every named section claimed. Nested sections excluded."""
+        """Nanoseconds every named section claimed, ``admit_ns`` excluded."""
 
         return sum(getattr(self, name) for name in SECTION_NAMES)
 
@@ -220,10 +311,38 @@ class PlanningSectionTiming:
         )
 
     def to_dict(self) -> dict[str, object]:
+        """Write the sections as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            Every field by name.
+        """
         return {name: getattr(self, name) for name in self.__dataclass_fields__}
 
     @classmethod
     def from_value(cls, value: object, path: str = "sections") -> PlanningSectionTiming:
+        """Read sections back from what `PlanningSectionTiming.to_dict` wrote.
+
+        A missing section reads as zero.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str, default "sections"
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        PlanningSectionTiming
+            The sections.
+
+        Raises
+        ------
+        ValueError
+            If a field is malformed.
+        """
         data = _mapping(value, path)
         return cls(
             **{
@@ -235,12 +354,31 @@ class PlanningSectionTiming:
 
 @dataclass(frozen=True, slots=True)
 class PlanningWorkDiagnostics:
-    """Exact search operations, and the sections the time went to.
+    """What a search did, counted exactly, and where the time went.
 
-    Invocation-level values include shared work performed before or across
-    candidates. Consequently they need not equal the sum of candidate values.
-    Times are summed section work, not necessarily elapsed wall time when
-    independent resolved programs are evaluated concurrently.
+    A resolved program's or a call's counts include work shared across its
+    candidates, so they need not equal the sum of its candidates'. Two of
+    these add with ``+``, field by field.
+
+    Parameters
+    ----------
+    schedule_emissions : int, default 0
+        Schedules emitted.
+    schedule_cache_hits : int, default 0
+        Emissions served from the cache instead.
+    simulation_calls : int, default 0
+        Simulations run.
+    simulation_cache_hits : int, default 0
+        Simulations served from the cache instead.
+    admission_calls : int, default 0
+        Admission checks run.
+    sections : PlanningSectionTiming, default PlanningSectionTiming()
+        Where the time went.
+
+    Raises
+    ------
+    ValueError
+        If a count is negative or not an integer.
     """
 
     schedule_emissions: int = 0
@@ -257,6 +395,7 @@ class PlanningWorkDiagnostics:
 
     @property
     def simulation_requests(self) -> int:
+        """Simulations asked for: those run and those served from the cache."""
         return self.simulation_calls + self.simulation_cache_hits
 
     def __add__(self, other: PlanningWorkDiagnostics) -> PlanningWorkDiagnostics:
@@ -270,6 +409,14 @@ class PlanningWorkDiagnostics:
         )
 
     def to_dict(self) -> dict[str, object]:
+        """Write the counts as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            The counts grouped under ``schedule``, ``simulation`` (with
+            ``requests``) and ``admission``, and the ``sections``.
+        """
         return {
             "schedule": {
                 "cache_hits": self.schedule_cache_hits,
@@ -288,6 +435,28 @@ class PlanningWorkDiagnostics:
     def from_value(
         cls, value: object, path: str = "search_work"
     ) -> PlanningWorkDiagnostics:
+        """Read counts back from what `PlanningWorkDiagnostics.to_dict` wrote.
+
+        A missing count reads as zero.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str, default "search_work"
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        PlanningWorkDiagnostics
+            The counts.
+
+        Raises
+        ------
+        ValueError
+            If a field is malformed, or the written ``requests`` disagrees with
+            the counts.
+        """
         data = _mapping(value, path)
         schedule = _mapping(data.get("schedule"), f"{path}.schedule")
         simulation = _mapping(data.get("simulation"), f"{path}.simulation")
@@ -326,15 +495,44 @@ class PlanningWorkDiagnostics:
 class ReductionStep:
     """One plan a candidate held, and what became of it.
 
-    A candidate reaches its answer by holding a succession of plans: it
-    reduces, emits, simulates, and either keeps what it got or repairs it and
-    goes again. A step is one turn of that, so the steps in order are the
-    search itself rather than a summary of it -- which plan stalled, which one
-    was measured, which one gave capacity back, and which one it answered with.
+    A candidate reaches its answer through a succession of plans: it
+    reduces, emits and simulates, then keeps the plan or repairs it and goes
+    again. A step is one turn, so `CandidateDiagnostic.steps` in order is the
+    candidate's whole trajectory. Steps are recorded only when the search is
+    asked for them.
 
-    Recorded only when the caller asks: the trajectory costs an allocation per
-    candidate that grows with the search, which is worth paying when
-    attributing planner time or explaining a plan, and not otherwise.
+    Parameters
+    ----------
+    makespan_ns : int
+        The plan's simulated makespan, in nanoseconds.
+    required_bytes : int
+        Bytes its layout spans; zero unless it was measured.
+    capacity_bytes : int
+        The object capacity it was built against, which falls as the
+        candidate gives capacity back.
+    cut_aliases : tuple of int
+        The objects the reducer cut to reach it, by alias index.
+    repairs : int
+        Repairs the candidate had made when it reached this plan.
+    simulation_status : int
+        The simulator's status for it; zero when it simulated.
+    capacity_violations : int
+        How many times it came up short of capacity and waited.
+    simulated : bool
+        Whether it was simulated.
+    measured : bool
+        Whether its layout was measured.
+    placed : bool
+        Whether its layout fit the pool.
+    refined : bool
+        Whether capacity was given back after it.
+    best : bool
+        Whether it was the candidate's best plan so far.
+    answer : bool
+        Whether the candidate answered with it.
+    moved : bool, default False
+        Whether its layout overran the pool and a fetch was moved later
+        after it.
     """
 
     makespan_ns: int
@@ -360,6 +558,13 @@ class ReductionStep:
     moved: bool = False
 
     def to_dict(self) -> dict[str, object]:
+        """Write the step as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            The counts by name, and the seven flags under ``outcome``.
+        """
         return {
             "makespan_ns": self.makespan_ns,
             "required_bytes": self.required_bytes,
@@ -373,6 +578,27 @@ class ReductionStep:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> ReductionStep:
+        """Read a step back from what `ReductionStep.to_dict` wrote.
+
+        A missing count reads as zero and a missing flag as False.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        ReductionStep
+            The step.
+
+        Raises
+        ------
+        ValueError
+            If a field is malformed.
+        """
         data = _mapping(value, path)
         outcome = _mapping(data.get("outcome"), f"{path}.outcome")
         aliases = data.get("cut_aliases", [])

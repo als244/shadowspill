@@ -74,7 +74,7 @@ class ModelInitialization:
     ``disk_bytes`` bounds downloaded/extracted files in the private cache,
     including incomplete transfers. Its reservation lasts until worker cleanup,
     so later frozen-base restores may reuse those files.
-    Installed definitions own initialization semantics; generic routing never
+    Installed components own initialization semantics; generic routing never
     guesses distributions, parameter names, missing buffers or weight formats.
     """
 

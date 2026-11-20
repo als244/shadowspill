@@ -20,7 +20,7 @@ def _preserves(explicit: Value, resolved: Value) -> bool:
 
 
 @dataclass(frozen=True)
-class ModelReferenceDefinition:
+class ModelReferenceComponent:
     """Resolve metadata only; downloading model weights belongs to initialization.
 
     ``accepts`` is a local predicate. The selected resolver may retrieve CPU
@@ -35,7 +35,7 @@ class ModelReferenceDefinition:
     def __post_init__(self) -> None:
         versioned_id(self.id)
         if not callable(self.accepts) or not callable(self.resolve):
-            raise TypeError("reference definition requires accepts/resolve functions")
+            raise TypeError("reference component requires accepts/resolve functions")
 
     def pin(self, requested: Model) -> Model:
         weights = requested.initialize
@@ -44,7 +44,7 @@ class ModelReferenceDefinition:
         resolved = self.resolve(requested)
         if (
             not isinstance(resolved, Model)
-            or resolved.definition is None
+            or resolved.name is None
             or resolved.initialize is None
             or resolved.initialize.kind != "pretrained"
             or resolved.initialize.reference != weights.reference
@@ -64,9 +64,6 @@ class ModelReferenceDefinition:
             raise ValueError("reference resolver changed explicit model settings")
         if not _preserves(weights.metadata, resolved.initialize.metadata):
             raise ValueError("reference resolver changed explicit weight metadata")
-        if (
-            requested.definition is not None
-            and resolved.definition != requested.definition
-        ):
-            raise ValueError("reference resolver changed the explicit model definition")
+        if requested.name is not None and resolved.name != requested.name:
+            raise ValueError("reference resolver changed the explicit model component")
         return resolved

@@ -15,26 +15,36 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-#: What a run does with one tree of the artifact store.
-#:
-#: ``contribute``  read a hit, write a miss. The default, and how a store
-#:                 fills up.
-#: ``reuse``       read a hit, persist nothing, so a store several runs
-#:                 share is changed by none of them.
-#: ``require``     read a hit, refuse a miss, which is what makes a store a
-#:                 fixed reference two runs can be compared against.
-#: ``refresh``     ignore hits, rebuild and replace, which retires a stale
-#:                 entry without discarding the rest of the store.
+#: What a run does with one tree of the artifact store: ``"contribute"``
+#: reads a hit and writes a miss (the default); ``"reuse"`` reads a hit and
+#: writes nothing; ``"require"`` reads a hit and refuses a miss; and
+#: ``"refresh"`` ignores hits, rebuilds and replaces them.
 type StoreMode = Literal["contribute", "reuse", "require", "refresh"]
 
-#: The same four, as a value a CLI can offer and a config can validate
-#: against. Written once so a surface cannot drift into offering three.
+#: The four store modes, for a command line to offer or a configuration to
+#: validate against.
 STORE_MODES: tuple[StoreMode, ...] = ("contribute", "reuse", "require", "refresh")
 
 
 @dataclass(frozen=True, slots=True)
 class StorePolicy:
-    """The four gates a `StoreMode` implies."""
+    """What a run may do with one tree of the artifact store.
+
+    `StorePolicy.for_mode` builds the policy a store mode implies; every store
+    reads its gates from it.
+
+    Parameters
+    ----------
+    read_enabled : bool, default True
+        Whether a stored artifact is read back when one is there.
+    write_enabled : bool, default True
+        Whether what the run produces is written.
+    overwrite : bool, default False
+        Whether a stored artifact is replaced rather than kept.
+    require_hit : bool, default False
+        Whether a miss is refused instead of doing the work, so a run proves it
+        reuses a store rather than silently rebuilding one.
+    """
 
     #: Read a stored artifact back when one is there.
     read_enabled: bool = True
@@ -48,7 +58,18 @@ class StorePolicy:
 
     @classmethod
     def for_mode(cls, mode: StoreMode) -> StorePolicy:
-        """The policy one mode implies."""
+        """Return the policy a store mode implies.
+
+        Parameters
+        ----------
+        mode : StoreMode
+            The mode.
+
+        Returns
+        -------
+        StorePolicy
+            Its gates.
+        """
 
         return cls(
             read_enabled=mode != "refresh",
@@ -58,12 +79,26 @@ class StorePolicy:
         )
 
     def refuse_miss(self, what: str, key: str, *, request: str | None = None) -> None:
-        """Raise when a miss is not allowed. Names what would fix it.
+        """Raise if this policy refuses a miss; return otherwise.
 
-        Called by a store on the read path, after a lookup came back empty
-        and before any work is done to produce the artifact. `request` says
-        what the key was made of, so a miss can be read against the records
-        the store holds without reconstructing the key.
+        A store calls it after a lookup comes back empty and before any work is done
+        to produce the artifact. The message names the modes that would allow the
+        miss.
+
+        Parameters
+        ----------
+        what : str
+            The kind of artifact missed, as the message names it.
+        key : str
+            The key that missed.
+        request : str, optional
+            What the key was made of, so a miss can be read against the records the
+            store holds.
+
+        Raises
+        ------
+        LookupError
+            If ``require_hit`` is set.
         """
 
         if not self.require_hit:

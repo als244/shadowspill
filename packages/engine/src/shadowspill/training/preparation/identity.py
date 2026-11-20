@@ -7,7 +7,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 import shadowspill_client
-from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.components import ComponentSource
 from shadowspill_client.protocol.training import ResolvedTraining
 
 
@@ -20,10 +20,10 @@ def without_initialization(config: ResolvedTraining) -> ResolvedTraining:
     return replace(
         config,
         model=replace(config.model, initialize=None),
-        reference_definition=None,
-        definition_sources={
+        reference_component=None,
+        component_sources={
             key: value
-            for key, value in config.definition_sources.items()
+            for key, value in config.component_sources.items()
             if key != "reference"
         },
         origins={},
@@ -32,8 +32,8 @@ def without_initialization(config: ResolvedTraining) -> ResolvedTraining:
 
 
 @lru_cache(maxsize=1)
-def setup_sources() -> tuple[DefinitionSource, DefinitionSource]:
-    """Pin Python definitions/defaults; runtime compatibility is separate.
+def setup_sources() -> tuple[ComponentSource, ComponentSource]:
+    """Pin Python components/defaults; runtime compatibility is separate.
 
     Hash relative paths and bytes, not Git heads or installation locations. CPU
     and CUDA wheels with the same Python sources describe the same settings.
@@ -49,5 +49,5 @@ def setup_sources() -> tuple[DefinitionSource, DefinitionSource]:
             digest.update(path.relative_to(root).as_posix().encode() + b"\0")
             digest.update(path.read_bytes())
             digest.update(b"\0")
-        sources.append(DefinitionSource(name, version(name), digest.hexdigest()))
+        sources.append(ComponentSource(name, version(name), digest.hexdigest()))
     return sources[0], sources[1]

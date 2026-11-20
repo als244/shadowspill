@@ -232,7 +232,6 @@ class TraceFiles:
             "plans": self.bundle.to_dict(),
             "plan": call.plan,
             "accumulate_gradients": command.accumulate_gradients,
-            "skipped": command.skipped,
             "batch_tokens": command.batch_tokens,
             "scheduled_tokens": command.scheduled_tokens,
         }

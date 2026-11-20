@@ -156,7 +156,7 @@ def bind_bundle(bundle: TrainingBundle, inventory: TemplateInventory) -> Prepare
 
     This is also the first part of strict validation. Worker bootstrap may use it
     only after checking the controller's privately granted artifact checksum and
-    resolving the exact installed definition sources. It does not authorize an
+    resolving the exact installed component sources. It does not authorize an
     uploaded bundle or replace ``TrainingBundle.recheck`` at the service boundary.
     """
     if bundle.config != inventory.layouts.setup.config:

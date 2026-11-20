@@ -9,7 +9,26 @@ from shadowspill_client.protocol.service import bearer_token
 
 
 class BearerTokens:
-    """Retain only credential digests and explicit authenticated owner IDs."""
+    """Client credentials for a `Server`, each with the owner ID it authenticates as.
+
+    A request presents one in an ``Authorization: Bearer`` header and acts as
+    its owner. Only the credentials' SHA-256 digests are kept, and they are
+    compared in constant time.
+
+    Parameters
+    ----------
+    tokens : mapping of str to str
+        Each credential, mapped to its owner ID; several may share an owner.
+        From 1 to 1024 entries. A credential is 32 to 512 visible ASCII
+        characters. An owner ID is up to 128 letters, digits and ``_.:-``,
+        starting with a letter or digit.
+
+    Raises
+    ------
+    ValueError
+        If ``tokens`` is not a mapping of 1 to 1024 entries, or holds an
+        invalid credential or owner ID.
+    """
 
     def __init__(self, tokens: Mapping[str, str]) -> None:
         if not isinstance(tokens, Mapping) or not 0 < len(tokens) <= 1024:
@@ -23,6 +42,24 @@ class BearerTokens:
         )
 
     def owner(self, authorization: Sequence[str]) -> str:
+        """Return the owner a request's credential authenticates as.
+
+        Parameters
+        ----------
+        authorization : sequence of str
+            The request's ``Authorization`` header values.
+
+        Returns
+        -------
+        str
+            The owner ID.
+
+        Raises
+        ------
+        PermissionError
+            If there is not exactly one value, or it is not ``Bearer`` (in any
+            case), a space and a configured credential.
+        """
         if len(authorization) != 1:
             raise PermissionError("Service authentication failed.")
         scheme, separator, token = authorization[0].partition(" ")
@@ -41,7 +78,21 @@ class BearerTokens:
         return owner
 
     def require_separate(self, other: "BearerTokens") -> None:
-        """One bearer credential cannot confer both client and node authority."""
+        """Check that no credential is also one of another set's.
+
+        `Server` checks its node credentials against its client credentials,
+        so that no credential confers both.
+
+        Parameters
+        ----------
+        other : BearerTokens
+            The other credentials.
+
+        Raises
+        ------
+        ValueError
+            If a credential is in both.
+        """
         if any(
             hmac.compare_digest(left, right)
             for left, _ in self._owners

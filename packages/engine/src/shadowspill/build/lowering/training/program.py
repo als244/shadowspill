@@ -20,6 +20,7 @@ from shadowspill.build.metadata import (
 from shadowspill.build.optimizer import BuiltOptimizer
 from shadowspill.build.training_capture import TrainingCapture
 from shadowspill.diagnostics.progress import timed
+from shadowspill.errors import ObjectiveError
 from shadowspill.ir import DeviceSpec, MemoryLocation, Persistence, ResidencySpec
 from shadowspill.parallelism import Parallelism
 from shadowspill.parallelism.ownership import ParameterOwnership
@@ -152,9 +153,21 @@ def lower_training(
             sources[alias_by_object[slot.object_id]].append(
                 f"example[{example}].{roots[slot.leaf_index]['name']}"
             )
-    schema = captures[0].training.objective_schema
+    # Each example has its own static metric values, under one structure.
+    schemas = [capture.training.objective_schema for capture in captures]
+    schema = schemas[0]
+    if any(
+        (item.metric_tree_spec, item.metric_leaf_count, item.tensor_metric_positions)
+        != (
+            schema.metric_tree_spec,
+            schema.metric_leaf_count,
+            schema.tensor_metric_positions,
+        )
+        for item in schemas[1:]
+    ):
+        raise ObjectiveError("objective metric structure differs between examples")
     return Program(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=objects.catalog.alias_groups(),
         objects=tuple(
             replace(item, persistence=Persistence.RUN)
@@ -229,7 +242,7 @@ def lower_training(
                 "tree": treespec_dumps(schema.metric_tree_spec),
                 "leaf_count": schema.metric_leaf_count,
                 "tensor_positions": schema.tensor_metric_positions,
-                "static_leaves": schema.static_metric_leaves,
+                "static_leaves": [item.static_metric_leaves for item in schemas],
             },
             "ordering_constraints": _ordering_constraints(captured),
         },

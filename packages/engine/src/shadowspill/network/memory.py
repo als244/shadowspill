@@ -39,27 +39,40 @@ class RemoteConfiguration(ctypes.Structure):
 
 @dataclass(frozen=True, slots=True)
 class RemotePool(SpillPool):
-    """Configuration for a spill pool held by a daemon on another machine.
+    """A spill pool in memory that a daemon on another machine holds.
 
-    ``capacity`` is declared rather than discovered: the daemon is asked for
-    exactly this many bytes and bringing the runtime up fails if it cannot
-    serve them. That is what keeps a plan reproducible from its configuration
-    alone -- a pool that quietly came up smaller would admit a plan that cannot
-    run.
+    `remote` returns one. When the runtime opens, it connects to the daemon
+    at ``host`` and ``port`` and asks for exactly ``capacity`` bytes, all at
+    once; opening fails if the daemon cannot serve them. Each execution
+    worker opens its own pool and connection, so a daemon serving several
+    workers needs memory for all their capacities. It needs the network library,
+    ``libshadowspill_network.so``.
 
-    The whole capacity is taken once, at create. Leases are carved from it by
-    the same suballocator that serves a local pool, because nothing in the
-    memory subsystem reads through a pool's address.
+    Parameters
+    ----------
+    capacity : int
+        Bytes to ask the daemon for. Positive.
+    kind : int, default 2
+        The runtime's ``ShadowSpillPoolKind`` value for remote memory.
+    kind_name : str, default "remote"
+        The kind's name, as the runtime's pool registry reports it.
+    host : str
+        The daemon's address or host name. Required: the empty default is
+        refused.
+    port : int
+        The daemon's TCP port, from 1 to 65535. Required: the default, 0, is
+        refused.
+    selector : str, default "host"
+        Which of the daemon's memory to ask for, without whitespace.
+        ``shadowspill_memory_daemon`` serves only ``"host"``.
 
-    Each execution worker creates its own pool, connection and remote region.
-    Workers may use the same daemon address; ``capacity`` remains per worker,
-    so the daemon must have enough memory for their combined reservations.
-
-    Two things outside it do, and both go through this kind rather than around
-    it: a lane, for the pools it was made to connect, and the object registry,
-    when state is imported or exported -- which is what ``write`` and ``read``
-    on the kind's ``pool_memory`` entry are for. The framework is told none of
-    this beyond :attr:`addressable`, and is never handed an address here.
+    Raises
+    ------
+    TypeError
+        If ``capacity`` or ``port`` is not an integer.
+    ValueError
+        If ``capacity`` is not positive, ``host`` or ``selector`` is empty,
+        ``port`` is out of range, or ``selector`` contains whitespace.
     """
 
     host: str = ""
@@ -68,9 +81,9 @@ class RemotePool(SpillPool):
     kind: int = REMOTE_POOL_KIND
     kind_name: str = "remote"
 
-    #: The region is a local reservation standing in for memory on another
-    #: machine, so no address in it may be dereferenced here. The kind's
-    #: ``write`` and ``read`` are what move bytes across that edge.
+    #: Always False: a lease's address lies in a local reservation that stands
+    #: for the daemon's memory and maps none of it. The kind's ``write`` and
+    #: ``read``, and the pool's lanes, move its bytes.
     addressable: ClassVar[bool] = False
 
     #: Built in ``__post_init__`` and held for this configuration's life: the
@@ -103,6 +116,13 @@ class RemotePool(SpillPool):
 
     @property
     def library(self) -> Path | None:
+        """The network library, ``libshadowspill_network.so``.
+
+        Raises
+        ------
+        RuntimeError
+            If this build does not include it.
+        """
         path = resolve_library(_LIBRARY)
         if path is None:
             raise RuntimeError(
@@ -112,9 +132,24 @@ class RemotePool(SpillPool):
         return path
 
     def configuration(self) -> ctypes.Structure | None:
+        """Return what the remote kind is told about this pool.
+
+        Returns
+        -------
+        ctypes.Structure
+            The ``ShadowSpillRemotePoolConfiguration`` holding ``host``,
+            ``port`` and ``selector`` as text. It lives as long as the pool.
+        """
         return self._configuration
 
     def calibration_identity(self) -> dict[str, Any]:
+        """Return the pool's configuration as stable JSON, for pool memory evidence.
+
+        Returns
+        -------
+        dict
+            ``host``, ``port`` and ``selector``.
+        """
         return {"host": self.host, "port": self.port, "selector": self.selector}
 
 
@@ -125,7 +160,31 @@ def remote(
     port: int,
     selector: str = DEFAULT_SELECTOR,
 ) -> RemotePool:
-    """Return a remote spill-pool configuration served by one daemon."""
+    """Return a configuration for a spill pool that a daemon serves.
+
+    Parameters
+    ----------
+    capacity : int
+        Bytes to ask the daemon for. Positive.
+    host : str
+        The daemon's address or host name.
+    port : int
+        The daemon's TCP port, from 1 to 65535.
+    selector : str, default "host"
+        Which of the daemon's memory to ask for, as in `RemotePool`.
+
+    Returns
+    -------
+    RemotePool
+        The configuration.
+
+    Raises
+    ------
+    TypeError
+        If ``capacity`` or ``port`` is not an integer.
+    ValueError
+        If an argument is empty or out of range, as `RemotePool` describes.
+    """
 
     return RemotePool(capacity=capacity, host=host, port=port, selector=selector)
 

@@ -9,15 +9,48 @@ from typing import Literal
 
 @dataclass(frozen=True, slots=True)
 class ProfilingOptions:
-    """Bounded conditioning and timing of each unique finalized task.
+    """Bounds on how each task form is conditioned and timed.
 
-    Duration targets count device-event time from the exact task. Wall limits
-    bound additional repetitions and are checked between invocations, never
-    interrupting an invocation or skipping the minimum measurement count.
-    Count limits also bound tiny tasks that cannot reach a time floor cheaply.
-    Distributed workers agree on each repetition. Zero duration targets disable
-    their corresponding time floor. These windows do not establish GPU thermal
-    equilibrium; see the profiling guide for operating-condition controls.
+    Time floors count device time measured around the exact task; wall-time
+    limits bound further runs, checked between runs and never interrupting
+    one. Timing stops once the minimum count, the device-time floor and both
+    stability checks are met, or at a wall-time or count limit; the profile
+    records which. Distributed workers agree on every repetition. The windows
+    do not bring a device to thermal equilibrium.
+
+    Parameters
+    ----------
+    conditioning_seconds : float, default 0.25
+        Device time, in seconds, to run a task before timing it. Zero
+        disables this floor.
+    conditioning_wall_seconds : float, default 3.0
+        Wall-time limit, in seconds, on conditioning runs.
+    conditioning_max_samples : int, default 32
+        Maximum conditioning runs, even if the time floor is unmet.
+    minimum_samples : int, default 3
+        Timing samples always taken, whatever the wall-time limit.
+    maximum_samples : int, default 128
+        Maximum timing samples, at least ``minimum_samples``.
+    measurement_seconds : float, default 0.18
+        Device time, in seconds, to accumulate across timing samples. Zero
+        disables this floor.
+    measurement_wall_seconds : float, default 2.0
+        Wall-time limit, in seconds, on timing samples after the minimum
+        count.
+    relative_mad_threshold : float, default 0.03
+        Largest median absolute deviation, as a fraction of the median, at
+        which samples are stable.
+    half_drift_threshold : float, default 0.03
+        Largest difference between the medians of the first and second half
+        of the samples, as a fraction of the overall median, at which samples
+        are stable.
+
+    Raises
+    ------
+    ValueError
+        If a count is not a positive integer, ``maximum_samples`` is below
+        ``minimum_samples``, or a duration or threshold is negative or not
+        finite.
     """
 
     conditioning_seconds: float = 0.25
@@ -53,10 +86,34 @@ class ProfilingOptions:
                 )
 
     def to_dict(self) -> dict[str, int | float]:
+        """Return the options as plain data.
+
+        Returns
+        -------
+        dict
+            Every field, by name.
+        """
         return asdict(self)
 
     @classmethod
     def from_dict(cls, value: object) -> ProfilingOptions:
+        """Rebuild options from a `to_dict` record.
+
+        Parameters
+        ----------
+        value : object
+            A dict with exactly the option fields.
+
+        Returns
+        -------
+        ProfilingOptions
+            The options.
+
+        Raises
+        ------
+        ValueError
+            If ``value`` is not such a dict, or an option is invalid.
+        """
         if not isinstance(value, dict) or set(value) != {
             item.name for item in fields(cls)
         }:
@@ -90,7 +147,24 @@ def resolve_options(
 
 @dataclass(frozen=True, slots=True)
 class TimingWindow:
-    """Observed repetitions, device-time coverage, and a limiting stop reason."""
+    """How one conditioning or timing window ran, as a task profile records it.
+
+    Attributes
+    ----------
+    gpu_ns : int
+        Device time of the window's runs, in nanoseconds.
+    wall_ns : int
+        Wall time the window took, in nanoseconds.
+    iterations : int
+        Runs in the window.
+    target_met : bool
+        Whether ``gpu_ns`` reached the window's device-time floor.
+    limit : str or None
+        The limit that ended the window early: ``"samples"`` for the count
+        limit, ``"wall"`` for the wall-time limit. A window ends early when its
+        floor is unmet or, for timing, its samples are unstable. None when it
+        ended normally.
+    """
 
     gpu_ns: int = 0
     wall_ns: int = 0
@@ -110,10 +184,34 @@ class TimingWindow:
             raise ValueError("invalid profiling timing window")
 
     def to_dict(self) -> dict[str, int | bool | str | None]:
+        """Return the window as plain data.
+
+        Returns
+        -------
+        dict
+            Every field, by name.
+        """
         return asdict(self)
 
     @classmethod
     def from_dict(cls, value: object) -> TimingWindow:
+        """Rebuild a window from a `to_dict` record.
+
+        Parameters
+        ----------
+        value : object
+            A dict with exactly the window's fields.
+
+        Returns
+        -------
+        TimingWindow
+            The window.
+
+        Raises
+        ------
+        ValueError
+            If ``value`` is not such a dict, or a field is invalid.
+        """
         if not isinstance(value, dict) or set(value) != {
             item.name for item in fields(cls)
         }:

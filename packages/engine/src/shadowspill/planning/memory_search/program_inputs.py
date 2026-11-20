@@ -29,11 +29,48 @@ _PLANNING_PROBLEM_SCHEMA = artifact_schema("plan_program")
 
 @dataclass(frozen=True, slots=True)
 class TransferBandwidths:
-    """The transfer calibration planning and simulation consume.
+    """The copy rates a plan is priced at, replacing a problem's own.
 
-    Bandwidths price every copy a plan makes. The latencies are optional:
-    ``None`` leaves a program's own latency in place, which is what an
-    override naming only bandwidths should do.
+    `memory_search.plan_program` takes them as ``transfer_bandwidths``.
+    Every field is part of the record and its digest; planning prices copies
+    at the four rates alone.
+
+    Parameters
+    ----------
+    fetch_solo_bytes_per_second : int
+        Fetch rate while no eviction moves bytes, in bytes per second.
+        Positive.
+    fetch_concurrent_bytes_per_second : int
+        Fetch rate while an eviction moves bytes, in bytes per second.
+        Positive.
+    evict_solo_bytes_per_second : int
+        Eviction rate while no fetch moves bytes, in bytes per second.
+        Positive.
+    evict_concurrent_bytes_per_second : int
+        Eviction rate while a fetch moves bytes, in bytes per second.
+        Positive.
+    scale_numerator : int, default 1
+        Numerator of a scale recorded with the calibration. Positive.
+        Planning does not apply it.
+    scale_denominator : int, default 1
+        Denominator of that scale. Positive.
+    calibration_digest : str, optional
+        SHA-256 hex digest of the calibration the rates came from, recorded
+        as provenance.
+    provenance : str, optional
+        A free-form note on where the rates came from.
+    fetch_latency_ns : int, optional
+        Fetch latency, in nanoseconds, at least zero, kept as metadata. None
+        keeps the problem's own.
+    evict_latency_ns : int, optional
+        Eviction latency, in nanoseconds, at least zero, kept as metadata.
+        None keeps the problem's own.
+
+    Raises
+    ------
+    ValueError
+        If a rate or scale is not positive, a latency is negative, or
+        ``calibration_digest`` is not 64 characters long.
     """
 
     fetch_solo_bytes_per_second: int
@@ -68,9 +105,17 @@ class TransferBandwidths:
 
     @property
     def digest(self) -> str:
+        """SHA-256 hex digest of `TransferBandwidths.to_dict`."""
         return _digest(self.to_dict())
 
     def to_dict(self) -> dict[str, object]:
+        """Write the rates as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            Every field by name.
+        """
         return {
             "calibration_digest": self.calibration_digest,
             "evict_solo_bytes_per_second": self.evict_solo_bytes_per_second,
@@ -92,6 +137,25 @@ class TransferBandwidths:
     def from_value(
         cls, value: object, path: str = "transfer_bandwidths"
     ) -> TransferBandwidths:
+        """Read rates back from what `TransferBandwidths.to_dict` wrote.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str, default "transfer_bandwidths"
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        TransferBandwidths
+            The rates.
+
+        Raises
+        ------
+        ValueError
+            If a field is missing, malformed or out of range.
+        """
         data = _mapping(value, path)
         return cls(
             fetch_solo_bytes_per_second=_integer(
@@ -135,7 +199,58 @@ class TransferBandwidths:
 
 @dataclass(frozen=True, slots=True)
 class ShadowSpillPlanningProblem:
-    """A program, the boundaries it runs between, and the machine it runs on."""
+    """A program, the boundaries it runs between, and the machine it was built for.
+
+    The question `memory_search.plan_program` answers, with no search
+    policy in it. Its capacities must reconcile: the execution pool is the
+    source budget less ``fixed_execution_bytes`` and the device's shared
+    residency, and the object capacity is that pool less
+    ``object_reserve_bytes``.
+
+    Parameters
+    ----------
+    role : str
+        ``"step"`` or ``"forward"``: whether the program is a whole step or
+        a forward pass. Recorded with the problem; planning does not read
+        it.
+    program : ShadowSpillProgram
+        The program, its task alternatives open.
+    initial_residency : tuple of ResidencySpec
+        Where each alias group is before the first task.
+    final_residency : tuple of ResidencySpec
+        Where each alias group must be after the last task.
+    simulation_config : SimulationConfig
+        The machine at the source budget: one device, whose capacity is the
+        object capacity plus its shared residency, and the spill capacity.
+    admission_facts : AdmissionFacts
+        The physical facts at the source budget, for the same device; their
+        pool and object capacities are the ones above.
+    source_execution_budget_bytes : int
+        The device budget the problem was built under, in bytes. Positive.
+    maximum_execution_budget_bytes : int
+        The largest device budget it may be planned under, in bytes: the
+        pool its tasks were profiled in. At least the source budget.
+    maximum_spill_budget_bytes : int
+        The spill pool it was profiled against, in bytes, kept as a record;
+        a larger spill budget may still be planned. At least the spill
+        capacity.
+    fixed_execution_bytes : int
+        Device bytes outside the execution pool, such as the runtime's fixed
+        costs, deducted from every budget. At least zero.
+    object_reserve_bytes : int
+        Pool bytes held back from object residency. At least zero.
+    dynamic_scratch_reserve_bytes : int
+        Pool bytes reserved for scratch outside the fixed layout: a layout
+        is measured against the pool less this, and the certificate adds it
+        to what a layout requires. At least zero.
+
+    Raises
+    ------
+    ValueError
+        If the role is unsupported, the configuration has other than one device
+        or another device than the facts, a capacity is out of range or does
+        not reconcile, or the facts do not describe the program.
+    """
 
     role: str
     program: ShadowSpillProgram
@@ -192,10 +307,12 @@ class ShadowSpillPlanningProblem:
 
     @property
     def digest(self) -> str:
+        """SHA-256 hex digest of `ShadowSpillPlanningProblem.to_dict`."""
         return _digest(self.to_dict())
 
     @property
     def transfer_bandwidths(self) -> TransferBandwidths:
+        """The device's own copy rates and latencies, as `TransferBandwidths`."""
         device = self.simulation_config.devices[0]
         return TransferBandwidths(
             device.fetch_solo_bandwidth_bytes_per_second,
@@ -213,7 +330,35 @@ class ShadowSpillPlanningProblem:
         spill_budget_bytes: int | None = None,
         transfer_bandwidths: TransferBandwidths | None = None,
     ) -> tuple[SimulationConfig, AdmissionFacts]:
-        """Rebase budget-dependent inputs without changing the ShadowSpillProgram."""
+        """Derive the machine and physical facts for one budget and set of rates.
+
+        The program is unchanged; the device capacity, the pool and object
+        capacities and the copy rates follow the arguments.
+
+        Parameters
+        ----------
+        execution_budget_bytes : int, optional
+            Device budget, in bytes, positive and at most
+            ``maximum_execution_budget_bytes``. None uses the source budget.
+        spill_budget_bytes : int, optional
+            Spill budget, in bytes, at least zero. None uses the spill
+            capacity of ``simulation_config``.
+        transfer_bandwidths : TransferBandwidths, optional
+            Copy rates, replacing the device's; a latency left None keeps
+            the device's. None keeps the device's rates.
+
+        Returns
+        -------
+        tuple of (SimulationConfig, AdmissionFacts)
+            The machine and the physical facts at that budget.
+
+        Raises
+        ------
+        ValueError
+            If a budget is out of range.
+        PlanInfeasibleError
+            If the budget leaves no positive pool or object capacity.
+        """
 
         execution_budget = (
             self.source_execution_budget_bytes
@@ -307,6 +452,15 @@ class ShadowSpillPlanningProblem:
         return config, facts
 
     def to_dict(self) -> dict[str, object]:
+        """Write the problem as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            The record's ``schema``, the role, the program with its digest,
+            the residency boundaries, the capacities, the configuration and
+            the physical facts.
+        """
         return {
             "schema": _PLANNING_PROBLEM_SCHEMA,
             "role": self.role,
@@ -331,10 +485,37 @@ class ShadowSpillPlanningProblem:
         }
 
     def to_json(self) -> str:
+        """Write the problem as compact JSON with sorted keys.
+
+        Returns
+        -------
+        str
+            `ShadowSpillPlanningProblem.to_dict`, encoded.
+        """
         return _canonical_json(self.to_dict())
 
     @classmethod
     def from_value(cls, value: object, path: str) -> ShadowSpillPlanningProblem:
+        """Read a problem back from what `ShadowSpillPlanningProblem.to_dict` wrote.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        ShadowSpillPlanningProblem
+            The problem.
+
+        Raises
+        ------
+        ValueError
+            If the schema is another one, the program does not match its
+            digest, or a field is missing, malformed or inconsistent.
+        """
         data = _mapping(value, path)
         if data.get("schema") != _PLANNING_PROBLEM_SCHEMA:
             raise ValueError(f"{path}.schema: unsupported schema")
@@ -390,6 +571,24 @@ class ShadowSpillPlanningProblem:
 
     @classmethod
     def from_json(cls, payload: str) -> ShadowSpillPlanningProblem:
+        """Read a problem back from what `ShadowSpillPlanningProblem.to_json` wrote.
+
+        Parameters
+        ----------
+        payload : str
+            The JSON text.
+
+        Returns
+        -------
+        ShadowSpillPlanningProblem
+            The problem.
+
+        Raises
+        ------
+        ValueError
+            If the text is not JSON or `ShadowSpillPlanningProblem.from_value`
+            refuses its record.
+        """
         try:
             value = json.loads(payload)
         except json.JSONDecodeError as error:

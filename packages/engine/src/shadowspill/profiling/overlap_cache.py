@@ -37,17 +37,37 @@ def observed_cost(observation: Mapping[str, Any]) -> TaskOverlapCost | None:
 
 
 class OverlapProfileCache:
-    """Reuse supported task/route evidence across candidates and processes.
+    """A store of overlap measurements, reused across candidates and processes.
 
-    Identity includes finalized code, representative input lineage, numerical
-    settings, allocator/stream policy, rank mapping, topology, backend, actual
-    route geometry and sampling protocol. This never supplies task timings,
-    allocation contracts, fixed memory or communication-memory evidence.
+    Pass one to `measure_overlap`, the same instance across a candidate
+    sweep. A measurement is reused only for the same finalized code, input
+    lineage, numerical settings, allocator and stream policy, rank layout,
+    topology, backend, transfer geometry and sampling protocol, and only when
+    every rank holds the same evidence; rank zero alone writes shared
+    entries. It never supplies task timings, allocation evidence or fixed
+    memory. Missing or unsupported observations are not stored, and explicit
+    ``inputs`` disable reuse.
 
-    Modes have the same meanings as TaskProfileCache. Refresh reuses new entries
-    within this instance; caller-supplied task inputs disable reuse. Missing or
-    unsupported observations are not cached. Every rank must agree on identical
-    evidence before skipping a probe; rank zero alone persists the shared entry.
+    Parameters
+    ----------
+    root : str or pathlib.Path or ArtifactStore, optional
+        The store, or its root directory. By default the user's store under
+        ``~/.cache/shadowspill``.
+    mode : str, default "contribute"
+        ``"contribute"``, ``"reuse"``, ``"require"`` or ``"refresh"``, as for
+        `TaskProfileCache`.
+
+    Attributes
+    ----------
+    store : ArtifactStore
+        The store the measurements live in.
+    policy : StorePolicy
+        What ``mode`` permits.
+
+    Raises
+    ------
+    ValueError
+        If ``mode`` is none of these.
     """
 
     def __init__(
@@ -68,6 +88,24 @@ class OverlapProfileCache:
         return digest_directory(self.store.overlap_profiles, key) / "measurement.json"
 
     def get(self, identity: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Look up the observation of one task and transfer route.
+
+        Parameters
+        ----------
+        identity : mapping
+            The observation's identity, as `measure_overlap` builds it.
+
+        Returns
+        -------
+        dict or None
+            A copy of the observation; None on a miss.
+
+        Raises
+        ------
+        ValueError
+            If the stored entry's identity differs, it is corrupt, or its
+            evidence does not fit ``identity``.
+        """
         key = digest(identity)
         if key in self._records:
             return plain(self._records[key])  # type: ignore[no-any-return]
@@ -94,6 +132,31 @@ class OverlapProfileCache:
         *,
         persist: bool = True,
     ) -> bool:
+        """Record an observation in this instance, and on disk if allowed.
+
+        An entry on disk is replaced only in ``"refresh"`` mode.
+
+        Parameters
+        ----------
+        identity : mapping
+            The observation's identity, as for `get`.
+        observation : mapping
+            The paired measurement, with every rank's trials.
+        persist : bool, default True
+            Whether this instance may write it to disk; `measure_overlap`
+            lets rank zero alone.
+
+        Returns
+        -------
+        bool
+            Whether it was recorded; only a ``"measured"`` observation is.
+
+        Raises
+        ------
+        ValueError
+            If the observation does not fit ``identity`` or lacks paired
+            trial evidence.
+        """
         if observation.get("status") != "measured":
             return False
         self._validate(identity, observation)

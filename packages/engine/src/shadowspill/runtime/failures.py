@@ -67,7 +67,84 @@ _ALLOCATION_OPERATIONS = {0: "allocate", 1: "free", 255: "end_of_task"}
 
 @dataclass(frozen=True, slots=True)
 class RuntimeFailureDiagnostics:
-    """Immutable allocator/runtime failure details retained after an exception."""
+    """What the runtime recorded about its first failure.
+
+    `RuntimeExecutionError.diagnostics` carries it. The runtime keeps only
+    the first failure it latches, so later refusals report that one. Byte
+    counts describe the pool when the failure was latched.
+
+    Attributes
+    ----------
+    operation : str
+        The call that failed, as its caller names it.
+    status : int
+        The runtime's status code.
+    status_name : str
+        The status's name, such as ``"out_of_memory"``, ``"no_progress"`` or
+        ``"plan_violation"``; ``"unknown_<code>"`` for a code it does not
+        name.
+    device_ordinal : int
+        The device the failure happened on.
+    requested_bytes : int
+        Bytes the failing request asked for; zero when no request was
+        involved.
+    free_bytes : int
+        Free bytes in the pool.
+    largest_free_range_bytes : int
+        The pool's largest free range, in bytes.
+    object_id : int or None
+        The runtime object involved, if any.
+    allocation_id : int or None
+        The allocation involved, if any.
+    task_id : int or None
+        The runtime's id for the task the failure happened in, if any.
+    task_live_requested_bytes : int
+        For an exceeded task allocation envelope, the bytes the task's live
+        allocations asked for, the refused request included; zero otherwise.
+    task_live_charged_bytes : int
+        The same, in charged bytes.
+    task_live_requested_limit_bytes : int
+        The task's limit on the bytes its live allocations ask for; zero for
+        no limit.
+    task_live_charged_limit_bytes : int
+        Its limit on their charged bytes; zero for no limit.
+    task_maximum_requested_allocation_bytes : int
+        Its limit on the bytes one allocation asks for; zero for no limit.
+    task_maximum_charged_allocation_bytes : int
+        Its limit on one allocation's charged bytes; zero for no limit.
+    task_allocation_operation_index : int
+        For a task allocation contract mismatch, the position in the task's
+        allocation contract where it occurred; zero otherwise.
+    task_allocation_expected_ordinal : int or None
+        The allocation ordinal the contract expected there; None without a
+        mismatch.
+    task_allocation_actual_ordinal : int or None
+        The allocation ordinal the task made there; None without a mismatch.
+    task_allocation_expected_requested_bytes : int
+        Bytes the contract expected that allocation to ask for.
+    task_allocation_actual_requested_bytes : int
+        Bytes it asked for.
+    task_allocation_expected_charged_bytes : int
+        Bytes the contract expected it to be charged.
+    task_allocation_actual_charged_bytes : int
+        Bytes it was charged.
+    task_allocation_expected_alignment_bytes : int
+        Alignment the contract expected, in bytes.
+    task_allocation_actual_alignment_bytes : int
+        Alignment it asked for, in bytes.
+    task_allocation_expected_operation : int
+        The operation the contract expected: 0 to allocate, 1 to free, 255
+        for the end of the task. 255 without a mismatch.
+    task_allocation_actual_operation : int
+        The operation the task made, coded the same way.
+    reason : int
+        The runtime's code for why it refused; zero when the status says it
+        all.
+    reason_name : str
+        The runtime's name for ``reason``; empty for zero.
+    pool_id : int or None
+        The pool the failure concerns, if any.
+    """
 
     operation: str
     status: int
@@ -96,18 +173,17 @@ class RuntimeFailureDiagnostics:
     task_allocation_actual_alignment_bytes: int = 0
     task_allocation_expected_operation: int = 255
     task_allocation_actual_operation: int = 255
-    #: What the runtime latched about why it refused, and the state of the object
-    #: it refused over. The runtime knows both; a report that drops them leaves a
-    #: status number and an object id to be decoded by hand.
     reason: int = 0
     reason_name: str = ""
-    refused_action: str | None = None
-    object_state: str | None = None
     pool_id: int | None = None
 
     @property
     def is_allocator_oom(self) -> bool:
-        """Whether the failure is the null-allocation case we translate."""
+        """Whether an allocation request found no memory.
+
+        True when the status is ``out_of_memory`` or ``no_progress`` and the
+        failure concerns a request for at least one byte.
+        """
 
         return self.status in {_OUT_OF_MEMORY, _NO_PROGRESS} and (
             self.requested_bytes > 0
@@ -115,7 +191,12 @@ class RuntimeFailureDiagnostics:
 
     @property
     def is_shadowspill_contract_failure(self) -> bool:
-        """Whether ShadowSpill should replace a secondary provider exception."""
+        """Whether execution departed from its admitted plan or a task's contract.
+
+        True for ``plan_violation``, ``task_allocation_envelope_exceeded`` and
+        ``task_allocation_contract_mismatch``. Such a failure, not an error the
+        framework raises after it, is the cause to report.
+        """
 
         return self.status in {
             Status.PLAN_VIOLATION,
@@ -124,14 +205,19 @@ class RuntimeFailureDiagnostics:
         }
 
     def as_dict(self) -> dict[str, object]:
+        """Return the record as a JSON-compatible dictionary.
+
+        Returns
+        -------
+        dict
+            Every field by name; each value is a str, an int or None.
+        """
         return {
             "operation": self.operation,
             "status": self.status,
             "status_name": self.status_name,
             "reason": self.reason,
             "reason_name": self.reason_name,
-            "refused_action": self.refused_action,
-            "object_state": self.object_state,
             "device_ordinal": self.device_ordinal,
             "pool_id": self.pool_id,
             "requested_bytes": self.requested_bytes,
@@ -179,7 +265,15 @@ class RuntimeFailureDiagnostics:
 
 
 class RuntimeExecutionError(RuntimeError):
-    """A ShadowSpill runtime operation rejected planned execution."""
+    """Raised when the runtime refuses a call made against it.
+
+    Parameters
+    ----------
+    message : str
+        The error message.
+    diagnostics : RuntimeFailureDiagnostics, optional
+        What the runtime latched about the failure, when it latched anything.
+    """
 
     def __init__(
         self,
@@ -284,10 +378,6 @@ def generic_runtime_error(
         lines.append(f"pool: {diagnostics.pool_id}")
     if diagnostics.reason_name:
         lines.append(f"reason: {diagnostics.reason_name}")
-    if diagnostics.refused_action is not None:
-        lines.append(f"refused_action: {diagnostics.refused_action}")
-    if diagnostics.object_state is not None:
-        lines.append(f"object_state: {diagnostics.object_state}")
     lines.extend(
         (
             f"device: {diagnostics.device_ordinal}",

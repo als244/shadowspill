@@ -16,9 +16,14 @@ from shadowspill.orchestration.launch.admission import (
 from shadowspill.orchestration.nodes.hardware import node_hardware
 from shadowspill.orchestration.nodes.registry import NodeRegistry
 from shadowspill.orchestration.nodes.selection import select_hardware
+from shadowspill.server.startup.memory import (
+    automatic,
+    device_request_bytes,
+    resolve_memory,
+)
 from shadowspill.server.startup.model_sources import local_model_source
 from shadowspill.server.storage import ServiceStorage
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill.training.worker.resources import WorkerHost
 from shadowspill_client._records import integer, names, number, text
@@ -26,6 +31,7 @@ from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.hardware import HardwareInventory
 from shadowspill_client.protocol.preview import TrainingDescription, TrainingPreview
 from shadowspill_client.protocol.runs import RunInfo
+from shadowspill_client.protocol.training import Origin
 
 if TYPE_CHECKING:
     from .creation import LocalCreation
@@ -33,13 +39,53 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class LocalCreationLimits:
-    """Deployment-qualified envelopes; no estimates from tensor pools or idle RSS.
+    """Envelopes of one run's creation and workers, as `ServerLimits.creation`.
 
-    The registry separately owns decoded-family/creation-thread host capacity.
-    ``preparation_disk_bytes`` includes the owned phase directory and its caches;
-    phase processes must be qualified within that envelope, like their host bound.
-    File-count/size checks reject excess before publication or persistent startup.
-    Shared external compiler caches remain the deployment's separate ownership.
+    A deployment qualifies them for the components it installs; none is
+    estimated from pool sizes or idle memory use. A preparation that exceeds
+    an envelope fails with the envelope named, and its directory is removed
+    unpublished. Compiler caches shared outside the service are the
+    deployment's own.
+
+    Parameters
+    ----------
+    preparation_host_bytes : int
+        Host memory, in bytes, of one preparation phase process, or of a
+        process that converts saved state to new Plans.
+    preparation_disk_bytes : int
+        Disk space, in bytes, of one creation's working directory, its caches
+        included; it also bounds the Plan bundle and exported measurements.
+    worker : WorkerHost
+        Host allowance of each training worker.
+    transfer_bytes : int
+        Host memory, in bytes, for streaming files between the service and
+        its phase and worker processes.
+    publication_bytes : int
+        Host memory, in bytes, for publishing a live run's results, logs and
+        manifests as artifacts.
+    log_bytes : int
+        Bytes kept of each output stream of each phase or worker process;
+        the rest is dropped.
+    max_preparation_files : int
+        Entries a preparation's working directory may hold, profiling cache
+        included. Workers whose programs differ keep one cache entry per
+        worker and task.
+    nsys : CollectorLimits, default CollectorLimits()
+        Envelope of the Nsight Systems collector, for runs that capture.
+    worker_startup_seconds : float, default 1800
+        How long a started worker may take to report ready, in seconds. A
+        worker binds its Plans and loads the run's model values in that
+        time; one that exits is reported at once, so this bounds only one
+        that hangs.
+
+    Raises
+    ------
+    ValueError
+        If an integer envelope is not an int of at least 1, or
+        ``worker_startup_seconds`` is not a positive number.
+    TypeError
+        If ``worker`` is not a `WorkerHost` or ``nsys`` is not a
+        `CollectorLimits`.
     """
 
     preparation_host_bytes: int
@@ -101,7 +147,7 @@ class LocalCreationFactory:
         self.storage, self.node = storage, node
         self.pool = text(pool, "compute pool")
         self.nodes = nodes
-        self.packages = names(packages, "definition packages")
+        self.packages = names(packages, "component packages")
         self.root, self.cache = root, cache
         self.model_root = model_root
         self.environment = MappingProxyType(dict(environment))
@@ -139,7 +185,11 @@ class LocalCreationFactory:
         return HardwareInventory((node_hardware(self.node, pool=self.pool),))
 
     def describe(self, request: TrainingDescription) -> TrainingPreview:
-        """Use the same CPU resolver; the caller owns the control-memory envelope."""
+        """Use the same CPU resolver; the caller owns the control-memory envelope.
+
+        Automatic memory budgets are sized here, on the selected workers, and
+        the preview's settings hold the sizes.
+        """
         with checksum_cache(self.cache / "source-digests"):
             settings = request.config if request.config is not None else request.setup
             assert settings is not None
@@ -147,13 +197,30 @@ class LocalCreationFactory:
                 load_registry(self.packages),
                 local_model_source(settings, self.model_root),
             )
+        inventory = self.startable()
+        memory = setup.config.memory
         selection = select_hardware(
-            self.startable(),
+            inventory,
             ranks=setup.context.parallelism.world_size,
-            device_bytes=int(setup.config.memory.device_gib * (1 << 30)),
+            device_bytes=device_request_bytes(memory),
             resources=request.resources,
             wait=True,
         )
+        preview = setup.preview()
+        if automatic(memory):
+            sized: dict[str, Origin] = {
+                f"memory.{name}": "engine_default"
+                for name in ("device_gib", "spill_gib")
+                if getattr(memory, name) == 0
+            }
+            preview = replace(
+                preview,
+                config=replace(
+                    preview.config,
+                    memory=resolve_memory(memory, selection.workers, inventory),
+                    origins={**preview.config.origins, **sized},
+                ),
+            )
         return replace(
-            setup.preview(), resources=selection.resources, hardware=selection.workers
+            preview, resources=selection.resources, hardware=selection.workers
         )

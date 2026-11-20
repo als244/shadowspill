@@ -25,6 +25,30 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ProfiledProgram(Artifact):
+    """A Program with a profile for each task form, ready to plan.
+
+    `apply_profiles` returns one, and ``ProfiledProgram.load`` reads a saved
+    one. It can be planned against any budgets, communication costs and
+    supported orderings. It is read-only: editing the `Profiles` it came from
+    changes nothing.
+
+    Attributes
+    ----------
+    program : Program
+        The profiled Program.
+    task_profiles : mapping of str to TaskProfile
+        One profile per profile key of the Program. A collective task's
+        timing comes from `CommunicationInfo` during planning instead.
+    setup : mapping
+        The setup the profiles were measured on.
+    fixed_device_bytes : int
+        Device memory the worker needs outside the execution pool, in bytes,
+        before communication and spill pool reservations.
+    metadata : mapping
+        The profiles' metadata, such as ``external_headroom_bytes``, the
+        headroom included in ``fixed_device_bytes``.
+    """
+
     artifact_kind: ClassVar[str] = "profiled_program"
     program: Program
     task_profiles: Mapping[str, TaskProfile]
@@ -71,7 +95,7 @@ class ProfiledProgram(Artifact):
 
     @property
     def profiles(self) -> Profiles:
-        """An editable copy; editing it never changes this artifact."""
+        """An editable copy of the profiles; editing it changes nothing here."""
         return Profiles(
             setup=plain(self.setup),
             tasks=dict(self.task_profiles),
@@ -81,12 +105,18 @@ class ProfiledProgram(Artifact):
 
     @cached_property
     def digest(self) -> str:
+        """SHA-256 hex digest of the Program and its profiles."""
         with writing_metadata():
             return digest(self._to_dict(copy_metadata=False))
 
     @property
     def estimated_memory(self) -> tuple[str, ...]:
-        result = ["program storage"] if self.program.memory_estimated else []
+        """What has estimated rather than measured memory.
+
+        ``"fixed device overhead"`` and profile keys; a Plan is
+        simulation-only unless this is empty.
+        """
+        result: list[str] = []
         if self.metadata.get("memory_kind", "estimated") == "estimated":
             result.append("fixed device overhead")
         for key, item in self.task_profiles.items():
@@ -192,6 +222,14 @@ class ProfiledProgram(Artifact):
 
     @shared_writer
     def to_dict(self) -> dict[str, Any]:
+        """Return the Program and its profiles as plain data.
+
+        Returns
+        -------
+        dict
+            ``program``, in `Program.to_dict` form, and ``profiles``, in
+            `Profiles.to_dict` form.
+        """
         return self._to_dict(copy_metadata=True)
 
     def _to_dict(self, *, copy_metadata: bool) -> dict[str, Any]:
@@ -221,6 +259,25 @@ class ProfiledProgram(Artifact):
     def from_dict(
         cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
     ) -> ProfiledProgram:
+        """Rebuild a profiled Program from `to_dict` data, through `apply_profiles`.
+
+        Parameters
+        ----------
+        value : dict
+            The profiled Program, in `to_dict` form.
+        payloads : mapping of str to bytes, optional
+            The Program's binary payloads, by SHA-256 hex digest.
+
+        Returns
+        -------
+        ProfiledProgram
+            The profiled Program.
+
+        Raises
+        ------
+        ValueError
+            If a payload is missing, or the profiles do not apply.
+        """
         from shadowspill.profiling.apply import apply_profiles
 
         return apply_profiles(

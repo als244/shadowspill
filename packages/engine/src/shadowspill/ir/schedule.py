@@ -36,6 +36,16 @@ _RUNTIME_OWNED = "shared residency is owned by the runtime, not the schedule"
 
 
 class MemoryLocation(StrEnum):
+    """Where an alias group's copy is.
+
+    Attributes
+    ----------
+    DEVICE : str
+        The device.
+    SPILL : str
+        The spill pool.
+    """
+
     DEVICE = "device"
     # Serialized as "host": stored programs carry that spelling and their
     # digests are taken over it.
@@ -45,11 +55,20 @@ class MemoryLocation(StrEnum):
 class MemoryActionKind(StrEnum):
     """What a memory action does to an alias group's two copies.
 
-    `FETCH` copies spill to execution. `WRITE_BACK` copies execution to spill
-    and keeps the execution copy, so the spill copy is current again and a
-    later `RELEASE` costs nothing. `RELEASE` drops the execution copy, which
-    requires the spill copy to be current. `EVICT` is the two in one: a
-    write-back where the spill copy is stale, then the release.
+    Attributes
+    ----------
+    RELEASE : str
+        Drop the device copy at once, and the spill copy with it unless the
+        group retains it. Requires a current spill copy when a later task reads
+        the value or the final residency names it.
+    EVICT : str
+        Copy the device copy to spill, then drop it once the copy lands.
+    FETCH : str
+        Copy the spill copy to the device. Requires a current spill copy and no
+        device copy, and drops the spill copy unless the group retains it.
+    WRITE_BACK : str
+        Copy the device copy to spill, keeping the device copy, so a later
+        release costs nothing.
     """
 
     RELEASE = "release"
@@ -60,6 +79,22 @@ class MemoryActionKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ResidencySpec:
+    """Where one alias group is at a schedule's opening or closing boundary.
+
+    Parameters
+    ----------
+    alias_group_id : str
+        The group.
+    location : MemoryLocation
+        Where a current copy of it is.
+
+    Raises
+    ------
+    ValidationError
+        If ``alias_group_id`` is empty or padded with whitespace, or
+        ``location`` is not a `MemoryLocation`.
+    """
+
     alias_group_id: str
     location: MemoryLocation
 
@@ -73,6 +108,13 @@ class ResidencySpec:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "alias_group_id": self.alias_group_id,
             "location": self.location.value,
@@ -80,6 +122,27 @@ class ResidencySpec:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> ResidencySpec:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"schedule.initial_residency[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        ResidencySpec
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         location_value = expect_string(
             field(data, "location", path), f"{path}.location"
@@ -98,6 +161,24 @@ class ResidencySpec:
 
 @dataclass(frozen=True, slots=True)
 class MemoryAction:
+    """One move of one alias group, issued at a task boundary.
+
+    Parameters
+    ----------
+    trigger_task_id : str
+        The task at whose end the action is issued.
+    alias_group_id : str
+        The group moved.
+    kind : MemoryActionKind
+        What the action does.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is empty or padded with whitespace, or ``kind`` is not a
+        `MemoryActionKind`.
+    """
+
     trigger_task_id: str
     alias_group_id: str
     kind: MemoryActionKind
@@ -111,11 +192,24 @@ class MemoryAction:
     def from_validated(
         cls, trigger_task_id: str, alias_group_id: str, kind: MemoryActionKind
     ) -> MemoryAction:
-        """An action whose identifiers a validated program already holds.
+        """Build an action without checking its fields.
 
-        A decoder of an indexed schedule takes every name from the program's
-        own tables, so the checks construction makes would only repeat the
-        program's; a schedule has hundreds of thousands of actions.
+        For identities taken from a validated program's own tables, whose
+        checks construction would only repeat.
+
+        Parameters
+        ----------
+        trigger_task_id : str
+            The task at whose end the action is issued.
+        alias_group_id : str
+            The group moved.
+        kind : MemoryActionKind
+            What the action does.
+
+        Returns
+        -------
+        MemoryAction
+            The action.
         """
 
         action = object.__new__(cls)
@@ -126,6 +220,13 @@ class MemoryAction:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the action as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "alias_group_id": self.alias_group_id,
             "kind": self.kind.value,
@@ -134,6 +235,27 @@ class MemoryAction:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> MemoryAction:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"schedule.actions[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        MemoryAction
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         kind_value = expect_string(field(data, "kind", path), f"{path}.kind")
         try:
@@ -153,6 +275,27 @@ class MemoryAction:
 
 @dataclass(frozen=True, slots=True)
 class MemorySchedule:
+    """Where alias groups start, what moves at each task boundary, and where they end.
+
+    Construction checks only the schedule's own shape; `validate` checks it
+    against a program.
+
+    Parameters
+    ----------
+    initial_residency : tuple of ResidencySpec
+        Where groups are before the first task, at most one entry each. A group
+        that retains its spill copy also starts with that copy current.
+    actions : tuple of MemoryAction
+        The moves, in the program order of their trigger tasks.
+    final_residency : tuple of ResidencySpec, default ()
+        Where groups must be after the last task, at most one entry each.
+
+    Raises
+    ------
+    ValidationError
+        If a field is not a tuple, or a residency names one group twice.
+    """
+
     initial_residency: tuple[ResidencySpec, ...]
     actions: tuple[MemoryAction, ...]
     final_residency: tuple[ResidencySpec, ...] = ()
@@ -179,12 +322,23 @@ class MemorySchedule:
 
     @property
     def digest(self) -> str:
+        """SHA-256 of the schedule's canonical JSON, in hexadecimal.
+
+        Computed once.
+        """
         if not self._digest_cache:
             self._digest_cache.append(digest_json(self.to_dict()))
         return self._digest_cache[0]
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the schedule as JSON values.
+
+        Returns
+        -------
+        dict
+            Its residencies and actions, and its schema label.
+        """
         return {
             "actions": [action.to_dict() for action in self.actions],
             "final_residency": [item.to_dict() for item in self.final_residency],
@@ -193,10 +347,34 @@ class MemorySchedule:
         }
 
     def to_json(self) -> str:
+        """Return the schedule's canonical JSON.
+
+        Returns
+        -------
+        str
+            The `to_dict` form with sorted keys and no whitespace.
+        """
         return canonical_json(self.to_dict())
 
     @classmethod
     def from_dict(cls, value: object) -> MemorySchedule:
+        """Read a schedule from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : mapping
+            The decoded JSON value.
+
+        Returns
+        -------
+        MemorySchedule
+            The schedule.
+
+        Raises
+        ------
+        ValidationError
+            If the schema label is not this version's, or a record is malformed.
+        """
         data = expect_mapping(value, "schedule")
         schema = expect_string(field(data, "schema", "schedule"), "schedule.schema")
         require(
@@ -230,6 +408,25 @@ class MemorySchedule:
 
     @classmethod
     def from_json(cls, payload: str) -> MemorySchedule:
+        """Read a schedule from its JSON text.
+
+        Parameters
+        ----------
+        payload : str
+            The text, as `to_json` writes it.
+
+        Returns
+        -------
+        MemorySchedule
+            The schedule.
+
+        Raises
+        ------
+        ValueError
+            If ``payload`` is not JSON.
+        ValidationError
+            If the decoded record is invalid, as for `from_dict`.
+        """
         return cls.from_dict(parse_json(payload))
 
     def validate(
@@ -237,6 +434,26 @@ class MemorySchedule:
         program: ShadowSpillProgram,
         selections: tuple[TaskAlternativeChoice, ...] = (),
     ) -> None:
+        """Check that the schedule can run on a program.
+
+        The schedule is walked over the tasks the selections activate: each task's
+        inputs are on the device when it runs, each action is possible where it is
+        issued, and the final residency is reached. Shared groups appear in no
+        action or residency; zero-size groups take no actions, and their residency
+        is ignored.
+
+        Parameters
+        ----------
+        program : ShadowSpillProgram
+            The program the schedule is for.
+        selections : tuple of TaskAlternativeChoice, default ()
+            One choice for every alternative group of the program.
+
+        Raises
+        ------
+        ValidationError
+            If the selections are invalid or the schedule cannot run.
+        """
         self._validate_selected(program, program.selected_tasks(selections))
 
     def _validate_selected(

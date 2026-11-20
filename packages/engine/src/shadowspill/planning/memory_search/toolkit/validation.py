@@ -25,18 +25,33 @@ def validate_search_inputs(
     config: SimulationConfig,
     admission: AdmissionFacts | None,
 ) -> None:
-    """Refuse malformed inputs, and a capacity that does not reconcile.
+    """Refuse search inputs of the wrong type, or whose capacities disagree.
 
-    The types first, so a mistake is named where it was made rather than
-    several layers down as a wrong-shaped struct. Then the one relationship
-    a caller can get wrong quietly: the capacity left after shared
-    residency must be exactly the object capacity the `AdmissionFacts`
-    declares, because the search plans against the first and the pool is
-    admitted against the second. A disagreement there produces a plan that
-    fits nothing.
+    A search calls it before anything else. With ``admission``, the
+    device's configured capacity less its shared residency must equal the
+    facts' ``object_capacity_bytes``: the search plans against the first
+    and the pool is admitted against the second, so a disagreement gives a
+    plan that fits nothing.
 
-    Raises `TypeError` for a wrong type and `ValueError` for a capacity
-    that does not reconcile. Returns `None` when there is nothing to say.
+    Parameters
+    ----------
+    program : ShadowSpillProgram
+        The program.
+    initial_residency : tuple of ResidencySpec
+        Where each alias group is before the first task.
+    final_residency : tuple of ResidencySpec
+        Where each alias group must be after the last task.
+    config : SimulationConfig
+        The machine.
+    admission : AdmissionFacts or None
+        The execution pool's physical facts, or None to check types only.
+
+    Raises
+    ------
+    TypeError
+        If an argument has the wrong type.
+    ValueError
+        If the facts do not describe the program, or the capacities disagree.
     """
 
     if not isinstance(program, ShadowSpillProgram):

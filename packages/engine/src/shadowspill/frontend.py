@@ -31,11 +31,14 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class RuntimeFrontend(Protocol):
-    """The one framework object a runtime is opened with, and keeps for its life.
+    """The framework object a runtime is opened with and keeps for its life.
 
-    Every framework call a runtime makes goes through this and through nothing
-    else, so `runtime.frontend` is the whole of the runtime's dependence on a
-    framework.
+    A framework frontend implements these methods; the PyTorch frontend is
+    ShadowSpill's own. `~shadowspill.runtime.Runtime` takes one as its
+    ``frontend`` and makes every framework call through it and through nothing
+    else. Every method is off the per-task path: device selection when a
+    runtime opens, the allocator install, a synchronize while a failure is
+    reported, a search for live objects when a Plan closes.
     """
 
     # The device this frontend submits work to. A runtime is opened against one
@@ -43,24 +46,54 @@ class RuntimeFrontend(Protocol):
     # caller's device argument means.
 
     def current_device_ordinal(self) -> int:
-        """The ordinal the framework would submit work to on this thread."""
+        """Return the ordinal the framework submits work to on this thread.
+
+        Returns
+        -------
+        int
+            The device ordinal.
+        """
 
     def device_ordinal(self, value: object) -> int:
-        """The ordinal ``value`` names: an ordinal, a device, or a device string.
+        """Return the device ordinal ``value`` names.
 
-        Raise :class:`TypeError` when it does not name a device at all, and
-        :class:`~shadowspill.runtime.RuntimeConfigurationError` when it names a
-        device this frontend cannot execute on.
+        Parameters
+        ----------
+        value : object
+            An ordinal, a framework device or a device string.
+
+        Returns
+        -------
+        int
+            The device ordinal.
+
+        Raises
+        ------
+        TypeError
+            If ``value`` does not name a device.
+        RuntimeConfigurationError
+            If it names a device this frontend cannot execute on.
         """
 
     def select_device(self, ordinal: int) -> None:
-        """Make ``ordinal`` the device this thread submits work to."""
+        """Make ``ordinal`` the device this thread submits work to.
+
+        Parameters
+        ----------
+        ordinal : int
+            The device ordinal.
+        """
 
     def synchronize(self, ordinal: int) -> None:
         """Wait for everything the framework has submitted to ``ordinal``.
 
-        Called while a failure is being reported, so it must be safe after a
-        fault and must raise rather than hang if the device is lost.
+        The runtime calls this while it reports a failure, so it must be safe
+        after a fault and must raise rather than hang if the device is lost.
+
+        Parameters
+        ----------
+        ordinal : int
+            The device ordinal.
         """
 
     # The process allocator, installed once and never uninstalled. Frameworks
@@ -70,45 +103,61 @@ class RuntimeFrontend(Protocol):
     # activate, warm the provider.
 
     def refuse_unusable_build(self) -> None:
-        """Raise now if this build cannot host the runtime's allocator.
+        """Raise if this build cannot host the runtime's allocator.
 
-        A framework that has already initialized its device provider is one such
-        refusal: the runtime's pool has to be the first thing on the device, or
-        admission cannot account for what is there.
+        A framework that has already initialized its device provider is one
+        such build: the runtime's pool has to be the first thing on the device,
+        or admission cannot account for what is there.
         """
 
     def missing_operations(self) -> Sequence[str]:
-        """The operations this frontend needs its library to register, and did
-        not find.
+        """Return the operations this frontend needs and its library lacks.
 
         A library that registered none of them is the usual symptom of a stale
-        build, and is worth one clear message rather than an attribute error at
-        the first task boundary.
+        build; the runtime names them in one error before installing anything.
+
+        Returns
+        -------
+        sequence of str
+            Names of the missing operations; empty when every one is
+            registered.
         """
 
     def prepare_allocator(self, library_path: Path, record_stream_pointer: int) -> None:
-        """Build the allocator over ``library_path``, with that callback.
+        """Build the allocator over the runtime's adapter library.
 
-        ``record_stream_pointer`` is the adapter's record-stream entry point,
-        resolved by the runtime; a framework that tracks stream use through its
-        allocator needs it, and one that does not may ignore it. Preparing is
-        separate from activating because the runtime has to bootstrap, and be
-        checked, before anything allocates through it.
+        Preparing is separate from activating because the runtime has to
+        bootstrap, and be checked, before anything allocates through it.
+
+        Parameters
+        ----------
+        library_path : pathlib.Path
+            The adapter library whose allocation functions the allocator
+            calls.
+        record_stream_pointer : int
+            Address of the adapter's record-stream function, resolved by the
+            runtime. A framework that tracks stream use through its allocator
+            needs it; one that does not may ignore it.
         """
 
     def activate_allocator(self) -> None:
         """Make the prepared allocator the one this process allocates through.
 
-        Irreversible for the process lifetime.
+        Irreversible for the life of the process.
         """
 
     def initialize_persistent_workspaces(self, device_ordinal: int) -> None:
-        """Force the libraries' retained workspaces into the pool now.
+        """Make the libraries create their retained workspaces in the pool now.
 
-        A library that creates its workspace lazily creates it in the middle of
-        a plan, splitting a slab admission had already certified. Doing it here,
-        while the pool is empty, makes the cost explicit and its placement
-        deterministic. A frontend with nothing to warm may do nothing.
+        A library that creates its workspace lazily does so mid-Plan, inside
+        space that admission has already certified. Creating it while the pool
+        is empty makes the cost explicit and the placement deterministic. A
+        frontend with nothing to create may do nothing.
+
+        Parameters
+        ----------
+        device_ordinal : int
+            The runtime's device ordinal.
         """
 
     # The framework objects standing on a runtime lease. A lease is bytes in a
@@ -123,30 +172,65 @@ class RuntimeFrontend(Protocol):
         allocations: Sequence[PoolAllocation],
         locate: Callable[[int], int | None],
     ) -> dict[int, tuple[object, ...]]:
-        """The framework objects whose storage lies inside each allocation.
+        """Find the framework objects whose storage lies inside each allocation.
 
-        The frontend walks its own live objects and asks ``locate`` which
-        allocation owns an address: only the framework can enumerate its
-        objects, and only the runtime knows whose bytes an address is. Every
-        allocation asked about appears in the result, mapped to an empty tuple
-        when nothing holds it.
+        Only the framework can enumerate its objects and only the runtime knows
+        whose bytes an address is, so the frontend walks its live objects and
+        asks ``locate`` about each one's address.
+
+        Parameters
+        ----------
+        allocations : sequence of PoolAllocation
+            The pool allocations to explain.
+        locate : callable
+            Takes an address and returns the id of the allocation that owns
+            it, or None when no pool allocation does.
+
+        Returns
+        -------
+        dict of int to tuple
+            For each allocation id asked about, the objects whose storage lies
+            in it; an empty tuple when nothing does.
         """
 
     def retainers(
         self, held: Sequence[object], *, ignore: Sequence[object] = ()
     ) -> dict[int, tuple[str, ...]]:
-        """Where each of ``held`` is referenced from, named so it can be freed.
+        """Name where each of ``held`` is referenced from, so it can be freed.
 
-        `occupants` answers which object occupies a range; this answers why that
-        object is still reachable. Keyed by ``id``, so a caller reads answers
-        back with the objects it passed in. Descriptions, never references.
+        `occupants` answers which object occupies a range; this answers why
+        that object is still reachable. It returns descriptions, never
+        references.
+
+        Parameters
+        ----------
+        held : sequence of object
+            The objects to explain, usually from `occupants`.
+        ignore : sequence of object, default ()
+            The caller's own containers of those objects, which are not
+            reported as referrers.
+
+        Returns
+        -------
+        dict of int to tuple of str
+            For each object's ``id``, descriptions of what references it.
         """
 
     def dematerialize(self, bindings: Sequence[object]) -> int:
-        """Detach ``bindings`` from their leases; return how many were detached.
+        """Detach ``bindings`` from their leases.
 
-        After this returns, none of them reads or writes pool memory and the
-        runtime is free to reclaim the bytes.
+        Afterwards none of them reads or writes pool memory, and the runtime
+        may reclaim the bytes.
+
+        Parameters
+        ----------
+        bindings : sequence of object
+            Framework objects, as `occupants` returns them.
+
+        Returns
+        -------
+        int
+            How many were detached.
         """
 
 

@@ -18,18 +18,27 @@ def startup_metadata_bytes(workers: int) -> int:
 
 @dataclass(frozen=True)
 class WorkerHost:
-    """Deployment allowances in addition to exact admitted pools and staging.
+    """Host memory allowance of each training worker, beyond its pools and staging.
 
-    ``process_bytes`` covers Python, framework/compiled runtime, thread stacks,
-    imported definitions and other resident process overhead. ``artifact_bytes``
-    covers the peak of loading, decoding and rechecking the saved bundle, plus
-    checkpoint descriptors/manifest encoding and bounded default RNG snapshots
-    while that family remains resident;
-    it is not the compressed file size. Neither value is inferred from idle RSS.
-    The deployment must qualify these allowances for its installed definitions.
-    Trace rings, owned copies and report scratch are included separately in the
-    startup's diagnostics allowance. Node-daemon/controller arenas and retained files
-    are separately owned reservations.
+    Neither value is inferred from idle memory use: a deployment qualifies
+    both for its installed components. A worker's trace memory is counted
+    separately, from its `WorkerStartup`; node daemon and controller memory
+    and retained files are separate reservations.
+
+    Parameters
+    ----------
+    process_bytes : int
+        Resident process overhead, in bytes: the interpreter, the framework
+        and compiled runtime, thread stacks and imported components.
+    artifact_bytes : int
+        Peak, in bytes, of loading, decoding and rechecking the saved Plan
+        bundle, with checkpoint descriptors, manifest encoding and default
+        random-state snapshots. Not the compressed file size.
+
+    Raises
+    ------
+    ValueError
+        If either is not an int of at least 1.
     """
 
     process_bytes: int
@@ -40,6 +49,24 @@ class WorkerHost:
         integer(self.artifact_bytes, "decoded artifact allowance", minimum=1)
 
     def peak_bytes(self, startup: WorkerStartup) -> int:
+        """Return a worker's host memory peak, which the service reserves for it.
+
+        Parameters
+        ----------
+        startup : WorkerStartup
+            The worker's startup record.
+
+        Returns
+        -------
+        int
+            In bytes: its spill pool, staging and trace memory, this
+            allowance, and fixed command and log buffers.
+
+        Raises
+        ------
+        TypeError
+            If ``startup`` is not a `WorkerStartup`.
+        """
         if not isinstance(startup, WorkerStartup):
             raise TypeError("worker accounting requires validated startup evidence")
         # Input, initialization and output copies execute serially and share the

@@ -17,11 +17,36 @@ from shadowspill_client._records import text
 
 @dataclass(frozen=True)
 class Allocation:
-    """A snapshot of the service's assigned environment, never a scheduler request.
+    """The compute a `Server` was given, as a snapshot of its environment.
 
-    The current deployment adapter serves one local node or assigned single-node
-    Slurm step. Multi-node bootstrap must supply real node daemons and is not inferred
-    from a controller's visible devices. Construction performs no device probe.
+    It describes resources already assigned, one local machine or a
+    single-node Slurm step, and never requests any. Construction probes no
+    device: the service discovers the node's devices and memory when it
+    starts, and refuses a multi-node Slurm allocation, which needs a node
+    daemon on every node.
+
+    Parameters
+    ----------
+    environment : mapping of str to str
+        Environment variables that describe the assignment, such as
+        ``CUDA_VISIBLE_DEVICES`` and Slurm's. Copied without
+        ``SHADOWSPILL_TOKEN``; the service's preparation and worker
+        processes inherit it. Left out of ``repr``.
+    pool : str, default "default"
+        Compute pool of the node's devices, as hardware listings show it and
+        `Resources` selects it. Not empty, at most 256 characters.
+    controller_only : bool, default False
+        Whether this host is only the controller, holding the service's
+        processing and storage, with node daemons supplying every device.
+
+    Raises
+    ------
+    TypeError
+        If ``controller_only`` is not a bool, or ``environment`` holds a name
+        or value that is not a str.
+    ValueError
+        If ``pool`` is empty, has surrounding spaces or is longer than 256
+        characters.
     """
 
     environment: Mapping[str, str] = field(repr=False)
@@ -44,11 +69,33 @@ class Allocation:
 
     @classmethod
     def from_environment(cls, *, pool: str = "default") -> Allocation:
+        """Describe the resources assigned to this process's environment.
+
+        Parameters
+        ----------
+        pool : str, default "default"
+            Compute pool of the node's devices.
+
+        Returns
+        -------
+        Allocation
+            An allocation of ``os.environ``.
+        """
         return cls(os.environ, pool)
 
     @classmethod
     def controller(cls) -> Allocation:
-        """Use this host only for service CPU/storage; node daemons supply all GPUs."""
+        """Describe a host that is only the controller.
+
+        The service then runs its processing and storage here, and node
+        daemons supply every device.
+
+        Returns
+        -------
+        Allocation
+            A controller-only allocation of ``os.environ``, in pool
+            ``"default"``.
+        """
         return cls(os.environ, controller_only=True)
 
     def _local_node(self, root: Path, *, controller_host_bytes: int) -> NodeAdmission:

@@ -29,7 +29,26 @@ from .abi import runtime_library
 
 
 class Marker:
-    """Where one instant on a stream is recorded, as often as the caller likes."""
+    """An instant on a stream, recorded as often as the caller likes.
+
+    Two markers make an interval; one alone says whether the device has
+    reached it.
+    Markers use the backend events the runtime times its own transfers with,
+    so their instants share one clock with the runtime's trace. When every
+    timing event is in use, taking a marker adds one rather than using the
+    reserve a prepared trace holds; releasing it gives the event back. As a
+    context manager, it releases the marker on exit.
+
+    Parameters
+    ----------
+    runtime_handle : int
+        Handle of the open runtime the marker's event comes from.
+
+    Raises
+    ------
+    PlanningError
+        If the runtime cannot provide an event.
+    """
 
     __slots__ = ("_handle",)
 
@@ -44,7 +63,18 @@ class Marker:
         self._handle = handle
 
     def record(self, compute_stream: int) -> None:
-        """Record this instant on the compute stream, replacing any before it."""
+        """Record this marker's instant on a stream, replacing any earlier one.
+
+        Parameters
+        ----------
+        compute_stream : int
+            The stream's integer handle, as its owner names it.
+
+        Raises
+        ------
+        PlanningError
+            If the backend refuses to record, or the marker is released.
+        """
 
         self._require(
             runtime_library().shadowspill_timing_marker_record(
@@ -60,7 +90,18 @@ class Marker:
             raise PlanningError(f"{operation} failed with status {status}")
 
     def reached(self) -> bool:
-        """Whether the device has reached this instant, without waiting."""
+        """Check, without waiting, whether the device has reached this instant.
+
+        Returns
+        -------
+        bool
+            True once the device has passed it.
+
+        Raises
+        ------
+        PlanningError
+            If the backend query fails, or the marker is released.
+        """
 
         reached = ctypes.c_uint8(0)
         self._require(
@@ -72,7 +113,13 @@ class Marker:
         return bool(reached.value)
 
     def wait(self) -> None:
-        """Block until the device reaches this instant."""
+        """Block the calling thread until the device reaches this instant.
+
+        Raises
+        ------
+        PlanningError
+            If the wait fails, or the marker is released.
+        """
 
         self._require(
             runtime_library().shadowspill_timing_marker_wait(self._handle),
@@ -80,7 +127,25 @@ class Marker:
         )
 
     def nanoseconds_since(self, earlier: Marker) -> int | None:
-        """The nanoseconds from ``earlier`` to here, or None while it runs."""
+        """Measure the time from an earlier marker to this one.
+
+        Parameters
+        ----------
+        earlier : Marker
+            The marker recorded first.
+
+        Returns
+        -------
+        int or None
+            Nanoseconds from ``earlier`` to this marker, or None while the
+            device has not reached this one.
+
+        Raises
+        ------
+        PlanningError
+            If the backend cannot measure the interval, or a marker is
+            released.
+        """
 
         reached = ctypes.c_uint8(0)
         elapsed = ctypes.c_uint64(0)
@@ -96,7 +161,11 @@ class Marker:
         return int(elapsed.value) if reached.value else None
 
     def release(self) -> None:
-        """Give the marker's event back to the runtime."""
+        """Give the marker's event back to the runtime.
+
+        Releasing it again does nothing. A released marker can no longer be
+        recorded or read.
+        """
 
         if self._handle.value:
             runtime_library().shadowspill_timing_marker_release(self._handle)
@@ -110,11 +179,29 @@ class Marker:
 
 
 def nanoseconds_between(earlier: Marker, later: Marker) -> int:
-    """The span between two markers, which the device must already have reached.
+    """Measure the time between two markers the device has already passed.
 
     `Marker.nanoseconds_since` answers None while the later instant is still
-    ahead of the device, which is what a poller wants. This is for a caller that
-    has already waited and is reading a result.
+    ahead of the device, which suits a caller that polls; this is for a caller
+    that has already waited.
+
+    Parameters
+    ----------
+    earlier : Marker
+        The marker recorded first.
+    later : Marker
+        The marker recorded second.
+
+    Returns
+    -------
+    int
+        Nanoseconds from ``earlier`` to ``later``.
+
+    Raises
+    ------
+    PlanningError
+        If the device has not reached ``later``, or the interval cannot be
+        measured.
     """
 
     elapsed = later.nanoseconds_since(earlier)
@@ -124,7 +211,20 @@ def nanoseconds_between(earlier: Marker, later: Marker) -> int:
 
 
 def wait_for_stream(runtime_handle: int, compute_stream: int) -> None:
-    """Block until the device has finished everything on the compute stream."""
+    """Block the calling thread until the device finishes all work on a stream.
+
+    Parameters
+    ----------
+    runtime_handle : int
+        Handle of the open runtime.
+    compute_stream : int
+        The stream's integer handle, as its owner names it.
+
+    Raises
+    ------
+    PlanningError
+        If the wait fails.
+    """
 
     status = int(
         runtime_library().shadowspill_timing_stream_wait(

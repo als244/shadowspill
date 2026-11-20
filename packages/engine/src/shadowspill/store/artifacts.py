@@ -31,7 +31,6 @@ _LAYOUT_SCHEMA = artifact_schema("artifact_store")
 #: ledger says which plans a run displaced.
 _ACCESS_KINDS = {
     "improved",
-    "managed",
     "certified",
     "verdict",
     "matched",
@@ -41,8 +40,11 @@ _ACCESS_KINDS = {
 
 
 class ArtifactRecorder(Protocol):
-    """What a store tells about each artifact it reads or writes: the
-    signature of `ArtifactStore.record`."""
+    """A function a store calls for each artifact it reads or writes.
+
+    It takes the keyword arguments of `ArtifactStore.record`, which is one
+    such function.
+    """
 
     def __call__(
         self,
@@ -59,7 +61,34 @@ class ArtifactRecorder(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class PlanningArtifact:
-    """One file or managed directory touched by a planning call."""
+    """One file or directory a store read or wrote for a call.
+
+    `ArtifactStore.artifacts` returns these records.
+
+    Attributes
+    ----------
+    category : str
+        What touched it, such as ``"search"``, ``"graph_pairs"`` or
+        ``"profiling"``.
+    kind : str
+        What it is within its category, such as ``"program"`` or
+        ``"request"``.
+    digest : str or None
+        The SHA-256 key it is filed under, in hexadecimal; None for an entry
+        with no key.
+    path : pathlib.Path
+        Where it is, as an absolute path.
+    access : str
+        How it was touched: ``"read"``, ``"write"``, ``"matched"`` (an
+        existing entry equal to what would have been written), ``"improved"``
+        (a write replacing a stored plan the answer beat), ``"certified"`` (a
+        certificate written beside a plan) or ``"verdict"`` (a refusal
+        recorded for the key).
+    schema : str or None
+        The schema label of its contents, if it has one.
+    dependencies : tuple of str
+        Digests of the artifacts it was derived from.
+    """
 
     category: str
     kind: str
@@ -100,13 +129,31 @@ class _ArtifactLedger:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactStore:
-    """Optional content-addressed caches for capture, measurement and planning.
+    """Content-addressed caches for capture, measurement and planning.
 
-    ``build`` holds graph pairs and optimizer captures; ``profiling/tasks``
-    holds optional TaskProfileCache entries; ``planning`` holds costed IR inputs,
-    search requests and results. Build and planning can use separate roots and
-    policies; TaskProfileCache owns its measurement policy. Saved public phase
-    artifacts are independent of these directories.
+    `ArtifactStore.resolve` returns it. The store is optional: saved phase
+    artifacts never depend on it. Its build tree holds graph pairs and optimizer
+    captures, which any run may reuse; its planning tree holds archived programs,
+    search requests and results, which a run may keep to itself. Each tree has
+    its own root and mode. Task and overlap measurements live under ``root``.
+
+    Attributes
+    ----------
+    root : pathlib.Path
+        The versioned root, ``<directory>/v<N>``.
+    build : pathlib.Path
+        The build tree.
+    planning : pathlib.Path
+        The planning tree.
+    build_store_mode, plan_store_mode : str
+        What the run may do with each tree: ``"contribute"``, ``"reuse"``,
+        ``"require"`` or ``"refresh"``.
+    export_bypass_key : str or None
+        The caller's label for the code the build is made from. The store
+        checks and keeps it, and files nothing under it.
+    plan_store, build_store : pathlib.Path or None
+        The versioned root a tree was given apart from ``root``; None when it
+        lives under ``root``.
     """
 
     root: Path
@@ -134,6 +181,40 @@ class ArtifactStore:
         plan_store_mode: StoreMode = "contribute",
         export_bypass_key: str | None = None,
     ) -> ArtifactStore:
+        """Resolve the store a caller names, without creating anything.
+
+        Parameters
+        ----------
+        value : path-like or None
+            The directory both trees live under; None for
+            ``~/.cache/shadowspill``.
+            The store's root is its ``v<N>`` subdirectory.
+        build_store : path-like, optional
+            A directory of its own for the build tree.
+        plan_store : path-like, optional
+            A directory of its own for the planning tree.
+        build_store_mode : str, default "contribute"
+            What the run may do with the build tree: ``"contribute"``,
+            ``"reuse"``, ``"require"`` or ``"refresh"``.
+        plan_store_mode : str, default "contribute"
+            What the run may do with the planning tree, from the same four.
+        export_bypass_key : str, optional
+            The caller's label for the code the build is made from; surrounding
+            whitespace is stripped.
+
+        Returns
+        -------
+        ArtifactStore
+            The store.
+
+        Raises
+        ------
+        ValueError
+            If a mode is not one of the four, ``export_bypass_key`` is blank, or a
+            directory names something that is not a directory.
+        TypeError
+            If ``export_bypass_key`` is not a str, or a directory is not path-like.
+        """
         for name, mode in (
             ("build_store_mode", build_store_mode),
             ("plan_store_mode", plan_store_mode),
@@ -175,22 +256,30 @@ class ArtifactStore:
 
     @property
     def graph_pairs(self) -> Path:
+        """Where the build tree keeps graph pairs."""
         return self.build / "graph_pairs"
 
     @property
     def optimizer_captures(self) -> Path:
+        """Where the build tree keeps optimizer captures."""
         return self.build / "optimizers"
 
     @property
     def task_profiles(self) -> Path:
+        """Where task measurements are kept, under ``root``."""
         return self.root / "profiling" / "tasks"
 
     @property
     def overlap_profiles(self) -> Path:
+        """Where overlap measurements are kept, under ``root``."""
         return self.root / "profiling" / "overlap"
 
     @property
     def programs_archive(self) -> Path:
+        """Where the planning tree keeps the programs it was asked to plan.
+
+        A plan's lineage points at this immutable copy.
+        """
         # In the planning tree, not the build tree. A planning call archives
         # the program it was given so a plan's lineage points at an immutable
         # copy of what was planned -- that copy is evidence about the planning,
@@ -199,21 +288,17 @@ class ArtifactStore:
 
     @property
     def plan_requests(self) -> Path:
+        """Where the planning tree keeps search requests."""
         return self.planning / "requests"
 
     @property
     def plan_selections(self) -> Path:
+        """Where the planning tree keeps search results."""
         return self.planning / "results"
 
     @property
     def build_policy(self) -> StorePolicy:
-        """What this run may do with the build tree.
-
-        Held apart from the planning tree because the two are shared for
-        different reasons. A build artifact is what a run *paid for* and any
-        run may reuse; a plan is what a run *decided*, and two runs comparing
-        planners must not read each other's.
-        """
+        """What this run may do with the build tree."""
 
         return StorePolicy.for_mode(self.build_store_mode)
 
@@ -236,7 +321,12 @@ class ArtifactStore:
         return self.build_policy.write_enabled
 
     def initialize(self) -> None:
-        """Create the stable top-level layout and its human guide."""
+        """Create the store's directories and the guides that describe them.
+
+        Creates the root, both trees and the profiling directory, and writes a
+        ``layout.json`` and a ``README.md`` at the root; a separate plan store
+        gets its own guides, naming the root. Existing guides are kept.
+        """
 
         self.root.mkdir(parents=True, exist_ok=True)
         for directory in (self.build, self.root / "profiling", self.planning):
@@ -272,6 +362,34 @@ class ArtifactStore:
         schema: str | None,
         dependencies: tuple[str, ...] = (),
     ) -> None:
+        """Record one artifact this store touched.
+
+        The record joins `artifacts` unless an equal one is already there. Safe to
+        call from several threads.
+
+        Parameters
+        ----------
+        category : str
+            What touched it, such as ``"search"``.
+        kind : str
+            What it is within its category, such as ``"program"``.
+        digest : str or None
+            The SHA-256 key it is filed under, in hexadecimal, or None.
+        path : str or pathlib.Path
+            Where it is; recorded as an absolute path.
+        access : str
+            How it was touched, as in `PlanningArtifact.access`.
+        schema : str or None
+            The schema label of its contents, if it has one.
+        dependencies : tuple of str, default ()
+            Digests of the artifacts it was derived from.
+
+        Raises
+        ------
+        ValueError
+            If ``category`` or ``kind`` is empty, ``digest`` is not 64 characters,
+            or ``access`` is unknown.
+        """
         self._ledger.append(
             PlanningArtifact(
                 category,
@@ -285,9 +403,25 @@ class ArtifactStore:
         )
 
     def artifacts(self) -> tuple[PlanningArtifact, ...]:
+        """Return the artifacts this store touched, in the order first recorded.
+
+        Returns
+        -------
+        tuple of PlanningArtifact
+            One record each.
+        """
         return self._ledger.snapshot()
 
     def diagnostics(self) -> tuple[tuple[str, str], ...]:
+        """Return the store's roots, for a report.
+
+        Returns
+        -------
+        tuple of (str, str)
+            ``("root", ...)``, ``("build", ...)``, ``("planning", ...)`` and
+            ``("plan_store", ...)``, each with its path; the plan store is the root
+            when it has none of its own.
+        """
         return (
             ("root", str(self.root)),
             ("build", str(self.build)),
@@ -299,7 +433,26 @@ class ArtifactStore:
         )
 
     def archive_program(self, program: ShadowSpillProgram) -> Path:
-        """Persist the exact canonical ShadowSpillProgram the search was given."""
+        """Archive the exact program a search was given, in the planning tree.
+
+        Nothing is written when the planning policy forbids writing. An existing
+        entry is compared rather than rewritten, unless the policy overwrites.
+
+        Parameters
+        ----------
+        program : ShadowSpillProgram
+            The program.
+
+        Returns
+        -------
+        pathlib.Path
+            Where the program's canonical JSON is, under its digest.
+
+        Raises
+        ------
+        ValueError
+            If an existing entry cannot be read or differs from the program.
+        """
 
         path = digest_directory(self.programs_archive, program.digest) / "program.json"
         if not self.plan_policy.write_enabled:
@@ -330,7 +483,29 @@ class ArtifactStore:
         self,
         value: Mapping[str, object],
     ) -> tuple[str, Path]:
-        """Persist one complete, framework-free search call boundary."""
+        """Archive one search request in the planning tree, keyed by its contents.
+
+        Nothing is written when the planning policy forbids writing. An existing
+        entry is compared rather than rewritten, unless the policy overwrites.
+
+        Parameters
+        ----------
+        value : mapping
+            The request, as JSON values, with the ``"program_digest"`` of the
+            program it plans.
+
+        Returns
+        -------
+        digest : str
+            SHA-256 of the request's compact sorted JSON, in hexadecimal.
+        path : pathlib.Path
+            Where the request is.
+
+        Raises
+        ------
+        ValueError
+            If an existing entry cannot be read or differs from the request.
+        """
 
         encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(encoded.encode()).hexdigest()
@@ -397,13 +572,27 @@ def _store_root(value: Any, name: str) -> Path:
 
 
 def digest_directory(root: Path, digest: str) -> Path:
-    """Where one content-addressed entry lives, under any store root.
+    """Return the directory one content-addressed entry lives in.
 
-    Every content-addressed artifact follows one shape,
-    ``<kind>/<first two of digest>/<digest>/<document>``: a directory named
-    for the key, sharded so no directory grows unbounded, holding one file
-    per document. A kind that needs a second file later adds it beside the
-    first instead of inventing a path.
+    Every entry is ``<root>/<first two characters of digest>/<digest>/``,
+    holding one file per document.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The directory of one kind of entry.
+    digest : str
+        The entry's SHA-256 key, in hexadecimal.
+
+    Returns
+    -------
+    pathlib.Path
+        The entry's directory.
+
+    Raises
+    ------
+    ValueError
+        If ``digest`` is not 64 characters.
     """
 
     if len(digest) != 64:

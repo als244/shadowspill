@@ -10,7 +10,7 @@ from shadowspill.checkpoint.file_digest import checksum_cache
 from shadowspill.diagnostics.progress import Progress, phase
 from shadowspill.orchestration.capture.progress import write_progress
 from shadowspill.orchestration.launch.file_grants import resolve_file, verify_file
-from shadowspill.training.definitions import InitializationRuntime, load_registry
+from shadowspill.training.components import InitializationRuntime, load_registry
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.preparation.artifacts.validation import bind_bundle
 from shadowspill.training.preparation.capture.templates import capture_inventory
@@ -37,7 +37,7 @@ def serve(
     launch = read_message(stream)
     if not isinstance(launch, WorkerLaunch):
         raise ProtocolError("worker requires private launch configuration first")
-    with phase("Load installed worker definitions"):
+    with phase("Load installed worker components"):
         registry = load_registry(launch.packages)
     with phase("Verify and decode saved Plans"):
         bundle = TrainingBundle.load(verify_file(files, launch.startup.bundle))

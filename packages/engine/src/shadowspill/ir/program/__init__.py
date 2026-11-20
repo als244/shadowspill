@@ -59,6 +59,37 @@ PROGRAM_SCHEMA = artifact_schema("program")
 
 @dataclass(frozen=True, slots=True)
 class ShadowSpillProgram:
+    """One step of work: tasks over objects, with what they cost.
+
+    A program says what the work is, not where it starts, what it runs on or how
+    much memory it has. Construction checks every cross-reference, so a program
+    that exists is consistent.
+
+    Parameters
+    ----------
+    devices : tuple of DeviceSpec
+        The devices; at least one.
+    alias_groups : tuple of AliasGroupSpec
+        The storages objects occupy.
+    objects : tuple of ObjectSpec
+        The values tasks read and write.
+    profiles : tuple of TaskProfile
+        The measurements tasks refer to.
+    tasks : tuple of TaskSpec
+        The tasks, in execution order.
+    task_alternative_groups : tuple of TaskAlternativeGroup, default ()
+        Choices between sets of tasks, one option of each taken by a plan;
+        empty for a program with one set of tasks.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is unknown or repeated, an object lies outside its group,
+        a dependency does not precede its task, a task does not depend on the
+        producer of an input, two writers of one object can be active together,
+        or a shared group is used against its policy.
+    """
+
     devices: tuple[DeviceSpec, ...]
     alias_groups: tuple[AliasGroupSpec, ...]
     objects: tuple[ObjectSpec, ...]
@@ -92,12 +123,23 @@ class ShadowSpillProgram:
 
     @property
     def digest(self) -> str:
+        """SHA-256 of the program's canonical JSON, in hexadecimal.
+
+        Computed once.
+        """
         if not self._digest_cache:
             self._digest_cache.append(digest_json(self.to_dict()))
         return self._digest_cache[0]
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the program as JSON values.
+
+        Returns
+        -------
+        dict
+            Its records by kind, and its schema label.
+        """
         return {
             "alias_groups": [group.to_dict() for group in self.alias_groups],
             "devices": [device.to_dict() for device in self.devices],
@@ -111,10 +153,35 @@ class ShadowSpillProgram:
         }
 
     def to_json(self) -> str:
+        """Return the program's canonical JSON.
+
+        Returns
+        -------
+        str
+            The `to_dict` form with sorted keys and no whitespace.
+        """
         return canonical_json(self.to_dict())
 
     @classmethod
     def from_dict(cls, value: object) -> ShadowSpillProgram:
+        """Read a program from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : mapping
+            The decoded JSON value.
+
+        Returns
+        -------
+        ShadowSpillProgram
+            The program.
+
+        Raises
+        ------
+        ValidationError
+            If the schema label is not this version's, or a record is malformed or
+            the records are inconsistent.
+        """
         data = expect_mapping(value, "program")
         schema = expect_string(field(data, "schema", "program"), "program.schema")
         require(
@@ -165,11 +232,52 @@ class ShadowSpillProgram:
 
     @classmethod
     def from_json(cls, payload: str) -> ShadowSpillProgram:
+        """Read a program from its JSON text.
+
+        Parameters
+        ----------
+        payload : str
+            The text, as `to_json` writes it.
+
+        Returns
+        -------
+        ShadowSpillProgram
+            The program.
+
+        Raises
+        ------
+        ValueError
+            If ``payload`` is not JSON.
+        ValidationError
+            If the decoded record is invalid, as for `from_dict`.
+        """
         return cls.from_dict(parse_json(payload))
 
     def selected_tasks(
         self, selections: tuple[TaskAlternativeChoice, ...]
     ) -> tuple[TaskSpec, ...]:
+        """Return the tasks that run under one choice per alternative group.
+
+        A task in no group always runs; a task in a group runs when the chosen
+        option activates it. Dependencies on tasks that do not run are dropped.
+
+        Parameters
+        ----------
+        selections : tuple of TaskAlternativeChoice
+            One choice for every group of the program, in any order.
+
+        Returns
+        -------
+        tuple of TaskSpec
+            The tasks that run, in program order.
+
+        Raises
+        ------
+        ValidationError
+            If ``selections`` is not a tuple, misses or repeats a group, or names an
+            unknown option, or if the tasks it selects produce one object twice or
+            leave a task without a dependency on the producer of an input.
+        """
         require_tuple(selections, "selections")
         cached = self._selected_cache
         if cached and cached[0][0] == selections:

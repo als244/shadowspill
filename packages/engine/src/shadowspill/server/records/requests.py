@@ -456,7 +456,7 @@ def _transition(before: RequestStatus, after: RequestStatus) -> None:
     allowed = {
         "uploading": {"accepted", "failed"},
         "accepted": {"running", "failed"},
-        "running": {"completed", "skipped", "failed"},
+        "running": {"completed", "failed"},
     }
     if before.identity != after.identity or after.state not in allowed.get(
         before.state, set()

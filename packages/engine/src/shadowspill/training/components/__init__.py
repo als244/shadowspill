@@ -5,8 +5,8 @@ from shadowspill.training.inputs.adapters import InputAdapter, InputLayout, Inpu
 
 from .build import ModelBuild, ModelBuildContext
 from .contracts import (
-    ModelDefinition,
-    ObjectiveDefinition,
+    ModelComponent,
+    ObjectiveComponent,
     ObjectiveEvaluation,
     simple_loss,
 )
@@ -16,11 +16,11 @@ from .initialization import (
     ModelInitialization,
     TensorInitializer,
 )
-from .optimizer import OptimizerDefinition
+from .optimizer import OptimizerComponent
 from .packages import load_registry
-from .policies import PolicyDefinition
-from .preparation import PreparationContext, PreparationDefinition
-from .references import ModelReferenceDefinition
+from .policies import PolicyComponent
+from .preparation import PreparationComponent, PreparationContext
+from .references import ModelReferenceComponent
 from .registry import Registry, ResolvedModel, ResolvedObjective, ResolvedOptimizer
 from .samples import RepresentativePattern, RepresentativeSample, UniformIntegers
 
@@ -33,15 +33,15 @@ __all__ = [
     "InputView",
     "ModelBuild",
     "ModelBuildContext",
-    "ModelDefinition",
+    "ModelComponent",
     "ModelInitialization",
-    "ModelReferenceDefinition",
-    "ObjectiveDefinition",
+    "ModelReferenceComponent",
+    "ObjectiveComponent",
     "ObjectiveEvaluation",
-    "OptimizerDefinition",
-    "PolicyDefinition",
+    "OptimizerComponent",
+    "PolicyComponent",
+    "PreparationComponent",
     "PreparationContext",
-    "PreparationDefinition",
     "Registry",
     "RepresentativePattern",
     "RepresentativeSample",

@@ -13,11 +13,59 @@ from shadowspill.artifacts.archive import Artifact
 
 @dataclass(frozen=True)
 class CommunicationInfo(Artifact):
-    """Transfer assumptions and optional observations, independent of profiling.
+    """Transfer and collective costs for planning, measured or supplied.
 
-    Concurrent rates describe fetch/evict overlap. If omitted they equal the
-    solo rates (independent full-duplex lanes); this assumption is saved.
-    Topology is a mapping from node names to ordered logical rank IDs.
+    `measure_communication` returns one; one written by hand plans with
+    assumed rates. It is kept apart from task profiles, so a change of
+    interconnect or backend replaces it alone. A fetch copies a value from the
+    spill pool to the device, an eviction back. A collective with a matching
+    measurement takes its measured time; any other is estimated as a ring
+    from the scale-up and scale-out rates.
+
+    Parameters
+    ----------
+    fetch_bytes_per_second : float
+        Fetch copy rate, in bytes per second. At least one.
+    evict_bytes_per_second : float
+        Eviction copy rate, in bytes per second. At least one.
+    fetch_concurrent_bytes_per_second : float, optional
+        Fetch rate while an eviction runs too. By default the solo rate, as
+        for independent full-duplex lanes.
+    evict_concurrent_bytes_per_second : float, optional
+        Eviction rate while a fetch runs too. By default the solo rate.
+    fetch_latency_seconds : float, default 0.0
+        Fixed time added to each fetch, in seconds.
+    evict_latency_seconds : float, default 0.0
+        Fixed time added to each eviction, in seconds.
+    topology : mapping of str to sequence of int, default {}
+        The logical ranks on each node, by node name. A rank is on at most
+        one node.
+    metadata : mapping, default {}
+        Provenance, such as the measured ``spill_kind``, ``backend_setup``,
+        ``profiling_options`` and ``host_placement``. ``timing_kind`` is
+        ``"estimated"`` for edited or assumed timings.
+    scale_up_bytes_per_second : float, optional
+        Per-rank collective rate between ranks on one node, in bytes per
+        second. At least one.
+    scale_out_bytes_per_second : float, optional
+        Per-rank collective rate between ranks on different nodes, in bytes
+        per second. At least one.
+    scale_up_latency_seconds : float, optional
+        Time of each ring step within a node, in seconds.
+    scale_out_latency_seconds : float, optional
+        Time of each ring step across nodes, in seconds.
+    measurements : sequence of mapping, default ()
+        Measured collectives, each with its ``operation``, ``ranks``,
+        ``tensor_bytes``, ``dtype`` and ``duration_seconds``.
+    fixed_device_bytes : int, optional
+        Device memory the communicators retain on each worker, in bytes.
+
+    Raises
+    ------
+    ValueError
+        If a rate is below one byte per second, a rate or latency is negative
+        or not finite, a rank appears twice in ``topology``, a measurement is
+        malformed, or measured communicator memory lacks its scope.
     """
 
     artifact_kind: ClassVar[str] = "communication_info"
@@ -72,6 +120,13 @@ class CommunicationInfo(Artifact):
         object.__setattr__(self, "measurements", freeze(tuple(self.measurements)))
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the costs as plain data.
+
+        Returns
+        -------
+        dict
+            Every field, by name.
+        """
         return {
             name: plain(getattr(self, name))
             for name in self.__dataclass_fields__
@@ -90,6 +145,26 @@ class CommunicationInfo(Artifact):
     def from_dict(
         cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
     ) -> CommunicationInfo:
+        """Rebuild costs from `to_dict` data.
+
+        Parameters
+        ----------
+        value : dict
+            The costs, in `to_dict` form.
+        payloads : mapping of str to bytes, optional
+            Binary payloads; communication costs hold none, so it must be
+            empty.
+
+        Returns
+        -------
+        CommunicationInfo
+            The costs.
+
+        Raises
+        ------
+        ValueError
+            If ``payloads`` is not empty, or a field is invalid.
+        """
         if payloads:
             raise ValueError("CommunicationInfo cannot contain executable payloads")
         return cls(**value)

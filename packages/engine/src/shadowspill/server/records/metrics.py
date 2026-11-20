@@ -57,7 +57,7 @@ def caller_metric(
 ) -> MetricRecord:
     if request.identity.request_id != annotation.request_id:
         raise ValueError("caller metrics name another request")
-    if status.state not in ("completed", "skipped", "failed"):
+    if status.state not in ("completed", "failed"):
         raise ValueError("caller metrics require a terminal request result")
     return replace(
         _metric(position, request, status),

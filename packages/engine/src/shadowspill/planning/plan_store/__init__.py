@@ -18,20 +18,16 @@ from shadowspill.planning.memory_search.algorithm import (
 from shadowspill.planning.memory_search.result import (
     ProgramPlanResult,
     ResolutionPlan,
-    certified_result,
 )
 from shadowspill.planning.plan_store.reader import read_selection
 from shadowspill.planning.plan_store.records import (
     RESOLUTION_SCHEMA,
     SCHEMA,
-    SUMMARY_SCHEMA,
     PlanLookup,
-    PlanSummaryLookup,
     Verdict,
 )
 from shadowspill.planning.plan_store.request import PlanRequest
 from shadowspill.planning.plan_store.resolutions import resolution_labels
-from shadowspill.planning.plan_store.summary import read_summary, write_summary
 from shadowspill.planning.plan_store.writer import write_selection, write_verdict
 from shadowspill.planning.serialization.certificate_file import (
     CERTIFICATE_FILE,
@@ -67,9 +63,6 @@ class PlanStore:
     def path(self, key: str) -> Path:
         return digest_directory(self.root, key) / "selection.json"
 
-    def summary_path(self, key: str) -> Path:
-        return digest_directory(self.root, key) / "summary.json"
-
     def certificate_path(self, key: str) -> Path:
         return digest_directory(self.root, key) / CERTIFICATE_FILE
 
@@ -78,31 +71,6 @@ class PlanStore:
 
         return (
             digest_directory(self.root, key) / "resolutions" / label / "selection.json"
-        )
-
-    def summary(
-        self,
-        program: ShadowSpillProgram,
-        *,
-        initial_residency: tuple[ResidencySpec, ...],
-        final_residency: tuple[ResidencySpec, ...],
-        config: SimulationConfig,
-        search_options: SearchOptions | None = None,
-        admission: AdmissionFacts | None = None,
-        placement: AdmissionFacts | None = None,
-    ) -> PlanSummaryLookup | None:
-        """Read certified summary evidence without loading the selected schedule."""
-        return read_summary(
-            self,
-            PlanRequest(
-                program,
-                initial_residency,
-                final_residency,
-                config,
-                admission,
-                placement,
-                search_options if search_options is not None else SearchOptions(),
-            ),
         )
 
     def resolve(
@@ -208,9 +176,6 @@ class PlanStore:
         # Its own file: the plan record is not read or written again.
         write_certificate(self.certificate_path(lookup.key), admission)
         self._record(lookup.key, lookup.result.program.digest, path, "certified")
-        # The summary is what the certified plan promises, so it is written
-        # here, with the certificate, and by nothing that precedes one.
-        write_summary(self, lookup.key, certified_result(lookup.result, admission))
 
     def certify_resolution(
         self, lookup: PlanLookup, plan: ResolutionPlan, admission: FixedLayoutAdmission
@@ -244,15 +209,12 @@ class PlanStore:
         path: Path,
         access: str,
         *,
-        summary: bool = False,
         resolution: bool = False,
     ) -> None:
         if self.artifact_recorder is None:
             return
         kind, schema = "selection", SCHEMA
-        if summary:
-            kind, schema = "summary", SUMMARY_SCHEMA
-        elif resolution:
+        if resolution:
             kind, schema = "resolution", RESOLUTION_SCHEMA
         self.artifact_recorder(
             category="search",

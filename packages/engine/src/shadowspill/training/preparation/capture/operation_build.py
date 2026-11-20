@@ -1,4 +1,4 @@
-"""Definition-aware calls into the one public build engine; no execution loop."""
+"""Component-aware calls into the one public build engine; no execution loop."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Any
 
 from shadowspill.artifacts.program import Program
-from shadowspill.training.definitions.registry import ResolvedOptimizer
+from shadowspill.training.components.registry import ResolvedOptimizer
 from shadowspill.training.inputs.adapters import AdaptedInputs
 from shadowspill.training.preparation.capture.binding import (
     OperationBinding,
@@ -66,7 +66,7 @@ def build_operation(
         )
         if "grad_dtype" in settings and settings["grad_dtype"] != gradient_dtype:
             raise ValueError(
-                "build gradient dtype differs from the optimizer definition"
+                "build gradient dtype differs from the optimizer component"
             )
         settings["grad_dtype"] = gradient_dtype
     arguments = binding.arguments(example)
@@ -100,7 +100,7 @@ def build_operation(
                     and settings["master_dtype"] != master_dtype
                 ):
                     raise ValueError(
-                        "build master dtype differs from the optimizer definition"
+                        "build master dtype differs from the optimizer component"
                     )
                 settings["master_dtype"] = master_dtype
             program = build_step(
@@ -109,7 +109,7 @@ def build_operation(
                 example_args=arguments,
                 optimizer=optimizer.create(
                     model,
-                    control_tensors(optimizer.definition.controls, optimizer.defaults),
+                    control_tensors(optimizer.component.controls, optimizer.defaults),
                 ),
                 runtime_gradient_scale=True,
                 **settings,
@@ -129,12 +129,12 @@ def build_operation(
     if kind == "step":
         assert optimizer is not None
         optimizer_identity = {
-            "id": optimizer.definition.id,
+            "id": optimizer.component.id,
             "source": optimizer.source.to_dict(),
             "config": dict(optimizer.config),
-            "controls": optimizer.definition.controls.to_dict(),
+            "controls": optimizer.component.controls.to_dict(),
             "defaults": dict(optimizer.defaults),
-            "bindings": dict(optimizer.definition.control_bindings),
+            "bindings": dict(optimizer.component.control_bindings),
             "master_dtype": optimizer.master_dtype,
             "gradient_dtype": optimizer.gradient_dtype,
         }

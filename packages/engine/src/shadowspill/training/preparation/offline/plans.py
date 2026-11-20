@@ -20,11 +20,26 @@ LOCAL_PLANS_MEDIA_TYPE = "application/vnd.shadowspill.local-plans+zip"
 
 @dataclass(frozen=True)
 class LocalPlans(Artifact):
-    """Selected CPU schedules awaiting server coverage and physical admission.
+    """Schedules planned locally, for the service to check and run.
 
-    Unlike an executable TrainingBundle, this contains no executable payloads. The
-    receiving service supplies those from the authenticated preparation job.
-    Rejected local searches are diagnostics, never new memory evidence.
+    `PlanningInputs.plan` returns one, and `write` saves it for upload. It
+    holds numeric profiles and Plan records but no executable code: the
+    service supplies that from its own preparation, then checks every
+    Program, schedule, input coverage and joint memory admission. Rejected
+    searches are diagnostics, never memory evidence.
+
+    Attributes
+    ----------
+    config : ResolvedTraining
+        The settings planned for.
+    profiles : mapping of str to Profiles
+        The profiles planned with, by template ID.
+    plans : mapping of str to mapping
+        Each request's Plan, in `Plan.to_dict` form, by request ID.
+    candidates : tuple of str
+        The selected candidates, each with a Plan for every request.
+    rejected : mapping of str to str
+        Why planning failed, by request ID.
     """
 
     artifact_kind: ClassVar[str] = "local_training_plans"
@@ -79,6 +94,14 @@ class LocalPlans(Artifact):
         object.__setattr__(self, "rejected", freeze(self.rejected))
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the proposal as plain data.
+
+        Returns
+        -------
+        dict
+            ``version``, ``config``, ``profiles``, ``plans``, ``candidates``
+            and ``rejected``.
+        """
         return {
             "version": 1,
             "config": self.config.to_dict(),
@@ -95,6 +118,26 @@ class LocalPlans(Artifact):
         *,
         payloads: Mapping[str, bytes] | None = None,
     ) -> LocalPlans:
+        """Rebuild a proposal from `to_dict` data.
+
+        Parameters
+        ----------
+        value : dict
+            The proposal, in `to_dict` form.
+        payloads : mapping of str to bytes, optional
+            Binary payloads; a proposal holds none, so it must be empty.
+
+        Returns
+        -------
+        LocalPlans
+            The proposal.
+
+        Raises
+        ------
+        ValueError
+            If ``payloads`` is not empty, or the record is not a version 1
+            proposal.
+        """
         if (
             payloads
             or set(value)
@@ -119,7 +162,19 @@ class LocalPlans(Artifact):
         )
 
     def write(self, path: str | Path) -> ArtifactRef:
-        """Save explicitly and return the typed reference for ordinary upload."""
+        """Save the proposal and return its reference for upload.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The file to write.
+
+        Returns
+        -------
+        ArtifactRef
+            The file's reference, to pass as ``reference`` to
+            `ArtifactTransfers.upload`.
+        """
         self.save(path)
         with Path(path).open("rb") as stream:
             checksum = hashlib.file_digest(stream, "sha256").hexdigest()

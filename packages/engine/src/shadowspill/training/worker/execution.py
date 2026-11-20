@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from shadowspill.runtime.plan.tracing import TraceCapacities
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef
-from shadowspill_client.protocol.results import ArtifactIssue
 
 from .bindings import BoundWorkerCall, WorkerBindings
 from .checkpoint_reader import WorkerCheckpointReader
@@ -93,11 +92,11 @@ class WorkerExecution:
         request_id = command.request.identity.request_id
         capture.begin(
             number,
-            can_start=operation in ("step", "forward_backward") and not command.skipped,
+            can_start=operation in ("step", "forward_backward"),
             request_id=request_id,
             history_id=command.history_id,
         )
-        completes = operation in ("step", "optim_step") and not command.skipped
+        completes = operation in ("step", "optim_step")
         label = (
             f"train/update={number}/operation={operation}"
             f"/request={request_id}/rank={command.scope.rank}"
@@ -137,17 +136,10 @@ class WorkerExecution:
             self._executor.close()
             return None
         if call.plan is None:
-            if call.command.request.runtime_trace:
-                return WorkerArtifacts(
-                    None,
-                    trace_issue=ArtifactIssue(
-                        "runtime_trace_skipped", "Skipped operation executed no Plan."
-                    ),
-                    execution_seconds=0.0,
-                )
-            return WorkerArtifacts(None, execution_seconds=0.0)
-        evaluation = self._randomness is not None and (
-            call.command.request.operation == "forward" or call.command.skipped
+            # The executor runs its primary Plan when given none.
+            raise ValueError("compute call has no saved Plan")
+        evaluation = (
+            self._randomness is not None and call.command.request.operation == "forward"
         )
         with (
             self._randomness.evaluation()

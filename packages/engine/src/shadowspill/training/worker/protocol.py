@@ -38,6 +38,22 @@ class WorkerOutputError(RuntimeError):
 
 @dataclass(frozen=True)
 class WorkerScope(Record):
+    """Identity of one training worker process within a run.
+
+    The service makes one for each worker when it starts a run.
+
+    Attributes
+    ----------
+    run_id : str
+        The run's ID.
+    server_incarnation : str
+        `Server.incarnation` of the service that started the worker.
+    worker_incarnation : str
+        ID of this worker process, new at each start.
+    rank : int
+        The worker's logical rank.
+    """
+
     run_id: str
     server_incarnation: str
     worker_incarnation: str
@@ -51,7 +67,34 @@ class WorkerScope(Record):
 
 @dataclass(frozen=True)
 class WorkerStartup(Record):
-    """CPU preflight evidence for one admitted bundle and assigned worker."""
+    """What one worker needs, resolved before the service admits it.
+
+    The service builds one for each worker when a run starts, from the run's
+    Plans and saved state, before it claims any device; `WorkerHost.peak_bytes`
+    reads it.
+
+    Attributes
+    ----------
+    scope : WorkerScope
+        The worker's identity.
+    bundle : ArtifactRef
+        The run's Plan bundle.
+    initialization_sha256 : str
+        SHA-256, in 64 lowercase hex digits, of what the worker starts from:
+        checkpoint, weights, initializer, frozen base and staging size.
+    logical_by_worker : tuple of int
+        The logical rank of each worker process, by position: a permutation
+        of the run's ranks.
+    device_bytes : int
+        Execution pool of the worker's Plan on its device, in bytes.
+    spill_bytes : int
+        Capacity of the worker's spill pool, in bytes.
+    staging_bytes : int
+        Host staging, in bytes, for the worker's inputs, outputs and
+        initialization.
+    diagnostics_bytes : int
+        Host memory, in bytes, of the largest runtime trace among its Plans.
+    """
 
     scope: WorkerScope
     bundle: ArtifactRef
@@ -104,7 +147,7 @@ class WorkerBoot(Record):
 class WorkerLaunch(Record):
     """Trusted node daemon configuration on the inherited private channel only.
 
-    Definition packages are installed deployment configuration, never requested
+    Component packages are installed deployment configuration, never requested
     Python imports. Initialization references are granted by the artifact owner.
     Filesystem roots remain local command arguments supplied by the node daemon.
     """
@@ -119,9 +162,9 @@ class WorkerLaunch(Record):
         object.__setattr__(
             self, "startup", record(WorkerStartup, self.startup, "startup")
         )
-        packages = names(self.packages, "installed definition packages")
+        packages = names(self.packages, "installed component packages")
         if len(packages) > 64 or any(len(name) > 128 for name in packages):
-            raise ValueError("worker definition packages exceed their bound")
+            raise ValueError("worker component packages exceed their bound")
         object.__setattr__(self, "packages", packages)
         if not isinstance(self.weights, (tuple, list)) or len(self.weights) > 1024:
             raise ValueError("worker weights require bounded artifact references")
@@ -169,7 +212,6 @@ class WorkerCall(Record):
     invocation: int
     request: OperationRequest
     candidate: str | None
-    skipped: bool
     accumulate_gradients: bool
     frames: Sequence[ArtifactRef] = ()
     checkpoint: SaveInfo | None = None
@@ -232,7 +274,7 @@ class WorkerCall(Record):
             ):
                 raise ValueError("checkpoint boundary differs from its worker request")
         if self.request.operation in STATE_OPERATIONS:
-            if self.candidate is not None or self.skipped or self.accumulate_gradients:
+            if self.candidate is not None or self.accumulate_gradients:
                 raise ValueError("state commands have no compute candidate or flags")
         else:
             identifier(self.candidate, "prepared candidate")
@@ -242,16 +284,9 @@ class WorkerCall(Record):
             or identity.server_incarnation != self.scope.server_incarnation
         ):
             raise ValueError("worker scope differs from its request owner")
-        if (
-            type(self.skipped) is not bool
-            or type(self.accumulate_gradients) is not bool
-        ):
+        if type(self.accumulate_gradients) is not bool:
             raise TypeError("worker state decisions must be boolean")
-        if self.request.operation != "optim_step" and self.skipped:
-            raise ValueError("compute cannot select a skipped training form")
-        if self.accumulate_gradients and (
-            self.request.operation != "forward_backward" or self.skipped
-        ):
+        if self.accumulate_gradients and self.request.operation != "forward_backward":
             raise ValueError("only participating backward can accumulate gradients")
         if not isinstance(self.frames, (tuple, list)) or len(self.frames) > 65536:
             raise ValueError("worker frames must be a bounded list")

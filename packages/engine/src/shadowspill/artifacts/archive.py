@@ -18,7 +18,15 @@ from ._values import encoded
 
 
 class Artifact:
-    """Explicit persistence shared by the public phase results."""
+    """A pipeline result that saves to one archive file.
+
+    `Program`, `Profiles`, `ProfiledProgram`, `PoolMemoryProfile`, `Plan`,
+    `SweepResult`, `CommunicationInfo` and `LocalPlans` are artifacts: `save`
+    writes one and `load` reads it back. An archive is a ZIP file of data: a
+    manifest, the metadata, and binary payloads such as task code, each
+    payload stored once by its SHA-256. Loading runs nothing from the archive
+    and needs no cache.
+    """
 
     artifact_kind: ClassVar[str]
     metadata_limit_bytes: ClassVar[int | None] = None
@@ -43,10 +51,26 @@ class Artifact:
     def save(
         self, path: str | os.PathLike[str], *, max_bytes: int | None = None
     ) -> None:
-        """Atomically publish an archive, optionally bounding each disk write.
+        """Save the artifact as an archive file.
 
-        The limit applies to the new archive; an existing destination retains
-        its separate ownership until the replacement is complete.
+        The archive is written to a temporary file beside ``path`` and then
+        replaces ``path`` atomically, so a failed save leaves ``path`` as it
+        was. The file and the directory entry naming it are synced before
+        `save` returns, so a saved archive survives a crash.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The file to write; its directory is created.
+        max_bytes : int, optional
+            Largest size of the new archive, in bytes. Writing stops before
+            the temporary file exceeds it. By default no limit.
+
+        Raises
+        ------
+        ValueError
+            If ``max_bytes`` is negative or not an integer, or the archive
+            exceeds it.
         """
         if max_bytes is not None and (type(max_bytes) is not int or max_bytes < 0):
             raise ValueError("archive byte limit must be a nonnegative integer")
@@ -99,6 +123,12 @@ class Artifact:
                 os.fsync(stream.fileno())
             os.replace(temporary, destination)
             temporary = None
+            # The rename is durable only once the directory is synced.
+            directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
         finally:
             if temporary is not None:
                 Path(temporary).unlink(missing_ok=True)
@@ -111,10 +141,42 @@ class Artifact:
         max_metadata_bytes: int | None = None,
         max_payload_bytes: int | None = None,
     ) -> Self:
-        """Check declared decompressed sizes before reading archive contents.
+        """Read an artifact that `save` wrote.
 
-        Limits bound wire metadata and binary bytes, not Python object overhead.
-        Artifact types may supply defaults; callers can set explicit limits.
+        Call it on the artifact's class, as in ``Plan.load(path)``. The
+        decompressed sizes the archive declares are checked against the
+        limits before any of it is read; then its manifest, its set of files
+        and each file's SHA-256. The limits count serialized bytes, not the
+        memory of the loaded objects. `save` writes the metadata as JSON
+        (archive version 1) or, for `LocalPlans`, as tables of shared values
+        (version 2); either version loads.
+
+        Parameters
+        ----------
+        path : str, os.PathLike or binary file
+            The archive, or a seekable binary file holding it.
+        max_metadata_bytes : int, optional
+            Largest decompressed size of the manifest and metadata, in bytes;
+            for version 2, also the largest size of the metadata expanded to
+            JSON. By default no limit, or 8 GiB for `LocalPlans`.
+        max_payload_bytes : int, optional
+            Largest decompressed size of the binary payloads, in bytes. By
+            default no limit, or zero for `LocalPlans`, which holds none.
+
+        Returns
+        -------
+        Artifact
+            The artifact, of the class ``load`` is called on.
+
+        Raises
+        ------
+        ValueError
+            If a limit is negative or not an integer, the archive exceeds a
+            limit, it holds another kind of artifact or an unsupported
+            version, its files differ from its manifest, a file fails its
+            checksum, or its metadata is malformed.
+        zipfile.BadZipFile
+            If ``path`` is not a readable ZIP file.
         """
         metadata_limit = (
             cls.metadata_limit_bytes

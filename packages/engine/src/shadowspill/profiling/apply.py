@@ -12,13 +12,37 @@ from shadowspill.communication.task_costs import task_collectives
 
 
 def apply_profiles(program: Program, profiles: Profiles) -> ProfiledProgram:
-    """Require compute durations and complete workspace sizes for every form.
+    """Attach profiles to a Program, ready for planning.
 
-    Static workspace/overhead may come from build. A supplied workspace can
-    exceed a static bound but cannot erase compiler-visible memory. Estimates
-    remain explicit and do not qualify an artifact for execution.
-    Explicit framework collectives can defer both timing and workspace to
-    CommunicationInfo during planning. No process group is needed here.
+    Every task form needs a workspace size, and every one but a collective
+    task a duration. A workspace size
+    missing from ``profiles`` comes from what the build recorded, which a
+    supplied value may exceed but not undercut; nothing else missing is
+    filled in. A collective task takes its timing,
+    and may take its workspace, from `CommunicationInfo` during planning.
+    Estimated memory leaves a Plan simulation-only. It runs on the CPU and
+    needs no process group.
+
+    Parameters
+    ----------
+    program : Program
+        The Program to profile.
+    profiles : Profiles
+        Profiles for the Program's setup, such as `measure_program` returns,
+        with any overlay merged.
+
+    Returns
+    -------
+    ProfiledProgram
+        The Program with each task form's profile.
+
+    Raises
+    ------
+    ValueError
+        If the profiles' setup differs from the Program's, a profile is for
+        another implementation, a duration or memory size is missing, a
+        supplied size is below the recorded one, or a collective task has a
+        timing.
     """
     # TaskProfile records are immutable. ProfiledProgram snapshots the editable
     # collection/setup/metadata below; serializing every task here needlessly
@@ -86,17 +110,6 @@ def apply_profiles(program: Program, profiles: Profiles) -> ProfiledProgram:
             )
     overhead = profiles.fixed_device_bytes
     metadata = dict(profiles.metadata)
-    if overhead is None:
-        overhead = program.fixed_device_bytes
-        if overhead is not None:
-            metadata["memory_kind"] = "static"
-            metadata["memory_source"] = "program"
-    elif (
-        program.fixed_device_bytes is not None and overhead < program.fixed_device_bytes
-    ):
-        raise ValueError(
-            "fixed device overhead is smaller than the Program requirement"
-        )
     if overhead is None:
         missing.append("fixed_device_bytes (runtime/provider overhead)")
     if missing:

@@ -54,7 +54,6 @@ def worker_call(
         invocation,
         call.request,
         None if call.candidate is None else call.candidate.id,
-        transition.skipped,
         transition.accumulate_gradients,
         frames,
         checkpoint,
@@ -153,16 +152,14 @@ class WorkerBindings:
         if key.operation == "optim_step":
             if candidate.operation.operation != "forward_backward":
                 raise ValueError("optimizer requires a prepared backward dependency")
-            plan = None if command.skipped else worker.optimizer
+            plan = worker.optimizer
         else:
             if candidate.operation != key:
                 raise ValueError("saved candidate differs from the requested operation")
-            if command.skipped:
-                raise ValueError("training compute requires loss participation")
             plan = worker.main
-        if plan is None and not (key.operation == "optim_step" and command.skipped):
+        if plan is None:
             raise ValueError("saved candidate is missing its required worker form")
-        if plan is not None and plan not in self.prepared.plans[self.scope.rank]:
+        if plan not in self.prepared.plans[self.scope.rank]:
             raise ValueError("worker form has no admitted Plan")
         bindings = (
             []
@@ -188,10 +185,10 @@ class WorkerBindings:
                 (SpooledFrame(resolve(reference), binding.inputs, reference), binding)
             )
         hyperparams: dict[str, Scalar] = {}
-        if key.operation in ("step", "optim_step") and not command.skipped:
+        if key.operation in ("step", "optim_step"):
             optimizer = self.setup.optimizer
-            assert optimizer is not None and plan is not None
-            for control, targets in optimizer.definition.control_bindings.items():
+            assert optimizer is not None
+            for control, targets in optimizer.component.control_bindings.items():
                 for target in targets:
                     hyperparams[target] = controls.optim[control]
             program = self.prepared.plans[self.scope.rank][plan].program

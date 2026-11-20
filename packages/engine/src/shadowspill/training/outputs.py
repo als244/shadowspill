@@ -11,7 +11,7 @@ from shadowspill.parallelism import InputPlacement, OutputPlacement
 from shadowspill_client._records import plain
 from shadowspill_client.inputs.packing import PackedAssignment
 from shadowspill_client.inputs.shapes import PackingSchedule
-from shadowspill_client.protocol.definitions import OutputSet, TensorOutput
+from shadowspill_client.protocol.components import OutputSet, TensorOutput
 from shadowspill_client.protocol.inputs import InputSchema, TensorField
 
 from .inputs.materialize import field_regions

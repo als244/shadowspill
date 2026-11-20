@@ -7,7 +7,18 @@ from typing import Never
 
 
 class ValidationError(ValueError):
-    """A field-addressable IR validation failure."""
+    """Raised when an IR record is malformed or contradicts itself.
+
+    IR constructors and readers raise it before any planner, simulator or
+    runtime sees the record. Its text is ``"<path>: <message>"``.
+
+    Parameters
+    ----------
+    path : str
+        Where the failure is, such as ``"program.tasks[3].inputs"``.
+    message : str
+        What is wrong there.
+    """
 
     def __init__(self, path: str, message: str) -> None:
         self.path = path

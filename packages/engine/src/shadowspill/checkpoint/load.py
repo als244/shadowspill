@@ -294,19 +294,45 @@ def load_checkpoint(
     frozen_state_id: str | None = None,
     fill_tensor: Callable[[TensorChunk, torch.Tensor], None] | None = None,
 ) -> dict[str, Any]:
-    """Restore a checkpoint of the same training state and return caller metadata.
+    """Restore a checkpoint into an Executor and return its metadata.
 
-    The checkpoint binds to the tensors by name, geometry and owned region,
-    not to the Program: a rebuilt Program, other kernels, another microbatch
-    geometry or budget restore it, and a different inventory is refused with
-    the tensors named. A failure while filling tensors leaves
-    Executor uninitialized. All persistent tensors, including CPU controls, load.
-    Partial checkpoints require the same frozen_state_id and a bounded loader
-    for the omitted base parameters, even when the Executor was initialized.
-    Ordinary omitted weight copies are reconstructed by bounded casts from the
-    archive's selected representation; encoded representations remain physical.
-    Replicated compute weights are reconstructed collectively from restored
-    master shards using bounded CPU transfers. All distributed workers call load.
+    The checkpoint must hold the executor's training state: the same tensor
+    names, geometries and owned regions, whatever Program saved it; another
+    state is refused, naming the tensors that differ. Every persistent
+    tensor is restored, host controls included, through
+    `Executor.initialize`, so a failure leaves the executor uninitialized.
+    Weight copies the archive left out are derived from the saved copies by
+    bounded casts, and replicated compute weights collectively from the
+    restored master shards. Every worker of a distributed run calls it with
+    its own archive.
+
+    Parameters
+    ----------
+    executor : Executor
+        The executor to restore into, initialized or not.
+    path : str or os.PathLike
+        The worker's archive, from `save_checkpoint`.
+    chunk_bytes : int, default 64 << 20
+        Largest chunk filled at once, in bytes.
+    frozen_state_id : str, optional
+        The identity the checkpoint was saved with, if any.
+    fill_tensor : callable, optional
+        Loader for the frozen parameters a partial checkpoint left out,
+        called as ``fill_tensor(chunk, buffer)`` like the one of
+        `Executor.initialize`. Required for a partial checkpoint.
+
+    Returns
+    -------
+    dict
+        The ``metadata`` saved with the checkpoint.
+
+    Raises
+    ------
+    ValueError
+        If the archive's format, byte order or logical rank differs, its state
+        or weight selection differs from the executor's, its
+        ``frozen_state_id`` differs, a tensor is missing, truncated or fails
+        its checksum, or a partial checkpoint has no ``fill_tensor``.
     """
     with open_checkpoint(path) as archive:
         manifest = _manifest(archive, executor)

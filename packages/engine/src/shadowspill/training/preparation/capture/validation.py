@@ -9,7 +9,7 @@ from shadowspill.artifacts.examples import input_groups
 from shadowspill.artifacts.program import Program
 
 if TYPE_CHECKING:
-    from shadowspill.training.definitions.registry import ResolvedOptimizer
+    from shadowspill.training.components.registry import ResolvedOptimizer
     from shadowspill.training.preparation.capture.binding import OperationBinding
 
 
@@ -41,9 +41,9 @@ def validate_optimizer_program(program: Program, optimizer: ResolvedOptimizer) -
     bindings = {item["name"]: item for item in program.bindings["optimizer_bindings"]}
     aliases = {obj.object_id: obj.alias_group_id for obj in program.objects}
     objects, hosts = _reads(program)
-    for control, names in optimizer.definition.control_bindings.items():
+    for control, names in optimizer.component.control_bindings.items():
         dtype = {"float": "torch.float32", "int": "torch.int64", "bool": "torch.bool"}[
-            optimizer.definition.controls.fields[control].dtype
+            optimizer.component.controls.fields[control].dtype
         ]
         for name in names:
             item = bindings.get(name)
@@ -133,7 +133,7 @@ def _validate_mutations(
     registrations: dict[str, list[Any]] = {}
     for item in program.bindings["registrations"]:
         registrations.setdefault(aliases[item["object_id"]], []).append(item)
-    declared = set(binding.model.definition.mutable_buffers)
+    declared = set(binding.model.component.mutable_buffers)
     available = {
         item["name"]
         for values in registrations.values()

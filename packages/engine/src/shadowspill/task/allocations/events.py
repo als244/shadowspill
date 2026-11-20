@@ -7,7 +7,15 @@ from enum import StrEnum
 
 
 class TaskAllocationOperation(StrEnum):
-    """One allocator transition made by a compiled task."""
+    """One allocator transition a compiled task makes.
+
+    Attributes
+    ----------
+    ALLOCATE : str
+        An allocation is made.
+    FREE : str
+        An allocation is freed.
+    """
 
     ALLOCATE = "allocate"
     FREE = "free"
@@ -15,11 +23,42 @@ class TaskAllocationOperation(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class TaskAllocationEvent:
-    """Task-local physical observation normalized away from process IDs.
+    """One allocation or free a task made, as profiling observed it.
 
-    ``reuses_ordinal`` links disjoint lifetimes at one fixed address. Anonymous
-    requests can differ in size; admission reserves the maximum of the chain.
-    Requested and charged sizes describe this allocation, not the slot capacity.
+    Allocations are numbered by ordinal in the order the task makes them, so
+    the record holds no process identity or address.
+
+    Parameters
+    ----------
+    allocation_ordinal : int
+        Which allocation, from zero.
+    operation : TaskAllocationOperation
+        Whether it is made or freed.
+    requested_bytes : int
+        Bytes the task asked for.
+    charged_bytes : int
+        Bytes the allocator charged for this allocation, not the capacity of
+        the address it takes. Positive.
+    output_leaf_indices : tuple of int, default ()
+        Positions of the outputs whose storage the allocation is. Empty for a
+        free.
+    output_view_offsets : tuple of int, default ()
+        Where each of those outputs starts in the allocation, in bytes.
+    reuses_ordinal : int, optional
+        An earlier, freed allocation whose address this one takes. Allocations
+        of temporary storage along one such chain may differ in size; admission
+        reserves the largest.
+    alignment_bytes : int, default 256
+        The allocation's alignment, in bytes. Positive.
+
+    Raises
+    ------
+    ValueError
+        If a size, ordinal, leaf or offset is invalid, the leaves repeat or do
+        not pair with the offsets, a free publishes outputs, or a free or the
+        allocation itself is named as reused.
+    TypeError
+        If ``operation`` is not a `TaskAllocationOperation`.
     """
 
     allocation_ordinal: int
@@ -61,6 +100,13 @@ class TaskAllocationEvent:
                 raise ValueError("task allocation cannot reuse itself")
 
     def to_dict(self) -> dict[str, object]:
+        """Return the event as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "alignment_bytes": self.alignment_bytes,
             "allocation_ordinal": self.allocation_ordinal,
@@ -74,6 +120,24 @@ class TaskAllocationEvent:
 
     @classmethod
     def from_dict(cls, value: object) -> TaskAllocationEvent:
+        """Read an event from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : dict
+            The decoded JSON value. ``alignment_bytes`` defaults to 256 when
+            absent.
+
+        Returns
+        -------
+        TaskAllocationEvent
+            The event.
+
+        Raises
+        ------
+        ValueError
+            If ``value`` is not a dict, lacks a field, or holds an invalid one.
+        """
         if not isinstance(value, dict):
             raise ValueError("cached allocation event must be an object")
         try:

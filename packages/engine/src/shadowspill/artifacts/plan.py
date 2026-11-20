@@ -26,6 +26,40 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Plan(Artifact):
+    """A schedule for one Program within memory budgets, with its timeline.
+
+    `plan_program` returns one, and ``Plan.load`` reads a saved one; an
+    `Executor` runs it. A Plan holds its task code, so running it needs
+    neither the model nor the build caches. A Plan whose
+    `simulation_only_reasons` is not empty predicts a timeline but cannot run.
+    A Plan of a forward/backward Program holds two schedules on one memory
+    layout: one starting gradients fresh, one adding to the stored gradients.
+
+    Attributes
+    ----------
+    profiled_program : ProfiledProgram
+        The planned Program and its profiles.
+    memory_budgets : MemoryBudgets
+        The budgets it was planned within.
+    communication_info : CommunicationInfo
+        The transfer and collective costs it was planned with.
+    schedule : MemorySchedule
+        Where storage starts and ends, and the residency actions around each
+        task.
+    selections : tuple of TaskAlternativeChoice
+        The option chosen in each task alternative group.
+    timeline : SimulationResult
+        The simulated invocation: task and transfer intervals and memory
+        peaks.
+    diagnostics : PlanningDiagnostics
+        What the search did.
+    memory_layout : FixedPhysicalLayout or None
+        Each allocation's place in the execution pool, certified against the
+        schedule; None when the memory evidence does not allow one.
+    pool_memory : PoolMemoryProfile or None
+        The spill pool memory measurement it was planned with.
+    """
+
     artifact_kind: ClassVar[str] = "plan"
     profiled_program: ProfiledProgram
     memory_budgets: MemoryBudgets
@@ -85,6 +119,7 @@ class Plan(Artifact):
 
     @property
     def program(self) -> Program:
+        """The planned `Program`."""
         return self.profiled_program.program
 
     @cached_property
@@ -119,7 +154,11 @@ class Plan(Artifact):
 
     @property
     def fixed_device_bytes(self) -> int:
-        """Compute/provider overhead plus communication resources and reserves."""
+        """Device memory the worker needs outside the execution pool, in bytes.
+
+        The profiled overhead, communicators and collective workspaces, and
+        the spill pool's measured process reservation.
+        """
         return (
             self.profiled_program.fixed_device_bytes
             + self._communication_memory[0]
@@ -132,7 +171,7 @@ class Plan(Artifact):
 
     @property
     def effective_execution_bytes(self) -> int:
-        """Process budget capped by separately measured physical availability."""
+        """The device budget, capped by `pool_memory`'s available memory, in bytes."""
         return (
             min(
                 self.memory_budgets.execution_bytes,
@@ -144,6 +183,11 @@ class Plan(Artifact):
 
     @property
     def simulation_only_reasons(self) -> tuple[str, ...]:
+        """Why the Plan cannot run; empty when it can.
+
+        Estimated memory, unresolved communication memory, absent task code or
+        an absent memory layout, in this Plan or its accumulating schedule.
+        """
         reasons = tuple(
             f"estimated memory: {key}" for key in self.profiled_program.estimated_memory
         )
@@ -171,6 +215,17 @@ class Plan(Artifact):
 
     @property
     def summary(self) -> dict[str, Any]:
+        """Headline figures of the simulated invocation, as a dict.
+
+        ``duration_seconds``, the simulated time; ``execution_peak_bytes``,
+        the device peak with the fixed overhead, and ``spill_peak_bytes``;
+        ``fixed_device_bytes`` and its ``communication_fixed_bytes`` part;
+        ``declared_execution_bytes`` and ``effective_execution_bytes``;
+        ``pool_process_reservation_bytes``; ``fetch_bytes`` and
+        ``evict_bytes``, each with its ``_host_bytes`` and
+        ``_collective_bytes`` parts; ``simulation_only``; and
+        ``logical_ranks``.
+        """
         result = self.timeline
         aliases = {
             item.alias_group_id: item for item in self._costed_program.alias_groups
@@ -202,7 +257,6 @@ class Plan(Artifact):
             "pool_process_reservation_bytes": 0
             if self.pool_memory is None
             else self.pool_memory.process_reservation_bytes,
-            "pool_startup_peak_bytes": None,
             "execution_peak_bytes": max(p.total_bytes for p in result.device_peaks)
             + self.fixed_device_bytes,
             "fixed_device_bytes": self.fixed_device_bytes,
@@ -217,6 +271,14 @@ class Plan(Artifact):
 
     @shared_writer
     def to_dict(self) -> dict[str, Any]:
+        """Return the Plan as plain data.
+
+        Returns
+        -------
+        dict
+            Every field as plain records, with the Program's code named by
+            SHA-256 hex digest.
+        """
         from shadowspill.planning.serialization.simulation_result import (
             simulation_result_value,
         )
@@ -254,6 +316,25 @@ class Plan(Artifact):
     def from_dict(
         cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
     ) -> Plan:
+        """Rebuild a Plan from `to_dict` data and its binary payloads.
+
+        Parameters
+        ----------
+        value : dict
+            The Plan, in `to_dict` form.
+        payloads : mapping of str to bytes, optional
+            The Program's binary payloads, by SHA-256 hex digest.
+
+        Returns
+        -------
+        Plan
+            The Plan.
+
+        Raises
+        ------
+        ValueError
+            If a payload is missing, or the Plan is invalid.
+        """
         from shadowspill.artifacts.budgets import MemoryBudgets
         from shadowspill.communication import CommunicationInfo
         from shadowspill.planning.memory_search.admission import AdmissionFacts

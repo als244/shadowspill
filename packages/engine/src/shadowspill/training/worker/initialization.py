@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from shadowspill.artifacts.state_inventory import program_state
 from shadowspill.artifacts.tensors import registration_name
 from shadowspill.planning.shared_state import shared_state
-from shadowspill.training.definitions.initialization import (
+from shadowspill.training.components.initialization import (
     InitializationContext,
     InitializationRuntime,
     ModelInitialization,
@@ -18,7 +18,7 @@ from shadowspill.training.definitions.initialization import (
 from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill.training.preparation.setup import ResolvedSetup
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.components import ComponentSource
 from shadowspill_client.protocol.frozen import FrozenBase
 
 from .frozen import validate_base
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 class PreparedInitialization:
     context: InitializationContext
     description: ModelInitialization
-    source: DefinitionSource
+    source: ComponentSource
 
     def signature(self) -> dict[str, Any]:
         """Portable startup evidence; no callback or filesystem path is serialized."""

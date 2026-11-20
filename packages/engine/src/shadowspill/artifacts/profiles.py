@@ -15,11 +15,42 @@ from .archive import Artifact
 
 @dataclass(frozen=True)
 class TaskProfile:
-    """None leaves a field unspecified; manual values default to estimates.
+    """The measured or supplied costs of one task form.
 
-    Metadata may mark ``duration_kind`` or ``memory_kind`` as ``measured``
-    and record ordinary source information. A memory peak alone is not an
-    allocation/lifetime contract for execution.
+    A field left None is unspecified: `Profiles.merge` keeps the earlier value,
+    and `apply_profiles` takes a missing workspace size from the build. A value
+    marked ``"estimated"`` in ``metadata``, or unmarked, is an estimate, and
+    estimated memory leaves a Plan simulation-only. A workspace size alone,
+    without measured allocation evidence, does not qualify a Plan to run.
+
+    Parameters
+    ----------
+    duration_seconds : float, optional
+        Time the task takes alone, in seconds. Finite and at least zero.
+    workspace_bytes : int, optional
+        Peak temporary memory the task allocates besides the objects it reads
+        and writes, in bytes. At least zero.
+    compatibility_digest : str, optional
+        The implementation the costs were measured for. When set, it must
+        equal the Program's for the form.
+    resource_phases : sequence of TaskResourcePhase, optional
+        The task's duration as sequential phases, each on a named resource or
+        on ordinary computation.
+    overlap_costs : sequence of TaskOverlapCost, optional
+        The task's progress while each kind of collective transfer overlaps
+        it, as `measure_overlap` measures it.
+    metadata : mapping, default {}
+        Provenance and measurement details. ``duration_kind`` and
+        ``memory_kind`` classify the duration and the memory as
+        ``"measured"``, ``"estimated"`` (the default) or ``"static"``.
+
+    Raises
+    ------
+    ValueError
+        If a duration or size is negative or not finite, or ``duration_kind``
+        or ``memory_kind`` has another value.
+    TypeError
+        If ``resource_phases`` or ``overlap_costs`` holds another type.
     """
 
     duration_seconds: float | None = None
@@ -55,6 +86,13 @@ class TaskProfile:
 
     @shared_writer
     def to_dict(self) -> dict[str, Any]:
+        """Return the profile as plain data.
+
+        Returns
+        -------
+        dict
+            Every field, with phases and overlap costs as records.
+        """
         return self._to_dict(copy_metadata=True)
 
     def _to_dict(self, *, copy_metadata: bool) -> dict[str, Any]:
@@ -73,6 +111,23 @@ class TaskProfile:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> TaskProfile:
+        """Rebuild a profile from `to_dict` data.
+
+        Parameters
+        ----------
+        value : dict
+            The profile, in `to_dict` form.
+
+        Returns
+        -------
+        TaskProfile
+            The profile.
+
+        Raises
+        ------
+        ValueError
+            If a field is invalid.
+        """
         data = dict(value)
         for key, record in (
             ("resource_phases", TaskResourcePhase),
@@ -86,6 +141,27 @@ class TaskProfile:
         return cls(**data)
 
     def merged(self, later: TaskProfile) -> TaskProfile:
+        """Return this profile with each field ``later`` supplies replaced.
+
+        A supplied duration or workspace takes its classification from
+        ``later``'s metadata, an estimate when unmarked; ``later``'s other
+        metadata entries then replace this one's.
+
+        Parameters
+        ----------
+        later : TaskProfile
+            The profile whose supplied fields win.
+
+        Returns
+        -------
+        TaskProfile
+            The merged profile.
+
+        Raises
+        ------
+        ValueError
+            If the profiles name different implementations.
+        """
         if (
             self.compatibility_digest is not None
             and later.compatibility_digest is not None
@@ -116,7 +192,29 @@ class TaskProfile:
 
 @dataclass
 class Profiles(Artifact):
-    """One setup, many task forms. Later supplied fields overwrite earlier ones."""
+    """Task profiles measured on one setup, by profile key.
+
+    `measure_program` returns one, and `measure_overlap` an overlay to merge
+    into it; one can also be written by hand, as estimates. It is editable:
+    `apply_profiles` copies what it uses, so later edits change no
+    `ProfiledProgram`.
+
+    Parameters
+    ----------
+    setup : dict, default {}
+        The device and software builds the profiles describe. `apply_profiles`
+        requires it to equal the Program's ``setup``.
+    tasks : dict of str to TaskProfile, default {}
+        Profiles by the Program's profile keys.
+    fixed_device_bytes : int, optional
+        Device memory the worker needs outside the execution pool, in bytes:
+        its context, libraries, retained provider state and requested
+        headroom.
+    metadata : dict, default {}
+        Provenance and measurement details, such as ``profiling_options`` and
+        ``task_cache``. ``memory_kind`` classifies ``fixed_device_bytes`` as a
+        `TaskProfile`'s does its memory.
+    """
 
     artifact_kind: ClassVar[str] = "profiles"
     setup: dict[str, Any] = field(default_factory=dict)
@@ -125,7 +223,29 @@ class Profiles(Artifact):
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def merge(self, *others: Profiles) -> Profiles:
-        """Return a new collection, preserving unspecified fields."""
+        """Return a copy with the fields later collections supply replaced.
+
+        Each collection is applied in turn: a task's profile merges as
+        `TaskProfile.merged` does, a supplied ``fixed_device_bytes`` replaces
+        the earlier one, and metadata entries replace earlier ones. Fields a
+        collection leaves unspecified are kept. This collection is unchanged.
+
+        Parameters
+        ----------
+        *others : Profiles
+            Collections for the same setup, in order.
+
+        Returns
+        -------
+        Profiles
+            The merged collection.
+
+        Raises
+        ------
+        ValueError
+            If a collection describes another setup, or a task's profiles name
+            different implementations.
+        """
         result = Profiles.from_dict(self.to_dict())
         for other in others:
             if freeze(result.setup) != freeze(other.setup):
@@ -143,6 +263,19 @@ class Profiles(Artifact):
         return result
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the collection as plain data.
+
+        Returns
+        -------
+        dict
+            ``setup``, ``tasks`` as `TaskProfile.to_dict` records,
+            ``fixed_device_bytes`` and ``metadata``.
+
+        Raises
+        ------
+        ValueError
+            If ``fixed_device_bytes`` is not a nonnegative integer.
+        """
         if self.fixed_device_bytes is not None:
             nonnegative_int(self.fixed_device_bytes, "fixed_device_bytes")
         return {
@@ -156,6 +289,25 @@ class Profiles(Artifact):
     def from_dict(
         cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
     ) -> Profiles:
+        """Rebuild a collection from `to_dict` data.
+
+        Parameters
+        ----------
+        value : dict
+            The collection, in `to_dict` form.
+        payloads : mapping of str to bytes, optional
+            Binary payloads; profiles hold none, so it must be empty.
+
+        Returns
+        -------
+        Profiles
+            The collection.
+
+        Raises
+        ------
+        ValueError
+            If ``payloads`` is not empty, or a profile is invalid.
+        """
         if payloads:
             raise ValueError("Profiles cannot contain executable payloads")
         return cls(

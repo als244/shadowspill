@@ -14,7 +14,7 @@ from shadowspill.diagnostics.progress import event, phase
 from shadowspill.orchestration.capture.nsys import NsysCapture
 from shadowspill.orchestration.launch.workers import workers
 from shadowspill.planning.spill import spill_configuration
-from shadowspill.training.definitions.initialization import InitializationRuntime
+from shadowspill.training.components.initialization import InitializationRuntime
 from shadowspill.training.inputs.staging import StagingLimitError
 from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill_client.buffers import BufferBudget

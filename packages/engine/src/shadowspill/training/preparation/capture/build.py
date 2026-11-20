@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from shadowspill.artifacts.component_layouts import attach_component_layouts
 from shadowspill.artifacts.program import Program
-from shadowspill.training.definitions.registry import Registry
+from shadowspill.training.components.registry import Registry
 from shadowspill.training.preparation.capture.allocation_coverage import (
     allocation_coverage,
 )

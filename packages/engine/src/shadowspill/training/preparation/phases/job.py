@@ -11,7 +11,7 @@ from typing import Any, ClassVar
 
 from shadowspill.artifacts.archive import Artifact
 from shadowspill.orchestration.launch.phases import PhaseInvocation, PhaseResult
-from shadowspill.training.definitions import Registry, load_registry
+from shadowspill.training.components import Registry, load_registry
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.preparation.capture.templates import (
     TemplateInventory,
@@ -53,9 +53,7 @@ class PreparationJob(Artifact):
     config: ResolvedTraining
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "packages", names(self.packages, "definition packages")
-        )
+        object.__setattr__(self, "packages", names(self.packages, "component packages"))
         if not isinstance(self.config, ResolvedTraining):
             raise TypeError("preparation job requires a resolved training setup")
 

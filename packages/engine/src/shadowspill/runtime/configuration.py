@@ -23,7 +23,13 @@ from .topology import MemoryPool, RuntimeRoute
 
 
 class RuntimeConfigurationError(RuntimeError):
-    """Raised when a runtime or plan asks for incompatible pool resources."""
+    """Raised when a runtime cannot be opened, used or closed as asked.
+
+    That is when the pools or routes are invalid, the adapter library is
+    missing, a runtime already exists in the process, the runtime is closed
+    or still owns work, calibration fails, or a plan asks for pools or routes
+    the runtime does not have.
+    """
 
 
 def validate_topology(

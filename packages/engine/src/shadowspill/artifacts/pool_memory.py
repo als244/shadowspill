@@ -17,13 +17,26 @@ from .archive import Artifact
 
 @dataclass(frozen=True)
 class PoolMemoryProfile(Artifact):
-    """Exact pool configuration and per-logical-rank resource observations.
+    """The measured device memory one spill pool configuration costs each worker.
 
-    Use :func:`shadowspill.measure_pool_memory` to measure a rank, then
-    :meth:`combine` for independent devices. Multiple workers sharing a GPU
-    require joint calibration and are currently refused. Process increments
-    are conservative additions to compute-profile reservations: their overlap
-    with mature provider state is unknown, not proven disjoint.
+    `measure_pool_memory` returns one for one logical rank, `combine` joins
+    ranks measured on distinct devices, and ``PoolMemoryProfile.load`` reads a
+    saved one. Passed to `plan_program` as ``pool_memory``, it caps the device
+    budget at the memory observed available with the pool live
+    (`physical_limit_bytes`) and adds the pool's process memory to the fixed
+    overhead (`process_reservation_bytes`), conservatively, since it may
+    overlap provider state. The observations are of retained memory; startup
+    peaks stay unknown. Workers sharing a device are refused.
+
+    Attributes
+    ----------
+    pool : mapping
+        The measured pool configuration: ``kind``, ``kind_name``,
+        ``capacity`` in bytes and the kind's ``configuration``.
+    ranks : tuple of mapping
+        One record per logical rank: its ``logical_rank``, the ``identity``
+        of the device, host and libraries measured on, and the raw samples of
+        each acquisition ``cycles``.
     """
 
     artifact_kind: ClassVar[str] = "pool_memory_profile"
@@ -126,7 +139,27 @@ class PoolMemoryProfile(Artifact):
 
     @classmethod
     def combine(cls, *profiles: Self) -> Self:
-        """Combine independently measured ranks; no extra GPU acquisition."""
+        """Join profiles measured for different logical ranks into one.
+
+        Nothing is measured again.
+
+        Parameters
+        ----------
+        *profiles : PoolMemoryProfile
+            Profiles of the same pool configuration, for distinct logical
+            ranks on distinct devices.
+
+        Returns
+        -------
+        PoolMemoryProfile
+            A profile with every rank.
+
+        Raises
+        ------
+        ValueError
+            If no profile is given, the configurations differ, or a rank or
+            device repeats.
+        """
         if not profiles or any(p.pool != profiles[0].pool for p in profiles):
             raise ValueError(
                 "combined pool measurements require identical configurations"
@@ -134,6 +167,23 @@ class PoolMemoryProfile(Artifact):
         return cls(profiles[0].pool, tuple(r for p in profiles for r in p.ranks))
 
     def rank(self, logical_rank: int) -> Mapping[str, Any]:
+        """Return one logical rank's record.
+
+        Parameters
+        ----------
+        logical_rank : int
+            The logical rank.
+
+        Returns
+        -------
+        mapping
+            The rank's record in `ranks`.
+
+        Raises
+        ------
+        ValueError
+            If the profile has no such rank.
+        """
         for rank in self.ranks:
             if rank["logical_rank"] == logical_rank:
                 return rank
@@ -141,6 +191,7 @@ class PoolMemoryProfile(Artifact):
 
     @property
     def resource_identity(self) -> str:
+        """SHA-256 hex digest of the pool configuration and each rank's identity."""
         return digest(
             {
                 "pool": self.pool,
@@ -156,10 +207,10 @@ class PoolMemoryProfile(Artifact):
 
     @property
     def physical_limit_bytes(self) -> int:
-        """Free plus own-process bytes with the full spill pool already live.
+        """Least device memory available to a worker with the pool live, in bytes.
 
-        This includes the global registration charge. Do not subtract it again.
-        Use the least available observed allowance across all ranks and cycles.
+        Free plus the process's own device memory, the least over every rank,
+        cycle and sample. It already accounts for the pool's device-wide cost.
         """
         return cast(
             int,
@@ -176,7 +227,12 @@ class PoolMemoryProfile(Artifact):
 
     @property
     def process_reservation_bytes(self) -> int:
-        """Conservative non-control process increment, charged once per worker."""
+        """Largest growth of the process's device memory from the pool, in bytes.
+
+        Measured from before acquisition to the live and warmed samples, less
+        the 4 MiB execution control, over every rank and cycle. Each worker
+        charges it once as fixed overhead.
+        """
         return cast(
             int,
             max(
@@ -196,7 +252,26 @@ class PoolMemoryProfile(Artifact):
         )
 
     def global_reservation_bytes(self, logical_rank: int) -> int:
-        """Observed outside-process increment to reserve before pool startup."""
+        """Return the largest growth of device memory outside the process, in bytes.
+
+        A worker of this rank reserves it before creating its pools.
+
+        Parameters
+        ----------
+        logical_rank : int
+            The logical rank.
+
+        Returns
+        -------
+        int
+            The largest growth, over the rank's cycles, of device memory used
+            outside the process while the pool is live.
+
+        Raises
+        ------
+        ValueError
+            If the profile has no such rank.
+        """
         return max(
             max(self._outside((*c["live"], *c["warmed"])))
             - min(self._outside(c["before"]))
@@ -211,6 +286,25 @@ class PoolMemoryProfile(Artifact):
         gpu: str | None = None,
         spill_kind: str | None = None,
     ) -> None:
+        """Check that the profile fits a Program's planning inputs.
+
+        Parameters
+        ----------
+        spill_bytes : int
+            The spill budget, in bytes; the measured capacity must equal it.
+        world_size : int
+            The Program's logical ranks; the profile must cover exactly them.
+        gpu : str, optional
+            The Program's device name; every rank must have been measured on
+            one.
+        spill_kind : str, optional
+            The spill pool kind communication was measured with.
+
+        Raises
+        ------
+        ValueError
+            If any of these differ.
+        """
         if spill_bytes != self.pool["capacity"]:
             raise ValueError("pool memory capacity differs from the spill budget")
         if {r["logical_rank"] for r in self.ranks} != set(range(world_size)):
@@ -225,12 +319,24 @@ class PoolMemoryProfile(Artifact):
             raise ValueError("pool memory backend differs from communication timing")
 
     def validate_worker(self, logical_rank: int, identity: Mapping[str, Any]) -> None:
-        """Require matching GPU/pool implementations, preserving provenance.
+        """Check that a worker's device and libraries match its rank's measurement.
 
-        UUID, hostname and driver version describe the measurement environment.
-        The device runtime validates driver compatibility when loading code;
-        exact version equality is not required. Cold runtime admission still
-        caps the arena by current availability and enforces its layout.
+        The device UUID, host name and driver version are provenance only, so
+        a Plan runs on another equivalent device or host. Startup still caps
+        the execution pool by the memory available then.
+
+        Parameters
+        ----------
+        logical_rank : int
+            The worker's logical rank.
+        identity : mapping
+            The worker's identity, with ``gpu_name`` and ``libraries``.
+
+        Raises
+        ------
+        ValueError
+            If the profile has no such rank, or the device name or library
+            hashes differ.
         """
         measured = self.rank(logical_rank)["identity"]
         mismatches = [
@@ -244,10 +350,36 @@ class PoolMemoryProfile(Artifact):
             )
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the profile as plain data.
+
+        Returns
+        -------
+        dict
+            ``pool`` and ``ranks``.
+        """
         return {"pool": plain(self.pool), "ranks": plain(self.ranks)}
 
     @classmethod
     def from_dict(
         cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
     ) -> Self:
+        """Rebuild a profile from `to_dict` data.
+
+        Parameters
+        ----------
+        value : dict
+            The profile, in `to_dict` form.
+        payloads : mapping of str to bytes, optional
+            Ignored; a profile holds no binary payloads.
+
+        Returns
+        -------
+        PoolMemoryProfile
+            The profile.
+
+        Raises
+        ------
+        ValueError
+            If the observations are incomplete or inconsistent.
+        """
         return cls(value["pool"], tuple(value["ranks"]))

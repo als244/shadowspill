@@ -8,15 +8,7 @@ but this module deliberately has no framework or device-backend dependency.
 from __future__ import annotations
 
 import threading
-from enum import StrEnum
 from typing import Protocol, runtime_checkable
-
-
-class ObjectConsistency(StrEnum):
-    """Cross-plan value-ordering policy for one object binding."""
-
-    CAUSAL = "causal"
-    UNORDERED = "unordered"
 
 
 @runtime_checkable
@@ -27,11 +19,13 @@ class ObjectReferenceOwner(Protocol):
 
 
 class ObjectRef:
-    """One retained reference to a runtime-global logical object.
+    """One open reference to a runtime object, wherever its bytes are.
 
-    Object identity is independent of residency. A generation may have leases
-    in any configured pool, and planning resolves required residency through
-    the selected plan's pool and route bindings.
+    The runtime makes one when it retains an object for a caller, and does not
+    close while any of its references is open. The object's identity outlasts
+    any one lease: each generation of its value may have leases in any of the
+    runtime's pools, and a plan's pool and route bindings decide where it must
+    be. As a context manager, it closes on exit.
     """
 
     __slots__ = (
@@ -66,25 +60,31 @@ class ObjectRef:
 
     @property
     def object_id(self) -> int:
-        """Return the runtime-global logical identity."""
+        """The object's identity, unique within the runtime."""
 
         return self._object_id
 
     @property
     def size_bytes(self) -> int:
-        """Return the exact byte extent of the logical storage root."""
+        """The extent of the object's storage, in bytes."""
 
         return self._size_bytes
 
     @property
     def closed(self) -> bool:
-        """Whether this public reference has released its ownership."""
+        """Whether this reference has been closed."""
 
         with self._lock:
             return self._closed
 
     def close(self) -> None:
-        """Release this reference exactly once."""
+        """Release this reference; closing it again does nothing.
+
+        Raises
+        ------
+        RuntimeExecutionError
+            If the runtime refuses the release. The reference stays open.
+        """
 
         with self._lock:
             if self._closed:
@@ -123,4 +123,4 @@ class ObjectRef:
         )
 
 
-__all__ = ["ObjectConsistency", "ObjectRef", "ObjectReferenceOwner"]
+__all__ = ["ObjectRef", "ObjectReferenceOwner"]

@@ -43,13 +43,55 @@ _SYNTHETIC_SCOPES: tuple[tuple[int, str], ...] = (
 
 @dataclass(frozen=True, slots=True)
 class PoolAllocation:
-    """One allocation a pool currently holds.
+    """One allocation a pool holds, with the scope that made it and its owner.
 
-    `offset` is a byte offset into the pool's arena, and is what explains a
-    contiguous-range refusal. `origin_task_id` is the scope that made it, so an
-    allocation still held after its scope ended can be attributed rather than
-    merely counted; `logical_freed` marks one the frontend has already given up,
-    which is awaiting retirement rather than outliving anything.
+    ``live_allocations`` returns one for each allocation a pool holds, in
+    pool order, and `RuntimeFrontend.occupants` receives them to say which
+    of the frontend's objects stand on each.
+
+    Attributes
+    ----------
+    allocation_id : int
+        The runtime's id for the allocation.
+    offset : int
+        Its byte offset in the pool.
+    charged_bytes : int
+        Bytes of the pool it holds.
+    requested_bytes : int
+        Bytes its allocating call asked for.
+    origin_plan_id : int or None
+        The plan whose scope made it; None when no plan was named.
+    origin_task_id : int or None
+        The scope that made it; None when it was made outside any scope.
+        Task ids are plan-local. Ids above a program's tasks name synthetic
+        scopes, which `PoolAllocation.origin` names.
+    origin_task_invocation : int
+        Which invocation of its task made it, counting from one; zero when
+        no running task allocated it.
+    origin_task_allocation_ordinal : int
+        The declared allocation step of its task it matched; ``2**64 - 1``
+        when it matched none or no running task allocated it.
+    object_id : int or None
+        The object bound to it; None for workspace, which holds no value the
+        program named.
+    references : int
+        References the runtime holds to it: one of its own, and one for each
+        retirement, release or handoff still pending.
+    scratch : bool
+        Whether its task allocated it outside the task's declared allocation
+        steps.
+    plan_owned : bool
+        Whether a plan owns it now, as an object's storage that the plan
+        releases.
+    ever_plan_owned : bool
+        Whether a plan has ever owned it. True with ``plan_owned`` false means
+        it passed to another owner, such as an output the caller holds.
+    logical_freed : bool
+        Whether it has been freed and waits only for the work still using it
+        to complete.
+    framework_free_seen : bool
+        For a range a plan has owned, whether the frontend has freed it. A
+        plan releases the ranges it owns regardless.
     """
 
     allocation_id: int
@@ -81,17 +123,11 @@ class PoolAllocation:
 
     @property
     def unclaimed_scope_workspace(self) -> bool:
-        """Workspace a scope made that nobody took ownership of.
+        """Whether it is workspace a scope made that nothing took over.
 
-        Not every range a scope made is the scope's to reclaim. The contract has
-        three ends, and two of them transfer ownership: a range promoted out to a
-        named owner -- an output the caller holds, an object registered for
-        sharing -- belongs to that owner now, and a range the plan placed is
-        released by the plan's own teardown. One already logically freed is
-        awaiting retirement rather than surviving.
-
-        What is left is workspace nobody named, which is the thing that outlives a
-        scope by accident, and the only thing a closing plan may take back.
+        True when a scope made it, no object is bound to it, no plan has
+        ever owned it and it has not been freed. A closing plan reclaims the
+        ones its own scopes made.
         """
 
         return (
@@ -104,14 +140,13 @@ class PoolAllocation:
 
     @property
     def role(self) -> str:
-        """What the range is for, as far as the runtime alone can tell.
+        """What the range is for, as far as the runtime can tell.
 
-        The runtime knows whether a range is bound to an object the program
-        named, whether a plan placed it, and which scope made it -- enough to
-        separate a planned value from workspace, and workspace made inside a
-        profiling probe from workspace made by a task. It does not know whether
-        a planned object is a parameter or an activation: that is the program's
-        to say, and a caller holding one resolves `object_id` against it.
+        ``"runtime-object"`` for the storage of an object the runtime owns,
+        which no plan owns; ``"planned"`` when a plan owns it or an object is
+        bound to it; ``"unscoped"`` when no scope made it; ``"op-internal"``
+        for workspace a profiling scope made; ``"workspace"`` for workspace a
+        task made.
         """
 
         if self.origin_task_id == RUNTIME_OBJECT_SCOPE_ID:
@@ -130,15 +165,12 @@ class PoolAllocation:
 
     @property
     def origin(self) -> str:
-        """The scope that made it, named rather than numbered.
+        """The plan and scope that made it, as text such as ``"plan 3 task 12"``.
 
-        Synthetic scopes carry ids far above any task of the program, so a bare
-        number reads as noise. Naming them is what lets a reader tell profiling
-        from execution without knowing the bases.
-
-        The plan comes first, because a task id is plan-local: task 1112 exists
-        in every plan, so the pair is the identity and neither half is one on
-        its own.
+        A synthetic scope is named rather than numbered, as in
+        ``"profiling scope #2"``, ``"initial actions"`` or
+        ``"runtime object"``. Without a plan the plan part is left out;
+        without a scope the scope part reads ``"no scope"``.
         """
 
         plan = "" if self.origin_plan_id is None else f"plan {self.origin_plan_id} "

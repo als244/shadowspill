@@ -129,7 +129,7 @@ def prepare_layouts(
     """Resolve adapters, output geometry and host bounds for actual-batch packing.
 
     Known staging infeasibility removes only that alternative, with a reason.
-    Definition/schema failures propagate. Every operation and explicit batch
+    Component/schema failures propagate. Every operation and explicit batch
     option must retain at least one layout. Constructive coverage is optional.
     This CPU step constructs no tensors/models and does not certify runtime pools
     or collectives.
@@ -150,7 +150,7 @@ def prepare_layouts(
         raise ValueError(
             f"operation/worker input bindings exceed configured limit {max_bindings}"
         )
-    grouping = setup.model.definition.batching
+    grouping = setup.model.component.batching
     if grouping not in ("independent", "grouped"):
         raise CoverageError(
             "whole-batch dependencies require the lower-level custom graph API"

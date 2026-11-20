@@ -58,9 +58,9 @@ def _resolve(spec: Parallelism, item: ParameterGeometry) -> ParameterOwnership:
         },
         spec.default_parameter_storage,
     )
-    group = spec.group(placement.group)
     shape = list(item.shape)
     if isinstance(placement, Sharded):
+        group = spec.group(placement.group)
         if not -len(shape) <= placement.dim < len(shape):
             raise ValueError(
                 f"{item.names[0]}: sharded dimension exceeds parameter rank"
@@ -71,8 +71,8 @@ def _resolve(spec: Parallelism, item: ParameterGeometry) -> ParameterOwnership:
             for index in range(group.size)
         )
     else:
-        # Replicated denotes one logical parameter, including repeated group
-        # instances. Distinct parameters must have distinct registered names.
+        # Every rank computes with one logical parameter. Distinct parameters
+        # must have distinct registered names.
         copies = (tuple(range(spec.world_size)),)
     by_rank = {rank: members for members in copies for rank in members}
     cutoff = storage.min_shard_bytes or 0
@@ -81,19 +81,22 @@ def _resolve(spec: Parallelism, item: ParameterGeometry) -> ParameterOwnership:
     small = item.storage_bytes is not None and item.storage_bytes < cutoff
 
     def ownership(component: Component) -> StorageOwnership:
+        # A buffer has no gradient or optimizer state to share a shard with,
+        # and a program that mutates one (a step counter, a running statistic)
+        # does so on each rank's own copy, so every rank stores it whole. The
+        # modes govern parameters; a frozen parameter keeps its declared mode.
+        if small or not item.parameter or getattr(storage, component) == "replicated":
+            whole = tuple((rank,) for rank in range(spec.world_size))
+            return StorageOwnership(prod(item.shape), whole)
         groups = spec.group(storage.group_for(component)).groups
+        # A shard is a part of one slice, so its group's ranks compute with
+        # the same slice.
         for members in groups:
             if any(rank not in by_rank[members[0]] for rank in members):
                 raise ValueError(
                     f"{item.names[0]} {component}: storage group combines different "
                     "logical parameter shards"
                 )
-        # A buffer has no gradient or optimizer state to share a shard with,
-        # and a program that mutates one (a step counter, a running statistic)
-        # does so on each rank's own copy, so every rank stores it whole. The
-        # modes govern parameters; a frozen parameter keeps its declared mode.
-        if small or not item.parameter or getattr(storage, component) == "replicated":
-            groups = tuple((rank,) for rank in range(spec.world_size))
         return StorageOwnership(prod(item.shape), groups)
 
     return ParameterOwnership(

@@ -16,14 +16,14 @@ def summary_rows(prepared: PreparedPlans) -> Iterator[PlanSummaryRow]:
 
     yield row(
         "configuration",
-        model=config.model.definition,
-        objective=config.objective.definition,
+        model=config.model.name,
+        objective=config.objective.name,
         memory=config.memory.to_dict(),
         preset=config.preparation.preset,
         engine_source=config.engine_source.to_dict(),
         client_source=config.client_source.to_dict(),
         timing="simulated; representative inputs, not measured request latency",
-        grouping=prepared.inventory.layouts.setup.model.definition.batching,
+        grouping=prepared.inventory.layouts.setup.model.component.batching,
         validation_workspace=[
             {"operation": key.to_dict(), "bytes": bound.workspace_bytes}
             for key, bound in prepared.inventory.layouts.staging.items()

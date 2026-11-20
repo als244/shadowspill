@@ -1,24 +1,52 @@
-"""What one task argument is, and the provenance of the value profiled for it.
+"""What one task argument is.
 
 `TaskInputRole` is the vocabulary: a task argument is an activation, a parameter,
-a buffer, a constant, or a piece of optimizer state. `RepresentativeInputSummary`
-is what profiling recorded about the value it materialized for one argument --
-its geometry and provenance, never its contents, so a profile artifact says what
-was measured without carrying any data.
+a buffer, a constant, or a piece of optimizer state.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import StrEnum
 
 #: The policy the representative values were generated under. A profile recorded
-#: under an older policy is not comparable with one recorded under this.
+#: under another policy is not comparable with one recorded under this.
 REPRESENTATIVE_VALUE_POLICY = "shadowspill.task-values/v6"
 
 
 class TaskInputRole(StrEnum):
-    """Semantic source of one explicit compiled-task argument."""
+    """What one argument of a compiled task is.
+
+    Attributes
+    ----------
+    PARAMETER : str
+        A trained parameter.
+    BUFFER : str
+        Model state that is not trained.
+    CONSTANT : str
+        A constant captured with the task.
+    USER_INPUT : str
+        A value the caller supplies.
+    CONTROL : str
+        Integer or boolean data that steers the computation, such as indices or
+        a mask; profiling needs its real value.
+    STATISTIC : str
+        Integer data from an earlier stage that the task uses only in
+        arithmetic, never to steer the computation.
+    ACTIVATION : str
+        A value an earlier stage produced.
+    RESIDUAL : str
+        A value a forward saved for its backward.
+    TANGENT : str
+        The gradient a backward receives for one of its forward's outputs.
+    GRADIENT : str
+        A gradient a task adds into or an optimizer reads.
+    OPTIMIZER_STATE : str
+        State the optimizer keeps between updates.
+    OPTIMIZER_HYPERPARAMETER : str
+        A value the optimizer reads, such as its learning rate.
+    ANONYMOUS : str
+        An argument whose source is not known.
+    """
 
     PARAMETER = "parameter"
     BUFFER = "buffer"
@@ -35,60 +63,7 @@ class TaskInputRole(StrEnum):
     ANONYMOUS = "anonymous"
 
 
-@dataclass(frozen=True, slots=True)
-class RepresentativeInputSummary:
-    """Content-free provenance for one materialized task argument."""
-
-    position: int
-    role: TaskInputRole
-    source: str | None
-    value_policy: str
-    dtype: str
-    shape: tuple[int, ...]
-    stride: tuple[int, ...]
-    storage_offset: int
-    alias_group: int
-    consumer_targets: tuple[str, ...]
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "position": self.position,
-            "role": self.role.value,
-            "source": self.source,
-            "value_policy": self.value_policy,
-            "dtype": self.dtype,
-            "shape": list(self.shape),
-            "stride": list(self.stride),
-            "storage_offset": self.storage_offset,
-            "alias_group": self.alias_group,
-            "consumer_targets": list(self.consumer_targets),
-        }
-
-    @classmethod
-    def from_dict(cls, value: object) -> RepresentativeInputSummary:
-        if not isinstance(value, dict):
-            raise ValueError("representative input summary must be an object")
-        try:
-            return cls(
-                position=int(value["position"]),
-                role=TaskInputRole(str(value["role"])),
-                source=(None if value["source"] is None else str(value["source"])),
-                value_policy=str(value["value_policy"]),
-                dtype=str(value["dtype"]),
-                shape=tuple(int(item) for item in value["shape"]),
-                stride=tuple(int(item) for item in value["stride"]),
-                storage_offset=int(value["storage_offset"]),
-                alias_group=int(value["alias_group"]),
-                consumer_targets=tuple(str(item) for item in value["consumer_targets"]),
-            )
-        except (KeyError, TypeError) as exc:
-            raise ValueError(
-                "representative input summary has an invalid schema"
-            ) from exc
-
-
 __all__ = [
     "REPRESENTATIVE_VALUE_POLICY",
-    "RepresentativeInputSummary",
     "TaskInputRole",
 ]

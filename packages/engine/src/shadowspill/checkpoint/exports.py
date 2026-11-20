@@ -124,7 +124,39 @@ def weights_size(
     weights: WeightRepresentation = "master",
     frozen_state_id: str | None = None,
 ) -> int:
-    """Exact inference archive bytes from saved declarations, without tensor I/O."""
+    """Return the exact size of a worker's weights archive, in bytes.
+
+    It is computed from the tensor descriptions and the manifest, without
+    reading any tensor. `write_weights` with the same arguments writes
+    exactly this many bytes.
+
+    Parameters
+    ----------
+    state : Executor or checkpoint state
+        The executor whose model state the archive holds, or any object that
+        describes one worker's state as an executor does: ``plan``,
+        ``plans``, ``logical_rank`` and ``tensor_chunks``.
+    metadata : mapping of str to object, optional
+        JSON data saved with the weights, as for `write_weights`.
+    weights : str, default "master"
+        Which copy of a weight held in two precisions is saved, as for
+        `write_weights`.
+    frozen_state_id : str, optional
+        Identity of a frozen base the caller keeps elsewhere, as for
+        `write_weights`.
+
+    Returns
+    -------
+    int
+        The archive's size, in bytes.
+
+    Raises
+    ------
+    ValueError
+        If ``metadata`` or the manifest holding it exceeds 16 MiB,
+        ``frozen_state_id`` is empty, or ``weights`` is neither
+        ``"master"`` nor ``"compute"``.
+    """
     return _size(_describe(state, metadata, weights, frozen_state_id))
 
 
@@ -137,11 +169,58 @@ def write_weights(
     weights: WeightRepresentation = "master",
     frozen_state_id: str | None = None,
 ) -> dict[str, Any]:
-    """Stream model state only; the owner commits files and their complete rank set.
+    """Write a worker's model weights to a stream, as an inference archive.
 
-    Unchanged base weights are omitted only with a verified external identity.
-    Mutated frozen tensors and persistent buffers remain necessary for inference.
-    Authoritative master/compute selection follows the ordinary checkpoint rules.
+    The archive holds the weights and persistent buffers this worker owns,
+    and records each model tensor's logical shape, the slice this worker
+    holds and which tensors share storage. It holds no optimizer state,
+    gradients or random state, so it cannot resume training:
+    `load_checkpoint` refuses it. Only the saved tensors are read, through
+    the executor's bounded export, and the stream is written without
+    seeking, flushing or closing: the caller publishes the archives of every
+    worker, and discards what was written if this raises.
+
+    Parameters
+    ----------
+    state : Executor or checkpoint state
+        An initialized executor, or any object that describes and exports
+        one worker's state as an executor does: ``plan``, ``plans``,
+        ``logical_rank``, ``tensor_chunks`` and ``export_tensors``. An
+        executor's outstanding run is waited for before tensors are read.
+    stream : writable binary file
+        Receives the archive through ``write``, as for `write_checkpoint`.
+    metadata : mapping of str to object, optional
+        JSON data saved with the weights, at most 16 MiB encoded.
+    chunk_bytes : int, default 64 << 20
+        Largest chunk read from the executor at once, in bytes.
+    weights : str, default "master"
+        Which copy of a weight held in two precisions is saved: the masters
+        with ``"master"``, the compute copies with ``"compute"``. Encoded
+        representations and incompatible layouts keep both, with the reason
+        in the manifest's ``retained_weight_copies``.
+    frozen_state_id : str, optional
+        Identity of a frozen base the caller keeps elsewhere. With it, the
+        parameters no admitted Plan changes are left out. Trainable
+        parameters, buffers and anything a Plan changes are always saved.
+
+    Returns
+    -------
+    dict
+        The archive's manifest, as written: each saved tensor's name,
+        geometry, size and BLAKE3 checksum, each model tensor's view, the
+        ``metadata``, and the state's identity.
+
+    Raises
+    ------
+    RuntimeError
+        If the executor is closed, failed or not initialized.
+    ValueError
+        If ``metadata`` or the manifest holding it exceeds 16 MiB,
+        ``frozen_state_id`` is empty, or ``weights`` is neither
+        ``"master"`` nor ``"compute"``.
+    OSError
+        If ``write`` returns anything but a positive count no larger than
+        the data it was given.
     """
     description = _describe(state, metadata, weights, frozen_state_id)
     _size(description)  # Bound all manifest/framing metadata before touching data.

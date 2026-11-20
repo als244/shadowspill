@@ -14,14 +14,34 @@ from .bind import bind_training
 
 
 def instantiate_examples(program: Program, template_indices: Sequence[int]) -> Program:
-    """Select/repeat captured physical example forms without build or profiling.
+    """Derive a Program that runs captured example forms in a chosen sequence.
 
-    Each occurrence gets independent input/activation/output storage. Model,
-    gradient, optimizer and registered state retain their existing identities.
-    Missing fresh/additive task forms fail; this never compiles a missing form.
-    Forward Programs return a tuple of ordinary results, one per occurrence.
-    The result still needs CPU planning, shared admission and capacity/coverage
-    validation. Selecting a count alone does not establish a legal batch size.
+    Each entry of ``template_indices`` adds one example of the form captured at
+    that index: ``[0, 0, 0]`` runs the first form three times, ``[1, 0]`` the
+    second and then the first. Each example gets its own input, activation and
+    output storage; model, gradient, optimizer and other registered state stay
+    shared. Task forms and their profile keys are unchanged and nothing is
+    compiled, so existing profiles apply. A derived forward Program returns a
+    tuple of one result per example.
+
+    Parameters
+    ----------
+    program : Program
+        A complete-step, forward/backward or forward Program, derived already
+        or not.
+    template_indices : sequence of int
+        The captured form of each example; at least one.
+
+    Returns
+    -------
+    Program
+        The derived Program.
+
+    Raises
+    ------
+    ValueError
+        If ``program`` has no saved example forms, or an index names no
+        captured example.
     """
     saved = program.bindings
     if saved.get("kind") == "forward":
@@ -94,6 +114,11 @@ def instantiate_examples(program: Program, template_indices: Sequence[int]) -> P
     )
     for key in ("ordering", "accumulate_gradients"):
         bindings.pop(key, None)
+    if "objective_schema" in saved:
+        # Static metric values belong to the captured form each example runs.
+        schema = plain(saved["objective_schema"])
+        schema["static_leaves"] = [schema["static_leaves"][i] for i in indices]
+        bindings["objective_schema"] = schema
     # Collective descriptions are form-keyed, but Program validates them against
     # actual tasks. Restore them after the control-only intermediate is rebound.
     collectives = bindings.pop("collective_tasks", {})

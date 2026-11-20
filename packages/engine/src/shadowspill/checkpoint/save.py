@@ -42,23 +42,51 @@ def save_checkpoint(
     frozen_state_id: str | None = None,
     weights: WeightRepresentation = "master",
 ) -> None:
-    """Save all persistent tensors without a full-model host snapshot.
+    """Save a worker's persistent state as one checkpoint archive.
 
-    Metadata can include completed updates and caller-owned scheduler/RNG state
-    encoded as JSON data. This helper does not discover application state.
-    Distributed callers supply a distinct path per logical rank; each archive
-    contains only that rank's owned tensor regions and records its identity.
-    A checkpoint binds to the training state, the tensors by name, geometry
-    and owned region (``state``); the Program that saved it is recorded for
-    information only.
-    With frozen_state_id, omit unchanged frozen parameters; retain trainable
-    tensors, optimizer state, buffers and anything mutated by an admitted Plan.
-    ``weights="master"`` saves ordinary master weights once and derives compute
-    copies on load. Replicated compute weights with sharded masters are rebuilt
-    collectively from those shards, without storing the compute replicas.
-    ``"compute"`` instead reconstructs masters from rounded
-    compute values. Encoded representations or incompatible owned layouts retain
-    both copies, with the reason recorded in ``retained_weight_copies``.
+    The state streams through the executor's bounded export, without a host
+    copy of the whole model, and the archive replaces ``path`` atomically. A
+    checkpoint binds to the training state: every persistent tensor's name,
+    geometry and owned region. Any Executor with the same state restores it,
+    whatever its Program, kernels, microbatch geometry, budgets or ordering;
+    the saving Program is recorded for information only. Each worker of a
+    distributed run saves its own regions to its own path. Application
+    state, such as a scheduler's or random generators', belongs in
+    ``metadata``.
+
+    Parameters
+    ----------
+    executor : Executor
+        An initialized executor. An outstanding run is waited for first.
+    path : str or os.PathLike
+        The archive to write; its directory is created.
+    metadata : mapping of str to object, optional
+        JSON data saved with the state, at most 16 MiB encoded, and returned
+        by `load_checkpoint`.
+    chunk_bytes : int, default 64 << 20
+        Largest chunk read from the executor at once, in bytes.
+    frozen_state_id : str, optional
+        Identity of a frozen base the caller keeps elsewhere. With it, the
+        parameters no admitted Plan changes are left out, and loading needs
+        the same identity and a loader for them. Trainable parameters,
+        optimizer state, buffers and anything a Plan changes are always
+        saved.
+    weights : str, default "master"
+        Which copy of a weight held in two precisions is saved: ``"master"``
+        saves the masters, and loading derives the compute copies, collectively
+        for replicated compute weights with sharded masters; ``"compute"``
+        saves the compute copies, and loading derives masters from their
+        rounded values. Encoded representations and incompatible layouts
+        keep both copies, with the reason in the archive's
+        ``retained_weight_copies``.
+
+    Raises
+    ------
+    RuntimeError
+        If the executor is closed, failed or not initialized.
+    ValueError
+        If ``metadata`` exceeds 16 MiB, ``frozen_state_id`` is empty, or
+        ``weights`` is neither ``"master"`` nor ``"compute"``.
     """
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -99,12 +127,54 @@ def write_checkpoint(
     frozen_state_id: str | None = None,
     weights: WeightRepresentation = "master",
 ) -> dict[str, Any]:
-    """Write the existing uncompressed rank archive to a borrowed blocking sink.
+    """Write a worker's checkpoint archive to a stream.
 
-    No seek, full-state snapshot, flush, close or publication is performed. The
-    owner must publish only after this returns and its own durability checks pass.
-    On failure, the owner discards the partial stream. Return the exact manifest
-    written, so a coordinator need not reread tensor bytes to inspect this rank.
+    The archive is the one `save_checkpoint` saves, streamed through the
+    executor's bounded export without seeking. The stream is not
+    flushed or closed: the caller makes the archive durable and publishes
+    it, and discards what was written if this raises. Its size is what
+    `checkpoint_size` returns for the same arguments.
+
+    Parameters
+    ----------
+    executor : Executor or checkpoint state
+        An initialized executor, or any object that describes and exports
+        one worker's state as an executor does: ``plan``, ``plans``,
+        ``logical_rank``, ``tensor_chunks`` and ``export_tensors``. An
+        executor's outstanding run is waited for first.
+    stream : writable binary file
+        Receives the archive through ``write``, which returns the number of
+        bytes it took; a partial write is continued.
+    metadata : mapping of str to object, optional
+        JSON data saved with the state, at most 16 MiB encoded, and returned
+        by `load_checkpoint`.
+    chunk_bytes : int, default 64 << 20
+        Largest chunk read from the executor at once, in bytes.
+    frozen_state_id : str, optional
+        Identity of a frozen base the caller keeps elsewhere, as for
+        `save_checkpoint`.
+    weights : str, default "master"
+        Which copy of a weight held in two precisions is saved,
+        ``"master"`` or ``"compute"``, as for `save_checkpoint`.
+
+    Returns
+    -------
+    dict
+        The archive's manifest, as written: each tensor's name, geometry,
+        size and BLAKE3 checksum, the ``metadata``, and the state identity
+        and settings `load_checkpoint` checks.
+
+    Raises
+    ------
+    RuntimeError
+        If the executor is closed, failed or not initialized.
+    ValueError
+        If ``metadata`` or the manifest holding it exceeds 16 MiB,
+        ``frozen_state_id`` is empty, or ``weights`` is neither
+        ``"master"`` nor ``"compute"``.
+    OSError
+        If ``write`` returns anything but a positive count no larger than
+        the data it was given.
     """
     saved_metadata, omitted, selection = _settings(
         executor, metadata, frozen_state_id, weights
@@ -227,12 +297,38 @@ def checkpoint_size(
     frozen_state_id: str | None = None,
     weights: WeightRepresentation = "master",
 ) -> int:
-    """Exact rank archive bytes from descriptors, without exporting any tensor.
+    """Return the exact size of a worker's checkpoint archive, in bytes.
 
-    Use the same immutable metadata/selection and quiescent state for the write.
-    The caller still owns resource admission and rejects a changed output size.
-    This uses the actual TAR framing and manifest encoder, including hash widths,
-    owned regions, weight reconstruction and frozen-base omissions.
+    It is computed from the tensor descriptions and the manifest, without
+    reading any tensor. `write_checkpoint` and `save_checkpoint` with the
+    same arguments write exactly this many bytes.
+
+    Parameters
+    ----------
+    executor : Executor or checkpoint state
+        The executor whose state the archive holds, or any object that
+        describes one worker's state as an executor does: ``plan``,
+        ``plans``, ``logical_rank`` and ``tensor_chunks``.
+    metadata : mapping of str to object, optional
+        JSON data saved with the state, as for `write_checkpoint`.
+    frozen_state_id : str, optional
+        Identity of a frozen base the caller keeps elsewhere, as for
+        `save_checkpoint`.
+    weights : str, default "master"
+        Which copy of a weight held in two precisions is saved,
+        ``"master"`` or ``"compute"``, as for `save_checkpoint`.
+
+    Returns
+    -------
+    int
+        The archive's size, in bytes.
+
+    Raises
+    ------
+    ValueError
+        If ``metadata`` or the manifest holding it exceeds 16 MiB,
+        ``frozen_state_id`` is empty, or ``weights`` is neither
+        ``"master"`` nor ``"compute"``.
     """
     saved_metadata, omitted, selection = _settings(
         executor, metadata, frozen_state_id, weights

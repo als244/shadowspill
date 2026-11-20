@@ -36,13 +36,31 @@ def _persistent_gradients(program: Program) -> list[dict[str, Any]]:
 
 
 def optimizer_program(step: Program) -> Program:
-    """Reuse captured updates, reductions and publications without model capture.
+    """Derive an optimizer-only Program from a complete-step Program.
 
-    The result accepts no examples. Its initial gradient storage has exactly
-    the producer layout declared by the complete-step Program; existing generic
-    reduction/transfer contracts deliver it to each local optimizer consumer.
-    All task identities and binaries retain their profile compatibility keys.
-    ``apply_profiles(result, step_profiles)`` reuses their measured evidence.
+    The result runs the step's captured updates, gradient reductions and
+    weight publications on the gradients already stored, in the step's
+    gradient layout, and takes no examples. Nothing is captured or compiled
+    and every task keeps its profile key, so
+    ``apply_profiles(result, step_profiles)`` reuses the step's measurements.
+    Admit its Plan in one `Executor` with the backward Plans that produce the
+    gradients; whether gradients are ready to apply is the caller's to track.
+
+    Parameters
+    ----------
+    step : Program
+        A complete-step Program, from `build_step`.
+
+    Returns
+    -------
+    Program
+        The optimizer-only Program.
+
+    Raises
+    ------
+    ValueError
+        If ``step`` is not a complete-step Program with captured optimizer
+        tasks.
     """
     if step.bindings.get("kind") != "step" or not step.bindings.get(
         "optimizer_templates"

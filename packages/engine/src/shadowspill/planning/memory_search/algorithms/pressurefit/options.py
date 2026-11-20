@@ -32,12 +32,52 @@ FETCH_RULES = (
 
 @dataclass(frozen=True, slots=True)
 class PressureFitOptions(OptionRecord):
-    """PressureFit's own controls: what it may try, and how hard.
+    """PressureFit's own options: what it may try, and how hard.
 
-    The planner carries this into the plan key and never reads it, so the
-    candidate space can grow without the planner learning a new word. What
-    every search is told instead -- workers, determinism, which objects may
-    move -- is :class:`~shadowspill.planning.memory_search.SearchOptions`.
+    `PressureFit` takes one. The planner carries it into the plan key and
+    never reads it; what every search is told is `GenericPlanningOptions`. A
+    candidate is one resolved program searched with one residency strategy
+    and one fetch rule, and every candidate the options name is searched.
+
+    Parameters
+    ----------
+    resolution_options : tuple of Fraction, default DEFAULT_RESOLUTION_OPTIONS
+        Which resolved programs to plan: each a share of the flexible
+        task-alternative groups to recompute, as
+        `validate_resolution_options` takes them. Kept distinct and
+        ascending.
+    tail_save_counts : tuple of int, default (0,)
+        How many final eligible forward invocations of each forward/backward
+        pass to save, as `validate_tail_save_counts` takes them. Each count
+        is crossed with every share, which then applies to the remaining
+        flexible groups; zero saves none. Kept distinct and ascending.
+    residency_strategies : tuple of str, default ``("headroom-stall", "tight-stall")``
+        How a candidate charges resident bytes and ranks the cuts at a
+        boundary over capacity: ``"headroom-stall"``,
+        ``"headroom-transfer"``, ``"tight-stall"`` or ``"tight-transfer"``.
+        At least one, each once.
+    fetch_rules : tuple of str, default FETCH_RULES
+        At which task boundary a candidate starts each fetch:
+        ``"packed-fifo"``, ``"packed-fit"``, ``"latest-safe"`` or
+        ``"demand"``; all four by default. At least one, each once.
+    max_repair_attempts : int, default 256
+        Repairs one candidate may make before it answers with the best plan
+        it reached. At least zero and below 2**32.
+    capacity_refinement_bytes : int, default 268435456
+        Capacity a candidate gives back per round when its layout does not
+        fit the pool, in bytes (256 MiB by default). Zero gives back the
+        whole shortfall at once. At least zero and below 2**64.
+    record_reduction_steps : bool, default False
+        Record every plan each candidate held, as `CandidateDiagnostic.steps`.
+
+    Raises
+    ------
+    ValueError
+        If a strategy or fetch rule is unknown or repeated, or none is named; a
+        share or count is invalid; ``max_repair_attempts`` is not a
+        non-negative integer below 2**32; ``capacity_refinement_bytes`` is
+        negative or not below 2**64; or ``record_reduction_steps`` is not a
+        bool.
     """
 
     KIND: ClassVar[str] = "pressurefit"
@@ -50,8 +90,8 @@ class PressureFitOptions(OptionRecord):
     resolution_options: tuple[Fraction, ...] = DEFAULT_RESOLUTION_OPTIONS
     #: Counts of final flexible forward invocations to save in every pass.
     #: Every count crosses every resolution share; that share applies to the
-    #: remaining flexible groups. (0,) preserves the original search space.
-    #: Required saves do not consume the count. This is a planning-only axis.
+    #: remaining flexible groups. (0,) saves no tail. Required saves do not
+    #: consume the count.
     tail_save_counts: tuple[int, ...] = (0,)
     #: The strategies and rules a winner comes from. Naming more of the
     #: strategies or rules above widens the candidate set, and every
@@ -86,7 +126,8 @@ class PressureFitOptions(OptionRecord):
     record_reduction_steps: bool = False
 
     def __post_init__(self) -> None:
-        if self.capacity_refinement_bytes < 0:
+        # The planner reads it as a 64-bit count, which would wrap.
+        if not 0 <= self.capacity_refinement_bytes < 1 << 64:
             raise ValueError("capacity_refinement_bytes is invalid")
         if not self.residency_strategies:
             raise ValueError("residency_strategies must not be empty")
@@ -104,12 +145,15 @@ class PressureFitOptions(OptionRecord):
             )
         if unknown_fetch:
             raise ValueError(f"unknown fetch rules: {sorted(unknown_fetch)}")
+        # The planner reads it as a 32-bit count, which would wrap.
         if (
             isinstance(self.max_repair_attempts, bool)
             or not isinstance(self.max_repair_attempts, int)
-            or self.max_repair_attempts < 0
+            or not 0 <= self.max_repair_attempts < 1 << 32
         ):
-            raise ValueError("max_repair_attempts must be a non-negative integer")
+            raise ValueError(
+                "max_repair_attempts must be a non-negative integer below 2**32"
+            )
         if not isinstance(self.record_reduction_steps, bool):
             raise ValueError("record_reduction_steps must be a boolean")
         # Normalized here rather than at the point of use, so what the plan
@@ -125,6 +169,24 @@ class PressureFitOptions(OptionRecord):
 
     @classmethod
     def from_dict(cls, record: Mapping[str, object]) -> PressureFitOptions:
+        """Read options back from what `OptionRecord.to_dict` wrote.
+
+        Parameters
+        ----------
+        record : mapping of str to object
+            Every option by name, and optionally ``kind``.
+
+        Returns
+        -------
+        PressureFitOptions
+            The options.
+
+        Raises
+        ------
+        ValueError
+            If ``record`` holds a key that is neither an option nor ``kind``,
+            misses an option, or holds an invalid value.
+        """
         unknown = set(record) - {"kind", *(field.name for field in fields(cls))}
         if unknown:
             raise ValueError(

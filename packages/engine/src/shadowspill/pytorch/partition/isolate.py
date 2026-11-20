@@ -13,11 +13,20 @@ from .policy import PartitionSpec, resolve_partition_assignments
 
 @dataclass(frozen=True, slots=True)
 class IsolateOperations:
-    """Give each selected operator and its tuple unpacking a separate stage.
+    """A `PartitionPolicy` that gives each call of selected operators its own stage.
 
-    ``targets`` contains exact operator overload names. ``base`` supplies the
-    surrounding stage boundaries. Overlapping unpacking intervals are merged;
-    unrelated nodes inside an interval stay with it to preserve graph order.
+    Each call of a listed operator forms one stage with the tuple extraction
+    of its results, and with any other operations between the call and its
+    last extraction, which keeps graph order. Calls whose stages would
+    overlap share one. ``base`` divides the rest of the graph; a base stage a
+    call interrupts continues as a new stage after it.
+
+    Parameters
+    ----------
+    targets : tuple of str
+        Exact operator overload names, such as ``"aten._softmax.default"``.
+    base : {"auto", "whole"} or PartitionPolicy, default "auto"
+        The partition of the rest of the graph.
     """
 
     targets: tuple[str, ...]
@@ -26,6 +35,27 @@ class IsolateOperations:
     def assign_stages(
         self, graph_module: GraphModule, module: nn.Module
     ) -> dict[str, int]:
+        """Assign a stage label to every executable node of ``graph_module``.
+
+        Parameters
+        ----------
+        graph_module : torch.fx.GraphModule
+            The captured graph.
+        module : torch.nn.Module
+            The model the graph was captured from, passed on to ``base``.
+            Under `ChunkRegions`, the task's graph module itself.
+
+        Returns
+        -------
+        dict of str to int
+            Every executable node's name mapped to its stage, numbered from
+            zero in graph order.
+
+        Raises
+        ------
+        CaptureError
+            If ``base`` is not a partition, or its mapping is malformed.
+        """
         assignments, _ = resolve_partition_assignments(graph_module, module, self.base)
         nodes = tuple(assignments)
         positions = {node: i for i, node in enumerate(nodes)}

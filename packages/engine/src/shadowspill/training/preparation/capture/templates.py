@@ -10,8 +10,8 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 from shadowspill.artifacts.program import Program
-from shadowspill.training.definitions.build import ModelBuild, ModelBuildContext
-from shadowspill.training.definitions.samples import RepresentativePattern
+from shadowspill.training.components.build import ModelBuild, ModelBuildContext
+from shadowspill.training.components.samples import RepresentativePattern
 from shadowspill.training.inputs.adapters import InputLayout
 from shadowspill.training.outputs import OutputLayout
 from shadowspill.training.preparation.capture.binding import OperationBinding
@@ -53,6 +53,21 @@ class CaptureTemplate:
 
 @dataclass(frozen=True)
 class TemplateUse:
+    """The captured Program a planning request uses, and for what operation.
+
+    Attributes
+    ----------
+    template : str
+        ID of the capture template, a key of `PlanningInputs.sources`.
+    kind : str
+        The operation: ``"step"``, ``"forward_backward"``, ``"forward"`` or
+        ``"optim_step"``. A forward/backward or optimizer-only use of a step
+        capture derives its Program with `backward_program` or
+        `optimizer_program`.
+    count : int
+        Examples per run, at least one; one for ``"optim_step"``.
+    """
+
     template: str
     kind: ProgramKind
     count: int
@@ -120,7 +135,7 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
             tuple(sorted(physical.fields.items())),
         )
         if pattern_key not in patterns:
-            describe = setup.preset.definition.representative
+            describe = setup.preset.component.representative
             if describe is None:
                 raise ValueError(
                     "preparation preset must declare a representative pattern"
@@ -151,11 +166,11 @@ def capture_inventory(layouts: PreparedLayouts) -> TemplateInventory:
             "model_build": model_build.to_dict(),
             "allocation_invariants": {
                 "model": dict(model_build.allocation_invariants),
-                "objective": dict(setup.objective.definition.allocation_invariants),
+                "objective": dict(setup.objective.component.allocation_invariants),
                 "optimizer": {}
                 if setup.optimizer is None
                 or binding.contract.key.operation == "forward"
-                else dict(setup.optimizer.definition.allocation_invariants),
+                else dict(setup.optimizer.component.allocation_invariants),
             },
             "policy_sources": {
                 key: value.to_dict()
@@ -283,7 +298,7 @@ def instantiate_program(use: TemplateUse, program: Program) -> Program:
     """CPU derivation also used by exported requests, without installed models.
 
     This is not an execution admission check. The service separately validates
-    the capture against its installed definition and retained measured bytes.
+    the capture against its installed component and retained measured bytes.
     """
     from shadowspill.planning.training.backward import backward_program
     from shadowspill.planning.training.examples import instantiate_examples

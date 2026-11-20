@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from shadowspill_client import Model
 from shadowspill_client._records import Value, mapping
 from shadowspill_client.config.precision import parameter_dtypes
+from shadowspill_client.protocol.components import OutputSet, Participation
 from shadowspill_client.protocol.controls import ControlSchema
-from shadowspill_client.protocol.definitions import OutputSet, Participation
 from shadowspill_client.protocol.inputs import InputSchema
 from shadowspill_client.protocol.operations import OperationKey
 
@@ -37,15 +37,15 @@ type Computation = Callable[
 
 def versioned_id(value: str) -> str:
     if not isinstance(value, str) or value.strip() != value:
-        raise ValueError("definition ID must be a versioned name")
+        raise ValueError("component ID must be a versioned name")
     name, separator, version = value.rpartition("@")
     if not name or not separator or not version or "@" in name:
-        raise ValueError("definition ID must have the form namespace/name@version")
+        raise ValueError("component ID must have the form namespace/name@version")
     return value
 
 
 @dataclass(frozen=True)
-class ModelDefinition:
+class ModelComponent:
     """An ordinary constructor plus CPU description and preparation hooks.
 
     Optional ``configure(Model)`` validates implementation/precision/LoRA
@@ -156,7 +156,7 @@ class ObjectiveEvaluation:
 
 
 @dataclass(frozen=True)
-class ObjectiveDefinition:
+class ObjectiveComponent:
     """Installed objective semantics, including its explicit padding guarantee.
 
     ``padding_safe`` asserts that schema/adapter padding contributes no loss or

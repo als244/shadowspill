@@ -24,6 +24,60 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class SweepRow:
+    """One candidate's predicted result at one point of a `PlanningSweep`.
+
+    `PlanningSweep.rows` holds them. A row with a ``failure`` has no
+    prediction: its time and peaks are None.
+
+    Attributes
+    ----------
+    point : int
+        Index of the grid point, from zero. The points take each device
+        budget in turn, each spill budget within it, and each transfer scale
+        within that.
+    device_gib : float
+        The point's device budget per worker, in GiB.
+    spill_gib : float
+        The point's spill budget per worker, in GiB.
+    transfer_scale : float
+        The point's factor on the measured fetch and eviction rates.
+    candidate : str
+        The candidate's ID, a key of `PlanningInputs.candidates`.
+    operation : str
+        The candidate's operation, output set and mode, joined by slashes,
+        such as ``"step/metrics/training"``.
+    capacities : mapping of str to int
+        The candidate's scheduled capacities, padding included, by capacity
+        name.
+    build : mapping
+        The candidate's `BuildCase`, as plain data.
+    microbatch_count : int
+        Microbatches per run on each worker.
+    ordering : mapping or None
+        The candidate's `StepDataOrdering`, as plain data; None for a
+        forward candidate.
+    comparison : str
+        Digest of the candidate's operation, declared batch and scheduled
+        capacities: rows with the same digest do the same work.
+    predicted_seconds : float or None
+        Simulated time of one run of the slowest Plan the candidate needs on
+        any worker, optimizer-only Plans excluded, in seconds.
+    device_peak_bytes : int or None
+        Device memory a worker needs for all its Plans, sharing their
+        persistent state, in bytes; the largest over the workers.
+    spill_peak_bytes : int or None
+        Spill memory a worker needs for all its Plans, in bytes; the largest
+        over the workers.
+    failure : str or None
+        Why the candidate cannot run at this point: the planner's reasons
+        for its rejected Plans, or a worker's Plans exceeding a budget
+        together. None when it can.
+    best : bool
+        Whether it is the fastest feasible row among those of its point with
+        the same ``comparison``; a tie goes to the candidate ID that sorts
+        first.
+    """
+
     point: int
     device_gib: float
     spill_gib: float
@@ -42,12 +96,35 @@ class SweepRow:
     best: bool = False
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the row as plain data.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {name: plain(getattr(self, name)) for name in self.__dataclass_fields__}
 
 
 @dataclass(frozen=True)
 class PlanningSweep:
-    """Predicted alternatives; only equal declared workloads share a comparison."""
+    """Predicted results of replanning exported candidates over a grid.
+
+    `PlanningInputs.sweep` returns one. Rows with the same ``comparison`` do
+    the same work; within each point, only they are ranked against each
+    other.
+
+    Attributes
+    ----------
+    rows : tuple of SweepRow
+        One row per grid point and candidate: by point, and within each, in
+        the order of `PlanningInputs.candidates`.
+    measurements : mapping
+        What the sweep planned from: ``"configuration"``, the preparation's
+        resolved settings, and ``"captures"``, each capture template's
+        ``"profiled_program"`` digest and unscaled ``"communication"``
+        costs, by template ID.
+    """
 
     rows: tuple[SweepRow, ...]
     measurements: Mapping[str, Any] = field(repr=False)
@@ -56,7 +133,24 @@ class PlanningSweep:
     )
 
     def write_report(self, path: str | Path) -> Path:
-        """Write an offline comparison and adjacent detailed Plan HTML reports."""
+        """Write an HTML page comparing the rows, with a report of each Plan.
+
+        The page groups the rows by ``comparison``. A directory beside it,
+        named after it with ``_reports`` appended (``sweep_reports`` for
+        ``sweep.html``), holds ``rows.json``, ``measurements.json`` and, linked
+        from the page, the `shadowspill.write_report` report of each Plan of
+        every feasible row, without plots.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The page to write; its directory is created.
+
+        Returns
+        -------
+        pathlib.Path
+            The page.
+        """
         from shadowspill.reporting.training_sweep import write_report
 
         return write_report(self, path)

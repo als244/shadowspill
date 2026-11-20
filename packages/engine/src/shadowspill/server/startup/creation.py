@@ -33,7 +33,7 @@ from shadowspill.server.startup.progress import StartupLog
 from shadowspill.server.startup.records import load_creation
 from shadowspill.server.startup.reuse import stage_preparation_reuse
 from shadowspill.server.startup.weights import ResolvedWeights
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.preparation.artifacts.measurement_export import (
     export_measurements,
@@ -179,7 +179,7 @@ class LocalCreation:
                 replace(capture, executable=limits.nsys.executable).command(
                     (), output="unused"
                 )
-            with phase("Resolve installed training definitions"):
+            with phase("Resolve installed training components"):
                 registry = load_registry(factory.packages)
                 setup = resolve_training(registry, config=creation.config)
             checkpoint, weights_source, weights = resolve_initialization(

@@ -16,6 +16,26 @@ from .storage import Storage
 
 @dataclass(frozen=True)
 class TrainingResult:
+    """The losses and metrics of one training run, per example.
+
+    The handle `Executor.run` returns resolves to one for a step,
+    forward/backward or optimizer-only Plan; a forward Plan's resolves to
+    the model's outputs instead.
+
+    Attributes
+    ----------
+    losses : tuple
+        Each example's loss as the objective returned it, a scalar tensor the
+        caller owns, in example order. Empty for an optimizer-only Plan.
+    metrics : tuple
+        Each example's metrics, in the structure the objective returned.
+    parameter_metrics : dict
+        When the run collects parameter norms, each trained parameter's
+        ``"param_norm"``, the norm of its weights before the update, and
+        ``"grad_norm"``, the norm of the gradient the optimizer applied, over
+        all workers, as host float32 scalar tensors. Empty otherwise.
+    """
+
     losses: tuple[Any, ...]
     metrics: tuple[Any, ...]
     parameter_metrics: dict[str, Any] = field(default_factory=dict)
@@ -48,9 +68,9 @@ def collect_outputs(state: Storage, acquisition: int) -> Any:
         restored = tuple(tree_unflatten(values, tree) for values in outputs)
         return restored[0] if single_forward(bindings) else restored
     schema, metrics = bindings["objective_schema"], []
-    for values in outputs:
+    for example, values in enumerate(outputs):
         leaves = [None] * schema["leaf_count"]
-        for position, value in schema["static_leaves"]:
+        for position, value in schema["static_leaves"][example]:
             leaves[position] = value
         for position, value in zip(schema["tensor_positions"], values[1:], strict=True):
             leaves[position] = value

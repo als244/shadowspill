@@ -8,26 +8,57 @@ from typing import Literal
 type StorageMode = Literal["sharded", "replicated"]
 type Component = Literal["weights", "gradients", "optimizer"]
 
+_COMPONENT_GROUPS: dict[Component, str] = {
+    "weights": "weight_group",
+    "gradients": "gradient_group",
+    "optimizer": "optimizer_group",
+}
+
 
 @dataclass(frozen=True)
 class ParameterStorage:
-    """Omitted fields inherit from the default, never another matching pattern.
+    """Where a parameter's weights, gradients and optimizer state are stored.
 
-    ``group`` is the common storage group. Component-specific groups override
-    it. Master weights follow optimizer ownership; scalar optimizer controls do
-    not acquire a parameter-shaped shard just because moments do.
+    Each component is ``"sharded"``, each rank of a group storing an equal
+    part, or ``"replicated"``, each storing all of it. A sharded component's
+    storage group holds only ranks that compute with the same slice of the
+    parameter. Unset fields come from the default storage of the
+    `Parallelism`, never from another matching selector: a mode or
+    ``min_shard_bytes`` left None takes the default's value, and a component
+    is stored over its own group (such as ``weight_group``), else ``group``,
+    else the default's group for that component, else the default's
+    ``group``. Master weights follow the optimizer state; scalar optimizer
+    controls are never sharded. Buffers are stored whole on every rank: they
+    have no gradient or optimizer state, and a Program that changes one
+    changes each rank's own copy.
 
-    Parameters whose unpadded physical weight storage is smaller than
-    ``min_shard_bytes`` keep all components replicated: a shard of a small
-    tensor saves little memory and costs a collective at every fetch.
-    ``Parallelism.dp`` and the client's ``data_parallel`` set it to 2 MiB;
-    left unset here it inherits the default storage's, and zero shards
-    everything. Frozen tensor-wrapper payloads/scales are also checked
-    separately during lowering.
+    Parameters
+    ----------
+    group : str, optional
+        The group collection the components are stored over.
+    weights : str, optional
+        ``"sharded"`` or ``"replicated"``.
+    gradients : str, optional
+        ``"sharded"`` or ``"replicated"``.
+    optimizer : str, optional
+        ``"sharded"`` or ``"replicated"``, for optimizer state and masters.
+    weight_group : str, optional
+        Group collection for the weights, instead of ``group``.
+    gradient_group : str, optional
+        Group collection for the gradients, instead of ``group``.
+    optimizer_group : str, optional
+        Group collection for the optimizer state, instead of ``group``.
+    min_shard_bytes : int, optional
+        Weight storage size, in bytes, below which a parameter keeps every
+        component replicated: its shard would save little memory and cost a
+        collective at every fetch. Zero, or unset everywhere, shards every
+        parameter.
 
-    The modes govern parameters. A buffer is stored whole on every rank: it has
-    no gradient or optimizer state to share a shard with, and a program that
-    mutates one does so on each rank's own copy.
+    Raises
+    ------
+    ValueError
+        If a mode is neither ``"sharded"`` nor ``"replicated"``, a group name
+        is empty, or ``min_shard_bytes`` is not a nonnegative integer.
     """
 
     group: str | None = None
@@ -53,25 +84,61 @@ class ParameterStorage:
                 raise ValueError(f"{name} must be a nonempty group name")
 
     def inherit(self, default: ParameterStorage) -> ParameterStorage:
-        return ParameterStorage(
-            **{
-                item.name: getattr(self, item.name)
-                if getattr(self, item.name) is not None
-                else getattr(default, item.name)
-                for item in fields(self)
-            }
-        )
+        """Return this storage with each unset field taken from ``default``.
+
+        A component group stays unset when this storage sets ``group``, so
+        the component is stored over that ``group``.
+
+        Parameters
+        ----------
+        default : ParameterStorage
+            The storage to inherit from.
+
+        Returns
+        -------
+        ParameterStorage
+            The combined storage.
+        """
+        values = {
+            item.name: getattr(self, item.name)
+            if getattr(self, item.name) is not None
+            else getattr(default, item.name)
+            for item in fields(self)
+        }
+        if self.group is not None:
+            for name in _COMPONENT_GROUPS.values():
+                values[name] = getattr(self, name)
+        return ParameterStorage(**values)
 
     def group_for(self, component: Component) -> str:
-        override = {
-            "weights": "weight_group",
-            "gradients": "gradient_group",
-            "optimizer": "optimizer_group",
-        }[component]
-        group = getattr(self, override) or self.group
+        """Return the group collection a component is stored over.
+
+        Parameters
+        ----------
+        component : str
+            ``"weights"``, ``"gradients"`` or ``"optimizer"``.
+
+        Returns
+        -------
+        str
+            The component's group, or else ``group``.
+
+        Raises
+        ------
+        ValueError
+            If the component's mode or group is unset.
+        """
+        group = getattr(self, _COMPONENT_GROUPS[component]) or self.group
         if group is None or getattr(self, component) is None:
             raise ValueError("default parameter storage must specify every component")
         return str(group)
 
     def to_dict(self) -> dict[str, str | int | None]:
+        """Return the storage as plain data.
+
+        Returns
+        -------
+        dict
+            Every field, by name.
+        """
         return asdict(self)

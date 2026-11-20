@@ -21,15 +21,36 @@ from shadowspill_client._records import integer
 
 @dataclass(frozen=True)
 class PlanningRequest:
+    """One rank-local Plan a candidate needs, in `PlanningInputs.requests`.
+
+    Attributes
+    ----------
+    rank : int
+        The logical rank the Plan is for.
+    use : TemplateUse
+        The capture template, operation and example count.
+    ordering : StepDataOrdering or None
+        The traversal of the examples of a step or forward/backward Plan;
+        None for forward and optimizer-only Plans.
+    """
+
     rank: int
     use: TemplateUse
     ordering: StepDataOrdering | None
 
     @property
     def id(self) -> str:
+        """The request's ID: a digest of its template, operation, count and ordering."""
         return plan_identity(self.use, self.ordering)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the request as plain data.
+
+        Returns
+        -------
+        dict
+            ``rank``, ``use`` and ``ordering``.
+        """
         return {
             "rank": self.rank,
             "use": asdict(self.use),
@@ -38,6 +59,24 @@ class PlanningRequest:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> PlanningRequest:
+        """Rebuild a request from a `to_dict` record.
+
+        Parameters
+        ----------
+        value : mapping
+            Exactly ``rank``, ``use`` and ``ordering``.
+
+        Returns
+        -------
+        PlanningRequest
+            The request.
+
+        Raises
+        ------
+        ValueError
+            If ``value`` has other keys, an unsupported operation, or a count
+            below one.
+        """
         if set(value) != {"rank", "use", "ordering"} or set(value["use"]) != {
             "template",
             "kind",

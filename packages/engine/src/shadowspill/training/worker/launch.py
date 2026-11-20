@@ -42,7 +42,7 @@ def launch_worker(
 ) -> WorkerProcess:
     """Launch only inside an existing complete resource claim.
 
-    The node daemon owns filesystem roots, definition packages, rendezvous and all file
+    The node daemon owns filesystem roots, component packages, rendezvous and all file
     grants. Its claim includes process/artifact overhead beyond these pool/staging
     lower bounds. This helper never discovers or invents allocation capacity.
     """

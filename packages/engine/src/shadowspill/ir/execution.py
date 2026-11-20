@@ -28,6 +28,25 @@ EXECUTION_PLAN_SCHEMA = artifact_schema("execution_plan")
 
 @dataclass(frozen=True, slots=True)
 class EntrypointSpec:
+    """Which function runs one active task.
+
+    Parameters
+    ----------
+    task_id : str
+        The task.
+    entrypoint_id : str
+        The function's identity.
+    executor_id : str
+        Identity of the executor that runs the function.
+    contract_digest : str
+        Digest of the task contract the function was compiled against.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is empty or padded with whitespace.
+    """
+
     task_id: str
     entrypoint_id: str
     executor_id: str
@@ -40,6 +59,13 @@ class EntrypointSpec:
         require_identifier(self.contract_digest, "entrypoint.contract_digest")
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "contract_digest": self.contract_digest,
             "entrypoint_id": self.entrypoint_id,
@@ -49,6 +75,27 @@ class EntrypointSpec:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> EntrypointSpec:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"plan.entrypoints[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        EntrypointSpec
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         return cls(
             task_id=expect_string(field(data, "task_id", path), f"{path}.task_id"),
@@ -66,15 +113,39 @@ class EntrypointSpec:
 
 @dataclass(frozen=True, slots=True)
 class PhysicalAdmission:
-    """Physical execution and spill admission for one selected plan.
+    """The memory one plan is admitted under, in bytes.
 
-    ``workspace_reserve_bytes`` is the contiguous task-workspace
-    allowance the execution pool must be able to serve; it is validated
-    against ``slab_bytes`` and is NOT subtracted from the pool. Task
-    workspace is charged per boundary during planning and placed inside
-    the admitted fixed slice, so this value does not define the search's
-    object capacity. The planning phase derives usable capacity from the
-    total GPU budget and fixed device overhead before physical admission.
+    Parameters
+    ----------
+    device_budget_bytes : int
+        Device memory the process may use: at least ``baseline_bytes``,
+        ``external_headroom_bytes`` and ``slab_bytes`` together.
+    spill_budget_bytes : int
+        Spill memory the plan may use.
+    baseline_bytes : int
+        Device memory the process holds before the execution pool exists.
+    external_headroom_bytes : int
+        Allowance for device memory the process uses outside the execution pool.
+    slab_bytes : int
+        Size of the execution pool the plan's layout is placed in.
+    workspace_reserve_bytes : int
+        Contiguous task workspace the pool must be able to serve; at most
+        ``slab_bytes``, and not subtracted from it.
+    spill_reservation_bytes : int
+        Spill memory reserved for the plan; at most ``spill_budget_bytes``.
+    predicted_fragmentation_bytes : int, default 0
+        Declared estimate of slab bytes the plan's lifetimes leave unusable; at
+        most ``slab_bytes``.
+    reject_overbudget : bool, default False
+        Whether external or whole-process memory beyond the budget is refused
+        rather than reported.
+
+    Raises
+    ------
+    ValidationError
+        If a size is negative, the baseline, headroom and slab exceed
+        ``device_budget_bytes``, a reserve exceeds what holds it, or
+        ``reject_overbudget`` is not a bool.
     """
 
     device_budget_bytes: int
@@ -128,6 +199,13 @@ class PhysicalAdmission:
         )
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "baseline_bytes": self.baseline_bytes,
             "device_budget_bytes": self.device_budget_bytes,
@@ -142,6 +220,27 @@ class PhysicalAdmission:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> PhysicalAdmission:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"plan.admission"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        PhysicalAdmission
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
 
         def integer(name: str) -> int:
@@ -164,6 +263,23 @@ class PhysicalAdmission:
 
 @dataclass(frozen=True, slots=True)
 class PlanPrediction:
+    """What a plan is expected to use and take.
+
+    Parameters
+    ----------
+    device_peak_bytes : int
+        Peak device memory of the process, in bytes.
+    spill_peak_bytes : int
+        Peak spill memory, in bytes.
+    makespan_ns : int
+        Duration of the plan, in nanoseconds.
+
+    Raises
+    ------
+    ValidationError
+        If a value is negative.
+    """
+
     device_peak_bytes: int
     spill_peak_bytes: int
     makespan_ns: int
@@ -174,6 +290,13 @@ class PlanPrediction:
         require_non_negative(self.makespan_ns, "prediction.makespan_ns")
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "device_peak_bytes": self.device_peak_bytes,
             "spill_peak_bytes": self.spill_peak_bytes,
@@ -182,6 +305,27 @@ class PlanPrediction:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> PlanPrediction:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"plan.prediction"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        PlanPrediction
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         return cls(
             device_peak_bytes=expect_integer(
@@ -199,6 +343,33 @@ class PlanPrediction:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionPlan:
+    """A schedule made runnable: alternatives fixed, functions bound, memory admitted.
+
+    `ProgramPlanResult.to_execution_plan` builds one from a search's answer.
+
+    Parameters
+    ----------
+    program : ShadowSpillProgram
+        The program.
+    schedule : MemorySchedule
+        The schedule over it.
+    selections : tuple of TaskAlternativeChoice
+        One choice for every alternative group of the program.
+    entrypoints : tuple of EntrypointSpec
+        One for each active task that requires an entrypoint, and no others.
+    admission : PhysicalAdmission
+        The memory the plan is admitted under.
+    prediction : PlanPrediction
+        What the plan is expected to use and take.
+
+    Raises
+    ------
+    ValidationError
+        If the schedule cannot run on the selected tasks, the entrypoints do not
+        match the tasks that require one, or a predicted peak exceeds its
+        budget.
+    """
+
     program: ShadowSpillProgram
     schedule: MemorySchedule
     selections: tuple[TaskAlternativeChoice, ...]
@@ -244,10 +415,15 @@ class ExecutionPlan:
 
     @property
     def digest(self) -> str:
+        """SHA-256 of the plan's canonical JSON, in hexadecimal."""
         return digest_json(self.to_dict())
 
     @property
     def scheduling_digest(self) -> str:
+        """SHA-256 over the program, schedule and selections, in hexadecimal.
+
+        Plans that differ only in entrypoints, admission or prediction share it.
+        """
         value: dict[str, JsonValue] = {
             "program": self.program.to_dict(),
             "schedule": self.schedule.to_dict(),
@@ -256,6 +432,13 @@ class ExecutionPlan:
         return digest_json(value)
 
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the plan as JSON values.
+
+        Returns
+        -------
+        dict
+            Its parts by name, and its schema label.
+        """
         return {
             "admission": self.admission.to_dict(),
             "entrypoints": [entrypoint.to_dict() for entrypoint in self.entrypoints],
@@ -267,10 +450,35 @@ class ExecutionPlan:
         }
 
     def to_json(self) -> str:
+        """Return the plan's canonical JSON.
+
+        Returns
+        -------
+        str
+            The `to_dict` form with sorted keys and no whitespace.
+        """
         return canonical_json(self.to_dict())
 
     @classmethod
     def from_dict(cls, value: object) -> ExecutionPlan:
+        """Read a plan from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : mapping
+            The decoded JSON value.
+
+        Returns
+        -------
+        ExecutionPlan
+            The plan.
+
+        Raises
+        ------
+        ValidationError
+            If the schema label is not this version's, a record is malformed, or the
+            parts do not agree.
+        """
         data = expect_mapping(value, "plan")
         schema = expect_string(field(data, "schema", "plan"), "plan.schema")
         require(
@@ -303,6 +511,25 @@ class ExecutionPlan:
 
     @classmethod
     def from_json(cls, payload: str) -> ExecutionPlan:
+        """Read a plan from its JSON text.
+
+        Parameters
+        ----------
+        payload : str
+            The text, as `to_json` writes it.
+
+        Returns
+        -------
+        ExecutionPlan
+            The plan.
+
+        Raises
+        ------
+        ValueError
+            If ``payload`` is not JSON.
+        ValidationError
+            If the decoded record is invalid, as for `from_dict`.
+        """
         return cls.from_dict(parse_json(payload))
 
 

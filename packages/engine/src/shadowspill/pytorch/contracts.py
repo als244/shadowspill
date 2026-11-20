@@ -34,7 +34,36 @@ def contiguous_stride(shape: tuple[int, ...]) -> tuple[int, ...]:
 
 @dataclass(frozen=True, slots=True)
 class TensorSpec:
-    """Storage-free representative tensor geometry used during planning."""
+    """A tensor's geometry, standing in for the tensor in a build's examples.
+
+    `build_forward`, `build_forward_backward` and `build_step` accept one in
+    place of a tensor in their example arguments, so an example needs no
+    storage. A run's tensor at that position must have this shape, strides,
+    dtype and gradient flag, a storage offset of zero, and a storage of its
+    own of exactly `TensorSpec.storage_nbytes` bytes.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        The tensor's shape. Each size at least zero.
+    dtype : torch.dtype
+        The element type.
+    stride : tuple of int, optional
+        Strides, in elements, one per dimension, each at least zero. None, the
+        default, means contiguous strides.
+    requires_grad : bool, default False
+        Whether the tensor requires gradients.
+    layout : torch.layout, default torch.strided
+        The layout. Only ``torch.strided`` is accepted.
+
+    Raises
+    ------
+    ValueError
+        If a size or stride is negative or not an int, ``stride`` has another
+        length than ``shape``, or ``layout`` is not ``torch.strided``.
+    TypeError
+        If ``dtype`` is not a ``torch.dtype``.
+    """
 
     shape: tuple[int, ...]
     dtype: torch.dtype
@@ -57,13 +86,13 @@ class TensorSpec:
 
     @property
     def resolved_stride(self) -> tuple[int, ...]:
-        """Return the authored stride or the standard contiguous geometry."""
+        """The strides: ``stride``, or the contiguous strides of ``shape``."""
 
         return self.stride or contiguous_stride(self.shape)
 
     @property
     def storage_nbytes(self) -> int:
-        """Smallest storage extent that can represent the fixed strided tensor."""
+        """Bytes of the smallest storage that holds every element at these strides."""
 
         if not self.shape or any(dimension == 0 for dimension in self.shape):
             elements = 0 if self.shape else 1
@@ -79,7 +108,24 @@ class TensorSpec:
 
 @dataclass(frozen=True, slots=True)
 class ObjectiveResult:
-    """Training loss plus metrics that are not differentiated."""
+    """An objective's loss, with metrics that are not differentiated.
+
+    An objective may return one in place of its loss alone or a
+    ``(loss, metrics)`` pair. A run's `TrainingResult` holds each example's
+    loss and metrics.
+
+    Parameters
+    ----------
+    loss : torch.Tensor
+        The value the backward differentiates: one floating-point or complex
+        element that requires gradients. Capture fails with `ObjectiveError`
+        otherwise.
+    metrics : object, optional
+        Any structure of values returned beside the loss, keeping one
+        structure across calls and examples. Its tensors are returned
+        detached; its other values are copied once for each example, during
+        build, and every run returns that example's copies. None by default.
+    """
 
     loss: torch.Tensor
     metrics: Any = None

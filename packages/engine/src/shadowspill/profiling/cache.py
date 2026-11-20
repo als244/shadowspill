@@ -26,22 +26,57 @@ _SCHEMA = "shadowspill.task-measurement/v1"
 
 @dataclass(frozen=True)
 class CachedTask:
+    """One task measurement a `TaskProfileCache` holds, as its ``get`` returns.
+
+    Attributes
+    ----------
+    profile : TaskProfile
+        The raw measured profile.
+    external_device_bytes : int
+        Device memory the process used outside PyTorch's allocator when the
+        task was measured, in bytes. It sets a floor under the fixed device
+        memory of a Program that reuses the measurement.
+    """
+
     profile: TaskProfile
     external_device_bytes: int
 
 
 class TaskProfileCache:
-    """Reuse exact finalized task measurements across Programs and processes.
+    """A store of task measurements, reused across Programs and processes.
 
-    ``root`` is an ArtifactStore or its unversioned root directory. Reuse one
-    instance across a candidate sweep. ``refresh`` ignores older disk entries,
-    but still reuses measurements produced by this instance during the sweep.
-    ``reuse`` never writes; ``require`` refuses misses. The default contributes
-    new measurements. Caller-supplied task inputs bypass this cache.
+    Pass one to `measure_program`, the same instance across a candidate
+    sweep. A measurement is reused only for the same finalized code, input
+    geometry and lineage, setup, numerical settings, resources and rank
+    layout, allocator configuration and timing bounds; one with more samples
+    satisfies a smaller ``minimum_samples``. Only task timing and allocation
+    evidence is reused: every `measure_program` call still loads its code and
+    resources and measures its own fixed memory. Tasks that retain lazy
+    allocations are never stored, and calls with explicit ``inputs`` bypass
+    the cache.
 
-    Only task-local timing/allocation evidence is reused. Every measure_program
-    call prepares its own resources, loads its executables and accounts for its
-    own fixed memory. Anonymous lazy device allocations prevent task reuse.
+    Parameters
+    ----------
+    root : str or pathlib.Path or ArtifactStore, optional
+        The store, or its root directory. By default the user's store under
+        ``~/.cache/shadowspill``.
+    mode : str, default "contribute"
+        ``"contribute"`` reads hits and writes new measurements; ``"reuse"``
+        reads without writing; ``"require"`` makes `measure_program` raise
+        `LookupError` on a miss; ``"refresh"`` ignores earlier entries on disk
+        but reuses what this instance measured.
+
+    Attributes
+    ----------
+    store : ArtifactStore
+        The store the measurements live in.
+    policy : StorePolicy
+        What ``mode`` permits.
+
+    Raises
+    ------
+    ValueError
+        If ``mode`` is none of these.
     """
 
     def __init__(
@@ -68,6 +103,29 @@ class TaskProfileCache:
         *,
         minimum_samples: int,
     ) -> CachedTask | None:
+        """Look up a task measurement.
+
+        Parameters
+        ----------
+        identity : mapping
+            The measurement's identity, as `measure_program` builds it.
+        manifest : mapping
+            The task form's saved manifest, which the stored evidence must
+            fit.
+        minimum_samples : int
+            Timing samples the measurement must hold.
+
+        Returns
+        -------
+        CachedTask or None
+            The measurement; None on a miss, or when it holds fewer samples.
+
+        Raises
+        ------
+        ValueError
+            If the stored entry's identity differs, it is corrupt, or its
+            evidence does not fit ``manifest``.
+        """
         key = digest(identity)
         if key in self._records:
             result = self._records[key]
@@ -113,6 +171,36 @@ class TaskProfileCache:
         profile: TaskProfile,
         external_device_bytes: int | None,
     ) -> bool:
+        """Record a task measurement in this instance, and on disk if allowed.
+
+        An entry on disk is replaced only in ``"refresh"`` mode or by a
+        measurement with more timing samples.
+
+        Parameters
+        ----------
+        identity : mapping
+            The measurement's identity, as for `get`.
+        manifest : mapping
+            The task form's saved manifest.
+        profile : TaskProfile
+            The raw measured profile.
+        external_device_bytes : int or None
+            Device memory the process used outside PyTorch's allocator at
+            measurement, in bytes; None when unknown.
+
+        Returns
+        -------
+        bool
+            Whether it was recorded. A measurement that retained lazy
+            allocations, or whose ``external_device_bytes`` is unknown, is
+            not.
+
+        Raises
+        ------
+        ValueError
+            If ``profile`` is not raw measured evidence fitting ``identity``
+            and ``manifest``.
+        """
         # Replaying a lazy allocation would be necessary to charge its lifetime.
         # Unknown external memory also cannot establish a safe cold-start floor.
         if (

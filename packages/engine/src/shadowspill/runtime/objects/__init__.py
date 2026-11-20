@@ -6,7 +6,7 @@ referencing and releasing them.
 Mirrors `csrc/src/runtime/objects/`.
 """
 
-from .references import ObjectConsistency, ObjectRef
+from .references import ObjectRef
 from .registration import (
     acquire_object_reference,
     register_object,
@@ -17,7 +17,6 @@ from .registration import (
 )
 
 __all__ = [
-    "ObjectConsistency",
     "ObjectRef",
     "acquire_object_reference",
     "register_object",

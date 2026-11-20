@@ -12,12 +12,12 @@ from shadowspill_client import BuildCandidates, BuildCase, PlanningOptions, Prep
 from shadowspill_client.inputs.coverage_bounds import input_bounds
 from shadowspill_client.inputs.shapes import BufferShape
 from shadowspill_client.inputs.validation import Path as FieldPath
-from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.components import ComponentSource
 
 from .preparation import (
+    PreparationComponent,
     PreparationContext,
-    PreparationDefinition,
-    ResolvedPreparationDefinition,
+    ResolvedPreparationComponent,
 )
 from .samples import RepresentativePattern, RepresentativeSample
 
@@ -27,7 +27,7 @@ STACKED_PRESET = "shadowspill/stacked@1"
 def _check(context: PreparationContext) -> int:
     if any(batch.typical for batch in context.batches):
         raise ValueError("the generic stacked preset does not declare timing hints")
-    if context.model.definition.batching != "independent" or any(
+    if context.model.component.batching != "independent" or any(
         field.batching != "stack" or any(not isinstance(n, int) for n in field.shape)
         for field in context.schema.fields
     ):
@@ -103,19 +103,19 @@ def representative(
 
 
 @lru_cache(maxsize=1)
-def builtin_preparation() -> ResolvedPreparationDefinition:
+def builtin_preparation() -> ResolvedPreparationComponent:
     root = Path(__file__).resolve().parents[1]
     digest = sha256()
     for name in (
-        "definitions/stacked.py",
-        "definitions/samples.py",
+        "components/stacked.py",
+        "components/samples.py",
     ):
         digest.update(name.encode())
         digest.update((root / name).read_bytes())
     for name in ("inputs/coverage_bounds.py", "inputs/shapes.py"):
         digest.update(("shadowspill_client/" + name).encode())
         digest.update((files("shadowspill_client") / name).read_bytes())
-    return ResolvedPreparationDefinition(
-        PreparationDefinition(STACKED_PRESET, defaults, buffers, representative),
-        DefinitionSource("shadowspill", version("shadowspill"), digest.hexdigest()),
+    return ResolvedPreparationComponent(
+        PreparationComponent(STACKED_PRESET, defaults, buffers, representative),
+        ComponentSource("shadowspill", version("shadowspill"), digest.hexdigest()),
     )

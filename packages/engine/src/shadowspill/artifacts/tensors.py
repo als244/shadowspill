@@ -52,12 +52,39 @@ def public_tensor_geometry(program: Program) -> dict[str, Mapping[str, Any]]:
 
 @dataclass(frozen=True)
 class TensorChunk:
-    """A contiguous region of physical tensor storage, in dtype elements.
+    """A contiguous region of one persistent tensor's storage.
 
-    ``shape`` describes the original tensor. ``offset`` indexes its storage,
-    not a flattened logical view; tied/strided views share one initialization.
-    Distributed loaders receive only this worker's valid region. ``offset`` is
-    still relative to the complete tensor storage; physical padding is internal.
+    `Executor.initialize`, `Executor.export_tensors` and the checkpoint
+    functions call the caller's callback with a chunk and a one-dimensional
+    buffer of its elements; `Executor.tensor_chunks` describes each tensor
+    whole. Offsets count dtype elements of the complete tensor's storage, not
+    of a flattened view, so tied and strided views share one region. A worker
+    of a sharded tensor sees only its own region; padding is never shown.
+
+    Attributes
+    ----------
+    name : str
+        The tensor's canonical name, such as a parameter's name,
+        ``master.<parameter>``, ``gradient.<parameter>`` or an optimizer
+        state's name. Tensors private to an additional Plan are named
+        ``plans.<plan>.<tensor>``.
+    shape : tuple of int
+        Shape of the complete tensor.
+    dtype : torch.dtype
+        Element type.
+    offset : int
+        Storage offset of the chunk's first element.
+    storage_elements : int
+        Elements in the complete tensor's storage.
+    stride : tuple of int
+        The tensor's strides, in elements.
+    storage_offset : int
+        Storage offset of the tensor's first element.
+    region_offset : int
+        Storage offset where this worker's region begins; zero for a tensor
+        the worker holds whole.
+    region_elements : int or None
+        Elements in this worker's region; None means the whole storage.
     """
 
     name: str

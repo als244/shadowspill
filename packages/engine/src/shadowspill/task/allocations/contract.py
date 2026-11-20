@@ -17,10 +17,42 @@ _TASK_ALLOCATION_CONTRACT_SCHEMA = artifact_schema("task_allocation_contract")
 
 @dataclass(frozen=True, slots=True)
 class TaskAllocationContractStep:
-    """One operation in a pointer-free compiled-task allocator contract.
+    """One operation of a task's allocation contract.
 
-    A persistent allocation is either returned storage (identified by output
-    leaves) or bounded persistent in-pool state retained beyond the task boundary.
+    An allocation that outlives the task is either storage the task returns,
+    named by its output positions, or bounded state kept in the pool.
+
+    Parameters
+    ----------
+    operation_index : int
+        The step's position in the contract.
+    allocation_ordinal : int
+        Which allocation, numbered in the order the task makes them.
+    operation : TaskAllocationOperation
+        Whether it is made or freed.
+    requested_bytes : int
+        Bytes the task asks for.
+    charged_bytes : int
+        Bytes the allocator charges. Positive.
+    alignment_bytes : int
+        The allocation's alignment, in bytes. Positive.
+    output_leaf_indices : tuple of int, default ()
+        Positions of the outputs whose storage the allocation is.
+    mutation_input_positions : tuple of int, default ()
+        Positions of the inputs whose updated value the allocation holds.
+    persistent_after_task : bool, default False
+        Whether the allocation outlives the task.
+    required : bool, default False
+        Whether the allocation holds an output or an update.
+
+    Raises
+    ------
+    ValueError
+        If an index, size or position is invalid, a free carries an
+        allocation's fields, or a required allocation holds neither an output
+        nor an update.
+    TypeError
+        If ``operation`` is not a `TaskAllocationOperation`.
     """
 
     operation_index: int
@@ -65,6 +97,13 @@ class TaskAllocationContractStep:
             )
 
     def identity(self) -> dict[str, object]:
+        """Return the step as plain values, as its contract's digest covers it.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "operation_index": self.operation_index,
             "allocation_ordinal": self.allocation_ordinal,
@@ -80,6 +119,23 @@ class TaskAllocationContractStep:
 
     @classmethod
     def from_dict(cls, value: object) -> TaskAllocationContractStep:
+        """Read a step from its `identity` form.
+
+        Parameters
+        ----------
+        value : dict
+            The decoded JSON value.
+
+        Returns
+        -------
+        TaskAllocationContractStep
+            The step.
+
+        Raises
+        ------
+        ValueError
+            If ``value`` is not a dict, lacks a field, or holds an invalid one.
+        """
         if not isinstance(value, dict):
             raise ValueError("cached task allocation contract step must be an object")
         try:
@@ -105,7 +161,26 @@ class TaskAllocationContractStep:
 
 @dataclass(frozen=True, slots=True)
 class TaskAllocationContract:
-    """Validated, deterministic allocator behavior for one structural task."""
+    """What one task allocates and frees, in order, with no addresses.
+
+    Ordinary profiling requires repeated runs of a task to agree on it.
+    `TaskAllocationContract.capture` builds one from an observed trace.
+
+    Parameters
+    ----------
+    steps : tuple of TaskAllocationContractStep
+        The operations, with operation indices ``0, 1, ...`` in order.
+    compatibility_digest : str
+        SHA-256 of the steps, in hexadecimal.
+
+    Raises
+    ------
+    ValueError
+        If the digest is not the steps', the operation indices or allocation
+        ordinals are not contiguous, a free names an allocation that is not
+        live or outlives the task, a free changes an allocation's geometry, or
+        an allocation that does not outlive the task is never freed.
+    """
 
     steps: tuple[TaskAllocationContractStep, ...]
     compatibility_digest: str
@@ -129,7 +204,29 @@ class TaskAllocationContract:
         trace: Sequence[TaskAllocationEvent],
         contract: TaskStorageContract | None = None,
     ) -> TaskAllocationContract:
-        """Build a contract from one trace and offline mutation semantics."""
+        """Build a contract from one observed trace.
+
+        An allocation the trace never frees outlives the task, and one holding an
+        output or an update is marked ``required``.
+
+        Parameters
+        ----------
+        trace : sequence of TaskAllocationEvent
+            The task's allocations and frees, in order.
+        contract : TaskStorageContract, optional
+            The task's storage contract, whose replacement outputs say which inputs
+            an allocation's update belongs to; None for a task without updates.
+
+        Returns
+        -------
+        TaskAllocationContract
+            The contract.
+
+        Raises
+        ------
+        ValueError
+            If the trace does not make a valid contract.
+        """
 
         mutation_by_leaf = (
             {}
@@ -155,14 +252,28 @@ class TaskAllocationContract:
         self,
         leaf_indices: Sequence[int],
     ) -> TaskAllocationContract:
-        """Specialize profiled output destruction for one execution task.
+        """Return the contract one execution task follows.
 
-        Isolated profiling destroys every returned value after inspecting its
-        storage.  Repeated execution instead promotes only the leaves declared
-        by the selected ShadowSpillProgram.  Retaining any view keeps its complete root
-        allocation alive; terminal frees for that allocation are removed.
-        Input-backed output leaves do not appear in this allocator contract and are
-        intentionally ignored here.
+        Profiling frees every output after inspecting its storage; execution keeps
+        only the outputs the selected program declares. Keeping any output keeps
+        its whole allocation alive, so that allocation's frees are dropped and it
+        outlives the task. Outputs stored in inputs make no allocation and are
+        ignored.
+
+        Parameters
+        ----------
+        leaf_indices : sequence of int
+            Positions of the outputs execution keeps.
+
+        Returns
+        -------
+        TaskAllocationContract
+            The contract, renumbered, with its digest.
+
+        Raises
+        ------
+        ValueError
+            If a position is negative.
         """
 
         retained_leaves = set(leaf_indices)
@@ -198,6 +309,13 @@ class TaskAllocationContract:
         return TaskAllocationContract(values, _digest_steps(values))
 
     def to_dict(self) -> dict[str, object]:
+        """Return the contract as JSON values.
+
+        Returns
+        -------
+        dict
+            Its steps, its digest and its schema label.
+        """
         return {
             "schema": _TASK_ALLOCATION_CONTRACT_SCHEMA,
             "compatibility_digest": self.compatibility_digest,
@@ -206,6 +324,24 @@ class TaskAllocationContract:
 
     @classmethod
     def from_dict(cls, value: object) -> TaskAllocationContract:
+        """Read a contract from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : dict
+            The decoded JSON value.
+
+        Returns
+        -------
+        TaskAllocationContract
+            The contract.
+
+        Raises
+        ------
+        ValueError
+            If ``value`` is not a dict, has another schema label, or does not make
+            a valid contract.
+        """
         if not isinstance(value, dict):
             raise ValueError("cached task allocation contract must be an object")
         if value.get("schema") != _TASK_ALLOCATION_CONTRACT_SCHEMA:

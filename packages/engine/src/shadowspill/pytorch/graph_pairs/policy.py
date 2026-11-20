@@ -13,14 +13,25 @@ from ..capture.retention import RetentionPolicy
 
 @dataclass(frozen=True, slots=True)
 class GraphPairPolicy:
-    """Choose each variant's operator retention policy, independently.
+    """The retention policy of each graph pair a checkpoint stage offers.
 
-    ``save`` uses cost-based removals from backward-required forward state.
-    ``recompute`` starts from checkpoint inputs and may retain selected results.
-    Both also retain supported discrete routing choices by default, unless
-    explicitly overridden in that variant's retention policy.
-    These are capture decisions; neither policy chooses storage residency or
-    which variant a stage executes. Planning chooses among measured variants.
+    A stage offers a ``save`` and a ``recompute`` variant, each with its own
+    saved-state cut; planning chooses among the measured variants and decides
+    where retained values reside. `build_forward_backward` and `build_step`
+    take one as ``graph_pair_policy``.
+
+    Parameters
+    ----------
+    save : RetentionPolicy, default RetentionPolicy()
+        Policy of the ``save`` variant. The default retains by cost.
+    recompute : RetentionPolicy, default RetentionPolicy(default="recompute")
+        Policy of the ``recompute`` variant. The default regenerates from the
+        checkpoint inputs.
+
+    Raises
+    ------
+    TypeError
+        If either is not a `RetentionPolicy`.
     """
 
     save: RetentionPolicy = field(default_factory=RetentionPolicy)
@@ -34,6 +45,23 @@ class GraphPairPolicy:
                 raise TypeError(f"{name} must be a RetentionPolicy")
 
     def variant(self, name: str) -> RetentionPolicy:
+        """Return the policy of one variant.
+
+        Parameters
+        ----------
+        name : {"save", "recompute"}
+            The variant.
+
+        Returns
+        -------
+        RetentionPolicy
+            That variant's policy.
+
+        Raises
+        ------
+        ValueError
+            If ``name`` is neither variant.
+        """
         if name == "save":
             return self.save
         if name == "recompute":
@@ -41,17 +69,56 @@ class GraphPairPolicy:
         raise ValueError(f"unknown graph-pair variant {name}; choose save or recompute")
 
     def identity(self) -> dict[str, object]:
+        """Return both policies' configurations, as `RetentionPolicy.identity`.
+
+        Returns
+        -------
+        dict
+            The ``"save"`` and ``"recompute"`` identities.
+        """
         return {"save": self.save.identity(), "recompute": self.recompute.identity()}
 
     def operator_classes(
         self, graph_module: torch.fx.GraphModule
     ) -> dict[str, dict[str, str]]:
+        """Classify every custom operator in ``graph_module`` under each policy.
+
+        Parameters
+        ----------
+        graph_module : torch.fx.GraphModule
+            A traced graph.
+
+        Returns
+        -------
+        dict
+            The ``"save"`` and ``"recompute"`` results of
+            `RetentionPolicy.operator_classes`.
+        """
         return {
             "save": self.save.operator_classes(graph_module),
             "recompute": self.recompute.operator_classes(graph_module),
         }
 
     def digest(self, graph_module: torch.fx.GraphModule) -> str:
+        """Return the SHA-256 digest of `capture_identity`.
+
+        The graph-pair store keys a stage's graph pairs by it.
+
+        Parameters
+        ----------
+        graph_module : torch.fx.GraphModule
+            The stage's traced graph.
+
+        Returns
+        -------
+        str
+            The digest, in hexadecimal.
+
+        Raises
+        ------
+        CaptureError
+            If `RetentionPolicy.capture_identity` raises it for either variant.
+        """
         encoded = json.dumps(
             self.capture_identity(graph_module),
             sort_keys=True,
@@ -60,7 +127,25 @@ class GraphPairPolicy:
         return hashlib.sha256(encoded.encode()).hexdigest()
 
     def capture_identity(self, graph_module: torch.fx.GraphModule) -> dict[str, object]:
-        """Occurrence scopes resolve before graph-pair cache lookup."""
+        """Return what both policies decide for ``graph_module``.
+
+        Combines each variant's `RetentionPolicy.capture_identity`.
+
+        Parameters
+        ----------
+        graph_module : torch.fx.GraphModule
+            The stage's traced graph.
+
+        Returns
+        -------
+        dict
+            The JSON-compatible description.
+
+        Raises
+        ------
+        CaptureError
+            If `RetentionPolicy.capture_identity` raises it for either variant.
+        """
         variants = {
             name: self.variant(name).capture_identity(graph_module)
             for name in ("save", "recompute")

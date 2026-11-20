@@ -8,17 +8,17 @@ from types import MappingProxyType
 from typing import Any, cast
 
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement, Parallelism
-from shadowspill.training.definitions.preparation import (
+from shadowspill.training.components.preparation import (
     PreparationContext,
-    ResolvedPreparationDefinition,
+    ResolvedPreparationComponent,
 )
-from shadowspill.training.definitions.registry import (
+from shadowspill.training.components.registry import (
     Registry,
     ResolvedModel,
     ResolvedObjective,
     ResolvedOptimizer,
 )
-from shadowspill.training.definitions.stacked import STACKED_PRESET
+from shadowspill.training.components.stacked import STACKED_PRESET
 from shadowspill.training.inputs.staging import input_envelope
 from shadowspill.training.preparation.configuration.expansion import (
     ExpandedPreparation,
@@ -48,8 +48,8 @@ from shadowspill_client import (
 from shadowspill_client._records import plain
 from shadowspill_client.inputs.validation import combined_schema
 from shadowspill_client.protocol.codec import encode
+from shadowspill_client.protocol.components import ComponentSource
 from shadowspill_client.protocol.controls import Scalar
-from shadowspill_client.protocol.definitions import DefinitionSource
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.preview import PreparationEstimate, TrainingPreview
 from shadowspill_client.protocol.setup import TrainingSetup
@@ -65,7 +65,7 @@ class ResolvedSetup:
     objective: ResolvedObjective
     optimizer: ResolvedOptimizer | None
     expansions: Mapping[OperationKey, ExpandedPreparation]
-    preset: ResolvedPreparationDefinition
+    preset: ResolvedPreparationComponent
 
     @property
     def model(self) -> ResolvedModel:
@@ -96,14 +96,14 @@ def _assemble(
     if (
         schema != config.inputs
         or objective.controls != config.loss_controls
-        or (None if optimizer is None else optimizer.definition.controls)
+        or (None if optimizer is None else optimizer.component.controls)
         != config.optimizer_controls
         or objective.participation != config.participation
         or {name: objective.outputs.get(name) for name in config.outputs}
         != config.outputs
     ):
         raise ValueError(
-            "saved input/control/output contract differs from installed definitions"
+            "saved input/control/output contract differs from installed components"
         )
     selected: dict[str, list[Operation]] = {}
     for key in config.operations:
@@ -201,33 +201,33 @@ def _describe(
         "optimizer": "explicit" if optimizer is not None else "engine_default",
         "execution": "explicit" if execution is not None else "engine_default",
         "parallelism": "explicit" if parallelism is not None else "engine_default",
-        "operations": "explicit" if operations is not None else "definition",
+        "operations": "explicit" if operations is not None else "component",
         "model.initialize": "explicit"
         if model.initialize is not None
         else "engine_default",
     }
     execution = execution or Execution()
     requested_model = model
-    for name in ("definition", "lora", "implementation", "trainable"):
+    for name in ("name", "lora", "implementation", "trainable"):
         origins[f"model.{name}"] = (
-            "explicit" if getattr(model, name) is not None else "definition"
+            "explicit" if getattr(model, name) is not None else "component"
         )
-    sources: dict[str, DefinitionSource] = {}
-    reference_definition = None
+    sources: dict[str, ComponentSource] = {}
+    reference_component = None
     if model.initialize is not None and model.initialize.kind == "pretrained":
-        model, reference_definition, sources["reference"] = (
+        model, reference_component, sources["reference"] = (
             registry.resolve_model_reference(model)
         )
-    assert model.definition is not None
-    resolved_model = registry.resolve_model(model.definition, settings=model)
+    assert model.name is not None
+    resolved_model = registry.resolve_model(model.name, settings=model)
     assert resolved_model.settings is not None
     sources["model"] = resolved_model.source
     for name in model.precision:
         origins[f"model.precision.{name}"] = (
-            "explicit" if name in requested_model.precision else "definition"
+            "explicit" if name in requested_model.precision else "component"
         )
     resolved_objective = registry.resolve_objective(
-        objective.definition,
+        objective.name,
         model=resolved_model,
         config=objective.config,
         defaults=cast(Mapping[str, Scalar], objective.defaults),
@@ -236,7 +236,7 @@ def _describe(
     resolved_optimizer = (
         None
         if optimizer is None
-        else registry.resolve_optimizer(optimizer.definition, settings=optimizer)
+        else registry.resolve_optimizer(optimizer.name, settings=optimizer)
     )
     if resolved_optimizer is not None:
         sources["optimizer"] = resolved_optimizer.source
@@ -247,19 +247,19 @@ def _describe(
     ):
         for name in resolved:
             origins[f"{prefix}.{name}"] = (
-                "explicit" if name in supplied else "definition"
+                "explicit" if name in supplied else "component"
             )
     if optimizer is not None and resolved_optimizer is not None:
         for name in ("config", "defaults"):
             for key in getattr(resolved_optimizer, name):
                 origins[f"optimizer.{name}.{key}"] = (
-                    "explicit" if key in getattr(optimizer, name) else "definition"
+                    "explicit" if key in getattr(optimizer, name) else "component"
                 )
     schema = combined_schema(resolved_model.inputs, resolved_objective.inputs)
     if parallelism is None:
         parallelism = resolved_model.default_parallelism(schema)
-        if resolved_model.definition.default_parallelism is not None:
-            origins["parallelism"] = "definition"
+        if resolved_model.component.default_parallelism is not None:
+            origins["parallelism"] = "component"
     if parallelism.inputs is None:
         if parallelism.world_size != 1:
             raise ValueError(
@@ -291,14 +291,14 @@ def _describe(
     preset_name = (
         prepare.preset
         if prepare is not None and prepare.preset is not None
-        else resolved_model.definition.preparation or STACKED_PRESET
+        else resolved_model.component.preparation or STACKED_PRESET
     )
     preset = registry.resolve_preparation(preset_name)
     origins["preparation.preset"] = (
         "explicit"
         if prepare is not None and prepare.preset is not None
-        else "definition"
-        if resolved_model.definition.preparation is not None
+        else "component"
+        if resolved_model.component.preparation is not None
         else "engine_default"
     )
     preparation, policies = resolve_build_policies(
@@ -315,7 +315,7 @@ def _describe(
         model=resolved_model.settings,
         objective=replace(
             objective,
-            definition=resolved_objective.definition.id,
+            name=resolved_objective.component.id,
             config=resolved_objective.config,
             defaults=resolved_objective.defaults,
         ),
@@ -326,7 +326,7 @@ def _describe(
         execution=execution,
         operations=keys,
         preparation=preparation,
-        definition_sources=sources,
+        component_sources=sources,
         policy_sources=policies,
         engine_source=engine_source,
         client_source=client_source,
@@ -334,7 +334,7 @@ def _describe(
         loss_controls=resolved_objective.controls,
         optimizer_controls=None
         if resolved_optimizer is None
-        else resolved_optimizer.definition.controls,
+        else resolved_optimizer.component.controls,
         outputs={
             key.outputs: resolved_objective.outputs[key.outputs]
             for key in keys
@@ -342,7 +342,7 @@ def _describe(
         },
         participation=resolved_objective.participation,
         origins=origins,
-        reference_definition=reference_definition,
+        reference_component=reference_component,
     )
     return _assemble(
         registry,
@@ -357,19 +357,19 @@ def _describe(
 def _recheck(registry: Registry, config: ResolvedTraining) -> ResolvedSetup:
     if (config.engine_source, config.client_source) != setup_sources():
         raise ValueError("saved setup engine/client source identity changed")
-    sources = config.definition_sources
-    if config.reference_definition is not None:
-        definition, _ = registry.model_reference(
-            config.reference_definition, source=sources["reference"]
+    sources = config.component_sources
+    if config.reference_component is not None:
+        component, _ = registry.model_reference(
+            config.reference_component, source=sources["reference"]
         )
-        if definition.pin(config.model) != config.model:
+        if component.pin(config.model) != config.model:
             raise ValueError("saved pretrained metadata/revision changed")
-    assert config.model.definition is not None
+    assert config.model.name is not None
     model = registry.resolve_model(
-        config.model.definition, settings=config.model, source=sources["model"]
+        config.model.name, settings=config.model, source=sources["model"]
     )
     objective = registry.resolve_objective(
-        config.objective.definition,
+        config.objective.name,
         model=model,
         config=config.objective.config,
         defaults=cast(Mapping[str, Scalar], config.objective.defaults),
@@ -379,14 +379,14 @@ def _recheck(registry: Registry, config: ResolvedTraining) -> ResolvedSetup:
         None
         if config.optimizer is None
         else registry.resolve_optimizer(
-            config.optimizer.definition,
+            config.optimizer.name,
             settings=config.optimizer,
             source=sources["optimizer"],
         )
     )
     if (
         model.settings != config.model
-        or objective.definition.id != config.objective.definition
+        or objective.component.id != config.objective.name
         or objective.config != config.objective.config
         or objective.defaults != config.objective.defaults
         or (None if optimizer is None else optimizer.settings) != config.optimizer

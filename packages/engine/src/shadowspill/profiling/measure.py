@@ -41,19 +41,64 @@ def measure_program(
     external_headroom_bytes: int = 512 << 20,
     cache: TaskProfileCache | None = None,
 ) -> Profiles:
-    """Profile all unique forms, or the explicitly selected stage indices.
+    """Measure the time and memory of each task form of a Program.
 
-    A stage subset excludes standalone optimizer tasks. `inputs` overrides flat
-    task arguments by profile key. Automatic inputs preserve geometry/aliases;
-    unknown control semantics require explicit values. Only one pair's tensors
-    are retained at a time. No model weights, pools or ArtifactStore are needed.
-    Fixed device overhead includes the requested worker headroom in addition to
-    observed library/context memory. Executor inherits the saved headroom and
-    mature process-external footprint when sizing its cold arena. Retained
-    in-arena workspaces are charged separately and never enter that external floor.
-    A shared TaskProfileCache reuses compatible finalized task measurements;
-    supplying explicit inputs disables reuse. Candidate-wide fixed costs are
-    always measured afresh, and physical planning admission is still required.
+    It runs the Program's finalized tasks on the GPU they were compiled for,
+    with generated inputs of the right geometry and aliasing, under
+    PyTorch's native allocator; it needs no model weights and opens no
+    pools. Stages sharing a form share its measurement. Fixed device memory,
+    the requested headroom included, is measured on every call, even when a
+    `TaskProfileCache` supplies the task measurements. Pass the result to
+    `apply_profiles`.
+
+    Parameters
+    ----------
+    program : Program
+        A built Program, with its finalized code.
+    device : str or torch.device, default "cuda"
+        The GPU to measure on, with the process-local ordinal and toolchain
+        the Program was built for.
+    stages : sequence of int, optional
+        Indices of the stages to measure; a subset leaves out standalone
+        optimizer tasks. By default every task form.
+    rank_map : mapping of int to int, optional
+        Launcher rank to logical rank, when the Program's resources need
+        every worker.
+    inputs : mapping of str to sequence, optional
+        Flat task arguments by profile key, instead of generated ones, for
+        tasks whose control inputs cannot be generated. Disables cache
+        reuse.
+    options : ProfilingOptions, optional
+        Timing bounds. By default ``ProfilingOptions()``.
+    warmup_seconds : float, optional
+        Shortcut for ``conditioning_seconds`` of ``options``; not with
+        ``options``.
+    measure_seconds : float, optional
+        Shortcut for ``measurement_seconds`` of ``options``; not with
+        ``options``.
+    external_headroom_bytes : int, default 512 << 20
+        Device memory each worker reserves for what libraries allocate
+        lazily, in bytes. It is counted in the fixed device memory and saved;
+        `Executor` reserves the same.
+    cache : TaskProfileCache, optional
+        Task measurements shared across Programs and processes.
+
+    Returns
+    -------
+    Profiles
+        A profile per measured task form, the fixed device memory, and the
+        session's details in ``metadata``.
+
+    Raises
+    ------
+    ValueError
+        If the Program has no finalized code or was built for another GPU or
+        toolchain, ``external_headroom_bytes`` is not a nonnegative integer,
+        or ``options`` comes with a shortcut.
+    RuntimeError
+        If PyTorch's native allocator is not in use.
+    ProfilingError
+        If a task cannot be measured.
     """
     started = perf_counter_ns()
     options = resolve_options(options, warmup_seconds, measure_seconds)

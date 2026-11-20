@@ -54,9 +54,8 @@ def write_selection(
             )
         store._record(key, result.program.digest, path, "matched")
     else:
-        # A summary describes the plan it was written beside; a new plan
+        # A certificate describes the plan it was written beside; a new plan
         # has none until it is certified.
-        store.summary_path(key).unlink(missing_ok=True)
         store.certificate_path(key).unlink(missing_ok=True)
         atomic_text(path, encoded)
         store._record(
@@ -91,7 +90,6 @@ def write_verdict(
     }
     # A verdict supersedes the plan the key held, and with it what was
     # written beside that plan.
-    store.summary_path(key).unlink(missing_ok=True)
     store.certificate_path(key).unlink(missing_ok=True)
     atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
     store._record(key, request.program.digest, path, "verdict")

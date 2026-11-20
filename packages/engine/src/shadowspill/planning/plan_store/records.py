@@ -6,13 +6,10 @@ from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.planning.memory_search.admission.layout.model import (
     FixedLayoutAdmission,
 )
-from shadowspill.planning.memory_search.diagnostics import GraphPairOutcome
-from shadowspill.planning.memory_search.diagnostics.plan_summary import PlanSummary
 from shadowspill.planning.memory_search.result import ProgramPlanResult
 from shadowspill.schema import artifact_schema
 
 SCHEMA = artifact_schema("plan_selection")
-SUMMARY_SCHEMA = artifact_schema("plan_summary")
 RESOLUTION_SCHEMA = artifact_schema("plan_resolution")
 
 
@@ -24,17 +21,6 @@ class PlanLookup:
     from_store: bool
     key: str = ""
     certificate: FixedLayoutAdmission | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PlanSummaryLookup:
-    """Certified makespan and selection diagnostics without the full plan."""
-
-    key: str
-    makespan_ns: int
-    summary: PlanSummary
-    graph_pair_outcomes: tuple[GraphPairOutcome, ...]
-    answered_with_incumbent: bool
 
 
 @dataclass(frozen=True, slots=True)

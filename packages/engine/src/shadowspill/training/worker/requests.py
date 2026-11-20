@@ -431,7 +431,7 @@ class WorkerResults:
                                 "checkpoint completion differs from owned files"
                             )
                     elif reply.result is not None:
-                        raise ValueError("skipped worker returned an unexpected output")
+                        raise ValueError("worker returned an output it was not given")
                 else:
                     if reply.result is None:
                         raise ValueError("worker omitted its prepared output reference")

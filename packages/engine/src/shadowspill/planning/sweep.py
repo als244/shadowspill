@@ -26,7 +26,30 @@ def sweep_programs(
     pool_memory: PoolMemoryProfile | None = None,
     search_options: SearchOptions | None = None,
 ) -> SweepResult:
-    """Keep each result. Invalid inputs and implementation errors are not hidden."""
+    """Plan every candidate Program within every budget.
+
+    Each candidate is planned within each budget with `plan_program` and its
+    default traversal; a case with no feasible Plan, or whose search is
+    exhausted, becomes a failure, and any other error propagates.
+
+    Parameters
+    ----------
+    programs : mapping of str to ProfiledProgram
+        The candidates, by name.
+    memory_budgets : sequence of MemoryBudgets
+        The budgets to plan each candidate within.
+    communication_info : CommunicationInfo
+        Transfer and collective costs, for every case.
+    pool_memory : PoolMemoryProfile, optional
+        Measured spill pool memory, for every case.
+    search_options : SearchOptions, optional
+        Search settings, for every case.
+
+    Returns
+    -------
+    SweepResult
+        Every case, budgets in order and candidates in order within each.
+    """
     cases = []
     for budget in memory_budgets:
         for name, program in programs.items():

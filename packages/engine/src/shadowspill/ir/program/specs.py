@@ -35,43 +35,88 @@ PROGRAM_SCHEMA = artifact_schema("program")
 
 @dataclass(frozen=True, slots=True)
 class DeviceSpec:
+    """One device the program's tasks run on.
+
+    Parameters
+    ----------
+    device_id : str
+        The device's identity, unique in the program.
+
+    Raises
+    ------
+    ValidationError
+        If ``device_id`` is empty or padded with whitespace.
+    """
+
     device_id: str
-    process_id: str
-    kind: str
-    index: int
 
     def __post_init__(self) -> None:
         require_identifier(self.device_id, "device.device_id")
-        require_identifier(self.process_id, "device.process_id")
-        require_identifier(self.kind, "device.kind")
-        require_non_negative(self.index, "device.index")
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
-        return {
-            "device_id": self.device_id,
-            "index": self.index,
-            "kind": self.kind,
-            "process_id": self.process_id,
-        }
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
+        return {"device_id": self.device_id}
 
     @classmethod
     def from_value(cls, value: object, path: str) -> DeviceSpec:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.devices[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        DeviceSpec
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         return cls(
             device_id=expect_string(
                 field(data, "device_id", path), f"{path}.device_id"
             ),
-            process_id=expect_string(
-                field(data, "process_id", path), f"{path}.process_id"
-            ),
-            kind=expect_string(field(data, "kind", path), f"{path}.kind"),
-            index=expect_integer(field(data, "index", path), f"{path}.index"),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class ResourceSpec:
+    """The queue a task runs on: one lane of one kind on one device.
+
+    Tasks on the same device, kind and lane run one at a time, in program order.
+
+    Parameters
+    ----------
+    device_id : str
+        The device, by `DeviceSpec.device_id`.
+    kind : ResourceKind
+        The kind of queue.
+    lane : int, default 0
+        Which queue of that kind on the device. At least zero.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is empty or padded with whitespace, ``kind`` is not a
+        `ResourceKind`, or ``lane`` is negative.
+    """
+
     device_id: str
     kind: ResourceKind
     lane: int = 0
@@ -83,10 +128,38 @@ class ResourceSpec:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {"device_id": self.device_id, "kind": self.kind.value, "lane": self.lane}
 
     @classmethod
     def from_value(cls, value: object, path: str) -> ResourceSpec:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.tasks[0].resource"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        ResourceSpec
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         kind_value = expect_string(field(data, "kind", path), f"{path}.kind")
         try:
@@ -104,6 +177,40 @@ class ResourceSpec:
 
 @dataclass(frozen=True, slots=True)
 class AliasGroupSpec:
+    """One storage on one device, which objects occupy and memory actions move.
+
+    A group has at most one device copy and one spill copy, and every memory
+    action moves or drops a whole group.
+
+    Parameters
+    ----------
+    alias_group_id : str
+        The group's identity, unique in the program.
+    device_id : str
+        The device that holds the device copy.
+    size_bytes : int
+        Size of the device copy, in bytes. Zero means the group needs no device
+        storage: a schedule gives it no actions and never requires it resident.
+    initial_version : int, default 0
+        Version of the group's value before the first task. Each mutation of an
+        object in the group adds its `MutationSpec.version_delta`.
+    retain_spill_copy : bool, default False
+        Whether the spill copy survives a fetch or a release. A schedule starts
+        such a group with a current spill copy.
+    shared_residency : SharedResidencyPolicy, optional
+        How the runtime shares the group across plans; None for a group the
+        schedule moves.
+    transfer : TransferSpec, optional
+        How the group moves when a move is more than one copy of
+        ``size_bytes``; None for one copy each way.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is empty or padded with whitespace, a size or version is
+        negative, or a field has the wrong type.
+    """
+
     alias_group_id: str
     device_id: str
     size_bytes: int
@@ -136,12 +243,23 @@ class AliasGroupSpec:
 
     @property
     def spill_size_bytes(self) -> int:
+        """Size of the group's spill copy, in bytes.
+
+        ``transfer.spill_size_bytes`` with a transfer recipe, ``size_bytes`` without.
+        """
         return (
             self.size_bytes if self.transfer is None else self.transfer.spill_size_bytes
         )
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "alias_group_id": self.alias_group_id,
             "device_id": self.device_id,
@@ -156,6 +274,27 @@ class AliasGroupSpec:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> AliasGroupSpec:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.alias_groups[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        AliasGroupSpec
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         shared_value = field(data, "shared_residency", path)
         if shared_value is None:
@@ -197,6 +336,33 @@ class AliasGroupSpec:
 
 @dataclass(frozen=True, slots=True)
 class ObjectSpec:
+    """One value tasks read or write: a byte range of one alias group.
+
+    Several objects can share a group, as views of one storage.
+
+    Parameters
+    ----------
+    object_id : str
+        The object's identity, unique in the program.
+    alias_group_id : str
+        The group whose storage holds it.
+    offset_bytes : int
+        Where the object starts in the group's storage, in bytes.
+    size_bytes : int
+        Bytes of the group's storage the object reaches from ``offset_bytes``.
+        The range lies inside the group.
+    role : ObjectRole, default ObjectRole.OTHER
+        What the object holds.
+    persistence : Persistence, default Persistence.STEP
+        How long its value lasts.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is empty or padded with whitespace, an offset or size is
+        negative, or ``role`` or ``persistence`` has the wrong type.
+    """
+
     object_id: str
     alias_group_id: str
     offset_bytes: int
@@ -218,6 +384,13 @@ class ObjectSpec:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "alias_group_id": self.alias_group_id,
             "object_id": self.object_id,
@@ -229,6 +402,27 @@ class ObjectSpec:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> ObjectSpec:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.objects[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        ObjectSpec
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         role_value = expect_string(field(data, "role", path), f"{path}.role")
         persistence_value = expect_string(
@@ -265,6 +459,37 @@ class ObjectSpec:
 
 @dataclass(frozen=True, slots=True)
 class TaskProfile:
+    """One task measurement, which tasks refer to by ID.
+
+    Several tasks may share a profile.
+
+    Parameters
+    ----------
+    profile_id : str
+        The profile's identity, unique in the program.
+    runtime_ns : int
+        How long the task runs alone, in nanoseconds.
+    workspace_bytes : int
+        Peak bytes of temporary storage the task holds while it runs, besides
+        its inputs and outputs.
+    compatibility_digest : str
+        Identity of the task contract the measurement was taken for.
+    resource_phases : tuple of TaskResourcePhase, default ()
+        The run split into sequential parts, whose durations sum to
+        ``runtime_ns``; empty for one part of computation.
+    overlap_costs : tuple of TaskOverlapCost, default ()
+        How fast the task and timed transfer phases progress while they
+        overlap, at most one sample per timing class and size; empty when not
+        measured, which leaves both at full rate.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is empty or padded with whitespace, a measurement is
+        negative, the phase durations do not sum to ``runtime_ns``, or two
+        overlap samples share a class and size.
+    """
+
     profile_id: str
     runtime_ns: int
     workspace_bytes: int
@@ -281,6 +506,13 @@ class TaskProfile:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the profile as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "compatibility_digest": self.compatibility_digest,
             "profile_id": self.profile_id,
@@ -292,6 +524,27 @@ class TaskProfile:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> TaskProfile:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.profiles[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        TaskProfile
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         return cls(
             profile_id=expect_string(
@@ -326,6 +579,23 @@ class TaskProfile:
 
 @dataclass(frozen=True, slots=True)
 class MutationSpec:
+    """An update a task makes to one of its inputs in place.
+
+    Parameters
+    ----------
+    object_id : str
+        The object updated, which is one of the task's inputs.
+    version_delta : int, default 1
+        How far the update advances the version of the object's alias group.
+        Positive.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is empty or padded with whitespace, or ``version_delta``
+        is not positive.
+    """
+
     object_id: str
     version_delta: int = 1
 
@@ -335,10 +605,38 @@ class MutationSpec:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {"object_id": self.object_id, "version_delta": self.version_delta}
 
     @classmethod
     def from_value(cls, value: object, path: str) -> MutationSpec:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.tasks[0].mutations[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        MutationSpec
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         return cls(
             object_id=expect_string(
@@ -352,6 +650,43 @@ class MutationSpec:
 
 @dataclass(frozen=True, slots=True)
 class TaskSpec:
+    """One unit of work: where it runs, what it costs, what it reads and writes.
+
+    A program lists its tasks in execution order. A task depends only on
+    earlier tasks, among them the producer of every input an earlier task
+    produces.
+
+    Parameters
+    ----------
+    task_id : str
+        The task's identity, unique in the program.
+    resource : ResourceSpec
+        The queue the task runs on.
+    profile_id : str
+        The `TaskProfile` that costs the task.
+    dependencies : tuple of str, default ()
+        Earlier tasks this one waits for: the producers of what it reads, the
+        earlier writers of what it updates, and any ordering the frontend adds.
+    inputs : tuple of str, default ()
+        Objects the task reads.
+    outputs : tuple of str, default ()
+        Objects the task produces.
+    mutations : tuple of MutationSpec, default ()
+        Inputs the task updates in place, at most one each.
+    phase : str, default "compute"
+        Label of the part of the work the task belongs to, such as
+        ``"forward"``. The IR carries it without interpreting it.
+    requires_entrypoint : bool, default True
+        Whether running the task calls a function bound to it. False for a
+        boundary that does no work.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is empty or padded with whitespace, a collection is not a
+        tuple or repeats an entry, or ``resource`` is not a `ResourceSpec`.
+    """
+
     task_id: str
     resource: ResourceSpec
     profile_id: str
@@ -388,6 +723,13 @@ class TaskSpec:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "dependencies": string_list(self.dependencies),
             "inputs": string_list(self.inputs),
@@ -402,6 +744,27 @@ class TaskSpec:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> TaskSpec:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.tasks[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        TaskSpec
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         dependencies = expect_list(
             field(data, "dependencies", path), f"{path}.dependencies"

@@ -58,44 +58,101 @@ _active_runtime: Runtime | None = None
 
 
 class PlanState(IntEnum):
-    """What became of one plan id, mirroring `ShadowSpillPlanState`.
+    """What became of one plan id, as `Runtime.plan_state` reports it.
 
-    An id stays answerable after its plan is gone. A closing plan releases the
-    ranges its own scopes made, so a live allocation naming a closed or destroyed
-    plan is a defect rather than an expected state, and this is what makes it
-    visible. Allocations taken outside any plan's scope carry no plan at all.
+    Mirrors ``ShadowSpillPlanState``. A closing plan releases the ranges its
+    own scopes made, so a live allocation naming a closed or destroyed plan is
+    a defect. Allocations made outside any plan's scope name no plan.
+
+    Attributes
+    ----------
+    UNKNOWN : int
+        No plan was ever created with this id.
+    LIVE : int
+        Created and open: the plan may still admit work.
+    CLOSED : int
+        Closed, with its record still present: it admits no further work.
+    DESTROYED : int
+        Closed and its record freed. The id stays claimed, because a lease may
+        still carry it.
     """
 
-    #: No plan was ever created with this id.
     UNKNOWN = 0
-    #: Created and open: it may still admit work.
     LIVE = 1
-    #: Closed, record still present: it admits no further work.
     CLOSED = 2
-    #: Closed and the record freed. The id stays claimed, because a lease may
-    #: still carry it.
     DESTROYED = 3
 
 
 class Runtime:
-    """Own ShadowSpill's process-lifetime allocator, pools, routes, and worker.
+    """The process's runtime: its device allocator, pools, routes and worker.
 
-    Accelerator allocator selection is process-global and irreversible after
-    the framework initializes the accelerator. Construct exactly one ``Runtime``
-    before any device allocation the framework makes. Executor performs this
-    setup and shares its runtime across its admitted Plans.
+    A process opens one runtime, before the framework makes any device
+    allocation. Opening it installs the process's device allocator through
+    ``frontend``, which cannot be undone, opens the pools and routes, and
+    measures the routes unless told not to; the transfer worker then runs
+    until the runtime closes. `Executor` opens one in a fresh worker and
+    shares it between its Plans, each of which names its execution and spill
+    pools and the routes between them.
 
-    The current backend supports one device pool plus configured spill pools
-    (pinned host, remote memory or SSD). Pools and directed routes have explicit
-    identities; each admitted plan selects its execution/spill pool pair and
-    matching routes.
+    By default, opening finds the device's NUMA node, narrows the CPU masks of
+    the process's existing threads to that node's permitted CPUs, and prefers
+    the node's pages before pinning spill pools; where a step fails it warns
+    and keeps the operating system's placement. The CPU masks and the opening
+    thread's memory policy stay in effect for the process, and existing
+    allocations are not moved. As a context manager, it closes on exit.
 
-    By default, initialization discovers the device's host NUMA node, narrows
-    existing process-thread CPU masks to permitted local CPUs, and prefers
-    local pages before pinning spill pools. Remote-page fallback warns.
-    ``numa_binding=False`` preserves the caller's placement. Affinity and the
-    initializing thread's memory policy remain in effect for the process;
-    existing allocations are not migrated.
+    Parameters
+    ----------
+    frontend : RuntimeFrontend
+        The framework integration the runtime works through: it selects and
+        synchronizes the device, provides the process allocator, and finds or
+        detaches the objects that hold a lease.
+    pools : mapping of str to DevicePool or SpillPool
+        The pools, by name. Names are identifiers; exactly one pool is a
+        device pool, and at least one other is a spill pool. A pool's id is
+        its position in the mapping.
+    routes : mapping of str to TransferRoute
+        The directed routes bytes may move along, by name; at least one. Each
+        joins the device pool and a spill pool, in either direction, and no
+        two join the same pools in the same direction. A route's id is its
+        position in the mapping.
+    library_path : str or path-like, optional
+        The framework adapter library to load. By default, the one installed
+        beside the package.
+    calibrate : bool, default True
+        Whether to measure every route before returning. Without it, the
+        routes carry no measurements until `calibrate_transfer_capabilities`
+        runs.
+    numa_binding : bool, default True
+        Whether to place the process on the device's NUMA node, as described
+        above. False leaves the caller's placement alone.
+    worker_poll_nanoseconds : int, default 1000
+        How long the transfer worker waits before asking again whether a
+        pending completion has finished, in nanoseconds. At least zero.
+    background_transfer_window_bytes : int, default DEFAULT_BACKGROUND_WINDOW_BYTES
+        Bytes of transfers the plan did not schedule, such as materializing
+        or reconciling state, that a route may have in flight at once (64 MiB
+        by default): a scheduled transfer never waits behind more. Zero
+        removes the bound. At least zero.
+    backend : str, optional
+        The backend library the adapter loads. By default, the one
+        accelerator backend installed beside the libraries; a name selects
+        ``libshadowspill_backend_<name>.so`` there, and a path (one that
+        contains ``/`` or ends in ``.so``) is used as given.
+
+    Raises
+    ------
+    RuntimeConfigurationError
+        If the pools or routes are invalid, the adapter library is not found, a
+        runtime has already been opened in this process (even one since
+        closed), a pool's image cannot be reserved, or calibration fails.
+    TypeError
+        If ``pools`` or ``routes`` is not a mapping, or holds something other
+        than a pool or route configuration.
+    RuntimeError
+        If the allocator cannot be installed: for example, the device budget
+        leaves no room for a pool, the backend library is missing, or the
+        adapter and runtime libraries come from different builds.
     """
 
     def __init__(
@@ -186,41 +243,50 @@ class Runtime:
 
     @property
     def frontend(self) -> RuntimeFrontend:
-        """The framework this runtime was opened with.
-
-        Every framework call the runtime makes goes through this, and through
-        nothing else: device selection and synchronization, the process
-        allocator, and finding or detaching the objects that hold a lease.
-        """
+        """The framework integration this runtime was opened with."""
 
         return self._frontend
 
     @property
     def pools(self) -> Mapping[str, MemoryPool]:
-        """Read-only initialized pool registry keyed by user names."""
+        """The runtime's pools, by name; read-only."""
 
         return self._pools
 
     def pool_statistics(self, pool: str = "execution") -> MemoryPoolStatistics:
-        """What one pool holds, asked of that pool by name.
+        """Read what one pool holds now.
 
-        A runtime may own any number of pools and a pool carries no role of its
-        own, so its numbers are read per pool. The allocator's own pool also
-        arrives with the adapter's statistics, which is the one a caller on the
-        allocation path usually wants.
+        Parameters
+        ----------
+        pool : str, default "execution"
+            Name of the pool, as given to the runtime.
+
+        Returns
+        -------
+        MemoryPoolStatistics
+            The pool's capacity, occupancy, fragmentation and record reserves.
+
+        Raises
+        ------
+        RuntimeConfigurationError
+            If the runtime is closed, or no pool has that name.
+        RuntimeExecutionError
+            If the runtime refuses the read.
         """
 
-        registered = self._pools.get(pool)
-        if registered is None:
-            raise RuntimeConfigurationError(f"unknown pool {pool!r}")
         statistics = MemoryPoolStatistics()
-        status = int(
-            runtime_library().shadowspill_memory_pool_statistics(
-                self._runtime_handle,
-                ctypes.c_uint32(registered.pool_id),
-                ctypes.byref(statistics),
+        with self._lock:
+            self._require_unclosed()
+            registered = self._pools.get(pool)
+            if registered is None:
+                raise RuntimeConfigurationError(f"unknown pool {pool!r}")
+            status = int(
+                runtime_library().shadowspill_memory_pool_statistics(
+                    self._runtime_handle,
+                    ctypes.c_uint32(registered.pool_id),
+                    ctypes.byref(statistics),
+                )
             )
-        )
         if status != 0:
             raise RuntimeExecutionError(
                 f"failed to read statistics for pool {pool!r}: status={status}"
@@ -228,27 +294,65 @@ class Runtime:
         return statistics
 
     def next_plan_id(self) -> int:
-        """Take an id no other plan on this runtime will be given."""
+        """Take a new plan id.
+
+        Ids count up from one and are never reissued; each creates one plan.
+
+        Returns
+        -------
+        int
+            The id, at least one.
+
+        Raises
+        ------
+        RuntimeConfigurationError
+            If the runtime is closed.
+        RuntimeExecutionError
+            If the runtime has latched a failure.
+        """
 
         plan_id = ctypes.c_uint64()
-        status = int(
-            runtime_library().shadowspill_runtime_next_plan_id(
-                self._runtime_handle, ctypes.byref(plan_id)
+        with self._lock:
+            self._require_unclosed()
+            status = int(
+                runtime_library().shadowspill_runtime_next_plan_id(
+                    self._runtime_handle, ctypes.byref(plan_id)
+                )
             )
-        )
         if status != 0 or plan_id.value == 0:
             raise RuntimeExecutionError(f"failed to take a plan id: status={status}")
         return int(plan_id.value)
 
     def plan_state(self, plan_id: int) -> PlanState:
-        """What became of one plan id, after the plan itself may be gone."""
+        """Read what became of one plan id, even after its plan is gone.
+
+        Parameters
+        ----------
+        plan_id : int
+            A plan id, such as the plan a live allocation names. Positive.
+
+        Returns
+        -------
+        PlanState
+            Whether the id was never used, or its plan is live, closed or
+            destroyed.
+
+        Raises
+        ------
+        RuntimeConfigurationError
+            If the runtime is closed.
+        RuntimeExecutionError
+            If ``plan_id`` is zero, or the runtime refuses the read.
+        """
 
         state = ctypes.c_uint32()
-        status = int(
-            runtime_library().shadowspill_runtime_plan_state(
-                self._runtime_handle, ctypes.c_uint64(plan_id), ctypes.byref(state)
+        with self._lock:
+            self._require_unclosed()
+            status = int(
+                runtime_library().shadowspill_runtime_plan_state(
+                    self._runtime_handle, ctypes.c_uint64(plan_id), ctypes.byref(state)
+                )
             )
-        )
         if status != 0:
             raise RuntimeExecutionError(
                 f"failed to read the state of plan {plan_id}: status={status}"
@@ -257,13 +361,19 @@ class Runtime:
 
     @property
     def routes(self) -> Mapping[str, RuntimeRoute]:
-        """Read-only directed-route registry keyed by user names."""
+        """The runtime's directed routes, by name; read-only."""
 
         return self._routes
 
     @property
     def transfer_capabilities(self) -> TransferCapabilities:
-        """Return a lock-consistent immutable transfer-matrix snapshot."""
+        """The transfer matrix the runtime publishes now, as one snapshot.
+
+        Raises
+        ------
+        RuntimeConfigurationError
+            If the runtime is closed or unusable, or the matrix cannot be read.
+        """
 
         with self._lock:
             self._require_open()
@@ -278,11 +388,46 @@ class Runtime:
         warmup_copies: int = 4,
         measured_copies: int = 16,
     ) -> TransferCapabilities:
-        """Measure all or selected routes and atomically publish a new matrix.
+        """Measure routes and publish a new transfer matrix.
 
-        This runtime must be locally idle. ShadowSpill deliberately performs no
-        cross-process barrier: callers may coordinate independent runtimes and
-        invoke this method concurrently to measure contended link behavior.
+        Each measured route first makes ``warmup_copies`` large copies. Its
+        latency is the median of ``measured_copies`` small copies timed one at
+        a time; its bandwidth comes from the median of three batches of
+        ``measured_copies`` large copies. When both directions between two
+        pools are measured, they are then measured again together, and each
+        uses that concurrent rate. A successful call publishes the whole
+        matrix at once, under the next generation.
+
+        The call waits for this runtime to go idle and takes no barrier with
+        other processes, so callers that coordinate several runtimes can
+        measure them at once to see contended links.
+
+        Parameters
+        ----------
+        routes : sequence of tuple of str, optional
+            The ``(source, destination)`` pool names of the routes to measure.
+            By default, every route.
+        small_copy_bytes : int, default 4096
+            Size of the copies that measure latency, in bytes. Positive.
+        large_copy_bytes : int, default 268435456
+            Size of the copies that measure bandwidth, in bytes (256 MiB by
+            default). At least ``small_copy_bytes``.
+        warmup_copies : int, default 4
+            Large copies made and discarded before measuring.
+        measured_copies : int, default 16
+            Copies timed per measurement. Positive.
+
+        Returns
+        -------
+        TransferCapabilities
+            The matrix the call published.
+
+        Raises
+        ------
+        RuntimeConfigurationError
+            If the runtime is closed or unusable, a plan is admitted or being
+            set up, a pair is not a route of the runtime, a size or count is
+            out of range, or a measurement fails.
         """
 
         return self._calibrate(
@@ -295,11 +440,21 @@ class Runtime:
         )
 
     def close(self) -> None:
-        """Close every runtime resource after verifying external ownership.
+        """Close the runtime and release everything it owns.
 
-        The framework's selected allocator shim remains installed because allocator
-        selection is process-global. Its runtime is permanently closed: future
-        nonzero device allocations raise a typed closed-runtime error.
+        Closing a closed runtime does nothing. Afterwards every other method
+        raises `RuntimeConfigurationError`; ``frontend``, ``pools`` and
+        ``routes`` still answer. The process's device allocator stays
+        installed, since it cannot be removed, but refuses every later nonzero
+        device allocation, and no other runtime can be opened in the process.
+
+        Raises
+        ------
+        RuntimeConfigurationError
+            If a plan is admitted or being set up, an `ObjectRef` is still
+            open, or device outputs the caller holds still reference a pool,
+            which leaves the runtime open; or if closing released everything
+            but observed a failure, which leaves it closed.
         """
 
         with self._lock:
@@ -324,6 +479,7 @@ class Runtime:
                     "still reference its memory pools; release those references first"
                 )
             self._closed = True
+            self._runtime_handle = 0
             if status != 0:
                 raise RuntimeConfigurationError(
                     "runtime close released its resources after observing "
@@ -382,12 +538,17 @@ class Runtime:
             return read_transfer_capabilities(self._runtime_handle, self._pool_names)
 
     def _require_open(self) -> None:
-        if self._closed:
-            raise RuntimeConfigurationError("ShadowSpill Runtime is closed")
+        self._require_unclosed()
         if self._unusable_reason is not None:
             raise RuntimeConfigurationError(
                 f"ShadowSpill Runtime is unusable: {self._unusable_reason}"
             )
+
+    def _require_unclosed(self) -> None:
+        # Closing frees the neutral runtime, so nothing may reach it after. An
+        # unusable runtime is still allocated, and its reads stay answerable.
+        if self._closed:
+            raise RuntimeConfigurationError("ShadowSpill Runtime is closed")
 
 
 __all__ = ["PlanState", "Runtime"]

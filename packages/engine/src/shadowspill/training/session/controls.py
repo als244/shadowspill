@@ -55,8 +55,8 @@ def call_controls(
         if optimizer is None:
             raise ValueError("optimizer was not prepared for this client")
         optim = control_values(
-            optimizer.definition.controls,
-            optimizer.definition.controls.resolve(
+            optimizer.component.controls,
+            optimizer.component.controls.resolve(
                 defaults=optimizer.defaults, overrides=request.optim
             ),
         )

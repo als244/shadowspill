@@ -24,7 +24,15 @@ from shadowspill.schema import artifact_schema
 
 
 class StorageRootKind(StrEnum):
-    """Semantic origin of one output-reachable task storage."""
+    """Where one storage a task's outputs reach comes from.
+
+    Attributes
+    ----------
+    INPUT : str
+        The storage of one of the task's inputs.
+    FRESH : str
+        Storage the task allocates.
+    """
 
     INPUT = "input"
     FRESH = "fresh"
@@ -32,11 +40,37 @@ class StorageRootKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class StorageRoot:
-    """One normalized semantic storage root.
+    """One storage a task's outputs reach.
 
-    Input roots name the canonical argument position for an input alias
-    group. Fresh roots name one FX producer and result index. Physical
-    allocation sizes deliberately do not appear in this record.
+    A root names where the storage comes from, never how large an allocation
+    is: an input root names its input, a fresh root the graph node that
+    produces it.
+
+    Parameters
+    ----------
+    root_id : int
+        The root's position in the contract's roots.
+    kind : StorageRootKind
+        Where the storage comes from.
+    source_input : int or None
+        The input's position, for an input root; None for a fresh root.
+    producer_node : str or None
+        Name of the graph node that produces a fresh root; None for an input
+        root.
+    producer_target : str or None
+        The operation that node calls, as text; None for an input root.
+    producer_result : int or None
+        Which of the node's results the root is; None for an input root.
+    minimum_span_bytes : int
+        Bytes from the root's start that its output views reach.
+
+    Raises
+    ------
+    ValueError
+        If ``root_id`` or ``minimum_span_bytes`` is negative, or the fields
+        given do not match ``kind``.
+    TypeError
+        If ``kind`` is not a `StorageRootKind`.
     """
 
     root_id: int
@@ -73,6 +107,13 @@ class StorageRoot:
                 raise ValueError("fresh root requires a producer result index")
 
     def identity(self) -> dict[str, object]:
+        """Return the record as plain values, as its contract's digest covers it.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "root_id": self.root_id,
             "kind": self.kind.value,
@@ -86,7 +127,34 @@ class StorageRoot:
 
 @dataclass(frozen=True, slots=True)
 class OutputView:
-    """One flattened output view of a semantic storage root."""
+    """One output of a task, as a view of one storage root.
+
+    Parameters
+    ----------
+    leaf_index : int
+        The output's position among the task's flattened outputs.
+    root_id : int
+        The root it views.
+    offset_bytes : int
+        Where the view starts in the root, in bytes.
+    span_bytes : int
+        Bytes of the root the view reaches from ``offset_bytes``, which can
+        differ from its element count times element size.
+    shape : tuple of int
+        The extent of each dimension.
+    stride : tuple of int
+        Elements between neighbours along each dimension.
+    dtype : str
+        The element type, as the frontend names it.
+    layout : str
+        The memory layout, as the frontend names it.
+
+    Raises
+    ------
+    ValueError
+        If a position, offset, span, extent or stride is negative, ``shape``
+        and ``stride`` differ in length, or ``dtype`` or ``layout`` is empty.
+    """
 
     leaf_index: int
     root_id: int
@@ -110,6 +178,13 @@ class OutputView:
             raise ValueError("output-view dtype and layout must be non-empty")
 
     def identity(self) -> dict[str, object]:
+        """Return the record as plain values, as its contract's digest covers it.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "leaf_index": self.leaf_index,
             "root_id": self.root_id,
@@ -124,15 +199,31 @@ class OutputView:
 
 @dataclass(frozen=True, slots=True)
 class MutationBinding:
-    """One task operation that updates an input storage.
+    """One operation of a task that updates an input's storage.
 
-    ``replacement_output_leaf`` distinguishes Export's functional mutation
-    form from a dispatcher-schema write.  The executable replacement normally
-    has fresh storage and becomes the input object's next authoritative
-    generation.  the compiler may prove a no-op update and return the target input
-    itself; that preserves the mutation contract without requiring a generation
-    replacement.  A schema write has no replacement output because the
-    compiled operation writes in place.
+    An update either returns a replacement output, which becomes the input
+    object's next generation, or writes the input in place and returns nothing
+    for it. A replacement normally has storage of its own; when the compiler
+    finds the update has no effect, it may return the input itself.
+
+    Parameters
+    ----------
+    input_position : int
+        The position of the input updated.
+    replacement_output_leaf : int or None
+        The output that holds the updated value; None for an in-place write.
+    producer_node : str
+        Name of the graph node that makes the update.
+    producer_target : str
+        The operation that node calls, as text.
+    argument_name : str
+        What the operation writes: the name of its written argument, or of the
+        updated input for a replacement.
+
+    Raises
+    ------
+    ValueError
+        If a position is negative or a name is empty.
     """
 
     input_position: int
@@ -153,6 +244,13 @@ class MutationBinding:
             raise ValueError("mutation provenance must be non-empty")
 
     def identity(self) -> dict[str, object]:
+        """Return the record as plain values, as its contract's digest covers it.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "input_position": self.input_position,
             "replacement_output_leaf": self.replacement_output_leaf,
@@ -164,7 +262,31 @@ class MutationBinding:
 
 @dataclass(frozen=True, slots=True)
 class TaskStorageContract:
-    """Deterministic semantic storage contract for one functional task contract."""
+    """What one task promises about the storage of its outputs and its updates.
+
+    A task that does not match its contract is refused, not warned about.
+    `TaskStorageContract.build` makes one with its digest computed.
+
+    Parameters
+    ----------
+    roots : tuple of StorageRoot
+        The storages the outputs reach, with root IDs ``0, 1, ...`` in order.
+    output_views : tuple of OutputView
+        Each output's view, at most one per output. Every root has a view, and
+        every view lies inside its root's span.
+    mutations : tuple of MutationBinding
+        The task's updates to its inputs, none repeated.
+    compatibility_digest : str
+        SHA-256 of the contract's parts, in hexadecimal, as `digest_of`
+        computes it.
+
+    Raises
+    ------
+    ValueError
+        If the root IDs are not contiguous, an output has two views, a view
+        names an unknown root or overruns its span, a root has no view, a
+        mutation repeats, or the digest is not 64 characters.
+    """
 
     roots: tuple[StorageRoot, ...]
     output_views: tuple[OutputView, ...]
@@ -208,11 +330,25 @@ class TaskStorageContract:
         output_views: tuple[OutputView, ...],
         mutations: tuple[MutationBinding, ...],
     ) -> str:
-        """What these parts identify, whether or not they make a contract.
+        """Return the digest these parts have, whether or not they make a contract.
 
-        A record read from a store is answered for by its digest before
-        anything is built from it, so a record that was changed is rejected
-        as changed rather than as whatever its contents then trip over.
+        A record read from a store is checked against its digest before anything
+        is built from it, so a changed record is refused as changed rather than for
+        whatever its contents then violate.
+
+        Parameters
+        ----------
+        roots : tuple of StorageRoot
+            The roots.
+        output_views : tuple of OutputView
+            The views.
+        mutations : tuple of MutationBinding
+            The updates.
+
+        Returns
+        -------
+        str
+            SHA-256 of their sorted compact JSON, in hexadecimal.
         """
 
         identity = {
@@ -230,7 +366,27 @@ class TaskStorageContract:
         output_views: tuple[OutputView, ...],
         mutations: tuple[MutationBinding, ...],
     ) -> TaskStorageContract:
-        """One contract over these parts, identified by what they say."""
+        """Build a contract over these parts, with the digest they have.
+
+        Parameters
+        ----------
+        roots : tuple of StorageRoot
+            The roots.
+        output_views : tuple of OutputView
+            The views.
+        mutations : tuple of MutationBinding
+            The updates.
+
+        Returns
+        -------
+        TaskStorageContract
+            The contract.
+
+        Raises
+        ------
+        ValueError
+            If the parts do not make a valid contract.
+        """
 
         return cls(
             roots=roots,
@@ -240,6 +396,13 @@ class TaskStorageContract:
         )
 
     def identity(self) -> dict[str, object]:
+        """Return the contract's parts as plain values, as its digest covers them.
+
+        Returns
+        -------
+        dict
+            Its roots, views and mutations.
+        """
         return {
             "roots": [root.identity() for root in self.roots],
             "output_views": [view.identity() for view in self.output_views],
@@ -247,26 +410,31 @@ class TaskStorageContract:
         }
 
     def without_device_storage(self, leaves: Collection[int]) -> TaskStorageContract:
-        """This contract with the named output leaves holding no storage.
+        """Return this contract with the named outputs holding no device storage.
 
-        A contract says what device storage a task's outputs occupy, and it
-        is written from a trace. A trace is taken over values that only
-        describe the real ones, and a describing value can be wrong about
-        where a result lives: an operator whose result is a host scalar is
-        traced as device memory of the scalar's size. Nothing on the device
-        is ever allocated for it, so no allocation can be found for it
-        either, and the contract is what has to give.
+        A contract is traced over values that only describe the real ones, and a
+        trace can place on the device a result the task really returns elsewhere,
+        such as a scalar. No device allocation exists for it, so the contract gives
+        way. A named output keeps its identity, shape and element type and gives up
+        its span; a root whose outputs are all named gives up its span too, which
+        is how the rest of the system says no storage is needed.
 
-        A leaf named here keeps its identity, shape and dtype -- it is still
-        one of the task's outputs, still passed from the task that produces
-        it to the task that reads it -- and gives up its span. A root whose
-        leaves are all named gives up its span with them, which is how the
-        rest of the system already says *this needs no storage*: zero bytes,
-        no allocation, no residency, no fetch.
+        Parameters
+        ----------
+        leaves : collection of int
+            Positions of the outputs observed off the device.
 
-        One root is one allocation, so it is in one place. A root named for
-        some of its leaves and not others describes an allocation half on
-        the device, which no observation can mean, and is refused.
+        Returns
+        -------
+        TaskStorageContract
+            The contract with those spans at zero; this one when ``leaves`` is
+            empty.
+
+        Raises
+        ------
+        CaptureError
+            If a position names no output, or a root is named for some of its
+            outputs but not all of them.
         """
 
         named = frozenset(leaves)
@@ -303,12 +471,24 @@ class TaskStorageContract:
         )
 
     def to_json(self) -> str:
-        """Return deterministic standalone diagnostic serialization."""
+        """Return the contract's `to_dict` form as compact sorted JSON.
+
+        Returns
+        -------
+        str
+            The text.
+        """
 
         return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
 
     def to_dict(self) -> dict[str, object]:
-        """Return the versioned JSON-compatible contract record."""
+        """Return the contract as JSON values.
+
+        Returns
+        -------
+        dict
+            Its parts, its digest and its schema label.
+        """
 
         return {
             "schema": artifact_schema("task_storage_contract"),
@@ -318,7 +498,24 @@ class TaskStorageContract:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> TaskStorageContract:
-        """Validate and restore one versioned contract record."""
+        """Read a contract from its `to_dict` form, checking its digest.
+
+        Parameters
+        ----------
+        payload : mapping
+            The decoded JSON value.
+
+        Returns
+        -------
+        TaskStorageContract
+            The contract.
+
+        Raises
+        ------
+        ValueError
+            If the fields or schema label differ from this version's, a part is
+            malformed, or the digest does not match the parts.
+        """
 
         expected_keys = {
             "schema",
@@ -352,7 +549,23 @@ class TaskStorageContract:
 
     @classmethod
     def from_json(cls, encoded: str) -> TaskStorageContract:
-        """Validate and restore deterministic standalone JSON."""
+        """Read a contract from its JSON text.
+
+        Parameters
+        ----------
+        encoded : str
+            The text, as `to_json` writes it.
+
+        Returns
+        -------
+        TaskStorageContract
+            The contract.
+
+        Raises
+        ------
+        ValueError
+            If ``encoded`` is not a JSON object, or as for `from_dict`.
+        """
 
         try:
             payload = json.loads(encoded)

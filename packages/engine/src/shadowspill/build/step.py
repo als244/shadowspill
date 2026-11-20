@@ -41,39 +41,98 @@ def build_step(
     rank_map: Mapping[int, int] | None = None,
     target: str | torch.device = "cuda",
 ) -> Program:
-    """Capture gradients and local updates without initializing persistent state.
+    """Capture a model's complete training update as a Program.
 
-    The supplied optimizer must refer to the model's parameters. Neither is
-    changed. Saved defaults describe lazily created optimizer state; actual
-    tensor contents are supplied at execution. CPU planning chooses when each
-    independent update runs after its required gradient writes and weight reads.
-    ``master_dtype`` optionally captures separate optimizer parameters; model
-    compute precision is unchanged. Ordinary parameters keep their own storage
-    when it already meets that precision; masters never narrow their dtype.
-    ``grad_dtype`` controls stored gradients
-    independently. Optimizer state dtypes come from that optimizer's own rules.
-    Trainable tensor wrappers require an explicit ``master_dtype`` even if their
-    logical dtype matches it. The bounded initializer must fill their physical
-    components and ``master.<parameter_name>`` separately.
-    ``example_args``/``example_kwargs`` plus ``num_examples`` describe repeated
-    geometry. Optional ``example_calls=[(args, kwargs), ...]`` describes distinct
-    geometries instead; planning still chooses their execution order.
-    ``graph_pair_policy`` defines independent saved-state cuts for the ``save``
-    and ``recompute`` graphs; ``None`` selects ``GraphPairPolicy()``. ``chunking``
-    may restrict allowed stage variants; planning selects among measured
-    alternatives and chooses residency. A different policy requires building
-    and profiling its resulting implementations before planning.
-    ``gradient_destination_rules`` supplies versioned opaque-operator contracts
-    for grouped in-place gradient accumulation across shared uses and chunks.
-    It is independent of retention and chunk selection; unmatched outputs keep
-    ordinary accumulation and all selected implementations are still profiled.
-    ``runtime_gradient_scale`` adds a read-only final-scale control (default 1)
-    to each optimizer consumer, after conversion to optimizer precision. Its
-    saved name is in ``Program.bindings["gradient_scale_control"]``; Executor
-    accepts overrides through ``hyperparams`` without changing stored gradients.
-    ``operator_preparation`` supplies explicit provider factories that capture
-    selected binaries during existing task finalization, without replaying the
-    task, and restore them before measurement/runtime admission.
+    It captures the objective, the backward and the optimizer's update.
+    Planning later chooses each stage's save or recompute form, the example
+    order, and when each update runs, once the gradients it needs are written
+    and the old weights it changes are read. Neither the model nor the
+    optimizer is changed: optimizer state is created at execution from the
+    captured defaults. Nothing is profiled, no pools are opened and no
+    persistent state is initialized.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        The model. Its parameters may be on the CPU, the meta device or the
+        target.
+    objective : callable
+        Called as ``objective(model, *args, **kwargs)`` for each example, as
+        in `build_forward_backward`.
+    optimizer : torch.optim.Optimizer
+        An optimizer over the model's parameters whose update can be
+        captured: value-dependent Python branches, unsupported first-use
+        state creation and step hooks are refused, and a control meant to
+        change between runs, such as a scheduled learning rate, must be a
+        tensor. Its state dtypes follow its own rules.
+    example_args : sequence, default ()
+        Positional arguments of one representative example, as in
+        `build_forward_backward`.
+    example_kwargs : mapping of str to object, optional
+        Keyword arguments of that example.
+    num_examples : int, default 1
+        Examples per update, each with that signature.
+    example_calls : sequence of tuple, optional
+        ``(args, kwargs)`` pairs of examples with different signatures,
+        instead of ``example_args``, ``example_kwargs`` and ``num_examples``.
+    fuse_narrow_gradient_accumulation : bool, default True
+        Fuse supported gradient production into its accumulation
+        destination.
+    gradient_destination_rules : sequence of GradientDestinationRule, default ()
+        In-place gradient accumulation contracts for opaque operators, as in
+        `build_forward_backward`.
+    partition : str or PartitionPolicy, default "auto"
+        Stage boundaries, as in `build_forward`.
+    chunking : ChunkPolicy or ChunkRegions, optional
+        Execution regions and chunks within stages, as in
+        `build_forward_backward`.
+    graph_pair_policy : GraphPairPolicy, optional
+        What each stage's save and recompute forms keep for the backward. By
+        default ``GraphPairPolicy()``.
+    grad_dtype : torch.dtype, optional
+        Dtype of stored gradients. By default each parameter's dtype.
+    master_dtype : torch.dtype, optional
+        Dtype of separate optimizer master weights; the model computes in its
+        own dtypes. A parameter already at that precision keeps one copy, and
+        masters never narrow a dtype. Trainable tensor wrappers require it,
+        and are initialized by filling their components and
+        ``master.<parameter>`` separately.
+    runtime_gradient_scale : bool, default False
+        Add a gradient scale control, default 1, that each optimizer consumer
+        applies after converting the gradient to optimizer precision. The
+        Program's ``bindings["gradient_scale_control"]`` names it;
+        ``hyperparams`` of `Executor.run` sets it for one run, leaving stored
+        gradients unchanged.
+    parallelism : Parallelism, optional
+        Ownership across ranks. By default one rank.
+    resources : mapping of str to Resource, optional
+        Shared resources the model's operators use, by name.
+    operator_preparation : sequence of OperatorPreparation, default ()
+        Adapters that save and restore external kernel selections, as in
+        `build_forward`.
+    rank_map : mapping of int to int, optional
+        Launcher rank to logical rank, when ``resources`` need every worker
+        during build.
+    target : str or torch.device, default "cuda"
+        The device to finalize code on, as in `build_forward`.
+
+    Returns
+    -------
+    Program
+        The complete-step Program. Its runs return a `TrainingResult`.
+
+    Raises
+    ------
+    CaptureError
+        If the computation or the optimizer's update cannot be captured as a
+        fixed graph, or the partition is invalid.
+    ObjectiveError
+        If the objective does not return a scalar differentiable loss.
+    CompilationError
+        If a task's code cannot be finalized.
+    TypeError
+        If ``runtime_gradient_scale`` is not a bool, or ``graph_pair_policy``
+        is not a `GraphPairPolicy`.
     """
     return _build_training(
         model,

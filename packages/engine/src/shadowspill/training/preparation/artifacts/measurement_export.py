@@ -75,7 +75,7 @@ def export_measurements(
 
     The caller holds the job's complete disk/host reservation. Original files,
     metadata and the growing archive share that disk allowance. Copies use 64 KiB
-    blocks; metadata is capped at 16 MiB. Definition hooks run only on the CPU.
+    blocks; metadata is capped at 16 MiB. Component hooks run only on the CPU.
     ``destination`` must be outside the measured directory and must not exist.
     """
     integer(max_disk_bytes, "preparation export disk bytes", minimum=1)

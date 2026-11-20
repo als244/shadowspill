@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from shadowspill.training.definitions.registry import ResolvedModel
+from shadowspill.training.components.registry import ResolvedModel
 from shadowspill.training.inputs.adapters import AdaptedInputs, InputBinding
 from shadowspill.training.outputs import OutputLayout
 from shadowspill.training.preparation.configuration.operations import OperationContract
@@ -44,7 +44,7 @@ class OperationBinding:
         layout = inputs.layout
         schema = combined_schema(model.inputs, contract.objective.inputs)
         if layout.schema != schema or outputs.schema != schema:
-            raise ValueError("operation schemas differ from the resolved definitions")
+            raise ValueError("operation schemas differ from the resolved components")
         if (
             outputs.outputs != contract.outputs
             or outputs.placement != layout.placement
@@ -61,8 +61,8 @@ class OperationBinding:
         if set(layout.buffer.fields) != set(contract.required_paths):
             raise ValueError("physical inputs must match the selected required fields")
         if not inputs.adapter.padding_safe or not (
-            contract.objective.definition.padding_safe
-            or contract.objective.definition.physical_batch_loss
+            contract.objective.component.padding_safe
+            or contract.objective.component.physical_batch_loss
         ):
             raise ValueError("model adapter and objective must declare padding safety")
         self.model, self.contract = model, contract
@@ -177,22 +177,22 @@ class OperationBinding:
             "version": 1,
             "operation": self.contract.key.to_dict(),
             "model": {
-                "id": self.model.definition.id,
+                "id": self.model.component.id,
                 "source": self.model.source.to_dict(),
                 "config": dict(self.model.config),
                 "trainable": None
                 if self.model.settings is None or self.model.settings.trainable is None
                 else list(self.model.settings.trainable),
-                "mutable_buffers": list(self.model.definition.mutable_buffers),
+                "mutable_buffers": list(self.model.component.mutable_buffers),
             },
             "objective": {
-                "id": objective.definition.id,
+                "id": objective.component.id,
                 "source": objective.source.to_dict(),
                 "config": dict(objective.config),
-                "padding_safe": objective.definition.padding_safe,
-                "physical_batch_loss": objective.definition.physical_batch_loss,
+                "padding_safe": objective.component.padding_safe,
+                "physical_batch_loss": objective.component.physical_batch_loss,
                 "participation": objective.participation.to_dict(),
-                "reduction": objective.definition.reduction,
+                "reduction": objective.component.reduction,
             },
             "inputs": self.inputs.signature(),
             "required_paths": [list(p) for p in self.contract.required_paths],

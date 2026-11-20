@@ -17,7 +17,7 @@ from shadowspill.orchestration.launch.admission import (
     ResourceRequest,
 )
 from shadowspill.orchestration.launch.node_capacity import discover_capacity
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill_client._records import Value, integer, names
 from shadowspill_client.protocol.requests import identifier
 
@@ -125,7 +125,7 @@ class NodeDaemon:
         self.node_id = identifier(node_id, "node identity")
         self.root = Path(work_root).absolute()
         self.pool, self.worker_address = pool, worker_address
-        self.packages = names(workload_packages, "definition packages")
+        self.packages = names(workload_packages, "component packages")
         self.host_bytes = integer(
             host_bytes, "node daemon host allowance", minimum=16 << 20
         )

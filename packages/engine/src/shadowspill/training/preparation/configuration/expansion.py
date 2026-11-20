@@ -6,9 +6,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from shadowspill.training.definitions.preparation import (
+from shadowspill.training.components.preparation import (
     PreparationContext,
-    ResolvedPreparationDefinition,
+    ResolvedPreparationComponent,
 )
 from shadowspill_client._records import integer, number
 from shadowspill_client.inputs.coverage import CoverageCertificate, certify_coverage
@@ -46,7 +46,7 @@ class ExpandedPreparation:
     def coverage(self, context: PreparationContext) -> tuple[CoverageCertificate, ...]:
         placement = context.parallelism.inputs
         assert placement is not None
-        grouping = context.model.definition.batching
+        grouping = context.model.component.batching
         if grouping == "whole_batch":
             raise ValueError(
                 "whole-batch dependencies require the lower-level custom graph API"
@@ -65,7 +65,7 @@ class ExpandedPreparation:
 
 def expand_schedules(
     resolved: ResolvedPreparation,
-    definition: ResolvedPreparationDefinition,
+    installed: ResolvedPreparationComponent,
     context: PreparationContext,
     required_paths: Sequence[Path],
     *,
@@ -77,11 +77,8 @@ def expand_schedules(
         ("max_buffers", max_buffers),
     ):
         integer(value, name, minimum=1)
-    if (
-        resolved.preset != definition.definition.id
-        or resolved.source != definition.source
-    ):
-        raise ValueError("resolved preparation definition identity changed")
+    if resolved.preset != installed.component.id or resolved.source != installed.source:
+        raise ValueError("resolved preparation component identity changed")
     counts = resolved.planning.microbatch_counts
     assert counts is not None
     if len(resolved.cases) * len(counts) * len(context.batches) > max_schedule_cases:
@@ -105,7 +102,7 @@ def expand_schedules(
             raise ValueError("batch limits must name exactly the declared capacities")
         for case_index, case in enumerate(resolved.cases):
             buffers = tuple(
-                definition.definition.buffers(
+                installed.component.buffers(
                     context,
                     batch_index,
                     tuple(required_paths),

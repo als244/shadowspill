@@ -74,7 +74,7 @@ def lower_forward(
         if name and name not in names:
             names.append(name)
     return Program(
-        devices=(DeviceSpec(device_id, "process_0", "cuda", 0),),
+        devices=(DeviceSpec(device_id),),
         alias_groups=objects.catalog.alias_groups(),
         objects=objects.catalog.objects(),
         tasks=graph.tasks,

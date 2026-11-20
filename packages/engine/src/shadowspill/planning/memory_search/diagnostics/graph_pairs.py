@@ -104,11 +104,42 @@ class AlternativeCosts:
 
 @dataclass(frozen=True, slots=True)
 class GraphPairOutcome:
-    """The best plan the search found under one graph-pair selection.
+    """What one resolved program cost: the best plan a search found for it.
 
-    ``selected_compute_seconds`` and ``unconstrained_seconds`` come from the
-    program's task profiles and this selection's own choices, so the split
-    below needs only the makespan the search already recorded.
+    One per resolved program a search evaluated, from the program's task
+    profiles and the search's diagnostics, with nothing simulated again.
+    ``graph_pair_outcomes`` derives them from a `ProgramPlanResult`.
+
+    Attributes
+    ----------
+    selection_id : str
+        The resolved program.
+    recompute_groups : int
+        Groups whose chosen option costs strictly more compute than their
+        cheapest.
+    group_count : int
+        The task-alternative groups the selection chooses for.
+    makespan_seconds : float or None
+        The makespan of its best plan, in seconds; None when no candidate
+        reached a plan.
+    selected_compute_seconds : float
+        Compute the selection asks for: the profiled runtime of the tasks it
+        runs, in seconds.
+    unconstrained_seconds : float
+        The least compute any selection could ask for, in seconds.
+    valid_candidate_count : int
+        Candidates that reached a plan.
+    candidate_count : int
+        Candidates evaluated.
+    fetched_bytes : int
+        Bytes its best plan fetches; zero when it placed nothing.
+    evicted_bytes : int
+        Bytes its best plan evicts; zero when it placed nothing.
+    fetch_busy_ns : int or None
+        Nanoseconds the fetch lane was busy in its best plan; None when the
+        result holds no simulation of that plan.
+    evict_busy_ns : int or None
+        The same for the evict lane.
     """
 
     selection_id: str
@@ -136,17 +167,17 @@ class GraphPairOutcome:
 
     @property
     def recomputation_overhead_seconds(self) -> float:
-        """Compute this selection spends above the cheapest possible."""
+        """Seconds of compute the selection asks for above the least possible."""
 
         return self.selected_compute_seconds - self.unconstrained_seconds
 
     @property
     def waiting_seconds(self) -> float | None:
-        """Everything in the step that is not compute.
+        """Seconds of the makespan that are not compute, or None without a plan.
 
-        Waiting between tasks and the terminal writeback together, because
-        separating them needs the span of this selection's plan and the
-        search records only its makespan.
+        Waiting between tasks and the terminal write-back together: the
+        search records only the makespan, not the span that would separate
+        them.
         """
 
         if self.makespan_seconds is None:
@@ -154,6 +185,13 @@ class GraphPairOutcome:
         return self.makespan_seconds - self.selected_compute_seconds
 
     def as_dict(self) -> dict[str, object]:
+        """Write the outcome as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            Every field by name.
+        """
         return {
             "selection_id": self.selection_id,
             "recompute_groups": self.recompute_groups,
@@ -171,7 +209,29 @@ class GraphPairOutcome:
 
     @classmethod
     def from_dict(cls, value: object, path: str) -> GraphPairOutcome:
-        """Read back what :meth:`as_dict` wrote."""
+        """Read an outcome back from what `GraphPairOutcome.as_dict` wrote.
+
+        Missing counts read as zero and missing lane times as None.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        GraphPairOutcome
+            The outcome.
+
+        Raises
+        ------
+        ValueError
+            If a field is malformed.
+        KeyError
+            If a required field is missing.
+        """
 
         record = _mapping(value, path)
         return cls(

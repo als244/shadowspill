@@ -41,7 +41,29 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TaskDefinition:
-    """One reusable task form. None means unresolved scratch, never zero."""
+    """One task form of a Program, shared by every task that runs it.
+
+    Parameters
+    ----------
+    profile_key : str
+        The form's key: tasks name it, and profiles are looked up by it.
+        Nonempty.
+    compatibility_digest : str
+        Identity of the form's finalized implementation. A profile measured
+        for another implementation does not apply. Nonempty.
+    workspace_bytes : int, optional
+        Temporary memory the build knows the form needs, in bytes. None means
+        unknown, never zero.
+    name : str, default ""
+        What the form does, as progress messages and reports name it.
+    module_paths : sequence of str, default ()
+        The model modules covered by the stages that use the form.
+
+    Raises
+    ------
+    ValueError
+        If a key is empty, or ``workspace_bytes`` is not a nonnegative integer.
+    """
 
     profile_key: str
     compatibility_digest: str
@@ -59,10 +81,55 @@ class TaskDefinition:
 
 @dataclass(frozen=True)
 class Program(Artifact):
-    """Graph/storage structure, independent of costs, pools and real devices.
+    """A captured computation: its tasks, the storage they use, and their code.
 
-    Builders populate these IR records. The public fields remain inspectable;
-    profile keys identify reusable task forms, task IDs identify occurrences.
+    `build_step`, `build_forward_backward` and `build_forward` return one, as
+    do `optimizer_program`, `backward_program` and `instantiate_examples`;
+    ``Program.load`` reads a saved one. It holds no costs or pools and names no
+    real device: `measure_program` profiles its tasks and `apply_profiles`
+    attaches the profiles. Profile keys name task forms; task IDs name their
+    occurrences. It is read-only.
+
+    Attributes
+    ----------
+    devices : tuple of DeviceSpec
+        The logical devices its tasks run on.
+    alias_groups : tuple of AliasGroupSpec
+        Its storage allocations, each holding one or more objects.
+    objects : tuple of ObjectSpec
+        The values its tasks read and write.
+    tasks : tuple of TaskSpec
+        The tasks of one invocation.
+    task_definitions : tuple of TaskDefinition
+        The task forms, one per profile key.
+    initial_residency : tuple of ResidencySpec
+        Where storage is when an invocation starts.
+    final_residency : tuple of ResidencySpec
+        Where storage must be when an invocation ends.
+    task_alternative_groups : tuple of TaskAlternativeGroup
+        Interchangeable task sequences, such as a stage's save and recompute
+        forms; planning selects one of each.
+    name : str
+        A readable name, such as the model's class name.
+    setup : mapping
+        The device and software builds its code was finalized for. Profiles
+        and execution must match it.
+    sources : mapping of str to sequence of str
+        Model names, such as parameter and input names, by storage ID.
+    executables : mapping of str to bytes
+        Finalized task code, by profile key.
+    bindings : mapping
+        How inputs, outputs, model state and controls map onto objects, with
+        the build's other metadata. ``bindings["kind"]`` is ``"step"``,
+        ``"forward_backward"``, ``"forward"`` or ``"optim_step"``.
+    parallelism : Parallelism or None
+        The ownership it was built with: one rank when the builder was given
+        none.
+    resources : mapping of str to Resource
+        Shared resources its operators use, by name.
+    operator_binaries : mapping of str to bytes
+        Kernel binaries saved by `OperatorPreparation` adapters, by SHA-256
+        hex digest.
     """
 
     artifact_kind: ClassVar[str] = "program"
@@ -77,8 +144,6 @@ class Program(Artifact):
     name: str = ""
     setup: Mapping[str, Any] = field(default_factory=dict)
     sources: Mapping[str, Any] = field(default_factory=dict)
-    fixed_device_bytes: int | None = None
-    memory_estimated: bool = False
     executables: Mapping[str, bytes] = field(default_factory=dict, repr=False)
     bindings: Mapping[str, Any] = field(default_factory=dict)
     parallelism: Parallelism | None = None
@@ -110,8 +175,6 @@ class Program(Artifact):
             keys = [item.alias_group_id for item in entries]
             if len(set(keys)) != len(keys) or set(keys) - identities.alias_ids.keys():
                 raise ValueError(f"{name} contains duplicate or unknown storage IDs")
-        if self.fixed_device_bytes is not None:
-            nonnegative_int(self.fixed_device_bytes, "fixed_device_bytes")
         object.__setattr__(self, "setup", freeze(self.setup))
         object.__setattr__(self, "sources", freeze(self.sources))
         if any(not isinstance(value, bytes) for value in self.executables.values()):
@@ -133,6 +196,7 @@ class Program(Artifact):
 
     @cached_property
     def digest(self) -> str:
+        """SHA-256 hex digest of the Program, with its code by checksum."""
         # Programs and their nested metadata are immutable. Runtime setup and
         # repeated checkpoints can share this identity without reserializing IR.
         with writing_metadata():
@@ -140,6 +204,14 @@ class Program(Artifact):
 
     @shared_writer
     def to_dict(self) -> dict[str, Any]:
+        """Return the Program as plain data.
+
+        Returns
+        -------
+        dict
+            Every field, with ``executables`` and ``operator_binaries`` named
+            by the SHA-256 hex digests of their bytes.
+        """
         return self._to_dict(copy_metadata=True)
 
     def _to_dict(self, *, copy_metadata: bool) -> dict[str, Any]:
@@ -162,8 +234,6 @@ class Program(Artifact):
             "name": self.name,
             "setup": plain(self.setup) if copy_metadata else self.setup,
             "sources": plain(self.sources) if copy_metadata else self.sources,
-            "fixed_device_bytes": self.fixed_device_bytes,
-            "memory_estimated": self.memory_estimated,
             "executables": {
                 key: sha256(value).hexdigest()
                 for key, value in self.executables.items()
@@ -191,6 +261,25 @@ class Program(Artifact):
     def from_dict(
         cls, value: dict[str, Any], *, payloads: Mapping[str, bytes] | None = None
     ) -> Program:
+        """Rebuild a Program from `to_dict` data and its binary payloads.
+
+        Parameters
+        ----------
+        value : dict
+            The Program, in `to_dict` form.
+        payloads : mapping of str to bytes, optional
+            Executables and operator binaries, by SHA-256 hex digest.
+
+        Returns
+        -------
+        Program
+            The Program.
+
+        Raises
+        ------
+        ValueError
+            If a payload is missing, or the Program is invalid.
+        """
         records: dict[str, Callable[[object, str], Any]] = {
             "devices": DeviceSpec.from_value,
             "alias_groups": AliasGroupSpec.from_value,

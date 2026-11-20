@@ -20,7 +20,7 @@ from .initialization import (
 if TYPE_CHECKING:
     from shadowspill.checkpoint.state import CheckpointState
     from shadowspill.execution.executor import Executor
-    from shadowspill.training.definitions import InitializationRuntime
+    from shadowspill.training.components import InitializationRuntime
 
 
 def validate_rank(

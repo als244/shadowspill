@@ -59,24 +59,83 @@ def build_forward_backward(
     rank_map: Mapping[int, int] | None = None,
     target: str | torch.device = "cuda",
 ) -> Program:
-    """Finalize both backward forms; order is selected later by CPU planning.
+    """Capture a model's objective and backward as a Program, without an optimizer.
 
-    The objective is called as objective(model, *example_args, **example_kwargs).
-    Gradients persist after execution; no optimizer is captured or initialized.
-    For heterogeneous examples, supply ``example_calls=[(args, kwargs), ...]``
-    instead of ``example_args``, ``example_kwargs`` and ``num_examples``.
-    ``graph_pair_policy`` defines independent saved-state cuts for the ``save``
-    and ``recompute`` graphs; ``None`` selects ``GraphPairPolicy()``. ``chunking``
-    may restrict allowed stage variants; planning selects among measured
-    alternatives and chooses residency. A different policy requires building
-    and profiling its resulting implementations before planning.
-    ``gradient_destination_rules`` supplies versioned opaque-operator contracts
-    for grouped in-place gradient accumulation across shared uses and chunks.
-    It is independent of retention and chunk selection; unmatched outputs keep
-    ordinary accumulation and all selected implementations are still profiled.
-    ``operator_preparation`` supplies explicit provider factories that capture
-    selected binaries during existing task finalization, without replaying the
-    task, and restore them before measurement/runtime admission.
+    Gradients persist after each run, which either starts them fresh or adds
+    to the stored ones; no optimizer is captured. Each stage is finalized in a
+    form that saves what its backward needs and one that recomputes it;
+    planning later chooses among the forms and orders the examples. The
+    model's parameters may be on the CPU, the meta device or the target;
+    build does not change them. Nothing is profiled, no pools are opened and
+    no persistent state is initialized.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        The model.
+    objective : callable
+        Called as ``objective(model, *args, **kwargs)`` for each example. It
+        returns a scalar loss, a ``(loss, metrics)`` pair or an
+        `~shadowspill.pytorch.ObjectiveResult`, and owns normalization
+        across examples and ranks.
+    example_args : sequence, default ()
+        Positional arguments of one representative example. Runs supply
+        examples of the same signature: tensor values may differ, but not
+        structure, shapes, dtypes or other Python values.
+    example_kwargs : mapping of str to object, optional
+        Keyword arguments of that example.
+    num_examples : int, default 1
+        Examples per run, each with that signature.
+    example_calls : sequence of tuple, optional
+        ``(args, kwargs)`` pairs of examples with different signatures,
+        instead of ``example_args``, ``example_kwargs`` and ``num_examples``.
+        Examples of one signature share their captures.
+    fuse_narrow_gradient_accumulation : bool, default True
+        Fuse supported gradient production into its accumulation
+        destination.
+    gradient_destination_rules : sequence of GradientDestinationRule, default ()
+        Contracts by which opaque operators accumulate in place into gradient
+        destinations, across shared uses and chunks. Outputs no rule matches
+        accumulate ordinarily.
+    partition : str or PartitionPolicy, default "auto"
+        Stage boundaries, as in `build_forward`.
+    chunking : ChunkPolicy or ChunkRegions, optional
+        Execution regions and chunks within stages, as in `build_forward`. It
+        may also restrict the stage forms built.
+    graph_pair_policy : GraphPairPolicy, optional
+        What each stage's save and recompute forms keep for the backward. By
+        default ``GraphPairPolicy()``.
+    grad_dtype : torch.dtype, optional
+        Dtype of stored gradients. By default each parameter's dtype.
+    parallelism : Parallelism, optional
+        Ownership across ranks. By default one rank.
+    resources : mapping of str to Resource, optional
+        Shared resources the model's operators use, by name.
+    operator_preparation : sequence of OperatorPreparation, default ()
+        Adapters that save and restore external kernel selections, as in
+        `build_forward`.
+    rank_map : mapping of int to int, optional
+        Launcher rank to logical rank, when ``resources`` need every worker
+        during build.
+    target : str or torch.device, default "cuda"
+        The device to finalize code on, as in `build_forward`.
+
+    Returns
+    -------
+    Program
+        The forward/backward Program. Its runs return a `TrainingResult`.
+
+    Raises
+    ------
+    CaptureError
+        If the computation cannot be captured as a fixed graph, or the
+        partition is invalid.
+    ObjectiveError
+        If the objective does not return a scalar differentiable loss.
+    CompilationError
+        If a task's code cannot be finalized.
+    TypeError
+        If ``graph_pair_policy`` is not a `GraphPairPolicy`.
     """
     return _build_training(
         model,

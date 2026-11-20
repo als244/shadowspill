@@ -180,7 +180,7 @@ class RunController[Work: CompletedWork]:
         with self._changed:
             while True:
                 status = self.status(request_id)
-                if status.state in ("completed", "skipped", "failed") or (
+                if status.state in ("completed", "failed") or (
                     accepted and status.acceptance is not None
                 ):
                     return status
@@ -329,7 +329,7 @@ class RunController[Work: CompletedWork]:
                     self._records,
                     self._state,
                     code="controller_failed",
-                    message="Controller failed; restore state from a checkpoint.",
+                    message="Controller failed; resume from a checkpoint in a new run.",
                 ),
             ):
                 # Failed owners remain reachable; broken storage never permits replay.

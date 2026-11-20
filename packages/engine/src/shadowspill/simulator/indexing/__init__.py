@@ -42,10 +42,46 @@ def simulate_program(
     config: SimulationConfig,
     admission: SimulationAdmission | None = None,
 ) -> SimulationResult:
-    """Replay an explicit schedule through the simulator.
+    """Replay one schedule through the simulator and return what it cost.
 
-    Exported as :func:`shadowspill.simulator.simulate`, which is the name a
-    caller outside the package uses.
+    The schedule is validated against the program first. A fetch or task
+    launch that does not fit waits for room, so a plan that comes up short
+    is slower rather than refused; its shortfalls are reported in the
+    result. The simulator runs in the ShadowSpill library, which must be
+    installed.
+
+    Parameters
+    ----------
+    program : ShadowSpillProgram
+        The program the schedule belongs to.
+    schedule : MemorySchedule
+        The memory actions and residency boundaries to replay.
+    selections : tuple of TaskAlternativeChoice, default ()
+        The option each task-alternative group takes, which decides the
+        tasks that run.
+    config : SimulationConfig
+        The machine: one device entry per program device, and spill
+        capacity.
+    admission : SimulationAdmission, optional
+        Physical pool accounting to charge against capacity. None charges
+        object and workspace bytes.
+
+    Returns
+    -------
+    SimulationResult
+        The makespan, task and copy intervals, memory peaks and capacity
+        shortfalls.
+
+    Raises
+    ------
+    ValidationError
+        If the schedule or selections are invalid for this program.
+    ValueError
+        If ``config`` or ``admission`` names devices other than the program's,
+        shared residency exceeds a capacity, or ``admission`` names a task or
+        action the schedule lacks.
+    SimulationInfeasibleError
+        If the schedule cannot run to completion on this machine.
     """
 
     projection = _project(program, schedule, selections, config, admission)

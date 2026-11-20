@@ -43,17 +43,70 @@ def build_forward(
     rank_map: Mapping[int, int] | None = None,
     target: str | torch.device = "cuda",
 ) -> Program:
-    """Build fixed implementations without profiling, pools or live training state.
+    """Capture one forward call of a model as a Program.
 
-    CPU and meta models are accepted. The CUDA backend finalizes kernels on
-    one representative GPU. Planning the returned artifact is CPU-only.
-    By default capture calls ``model(*args, **kwargs)``. ``forward_fn`` instead
-    receives ``(model, *args, **kwargs)``, preserving registered parameter names.
-    ``operator_preparation`` supplies explicit provider factories that capture
-    selected binaries and restore them before measurement/runtime admission.
-    ``preserve_buffers`` names buffers whose functional updates may contribute
-    to outputs but must not be written back. Each invocation starts from the
-    current registered values; temporary values use ordinary planned storage.
+    The call is captured, split into stages, and each task's code finalized
+    on one representative GPU of the target. The model's parameters may be on
+    the CPU, the meta device or the target; build does not change them, and
+    the Program holds none of their values. Nothing is profiled, no pools are
+    opened and no persistent state is initialized; planning the result needs
+    no GPU.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        The model.
+    example_args : sequence, default ()
+        Positional arguments of one representative call. Runs supply
+        arguments of the same signature: tensor values may differ, but not
+        structure, shapes, dtypes or other Python values.
+    example_kwargs : mapping of str to object, optional
+        Keyword arguments of that call.
+    forward_fn : callable, optional
+        Function to capture instead of ``model(*args, **kwargs)``, such as a
+        validation loss, called as ``forward_fn(model, *args, **kwargs)``.
+        Parameter names are kept. Only the build needs it.
+    preserve_buffers : sequence of str, default ()
+        Buffers whose in-place updates may feed the outputs but are not
+        written back: each run starts from their current values.
+        Parameter-backed buffers are refused.
+    partition : str or PartitionPolicy, default "auto"
+        Stage boundaries: ``"auto"``, one stage per block of a repeated
+        module sequence, such as each layer, with what comes before and after
+        as stages of their own; ``"whole"``, one stage; or a
+        `PartitionPolicy`.
+    chunking : ChunkPolicy or ChunkRegions, optional
+        Execution regions and chunks within stages, which bound temporary
+        memory. By default none.
+    parallelism : Parallelism, optional
+        Ownership across ranks. By default one rank.
+    resources : mapping of str to Resource, optional
+        Shared resources the model's operators use, by name.
+    operator_preparation : sequence of OperatorPreparation, default ()
+        Adapters that save the external kernels each task selects while it is
+        finalized, and restore them before measurement and execution.
+    rank_map : mapping of int to int, optional
+        Launcher rank to logical rank, when ``resources`` need every worker
+        during build.
+    target : str or torch.device, default "cuda"
+        The device to finalize code on. Measurement and execution use the
+        same process-local device ordinal.
+
+    Returns
+    -------
+    Program
+        The forward Program. Its runs return the model's outputs in their
+        original structure.
+
+    Raises
+    ------
+    CaptureError
+        If the call cannot be captured as a fixed graph, or the partition is
+        invalid.
+    CompilationError
+        If a task's code cannot be finalized.
+    NotImplementedError
+        If a distributed call changes anything but rank-local model buffers.
     """
     spec, parameters = model_parallelism(model, parallelism)
     validate_resources(resources or {}, spec)

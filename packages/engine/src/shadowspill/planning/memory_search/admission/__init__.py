@@ -36,7 +36,15 @@ _SCHEMA = artifact_schema("admission_facts")
 
 
 class TaskAllocationStepKind(StrEnum):
-    """One allocator transition observed inside a compiled task."""
+    """Whether a task's allocation step allocates storage or releases it.
+
+    Attributes
+    ----------
+    ALLOCATE : str
+        ``"allocate"``: the task allocates storage.
+    RELEASE : str
+        ``"release"``: the task frees storage it allocated.
+    """
 
     ALLOCATE = "allocate"
     RELEASE = "release"
@@ -44,12 +52,37 @@ class TaskAllocationStepKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class TaskAllocationStep:
-    """Neutral projection of one profiled task-local allocator transition.
+    """One allocation or release a task makes while it runs, as profiled.
 
-    ``allocation_ordinal`` relates a release to its earlier allocation.  An
-    output alias is present only when that allocation becomes a persistent
-    program object after the task.  The trace is admission evidence, not a
-    runtime callback-order contract.
+    A `TaskAdmissionSpec` lists a task's steps in the order the task made
+    them. They are evidence for admission, which places them; they name no
+    address, and the runtime's allocations need not follow their order.
+
+    Parameters
+    ----------
+    allocation_ordinal : int
+        The allocation's identity within the task. At least zero. A release
+        names the ordinal of the allocation it frees.
+    kind : TaskAllocationStepKind
+        Whether the step allocates or releases.
+    charged_bytes : int, default 0
+        Bytes the allocation is charged: positive for an allocation, zero
+        for a release.
+    output_alias_group_id : str, optional
+        The alias group the allocation becomes when it outlives the task as
+        a program object. None for workspace, and for a release.
+    reuses_allocation_ordinal : int, optional
+        An earlier, released allocation of the same task whose storage this
+        one reuses. None for new storage, and for a release.
+
+    Raises
+    ------
+    ValueError
+        If an ordinal is negative or reuses itself, an allocation's bytes are
+        not positive, an output alias is empty, or a release carries an
+        allocation's fields.
+    TypeError
+        If ``kind`` is not a `TaskAllocationStepKind`.
     """
 
     allocation_ordinal: int
@@ -82,6 +115,13 @@ class TaskAllocationStep:
 
     @shared_writer
     def to_dict(self) -> dict[str, object]:
+        """Write the step as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            Every field by name, ``kind`` as its value.
+        """
         return {
             "allocation_ordinal": self.allocation_ordinal,
             "charged_bytes": self.charged_bytes,
@@ -92,6 +132,25 @@ class TaskAllocationStep:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> TaskAllocationStep:
+        """Read a step back from what `TaskAllocationStep.to_dict` wrote.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        TaskAllocationStep
+            The step.
+
+        Raises
+        ------
+        ValueError
+            If a field is missing or malformed.
+        """
         data = _mapping(value, path)
         return cls(
             allocation_ordinal=_integer(
@@ -154,7 +213,20 @@ class _AllocationSteps:
 
 @dataclass(frozen=True, slots=True)
 class StorageHandoff:
-    """Transfer one live lease between two logical alias identities."""
+    """A live lease a task passes from one alias group to another, uncopied.
+
+    Parameters
+    ----------
+    source_alias_group_id : str
+        The alias group that gives up the lease.
+    destination_alias_group_id : str
+        The alias group that takes it over. Differs from the source.
+
+    Raises
+    ------
+    ValueError
+        If an identifier is empty, or the two are the same.
+    """
 
     source_alias_group_id: str
     destination_alias_group_id: str
@@ -167,6 +239,13 @@ class StorageHandoff:
 
     @shared_writer
     def to_dict(self) -> dict[str, str]:
+        """Write the handoff as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            Both alias group identifiers, by field name.
+        """
         return {
             "destination_alias_group_id": self.destination_alias_group_id,
             "source_alias_group_id": self.source_alias_group_id,
@@ -174,6 +253,25 @@ class StorageHandoff:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> StorageHandoff:
+        """Read a handoff back from what `StorageHandoff.to_dict` wrote.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        StorageHandoff
+            The handoff.
+
+        Raises
+        ------
+        ValueError
+            If a field is missing or malformed.
+        """
         data = _mapping(value, path)
         return cls(
             source_alias_group_id=_string(
@@ -189,7 +287,36 @@ class StorageHandoff:
 
 @dataclass(frozen=True, slots=True)
 class TaskAdmissionSpec:
-    """Physical ownership transitions for one executable task."""
+    """What one task allocates, produces and hands over, for admission.
+
+    Parameters
+    ----------
+    task_id : str
+        The task. Non-empty.
+    workspace_extents : tuple of int, default ()
+        Byte sizes of the task's anonymous allocations that are live
+        together; their sum is ``workspace_bytes``. Each positive.
+    fresh_output_aliases : tuple of str, default ()
+        Alias groups the task produces into storage it allocates, each once.
+    replacement_aliases : tuple of str, default ()
+        Alias groups the task mutates by allocating their replacement, each
+        once.
+    storage_handoffs : tuple of StorageHandoff, default ()
+        Leases the task passes between alias groups, each source and each
+        destination at most once.
+    allocation_steps : tuple of TaskAllocationStep, default ()
+        Every allocation and release the task makes, in order. Required when
+        the task has workspace, fresh outputs or replacements. Every
+        allocation not bound to an output is released, and the outputs bound
+        are exactly the fresh outputs and replacements.
+
+    Raises
+    ------
+    ValueError
+        If an identifier is empty or repeated, an extent is not positive, fresh
+        outputs, replacements and handoff destinations overlap, or the
+        allocation steps contradict each other or the outputs.
+    """
 
     task_id: str
     workspace_extents: tuple[int, ...] = ()
@@ -314,12 +441,19 @@ class TaskAdmissionSpec:
 
     @property
     def workspace_bytes(self) -> int:
-        """Return total simultaneously-live anonymous workspace bytes."""
+        """Bytes of anonymous workspace live together: the sum of the extents."""
 
         return sum(self.workspace_extents)
 
     @shared_writer
     def to_dict(self) -> dict[str, object]:
+        """Write the task's facts as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            Every field by name, handoffs and steps as their own mappings.
+        """
         return {
             "fresh_output_aliases": list(self.fresh_output_aliases),
             "replacement_aliases": list(self.replacement_aliases),
@@ -333,6 +467,25 @@ class TaskAdmissionSpec:
     def from_value(
         cls, value: object, path: str, *, _steps: _AllocationSteps | None = None
     ) -> TaskAdmissionSpec:
+        """Read a task's facts back from what `TaskAdmissionSpec.to_dict` wrote.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        TaskAdmissionSpec
+            The task's facts.
+
+        Raises
+        ------
+        ValueError
+            If a field is missing or malformed.
+        """
         data = _mapping(value, path)
         read_step = TaskAllocationStep.from_value if _steps is None else _steps.read
         return cls(
@@ -365,14 +518,33 @@ class TaskAdmissionSpec:
 
 @dataclass(frozen=True, slots=True)
 class AdmissionFacts:
-    """Immutable physical facts reused by every candidate a search measures.
+    """The physical facts every candidate schedule is admitted against.
 
-    ``pool_capacity_bytes`` is the complete execution-pool capacity certified
-    by the production range allocator. ``object_capacity_bytes`` is the
-    conservative residency capacity a search plans against before exact task and
-    transfer deltas are evaluated.  The current runtime admits one execution
-    pool; the device identity is explicit so extending this record to several
-    pools does not require model-specific policy.
+    They describe one device's execution pool and how each task allocates
+    within it, and do not depend on the schedule. A search measures its
+    candidates against them, and admission places a plan's leases with them.
+
+    Parameters
+    ----------
+    device_id : str
+        The device whose execution pool this describes. Non-empty.
+    pool_capacity_bytes : int
+        The execution pool's capacity, in bytes. Positive.
+    object_capacity_bytes : int
+        The capacity, in bytes, a search plans object residency against
+        before exact task and transfer deltas are evaluated. Positive and at
+        most ``pool_capacity_bytes``.
+    minimum_alignment : int
+        The alignment, in bytes, every offset in the pool satisfies.
+        Positive.
+    tasks : tuple of TaskAdmissionSpec
+        One entry per program task, each task once; `AdmissionFacts.validate`
+        requires the program's task order.
+
+    Raises
+    ------
+    ValueError
+        If a field is empty or out of range, or a task is listed twice.
     """
 
     device_id: str
@@ -414,6 +586,11 @@ class AdmissionFacts:
 
     @property
     def digest(self) -> str:
+        """SHA-256 hex digest naming these facts, computed once.
+
+        It covers every field, the tasks through the digest of their
+        columns; plan keys and layout certificates name the facts by it.
+        """
         if not self._digest_cache:
             encoded = json.dumps(
                 {
@@ -432,7 +609,11 @@ class AdmissionFacts:
 
     @property
     def task_columns(self) -> TaskColumns:
-        """`tasks` as columns, extracted once for every variant of these facts."""
+        """The tasks as arrays, one per field, as the library reads them.
+
+        Extracted once and shared by every copy of these facts with the same
+        tasks, such as a copy at another capacity.
+        """
 
         return self._derived_tasks()[0]
 
@@ -454,6 +635,14 @@ class AdmissionFacts:
 
     @shared_writer
     def to_dict(self) -> dict[str, object]:
+        """Write the facts as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            Every field by name, the tasks as their own mappings, and the
+            record's ``schema``.
+        """
         return {
             "device_id": self.device_id,
             "minimum_alignment": self.minimum_alignment,
@@ -464,10 +653,34 @@ class AdmissionFacts:
         }
 
     def to_json(self) -> str:
+        """Write the facts as compact JSON with sorted keys.
+
+        Returns
+        -------
+        str
+            `AdmissionFacts.to_dict`, encoded.
+        """
         return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
 
     @classmethod
     def from_dict(cls, value: object) -> AdmissionFacts:
+        """Read facts back from what `AdmissionFacts.to_dict` wrote.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+
+        Returns
+        -------
+        AdmissionFacts
+            The facts.
+
+        Raises
+        ------
+        ValueError
+            If the schema is another one, or a field is missing or malformed.
+        """
         data = _mapping(value, "admission")
         schema = _string(data.get("schema"), "admission.schema")
         if schema != _SCHEMA:
@@ -497,6 +710,24 @@ class AdmissionFacts:
 
     @classmethod
     def from_json(cls, payload: str) -> AdmissionFacts:
+        """Read facts back from what `AdmissionFacts.to_json` wrote.
+
+        Parameters
+        ----------
+        payload : str
+            The JSON text.
+
+        Returns
+        -------
+        AdmissionFacts
+            The facts.
+
+        Raises
+        ------
+        ValueError
+            If the text is not JSON or `AdmissionFacts.from_dict` refuses its
+            record.
+        """
         try:
             value = json.loads(payload)
         except json.JSONDecodeError as exc:
@@ -504,7 +735,20 @@ class AdmissionFacts:
         return cls.from_dict(value)
 
     def validate(self, program: ShadowSpillProgram) -> None:
-        """Validate exact task and alias coverage against ``program``."""
+        """Check that these facts describe exactly ``program``.
+
+        Parameters
+        ----------
+        program : ShadowSpillProgram
+            The program the facts are for.
+
+        Raises
+        ------
+        ValueError
+            If the program has more than one device or lacks the facts' device,
+            the tasks do not follow the program's task order exactly, or a task
+            names an alias group the program lacks.
+        """
 
         devices = {item.device_id for item in program.devices}
         if self.device_id not in devices:

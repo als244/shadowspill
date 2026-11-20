@@ -9,9 +9,9 @@ from math import prod
 from typing import Any, Literal
 
 from shadowspill.planning.memory_search.algorithm import SearchOptions
-from shadowspill.training.definitions.preparation import (
+from shadowspill.training.components.preparation import (
     PreparationContext,
-    ResolvedPreparationDefinition,
+    ResolvedPreparationComponent,
 )
 from shadowspill_client import (
     BuildCase,
@@ -42,7 +42,7 @@ def _search(values: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def resolve_preparation(
-    definition: ResolvedPreparationDefinition,
+    installed: ResolvedPreparationComponent,
     context: PreparationContext,
     requested: Preparation | None = None,
     *,
@@ -50,13 +50,13 @@ def resolve_preparation(
 ) -> ResolvedPreparation:
     integer(max_build_cases, "max_build_cases", minimum=1)
     supplied = requested or Preparation()
-    preset = definition.definition.defaults(replace(context, requested=supplied))
+    preset = installed.component.defaults(replace(context, requested=supplied))
     if not isinstance(preset, Preparation):
         raise TypeError("installed preparation defaults must return Preparation")
-    if supplied.preset is not None and supplied.preset != definition.definition.id:
-        raise ValueError("requested preset differs from its resolved definition")
-    if preset.preset is not None and preset.preset != definition.definition.id:
-        raise ValueError("installed preset defaults name another definition")
+    if supplied.preset is not None and supplied.preset != installed.component.id:
+        raise ValueError("requested preset differs from its resolved component")
+    if preset.preset is not None and preset.preset != installed.component.id:
+        raise ValueError("installed preset defaults name another component")
     origins: dict[str, Origin] = {}
     defaults: dict[str, Any] = {
         "partition": Policy("shadowspill/partition@1", {"mode": "auto"}).to_dict(),
@@ -203,8 +203,8 @@ def resolve_preparation(
     if preset.reuse:
         raise ValueError("installed presets cannot supply artifact reuse identities")
     return ResolvedPreparation(
-        definition.definition.id,
-        definition.source,
+        installed.component.id,
+        installed.source,
         cases,
         profiling,
         PlanningOptions(**planning),

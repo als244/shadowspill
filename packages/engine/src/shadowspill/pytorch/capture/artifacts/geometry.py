@@ -11,6 +11,29 @@ from shadowspill.task.inputs import TaskInputRole
 
 @dataclass(frozen=True, slots=True)
 class TensorGeometry:
+    """The geometry of one tensor, without its storage.
+
+    Chunk policies receive one for each tensor input in `StageInfo.inputs`,
+    and an `ExecutionLifetimes` ``select`` callable one for each tensor
+    argument and result in `LifetimeOperation.inputs` and
+    `LifetimeOperation.outputs`.
+
+    Attributes
+    ----------
+    shape : tuple of int
+        The tensor's shape.
+    stride : tuple of int
+        Its strides, in elements.
+    storage_offset : int
+        Its first element's offset into its storage, in elements.
+    dtype : torch.dtype
+        Its element type.
+    device_type : str
+        Its device's type, such as ``"cuda"``.
+    requires_grad : bool
+        Whether it requires gradients.
+    """
+
     shape: tuple[int, ...]
     stride: tuple[int, ...]
     storage_offset: int
@@ -20,6 +43,18 @@ class TensorGeometry:
 
     @classmethod
     def from_tensor(cls, tensor: torch.Tensor) -> TensorGeometry:
+        """Return the geometry of ``tensor``.
+
+        Parameters
+        ----------
+        tensor : torch.Tensor
+            The tensor. Only its metadata is read.
+
+        Returns
+        -------
+        TensorGeometry
+            Its geometry.
+        """
         return cls(
             shape=tuple(tensor.shape),
             stride=tuple(tensor.stride()),
@@ -30,6 +65,14 @@ class TensorGeometry:
         )
 
     def identity(self) -> dict[str, object]:
+        """Return the geometry as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            The six attributes by name, with ``dtype`` as its string, such as
+            ``"torch.float32"``.
+        """
         return {
             "shape": self.shape,
             "stride": self.stride,

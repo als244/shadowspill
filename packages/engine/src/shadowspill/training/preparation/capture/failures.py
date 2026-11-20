@@ -145,7 +145,7 @@ def prune_failed_templates(
                     schedules,
                     grouping=cast(
                         Literal["independent", "grouped"],
-                        setup.model.definition.batching,
+                        setup.model.component.batching,
                     ),
                 )
     layouts = replace(

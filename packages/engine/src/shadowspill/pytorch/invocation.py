@@ -16,7 +16,13 @@ if TYPE_CHECKING:
 
 
 class InvocationResult[T]:
-    """One dispatched callable result with an explicit synchronization point."""
+    """The result of one `Executor.run` call, available once its work completes.
+
+    `Executor.run` returns as soon as the call's work is dispatched; this
+    object waits for it. The first `result` call synchronizes, and every later
+    call returns the same value or raises the same error. ``wait`` is another
+    name for `result`.
+    """
 
     __slots__ = (
         "_diagnostics",
@@ -49,7 +55,11 @@ class InvocationResult[T]:
 
     @property
     def diagnostics(self) -> StepDiagnostics | None:
-        """Wait for this call's optional runtime trace; untraced calls return None."""
+        """The call's runtime trace, or None when it ran without ``runtime_trace``.
+
+        A `StepDiagnostics` when traced. Reading it waits for a traced call, and raises
+        the call's error if the call failed.
+        """
         if self._diagnostics is None:
             return None
         self.result()
@@ -57,13 +67,26 @@ class InvocationResult[T]:
 
     @property
     def resolved(self) -> bool:
-        """Whether this handle has crossed its explicit completion boundary."""
+        """Whether the call's work has been waited for, successfully or not."""
 
         with self._lock:
             return self._resolved
 
     def result(self) -> T:
-        """Synchronize this invocation once and return its public result."""
+        """Wait for the call's work and return its result.
+
+        Returns
+        -------
+        object
+            For a training Plan, a `TrainingResult`; for a forward Plan, its
+            outputs.
+
+        Raises
+        ------
+        Exception
+            If the call's work failed: its own error. Its outputs are then
+            released, and every later call raises the same error.
+        """
 
         with self._lock:
             if self._resolved:

@@ -47,8 +47,10 @@ class Boundary:
 class Transition:
     """Decision at the queue head, valid only for its issuing state machine.
 
-    Training requires validated global loss participation. Completion follows
-    execution and required terminal transfers; publication follows this boundary.
+    Training requires validated global loss participation, so an open
+    accumulation always holds a participating contribution and every
+    ``optim_step`` applies an update. Completion follows execution and required
+    terminal transfers; publication follows this boundary.
     """
 
     request_id: str
@@ -56,7 +58,6 @@ class Transition:
     before: Boundary
     participates: bool
     accumulate_gradients: bool
-    skipped: bool
 
 
 class OperationState:
@@ -65,7 +66,9 @@ class OperationState:
     The coordinator owns validation, deduplication, durable request order and
     dependency failures. This component owns live accumulation and update
     counters. A worker failure invalidates them; a validation rejection does
-    not. A restored checkpoint can rewind updates, never generation identities.
+    not. An invalid state accepts only ``close``: its workers' tensors are
+    unknown, so recovery is a new run from a checkpoint. A restored checkpoint
+    can rewind updates, never generation identities.
     """
 
     def __init__(
@@ -96,8 +99,11 @@ class OperationState:
         before = self._boundary
         if before.closed:
             raise RuntimeError("session is closed")
-        if not before.valid and command not in ("restore", "close"):
-            raise RuntimeError("session state is invalid; restore or start a new run")
+        if not before.valid and command != "close":
+            raise RuntimeError(
+                "session state is invalid; close the run and resume from a "
+                "checkpoint in a new run"
+            )
         accumulation = before.accumulation
         if (
             before.valid
@@ -135,7 +141,6 @@ class OperationState:
             command == "forward_backward"
             and bool(participates)
             and accumulation.participating_contributions > 0,
-            command in ("step", "forward_backward", "optim_step") and not participates,
         )
         self._pending = pending
         return pending
@@ -192,7 +197,7 @@ class OperationState:
             history,
             updates,
             accumulation,
-            before.valid or command == "restore",
+            before.valid,
             command == "close",
         )
 

@@ -36,7 +36,7 @@ def certificate(
         placement,
         [candidate.source.layout.candidate.schedule],
         grouping=cast(
-            Literal["independent", "grouped"], setup.model.definition.batching
+            Literal["independent", "grouped"], setup.model.component.batching
         ),
     )
 

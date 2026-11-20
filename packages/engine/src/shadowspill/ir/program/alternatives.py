@@ -27,6 +27,25 @@ PROGRAM_SCHEMA = artifact_schema("program")
 
 @dataclass(frozen=True, slots=True)
 class TaskAlternativeOption:
+    """One way of running a group: the tasks it activates and the storage it keeps.
+
+    Parameters
+    ----------
+    option_id : str
+        The option's identity, unique in its group.
+    active_task_ids : tuple of str
+        Tasks that run when the option is taken.
+    retained_alias_group_ids : tuple of str, default ()
+        Alias groups the option keeps across its alternative group's boundary,
+        none of them shared; their sizes are its memory cost.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is empty or padded with whitespace, or a collection is
+        not a tuple or repeats an entry.
+    """
+
     option_id: str
     active_task_ids: tuple[str, ...]
     retained_alias_group_ids: tuple[str, ...] = ()
@@ -46,6 +65,13 @@ class TaskAlternativeOption:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "active_task_ids": string_list(self.active_task_ids),
             "option_id": self.option_id,
@@ -54,6 +80,27 @@ class TaskAlternativeOption:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> TaskAlternativeOption:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.task_alternative_groups[0].options[1]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        TaskAlternativeOption
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         active = expect_list(
             field(data, "active_task_ids", path), f"{path}.active_task_ids"
@@ -79,6 +126,24 @@ class TaskAlternativeOption:
 
 @dataclass(frozen=True, slots=True)
 class TaskAlternativeGroup:
+    """A choice between options, exactly one of which each plan takes.
+
+    A task belongs to at most one group, and a task in no group always runs.
+
+    Parameters
+    ----------
+    group_id : str
+        The group's identity, unique in the program.
+    options : tuple of TaskAlternativeOption
+        The options; at least one, with distinct IDs.
+
+    Raises
+    ------
+    ValidationError
+        If ``group_id`` is empty or padded with whitespace, or ``options`` is not
+        a tuple, is empty or repeats an ID.
+    """
+
     group_id: str
     options: tuple[TaskAlternativeOption, ...]
 
@@ -95,6 +160,13 @@ class TaskAlternativeGroup:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "group_id": self.group_id,
             "options": [option.to_dict() for option in self.options],
@@ -102,6 +174,27 @@ class TaskAlternativeGroup:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> TaskAlternativeGroup:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.task_alternative_groups[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        TaskAlternativeGroup
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         options = expect_list(field(data, "options", path), f"{path}.options")
         return cls(
@@ -115,6 +208,21 @@ class TaskAlternativeGroup:
 
 @dataclass(frozen=True, slots=True)
 class TaskAlternativeChoice:
+    """The option one plan takes for one group.
+
+    Parameters
+    ----------
+    group_id : str
+        The group, by `TaskAlternativeGroup.group_id`.
+    option_id : str
+        The option taken, by `TaskAlternativeOption.option_id`.
+
+    Raises
+    ------
+    ValidationError
+        If an identity is empty or padded with whitespace.
+    """
+
     group_id: str
     option_id: str
 
@@ -124,10 +232,38 @@ class TaskAlternativeChoice:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the record as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {"group_id": self.group_id, "option_id": self.option_id}
 
     @classmethod
     def from_value(cls, value: object, path: str) -> TaskAlternativeChoice:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"plan.selections[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        TaskAlternativeChoice
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         return cls(
             group_id=expect_string(field(data, "group_id", path), f"{path}.group_id"),

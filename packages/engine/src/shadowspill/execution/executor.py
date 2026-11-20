@@ -33,6 +33,74 @@ from .worker import create_paths
 
 
 class Executor:
+    """A worker that runs saved Plans and owns their persistent state.
+
+    Constructing one admits ``plan`` and every Plan in ``plans`` on one
+    device: it opens the device and spill pools, loads the task code and
+    binds each Plan's storage, without filling it. Then `initialize` fills the
+    persistent state, `run` invokes a Plan, and `close` releases everything;
+    as a context manager it closes on exit. Construct it in a process whose
+    device has no other allocator; it needs neither the model nor the build
+    caches. Every worker of a distributed Plan constructs its Executor after
+    the process-group rendezvous, and calls `initialize`, `run` and
+    `discard_gradients` together with the others.
+
+    Parameters
+    ----------
+    plan : Plan
+        The default Plan, run when `run` names none.
+    plans : mapping of str to Plan, optional
+        Additional Plans by name, such as evaluation, backward or
+        optimizer-only Plans, sharing persistent state with ``plan``. All
+        must share the build target, parallelism and memory budgets; state is
+        matched by name and layout. Admission checks that every Plan fits
+        together.
+    device : int, default 0
+        Process-local GPU ordinal, the one the Plans' code was compiled for.
+    rank_map : mapping of int to int, optional
+        Launcher rank to logical rank, for every worker; required for a
+        Plan with more than one rank.
+    external_headroom_bytes : int, optional
+        Device memory reserved outside the execution pool for what libraries
+        allocate lazily, in bytes. By default the headroom the Plans
+        were profiled with, or 512 MiB when unrecorded; more than that is
+        refused.
+    parameter_norms : bool, default False
+        Collect each parameter's weight and gradient norms during runs of a
+        step Plan, in `TrainingResult.parameter_metrics`.
+    spill : SpillPool, optional
+        The spill pool configuration. Its capacity must cover the Plans'
+        spill requirement and fit their spill budget. By default a pinned host
+        pool of the requirement plus 5%, up to the budget.
+    reject_overbudget : bool, default False
+        Refuse, rather than report, device memory use beyond the reservations
+        outside the execution pool and process use beyond the budget. The
+        pool's own bounds are enforced either way.
+
+    Attributes
+    ----------
+    plan : Plan
+        The default Plan.
+    plans : mapping of str to Plan
+        The additional Plans, by name, read-only.
+    device : torch.device
+        The execution device.
+    runtime : Runtime
+        The runtime that holds the pools.
+
+    Raises
+    ------
+    ValueError
+        If a Plan is simulation-only, was built for another device, toolchain
+        or build, was measured for another spill backend or pool, cannot share
+        state or memory with the others, ``external_headroom_bytes`` exceeds
+        its reservation, or ``parameter_norms`` is set for a Plan that is not
+        a step.
+    TypeError
+        If ``parameter_norms`` or ``reject_overbudget`` is not a bool, or
+        ``spill`` is not a `SpillPool`.
+    """
+
     def __init__(
         self,
         plan: Plan,
@@ -94,12 +162,12 @@ class Executor:
 
     @property
     def spill_capacity_bytes(self) -> int:
-        """Actual worker spill capacity, which may be below the planning budget."""
+        """Capacity of the worker's spill pool, in bytes; at most the spill budget."""
         return self.runtime.pools["spill"].capacity
 
     @property
     def logical_rank(self) -> int:
-        """This worker's identity in the saved Plan, independent of launcher rank."""
+        """This worker's logical rank in the Plans, whatever its launcher rank."""
         return 0 if self._distributed is None else self._distributed.groups.logical_rank
 
     def initialize(
@@ -110,16 +178,44 @@ class Executor:
         restore: bool | Collection[str] = False,
         replicated_copies: Mapping[str, tuple[str, GroupRef]] | None = None,
     ) -> None:
-        """Fill owned state, then optionally reconstruct declared replicas.
+        """Fill the persistent state, which every run needs first.
 
-        ``replicated_copies`` maps a destination name to a source name and its
-        ordered shard-owner group. The callback may leave those destinations
-        untouched: bounded CPU transfers fill them after all local reads pass.
-        All workers must participate, including workers with an empty mapping.
-        This is initialization, not an optimizer update or checkpoint reshard.
-        ``restore=True`` loads all state. A collection selects canonical tensor
-        names whose saved values override defaults; unselected tensors retain
-        the ordinary fresh initialization behavior.
+        Each persistent tensor this worker owns is filled in chunks:
+        ``fill_tensor`` fills those without captured initial values, such as
+        the model's parameters and buffers, and the rest take their captured
+        values: gradients start at zero, masters copy their compute weights,
+        and optimizer state, controls and constants take the values captured
+        at build. Calling it again fills everything again; a failure leaves the
+        executor uninitialized.
+
+        Parameters
+        ----------
+        fill_tensor : callable
+            Called as ``fill_tensor(chunk, buffer)`` with a `TensorChunk` and
+            a one-dimensional buffer of its elements, which it fills before
+            returning and keeps no reference to.
+        chunk_bytes : int, default 64 << 20
+            Largest chunk, in bytes.
+        restore : bool or collection of str, default False
+            True asks ``fill_tensor`` for every tensor, captured values
+            included, as when restoring saved state; a collection asks for the
+            tensors of those canonical names.
+        replicated_copies : mapping of str to tuple, optional
+            Replicated tensors to rebuild after filling, as destination name
+            to ``(source name, GroupRef)``: the destination is assembled from
+            the shards of the source the group's members own, in the group's
+            order. ``fill_tensor`` may leave such a destination unfilled.
+            Every worker passes it, even one with an empty mapping.
+
+        Raises
+        ------
+        RuntimeError
+            If the executor is closed or an earlier run failed.
+        TypeError
+            If ``restore`` is neither a bool nor a collection of names.
+        ValueError
+            If ``restore`` names a tensor `tensor_chunks` does not list, or
+            ``chunk_bytes`` is not positive.
         """
         self.synchronize()
         self._initialized = False
@@ -190,6 +286,34 @@ class Executor:
         chunk_bytes: int = 64 << 20,
         names: Collection[str] | None = None,
     ) -> None:
+        """Read the persistent state out in bounded chunks.
+
+        An outstanding run is waited for first. Checkpoint formats belong to
+        the caller.
+
+        Parameters
+        ----------
+        write_chunk : callable
+            Called as ``write_chunk(chunk, buffer)`` with a `TensorChunk` and
+            a one-dimensional buffer of its elements, which it consumes before
+            returning and keeps no reference to.
+        chunk_bytes : int, default 64 << 20
+            Largest chunk, in bytes.
+        names : collection of str, optional
+            Canonical names of the tensors to export; the others are not
+            read. By default every tensor.
+
+        Raises
+        ------
+        RuntimeError
+            If the executor is closed, an earlier run failed, or it is not
+            initialized.
+        TypeError
+            If ``names`` is a string or holds something else.
+        ValueError
+            If ``names`` holds a name `tensor_chunks` does not list, or
+            ``chunk_bytes`` is not positive.
+        """
         self.synchronize()
         if not self._initialized:
             raise RuntimeError("initialize persistent tensors before exporting them")
@@ -223,9 +347,15 @@ class Executor:
             )
 
     def tensor_chunks(self) -> Iterator[TensorChunk]:
-        """One chunk spanning each persistent tensor this executor owns, named
-        as ``export_tensors`` names it and read without touching any data: the
-        training state a checkpoint describes and binds to."""
+        """Describe each persistent tensor this worker owns, without reading it.
+
+        This inventory is the training state a checkpoint binds to.
+
+        Yields
+        ------
+        TensorChunk
+            One chunk spanning each tensor's owned region.
+        """
         yield from tensor_descriptors(self._paths[0].storage)
         yield from self._paths[0].controls.descriptors()
         for name, path in self._named_paths.items():
@@ -251,6 +381,67 @@ class Executor:
         runtime_trace: bool = False,
         trace_capacity: TraceCapacities | None = None,
     ) -> InvocationResult[Any]:
+        """Invoke a Plan once, without waiting for it to finish.
+
+        It waits for the previous run, checks and stages the inputs, then
+        dispatches every task. Every worker of a Plan that issues collectives
+        calls it with the same ``plan``, ``accumulate_gradients`` and norm
+        setting. The outputs belong to the caller, who releases any device
+        outputs it holds before `close`.
+
+        Parameters
+        ----------
+        plan : str, optional
+            Name of an additional Plan. By default the default Plan.
+        args : sequence of tuple, optional
+            Positional arguments of each example, one tuple per example the
+            Plan was built for, each of the built signature. An
+            optimizer-only Plan takes none.
+        kwargs : sequence of mapping, optional
+            Keyword arguments of each example, matching ``args``.
+        input_loader : callable, optional
+            Called with each example's index and returning its
+            ``(args, kwargs)``, instead of ``args`` and ``kwargs``.
+        hyperparams : mapping of str to object, optional
+            Values of captured runtime controls for this run only, such as
+            ``"optimizer_group.0.lr"`` or the gradient scale; the others keep
+            their captured defaults.
+        accumulate_gradients : bool, default False
+            Add this run's gradients to the stored ones instead of replacing
+            them. Only for Plans of forward/backward Programs.
+        collect_parameter_norms : bool, optional
+            Whether this run collects parameter norms. By default it does for
+            the default Plan when the executor collects them.
+        profiler_annotations : bool, default False
+            Open a named profiler range around each task.
+        runtime_trace : bool, default False
+            Record a runtime trace of this run, read from the result's
+            ``diagnostics``.
+        trace_capacity : TraceCapacities, optional
+            Event capacities of that trace; only with ``runtime_trace``. By
+            default sized from the Plan.
+
+        Returns
+        -------
+        InvocationResult
+            The run's handle. Its ``result()`` waits, and returns the model's
+            outputs for a forward Plan or a `TrainingResult` for any other.
+
+        Raises
+        ------
+        RuntimeError
+            If the executor is closed, an earlier run failed, or it is not
+            initialized.
+        ValueError
+            If ``plan`` names no admitted Plan, the examples differ in number
+            or signature from the build, a control is unknown or misshapen,
+            the Plan has no accumulating path, norms are asked for without
+            ``parameter_norms`` or of an additional Plan, or
+            ``trace_capacity`` comes without ``runtime_trace``.
+        TypeError
+            If ``profiler_annotations``, ``runtime_trace`` or
+            ``collect_parameter_norms`` has another type.
+        """
         self.synchronize()
         observe = (
             self.parameter_norms and plan is None
@@ -366,10 +557,20 @@ class Executor:
         self._failure = error
 
     def discard_gradients(self) -> None:
-        """Release every shared persistent gradient value once, without updating.
+        """Release the stored gradients without applying them.
 
-        Logical objects and admitted Plans survive. The next participating
-        backward must use its fresh-write form; the session owns that decision.
+        Each persistent gradient is released once; the Plans and the other
+        state remain. The next backward must then start fresh gradients
+        (``accumulate_gradients=False``); the caller keeps track of that. An
+        outstanding run is waited for first.
+
+        Raises
+        ------
+        RuntimeError
+            If the executor is closed, an earlier run failed, or it is not
+            initialized.
+        ValueError
+            If gradient storage overlaps other persistent state.
         """
         self.synchronize()
         if not self._initialized:
@@ -403,6 +604,16 @@ class Executor:
             raise
 
     def synchronize(self) -> None:
+        """Wait for the outstanding run, if any.
+
+        Raises
+        ------
+        RuntimeError
+            If the executor is closed or an earlier run failed.
+        Exception
+            If the outstanding run failed: its own failure, after which the
+            executor is unusable.
+        """
         if self._closed or self._plan_released:
             raise RuntimeError("Executor is closed")
         if self._failure is not None:
@@ -414,16 +625,21 @@ class Executor:
             self._pending = None
 
     def close(self) -> None:
-        """Release the admitted Plans and close the runtime, failed or not.
+        """Release the admitted Plans and close the runtime.
 
-        After a failure the failed invocation is dropped rather than awaited,
-        the device is drained, and every step still runs. Once the runtime has
-        closed, close returns: the call that failed has raised already, and a
-        runtime that latched the failure is expected to refuse the plan's own
-        steps. A failure only this close waited for is raised once everything
-        is released. A runtime refused for outputs the caller still holds stays
-        open; close then raises, naming the failure, and can be retried once
-        those outputs are released.
+        An outstanding run is waited for, unless an earlier run failed: then
+        it is dropped, the device is drained, and every release step still
+        runs. Calling it again after it has closed does nothing.
+
+        Raises
+        ------
+        RuntimeConfigurationError
+            If device outputs the caller still holds reference the pools. The
+            runtime stays open, and close can be retried once they are
+            released.
+        Exception
+            If the outstanding run failed: its failure, raised once everything
+            is released.
         """
         if self._closed:
             return

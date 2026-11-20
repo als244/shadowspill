@@ -20,7 +20,7 @@ from .failures import (
     RuntimeExecutionError,
     RuntimeFailureDiagnostics,
 )
-from .objects import ObjectConsistency, ObjectRef
+from .objects import ObjectRef
 from .topology import (
     MemoryPool,
     RuntimeRoute,
@@ -36,7 +36,6 @@ __all__ = [
     "AdmissionReplayResult",
     "AdmissionReuseDependency",
     "MemoryPool",
-    "ObjectConsistency",
     "ObjectRef",
     "Runtime",
     "RuntimeConfigurationError",

@@ -26,10 +26,26 @@ from ..validation import (
 
 @dataclass(frozen=True, slots=True)
 class TaskResourcePhase:
-    """Sequential task work; ``None`` means ordinary GPU computation.
+    """One sequential part of a task's run.
 
-    Named phases occupy the same submission-ordered resource as transfer phases.
-    Workspace and outputs remain allocated throughout the task, including waits.
+    A part named for a resource occupies that serial resource, which timed
+    transfer phases of the same name also occupy; a part without one is
+    computation.
+    The task's workspace and outputs stay allocated through every part, waits
+    included.
+
+    Parameters
+    ----------
+    duration_ns : int
+        How long the part takes alone, in nanoseconds. At least zero.
+    resource : str, optional
+        The serial resource the part occupies; None for computation.
+
+    Raises
+    ------
+    ValidationError
+        If ``duration_ns`` is negative or ``resource`` is empty or padded with
+        whitespace.
     """
 
     duration_ns: int
@@ -42,10 +58,38 @@ class TaskResourcePhase:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the part as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {"duration_ns": self.duration_ns, "resource": self.resource}
 
     @classmethod
     def from_value(cls, value: object, path: str) -> TaskResourcePhase:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.profiles[0].resource_phases[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        TaskResourcePhase
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         resource = field(data, "resource", path)
         return cls(
@@ -56,11 +100,30 @@ class TaskResourcePhase:
 
 @dataclass(frozen=True, slots=True)
 class TaskOverlapCost:
-    """Fractions of solo progress while this task and a transfer phase overlap.
+    """How fast a task and a timed transfer phase progress while they overlap.
 
-    For example, 0.5 means that one nanosecond of wall time completes half a
-    nanosecond of isolated work. Rates apply only during actual overlap. Samples
-    are interpolated in log(message bytes), clamped to the measured endpoints.
+    A rate is the fraction of solo progress made per unit of wall time: at 0.5,
+    one nanosecond of overlap does half a nanosecond of the work. Rates apply
+    only while the two overlap. Between the samples of one class they are
+    interpolated in the logarithm of one plus the message size, and outside them
+    the nearest sample's rates hold.
+
+    Parameters
+    ----------
+    timing_class : str
+        The class of transfer work, matched against `TransferPhase.timing_class`.
+    bytes : int
+        Message size the sample was measured at, in bytes.
+    task_rate : float
+        The task's rate during the overlap, in (0, 1].
+    transfer_rate : float
+        The transfer phase's rate during the overlap, in (0, 1].
+
+    Raises
+    ------
+    ValidationError
+        If ``timing_class`` is empty or padded with whitespace, ``bytes`` is
+        negative, or a rate is outside (0, 1].
     """
 
     timing_class: str
@@ -84,6 +147,13 @@ class TaskOverlapCost:
 
     @shared_writer
     def to_dict(self) -> dict[str, JsonValue]:
+        """Return the sample as JSON values.
+
+        Returns
+        -------
+        dict
+            Its fields by name.
+        """
         return {
             "timing_class": self.timing_class,
             "bytes": self.bytes,
@@ -93,6 +163,27 @@ class TaskOverlapCost:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> TaskOverlapCost:
+        """Read a record from its `to_dict` form.
+
+        Parameters
+        ----------
+        value : object
+            The decoded JSON value.
+        path : str
+            Where the value sits in its document, such as
+            ``"program.profiles[0].overlap_costs[0]"``.
+            Error paths start with it.
+
+        Returns
+        -------
+        TaskOverlapCost
+            The record.
+
+        Raises
+        ------
+        ValidationError
+            If a field is missing, has the wrong type or is invalid.
+        """
         data = expect_mapping(value, path)
         rates = []
         for name in ("task_rate", "transfer_rate"):

@@ -13,7 +13,7 @@ from shadowspill.artifacts.archive import Artifact
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.profiled_program import ProfiledProgram
 from shadowspill.serialization.sharing import share
-from shadowspill.training.definitions.registry import Registry
+from shadowspill.training.components.registry import Registry
 from shadowspill.training.preparation.artifacts.manifest import manifest
 from shadowspill.training.preparation.capture.templates import capture_inventory
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
@@ -30,7 +30,7 @@ class TrainingBundle(Artifact):
     """An inspectable archive; ``recheck`` is required before worker creation.
 
     Raw loading verifies the archive and decodes CPU artifacts. Rechecking also
-    requires the installed definitions and exact setup sources. Neither path
+    requires the installed components and exact setup sources. Neither path
     constructs a model, initializes weights, profiles, or searches for a Plan.
     """
 

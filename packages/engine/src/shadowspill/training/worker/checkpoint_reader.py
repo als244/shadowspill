@@ -27,7 +27,7 @@ from .initialization import (
 if TYPE_CHECKING:
     from shadowspill.checkpoint.state import CheckpointState
     from shadowspill.execution import Executor
-    from shadowspill.training.definitions.initialization import InitializationRuntime
+    from shadowspill.training.components.initialization import InitializationRuntime
     from shadowspill.training.preparation.setup import ResolvedSetup
 
     from .randomness import WorkerRandomness

@@ -54,7 +54,42 @@ def _csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def write_report(
     result: Plan | SweepResult, path: str | Path, *, plots: bool = True
 ) -> Path:
-    """Write index.html, numeric evidence and figures, without touching a GPU."""
+    """Write an HTML report of a Plan or a planning sweep into a directory.
+
+    The report is made from the result alone and needs no device. The
+    directory is created if it is missing, and report files already in it
+    are overwritten.
+
+    For a `Plan`, the directory receives ``index.html``, ``tasks.csv``,
+    ``transfers.csv``, ``summary.json``, ``timeline.json`` (the tasks, the
+    transfers, and why the Plan is simulation only, if it is),
+    ``occupancy.html`` (an interactive page of pool occupancy over the step)
+    and, with ``plots``, ``timeline.svg`` and ``timeline.png``. For a
+    `SweepResult`, it receives ``cases.csv``, one row per case with its
+    budgets, duration and status; an ``index.html`` linking every case that
+    planned; and each planned case's report in a subdirectory named by its
+    position, ``case-0000``, ``case-0001`` and so on.
+
+    Parameters
+    ----------
+    result : Plan or SweepResult
+        The Plan or sweep to report.
+    path : str or path-like
+        Directory to write into.
+    plots : bool, default True
+        Whether to draw the simulated timeline of compute, transfers and
+        memory.
+
+    Returns
+    -------
+    Path
+        The report's ``index.html``.
+
+    Raises
+    ------
+    TypeError
+        If ``result`` is neither a `Plan` nor a `SweepResult`.
+    """
     destination = Path(path)
     destination.mkdir(parents=True, exist_ok=True)
     if isinstance(result, SweepResult):
@@ -126,9 +161,8 @@ def write_report(
         )
         html = _page(
             result.program.name or "Plan report",
-            note
-            + '<p><a href="occupancy.html">Interactive report: summary, lanes, '
-            'execution and spill memory breakdowns</a></p>'
+            note + '<p><a href="occupancy.html">Interactive report: summary, lanes, '
+            "execution and spill memory breakdowns</a></p>"
             + _table([result.summary])
             + figure
             + "<details open><summary>Tasks</summary>"

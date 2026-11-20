@@ -1,4 +1,4 @@
-"""Structural options belong to installed definitions, never model-name branches."""
+"""Structural options belong to installed components, never model-name branches."""
 
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -15,7 +15,7 @@ def constructor_config(
 ) -> Mapping[str, Value]:
     """Resolve all structural settings into the ordinary factory configuration.
 
-    A definition's optional CPU hook validates every supported option and must
+    A component's optional CPU hook validates every supported option and must
     reject unsupported ones. Its result passes the same typed config factory as
     ordinary settings and must be stable when those defaults are supplied again.
     Initial weight loading stays separate from model construction/capture.
@@ -31,7 +31,7 @@ def constructor_config(
             },
         )
     if configure is not None:
-        return mapping(configure(settings), "configured definition settings")
+        return mapping(configure(settings), "configured component settings")
     fields = (
         ("lora", "implementation", "precision")
         if isinstance(settings, Model)
@@ -45,6 +45,6 @@ def constructor_config(
     ]
     if unsupported:
         raise ValueError(
-            f"definition {settings.definition} has no settings hook for {unsupported}"
+            f"component {settings.name} has no settings hook for {unsupported}"
         )
     return settings.config

@@ -102,8 +102,8 @@ def validate_resume_optimizer(
     old, new = saved.optimizer, target.optimizer
     if (
         (old is None) != (new is None)
-        or saved.definition_sources.get("optimizer")
-        != target.definition_sources.get("optimizer")
+        or saved.component_sources.get("optimizer")
+        != target.component_sources.get("optimizer")
         or (
             old is not None
             and new is not None

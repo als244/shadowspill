@@ -25,7 +25,22 @@ _TRACE_RECORD_FLOOR = 1_000_000
 
 @dataclass(frozen=True, slots=True)
 class TraceCapacities:
-    """How many records a runtime trace of one invocation is prepared for."""
+    """How many records a runtime trace of one call has room for.
+
+    `Executor` sizes each call's trace from its Plan; passing one as
+    ``trace_capacity`` to `Executor.run`, with ``runtime_trace=True``,
+    replaces that size. A trace that fills says so in its overflow flags
+    rather than failing the call.
+
+    Parameters
+    ----------
+    events : int
+        Room for the trace's events: tasks entered and left, waits, and
+        transfers queued, dispatched and completed. Positive.
+    allocation_events : int
+        Room for the allocator's ledger, one entry per change of a lease's
+        state. Positive.
+    """
 
     events: int
     allocation_events: int

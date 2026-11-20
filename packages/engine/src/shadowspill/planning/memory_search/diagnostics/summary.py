@@ -33,12 +33,45 @@ from shadowspill.schema import artifact_schema
 class PlanningDiagnostics:
     """What a search did, and what it answered with.
 
-    The record has two halves. The **generic** half is what any search must
-    say: which plan won, at what cost, and which search found it. The
-    **search** half is how it got there -- resolved programs, repairs,
-    capacity refinement, work and section timings -- serialized under the
-    key ``search``, with the search's own name beside it as ``search_name``.
-    A reader that wants only the answer reads the generic half and stops.
+    The record has two halves. The generic half is what any search must
+    say: which plan won, at what cost, and which search found it. The rest
+    is how this search got there, which the written record keeps under
+    ``search``; a reader that knows no search reads only the generic half.
+
+    Parameters
+    ----------
+    selected_candidate_id : str
+        The candidate policy the search answered with, or ``"incumbent"``
+        when the plan to beat won.
+    selected_selection_id : str
+        The resolved program the answer came from.
+    selected_makespan_ns : int
+        The answer's makespan, in nanoseconds; once the layout is
+        certified, the certificate's.
+    resolved_programs : tuple of ResolvedProgramDiagnostics
+        Every resolved program the search evaluated, each once; the selected
+        one agrees with the three fields above.
+    work : PlanningWorkDiagnostics, default PlanningWorkDiagnostics()
+        The call's operation counts and section times.
+    effective_object_capacity_bytes : int, optional
+        The object capacity the search finally planned against, when it
+        reports one.
+    search : str, default ""
+        The search's own ``name``; empty only on a record built by hand.
+    workers : int, default 0
+        How many threads the search was given. Recorded for visibility and
+        left out of anything compared across runs.
+
+    Attributes
+    ----------
+    SCHEMA : str
+        The schema the record is written under.
+
+    Raises
+    ------
+    ValueError
+        If a resolved program appears twice, or the selected one is not unique
+        or disagrees with the selection.
     """
 
     SCHEMA: ClassVar[str] = artifact_schema("search_diagnostics")
@@ -83,22 +116,27 @@ class PlanningDiagnostics:
 
     @property
     def resolved_program_count(self) -> int:
+        """How many resolved programs the search evaluated."""
         return len(self.resolved_programs)
 
     @property
     def candidate_policy_count(self) -> int:
+        """How many distinct candidate policies it evaluated."""
         return len({item.candidate_id for item in self._candidate_evaluations()})
 
     @property
     def candidate_evaluation_count(self) -> int:
+        """How many candidate evaluations it made, over every resolved program."""
         return len(self._candidate_evaluations())
 
     @property
     def valid_candidate_evaluation_count(self) -> int:
+        """How many of those evaluations reached a plan."""
         return sum(item.status == "valid" for item in self._candidate_evaluations())
 
     @property
     def valid_resolved_program_count(self) -> int:
+        """How many resolved programs have an answer."""
         return sum(
             problem.selected_candidate_id is not None
             for problem in self.resolved_programs
@@ -106,6 +144,7 @@ class PlanningDiagnostics:
 
     @property
     def repairs(self) -> PlanningRepairDiagnostics:
+        """Every candidate's repairs, summed."""
         result = PlanningRepairDiagnostics()
         for candidate in self._candidate_evaluations():
             result += candidate.repairs
@@ -113,6 +152,7 @@ class PlanningDiagnostics:
 
     @property
     def candidate_status_counts(self) -> dict[str, int]:
+        """How many evaluations ended in each status, by status name."""
         return dict(
             sorted(
                 Counter(item.status for item in self._candidate_evaluations()).items()
@@ -120,7 +160,27 @@ class PlanningDiagnostics:
         )
 
     def replace_selected_makespan(self, makespan_ns: int) -> PlanningDiagnostics:
-        """Replace the selected policy's admission-aware timing consistently."""
+        """Copy the record with the answer's makespan replaced everywhere it appears.
+
+        The selected resolved program, its selected candidate, and its plan
+        to beat when that won, all take the new makespan; the planner uses
+        it to record the certificate's makespan.
+
+        Parameters
+        ----------
+        makespan_ns : int
+            The new makespan, in nanoseconds. At least zero.
+
+        Returns
+        -------
+        PlanningDiagnostics
+            The copy.
+
+        Raises
+        ------
+        ValueError
+            If ``makespan_ns`` is negative or not an integer.
+        """
 
         _nonnegative("makespan_ns", makespan_ns)
         problems = tuple(
@@ -151,6 +211,15 @@ class PlanningDiagnostics:
         )
 
     def to_dict(self) -> dict[str, object]:
+        """Write the record as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            ``schema``, ``search_name``, ``workers`` and the ``selection``,
+            then the search's own half under ``search``: the derived counts,
+            work, repairs, capacity refinement and resolved programs.
+        """
         return {
             "schema": self.SCHEMA,
             # The generic half: which plan won, and which search found it.
@@ -189,7 +258,16 @@ class PlanningDiagnostics:
         }
 
     def stable_dict(self) -> dict[str, object]:
-        """Return deterministic search evidence without measured work times."""
+        """Write the record without anything that measures the run.
+
+        Section times, spans, wall times and ``workers`` are left out, so two
+        runs that found the same plan write the same mapping.
+
+        Returns
+        -------
+        dict
+            `PlanningDiagnostics.to_dict` without those fields.
+        """
 
         value = without_measurements(self.to_dict())
         assert isinstance(value, dict)
@@ -197,6 +275,26 @@ class PlanningDiagnostics:
 
     @classmethod
     def from_value(cls, value: object, path: str) -> PlanningDiagnostics:
+        """Read a record back from what `PlanningDiagnostics.to_dict` wrote.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        PlanningDiagnostics
+            The record.
+
+        Raises
+        ------
+        ValueError
+            If the schema is another one, a field is missing or malformed, or a
+            written count or the written repairs disagree with the record.
+        """
         data = _mapping(value, path)
         if data.get("schema") != cls.SCHEMA:
             raise ValueError(f"{path}.schema: unsupported schema")

@@ -77,9 +77,7 @@ def _is_forward_choice(node: torch.fx.Node) -> bool:
         return False
     declared = getattr(node.target, "retain_for_backward", False)
     if type(declared) is not bool:
-        raise CaptureError(
-            f"{node.target}.retain_for_backward must be a static bool"
-        )
+        raise CaptureError(f"{node.target}.retain_for_backward must be a static bool")
     return declared is True or str(node.target) in _BUILTIN_FORWARD_CHOICES
 
 
@@ -104,24 +102,56 @@ _LIFTED_BANS: Mapping[str, Any] = {
 
 
 class OperatorClass(StrEnum):
-    """What regenerating one operator's results costs."""
+    """What regenerating one operator's results costs.
 
-    #: One pass over its bytes: it may be regenerated.
+    `RetentionPolicy.operator_classes` reports one for each custom operator in
+    a traced graph.
+
+    Attributes
+    ----------
+    MEMORY_BOUND : str
+        One pass over its bytes: it may be regenerated.
+    COMPUTE_BOUND : str
+        More than that, growing with its flops: it is retained.
+    UNKNOWN : str
+        A custom operator with no flop formula: retained, as if compute-bound.
+    """
+
     MEMORY_BOUND = "memory_bound"
-    #: More than that, growing with its flops: it is retained.
     COMPUTE_BOUND = "compute_bound"
-    #: A custom operator with no flop formula: retained, as if compute-bound.
     UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
 class RetentionRule:
-    """Override one exact operator overload in a variant's saved-state cut.
+    """Retention override for one exact operator overload.
 
-    ``retain`` saves backward-required results. ``recompute`` regenerates them
-    if needed. ``module_pattern`` restricts the rule to source module paths
-    matching a case-sensitive shell pattern, including descendant operations.
-    Contradictory rules and model checkpoint annotations are refused.
+    The rule covers the operator's result and the items it is unpacked into.
+    Capture fails when the saved-state cut cannot satisfy the rule, when two
+    rules with different actions match one operation, or when a rule
+    contradicts the model's own checkpoint annotation.
+
+    Parameters
+    ----------
+    target : str
+        Exact operator overload name, such as ``"aten.mm.default"``. Not
+        empty. A stage without the operator ignores the rule.
+    action : {"retain", "recompute"}
+        ``"retain"``: the backward never regenerates the operator's results.
+        ``"recompute"``: the cut never saves them, so the backward regenerates
+        what it needs.
+    module_pattern : str, optional
+        Case-sensitive shell pattern, such as ``"model.blocks.*.experts"``,
+        matched against the module paths an operation comes from; a match on
+        any enclosing module counts. Capture fails when an operation with
+        the target has no recorded module paths. None, the default, applies
+        the rule everywhere. Keyword only.
+
+    Raises
+    ------
+    ValueError
+        If ``target`` or ``module_pattern`` is empty, or ``action`` is
+        neither value.
     """
 
     target: str
@@ -156,21 +186,48 @@ class _RetentionScope:
 
 @dataclass(frozen=True, slots=True)
 class RetentionPolicy:
-    """Choose which forward values one graph pair retains for backward.
+    """Which forward values one graph pair retains for its backward.
 
-    Memory-bound results may be regenerated when the cut saves storage;
-    compute-bound and unknown results are marked for retention. Model-authored
-    checkpoint annotations take precedence over the default. Explicit rules
-    override classification; contradictory model annotations are refused.
-    ``default="retain"`` retains backward-required results; ``"recompute"``
-    regenerates them from inputs. ``"cost"`` permits memory-bound replay.
-    Explicit rules override the default. Selective cuts retain RNG/effect state;
-    explicit replay of those operations is refused. Retention never requests residency.
-    Top-k and provider-declared choices retain their backward-required state
-    in every variant by default. Providers set the static boolean attribute
-    ``retain_for_backward`` on their public operator overload.
-    Explicit rules can override this independently for either variant;
-    model checkpoint annotations retain their precedence.
+    The model's own checkpoint annotations decide first, then ``rules``, then
+    ``default``. Results of top-k, and of any operator overload whose static
+    ``retain_for_backward`` attribute is True, are retained unless a rule says
+    otherwise. Every cut but a plain recompute from the checkpoint inputs
+    retains the results of operations that use random state or ordered
+    effects, and a rule asking to regenerate one fails capture. Retention
+    decides the saved-state cut only, never where a retained value resides.
+
+    Under the ``"cost"`` default an operator is classed (`OperatorClass`) by
+    its flops per byte moved. Flops come from PyTorch's flop counter, so a
+    custom operator is priced once its library registers a formula with
+    ``torch.utils.flop_counter.register_flop_formula``, and is retained until
+    then. The threshold, ``rules``, ``default`` and the custom operators'
+    registered formulas decide the cut, and each enters `digest`.
+
+    Parameters
+    ----------
+    memory_bound_flops_per_byte : float, default 16.0
+        Under the ``"cost"`` default, flops per byte moved (inputs plus
+        outputs) at or below which an operator is memory-bound and may be
+        regenerated. Finite and at least zero.
+    rules : tuple of RetentionRule, default ()
+        Overrides for exact operator overloads. Each pair of target and
+        module pattern appears at most once.
+    default : {"cost", "retain", "recompute"}, default "cost"
+        What happens to an operation no rule names. ``"cost"``: a
+        memory-bound result is regenerated when the cut saves bytes by it,
+        and compute-bound results and custom operators without a flop formula
+        are retained. ``"retain"``: every result the backward needs is
+        retained. ``"recompute"``: the backward regenerates results from the
+        checkpoint inputs.
+
+    Raises
+    ------
+    TypeError
+        If ``memory_bound_flops_per_byte`` is not a number, or ``rules`` is
+        not a tuple of `RetentionRule`.
+    ValueError
+        If the threshold is negative or not finite, ``default`` is none of
+        the three, or a target and module pattern repeat.
     """
 
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE
@@ -199,6 +256,16 @@ class RetentionPolicy:
             )
 
     def identity(self) -> dict[str, object]:
+        """Return the policy's configuration as a JSON-compatible mapping.
+
+        Rules are in a fixed order, and ``rules`` and ``default`` are left out
+        when they have their default values.
+
+        Returns
+        -------
+        dict
+            The threshold, and the rules and default when set.
+        """
         result: dict[str, object] = {
             "memory_bound_flops_per_byte": self.memory_bound_flops_per_byte
         }
@@ -219,47 +286,68 @@ class RetentionPolicy:
             result["default"] = self.default
         return result
 
-    def classify(self, node: torch.fx.Node) -> OperatorClass | None:
-        """Classify one traced operator, or ``None`` for a node that is not one."""
-
-        if node.op != "call_function":
-            return None
-        action = _source_action(node, self.rules)
-        if action is None and _is_forward_choice(node):
-            action = "retain"
-        if action is not None:
-            return (
-                OperatorClass.COMPUTE_BOUND
-                if action == "retain"
-                else OperatorClass.MEMORY_BOUND
-            )
-        if self.default == "recompute":
-            return OperatorClass.MEMORY_BOUND
-        if self.default == "retain":
-            return OperatorClass.COMPUTE_BOUND
-        return _classify(node, self.memory_bound_flops_per_byte)
-
     def operator_classes(self, graph_module: torch.fx.GraphModule) -> dict[str, str]:
-        """How this policy classes every custom operator in ``graph_module``.
+        """Classify every custom operator in ``graph_module``.
 
-        PyTorch's own operators class the same way under one PyTorch build,
-        which a graph's structural contract already names. A custom
-        operator's class moves when its library registers or corrects a
-        formula, so a store keyed by this dictionary misses when the answer
-        would change rather than reading back a pair built under the old one.
+        Each is classed by its flops per byte moved against this policy's
+        threshold, as the saved-state cut classes an operation that no
+        annotation, rule, retained choice or ``default`` decides; rules and
+        ``default`` do not change the class. PyTorch's own operators classify
+        the same way under one PyTorch build, which a graph's structural
+        contract already names. A custom operator's class changes when its
+        library registers or corrects a formula, so a store keyed by this
+        mapping misses rather than reading back a graph pair built under the
+        old answer.
+
+        Parameters
+        ----------
+        graph_module : torch.fx.GraphModule
+            A traced graph.
+
+        Returns
+        -------
+        dict of str to str
+            Each custom operator overload name, in sorted order, mapped to
+            its `OperatorClass` value.
+
+        Raises
+        ------
+        CaptureError
+            If a custom operator's flop formula cannot price its traced call.
         """
 
         classes: dict[str, str] = {}
         for node in graph_module.graph.nodes:
             if node.op != "call_function" or _is_builtin(node.target):
                 continue
-            operator_class = self.classify(node)
+            operator_class = _classify(node, self.memory_bound_flops_per_byte)
             if operator_class is not None:
                 classes[str(node.target)] = operator_class.value
         return dict(sorted(classes.items()))
 
     def capture_identity(self, graph_module: torch.fx.GraphModule) -> dict[str, object]:
-        """Resolve occurrence scopes before structural capture reuse."""
+        """Return what this policy decides for ``graph_module``.
+
+        This is `identity` together with `operator_classes`, the
+        always-retained operators the graph holds, and, for rules with a
+        module pattern, the operations each one matches.
+
+        Parameters
+        ----------
+        graph_module : torch.fx.GraphModule
+            A traced graph.
+
+        Returns
+        -------
+        dict
+            The JSON-compatible description.
+
+        Raises
+        ------
+        CaptureError
+            If a scoped rule needs module paths the graph lacks, rules
+            conflict, or a flop formula cannot price its call.
+        """
 
         result = {**self.identity(), "operators": self.operator_classes(graph_module)}
         choices = sorted(
@@ -277,14 +365,14 @@ class RetentionPolicy:
             scopes = _resolve_scopes(graph_module, self)
             result["scoped"] = {
                 "rules": [scope.identity() for scope in scopes],
-                # The same custom overload can have different scoped actions.
-                # Record every occurrence so an unselected call's changed flop
-                # classification cannot be hidden by a selected later call.
+                # "operators" holds one class per overload. Record every
+                # occurrence, so a class that changes at an unselected call
+                # cannot be hidden behind a selected call of the same overload.
                 "operator_occurrences": [
                     {
                         "source_index": index,
                         "target": str(node.target),
-                        "class": self.classify(node),
+                        "class": _classify(node, self.memory_bound_flops_per_byte),
                     }
                     for index, node in enumerate(source_nodes(graph_module))
                     if node.op == "call_function" and not _is_builtin(node.target)
@@ -293,7 +381,23 @@ class RetentionPolicy:
         return result
 
     def digest(self, graph_module: torch.fx.GraphModule) -> str:
-        """Digest the policy, operator classes and resolved source scopes."""
+        """Return the SHA-256 digest of `capture_identity`.
+
+        Parameters
+        ----------
+        graph_module : torch.fx.GraphModule
+            A traced graph.
+
+        Returns
+        -------
+        str
+            The digest, in hexadecimal.
+
+        Raises
+        ------
+        CaptureError
+            If `capture_identity` raises it.
+        """
 
         encoded = json.dumps(
             self.capture_identity(graph_module),

@@ -55,8 +55,8 @@ independent single-worker attempts only.
 Callers keep their own policies:
 
 - `shadowspill.training.preparation` composes the public build/profile/plan phases
-  from registered workload definitions. The service owns subsequent execution;
-  model, input, objective and initialization hooks stay with their definitions.
+  from registered workload components. The service owns subsequent execution;
+  model, input, objective and initialization hooks stay with their components.
 - `tools/planning` owns measurement corpora and planner comparisons.
 - `tools/measure_plan` owns saved-Plan measurement, warmup exclusion,
   per-rank timing aggregation, GPU sampling and offline reports. Its generic

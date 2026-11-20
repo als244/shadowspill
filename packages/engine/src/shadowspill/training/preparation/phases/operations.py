@@ -1,4 +1,4 @@
-"""Resolved definition jobs use the ordinary build/profile/calibrate/plan APIs."""
+"""Resolved component jobs use the ordinary build/profile/calibrate/plan APIs."""
 
 import json
 import os

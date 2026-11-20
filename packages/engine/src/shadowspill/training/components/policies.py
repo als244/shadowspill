@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from shadowspill_client._records import Value
-from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.components import ComponentSource
 
 from .contracts import Configuration, versioned_id
 
@@ -18,7 +18,7 @@ type PolicyKind = Literal["partition", "chunking", "graph_pair_policy"]
 
 
 @dataclass(frozen=True)
-class PolicyDefinition:
+class PolicyComponent:
     """Resolve configuration without creating a framework policy during preview."""
 
     id: str
@@ -36,17 +36,17 @@ class PolicyDefinition:
 
 @dataclass(frozen=True)
 class ResolvedPolicy:
-    definition: PolicyDefinition
-    source: DefinitionSource
+    component: PolicyComponent
+    source: ComponentSource
     config: Mapping[str, Value]
 
     def create(self) -> Any:
         from .registry import _configuration
 
-        configured, settings = _configuration(self.definition.config, self.config)
+        configured, settings = _configuration(self.component.config, self.config)
         if settings != self.config:
             raise ValueError("policy configuration changed after resolution")
-        return self.definition.create(configured)
+        return self.component.create(configured)
 
 
 @dataclass(frozen=True)
@@ -62,12 +62,12 @@ def _partition(config: PartitionConfig) -> str:
     return config.mode
 
 
-def builtin_policy() -> tuple[PolicyDefinition, DefinitionSource]:
+def builtin_policy() -> tuple[PolicyComponent, ComponentSource]:
     return (
-        PolicyDefinition(
+        PolicyComponent(
             "shadowspill/partition@1", "partition", PartitionConfig, _partition
         ),
-        DefinitionSource(
+        ComponentSource(
             "shadowspill",
             version("shadowspill"),
             sha256(Path(__file__).read_bytes()).hexdigest(),

@@ -167,13 +167,22 @@ def ordered_resolutions(
 
 
 class PressureFit(SearchAlgorithm):
-    """PressureFit, built with the options it will search under.
+    """The search that ships, built with the options it searches under.
 
-    Stateless past construction: everything else a call needs arrives as an
-    argument, so one instance serves every budget of a sweep and every
-    worker of a search.
+    A `SearchAlgorithm` named ``"pressurefit"``. It expands a program's task
+    alternatives into the resolved programs its options name, searches each
+    one with every residency strategy crossed with every fetch rule, and
+    answers with the fastest plan any of them reached.
 
-        >>> PressureFit(PressureFitOptions(max_repair_attempts=256))
+    Parameters
+    ----------
+    options : PressureFitOptions, optional
+        What it may try, and how hard. None uses ``PressureFitOptions()``.
+
+    Raises
+    ------
+    TypeError
+        If ``options`` is not a `PressureFitOptions`.
     """
 
     name = "pressurefit"
@@ -197,11 +206,37 @@ class PressureFit(SearchAlgorithm):
         admission: AdmissionFacts | None = None,
         generic: GenericPlanningOptions,
     ) -> None:
-        """Reject a capacity no resolution of this program could fit.
+        """Refuse a machine on which no resolved program of ``program`` fits.
 
-        The same resolved programs a search would plan, checked against the
-        task-by-task residency floor. Cheap next to a search, and what
-        passes is what the search can reach.
+        Checks each resolved program the options name: at every task, its
+        workspace and the inputs and outputs it needs must fit the device
+        together, and every input must be able to reach the device by its
+        first use. A search plans only the resolved programs that pass.
+
+        Parameters
+        ----------
+        program : ShadowSpillProgram
+            As in `SearchAlgorithm.preflight`.
+        initial_residency : tuple of ResidencySpec
+            As in `SearchAlgorithm.preflight`.
+        final_residency : tuple of ResidencySpec, default ()
+            As in `SearchAlgorithm.preflight`.
+        config : SimulationConfig
+            As in `SearchAlgorithm.preflight`.
+        admission : AdmissionFacts, optional
+            As in `SearchAlgorithm.preflight`.
+        generic : GenericPlanningOptions
+            Not read.
+
+        Raises
+        ------
+        TypeError
+            If an argument has the wrong type.
+        ValueError
+            If ``admission`` does not describe ``program``, or its object
+            capacity disagrees with ``config``.
+        PlanInfeasibleError
+            If no resolved program passes. The error is the first one's.
         """
 
         validate_search_inputs(
@@ -234,7 +269,42 @@ class PressureFit(SearchAlgorithm):
         placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> None:
-        """Rerun the selected policies and stream their exact cut histories."""
+        """Record the cut history of each traced candidate, rerunning it alone.
+
+        Each call makes a new ``pressurefit-*`` directory under
+        ``options.trace_directory`` holding ``manifest.json``,
+        ``program.json`` and one ``.pftrace`` file per candidate. Each
+        candidate is rerun alone on one worker and checked against its
+        original diagnostic. The manifest ends ``"complete"``, or
+        ``"failed"`` with the error.
+
+        Parameters
+        ----------
+        result : ProgramPlanResult
+            As in `SearchAlgorithm.record_trace`.
+        options : SearchOptions
+            As in `SearchAlgorithm.record_trace`. Its generic options must be
+            ``deterministic``.
+        admission : AdmissionFacts, optional
+            As in `SearchAlgorithm.record_trace`.
+        placement : AdmissionFacts, optional
+            As in `SearchAlgorithm.record_trace`.
+        progress : callable, optional
+            Receives one line per traced candidate, then the directory.
+
+        Raises
+        ------
+        ValueError
+            If ``options`` names no ``trace_directory`` or is not
+            ``deterministic``; the plan is for more than one device; a pair to
+            trace was not evaluated; or no pairs are named and the answer is
+            the plan to beat, which has no cut history in this search.
+        TypeError
+            If ``options`` names a search whose options are not
+            `PressureFitOptions`.
+        RuntimeError
+            If a rerun differs from its original candidate.
+        """
         from .tracing import (
             record_plan_trace,
         )
@@ -430,8 +500,8 @@ class PressureFit(SearchAlgorithm):
         )
 
 
-#: The search that ships, with its own defaults. A caller wanting other
-#: options builds their own `PressureFit(...)`.
+#: The search that ships: a `PressureFit` built with the default
+#: `PressureFitOptions`. `SearchOptions` runs it when ``algorithm`` is None.
 pressurefit = PressureFit()
 
 # What a planning call gets when it names no algorithm.

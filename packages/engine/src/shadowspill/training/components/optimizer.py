@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class OptimizerDefinition:
+class OptimizerComponent:
     """Create an ordinary optimizer for existing capture, never a second updater.
 
     The factory receives the model, validated configuration and tensor-valued

@@ -12,12 +12,12 @@ from typing import Any, cast
 
 from shadowspill_client import Objective
 from shadowspill_client._records import Value, mapping, plain
+from shadowspill_client.protocol.components import ComponentSource, OutputSet
 from shadowspill_client.protocol.controls import ControlSchema, Scalar, ScalarControl
-from shadowspill_client.protocol.definitions import DefinitionSource, OutputSet
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.operations import OperationKey
 
-from .contracts import Computation, ObjectiveDefinition, ObjectiveEvaluation
+from .contracts import Computation, ObjectiveComponent, ObjectiveEvaluation
 from .registry import Registry, ResolvedModel, ResolvedObjective
 
 
@@ -38,7 +38,7 @@ def _selection(
                 key.operation,
                 key.outputs
                 if key.outputs != "metrics" and key.outputs in term.outputs
-                else term.definition.default_outputs,
+                else term.component.default_outputs,
                 key.mode,
             ),
         )
@@ -161,7 +161,7 @@ def _bind(terms: Mapping[str, ResolvedObjective], key: OperationKey) -> Computat
     return compute
 
 
-def _source(terms: Mapping[str, ResolvedObjective]) -> DefinitionSource:
+def _source(terms: Mapping[str, ResolvedObjective]) -> ComponentSource:
     digest = sha256()
     for name in ("composition.py", "contracts.py", "registry.py"):
         digest.update(name.encode())
@@ -169,13 +169,13 @@ def _source(terms: Mapping[str, ResolvedObjective]) -> DefinitionSource:
     digest.update(
         json.dumps(
             {
-                name: {"id": term.definition.id, "source": term.source.to_dict()}
+                name: {"id": term.component.id, "source": term.source.to_dict()}
                 for name, term in terms.items()
             },
             sort_keys=True,
         ).encode()
     )
-    return DefinitionSource("shadowspill", version("shadowspill"), digest.hexdigest())
+    return ComponentSource("shadowspill", version("shadowspill"), digest.hexdigest())
 
 
 def resolve_sum(
@@ -183,7 +183,7 @@ def resolve_sum(
     model: ResolvedModel,
     config: Mapping[str, Value] | None,
     defaults: Mapping[str, Scalar] | None,
-    source: DefinitionSource | None,
+    source: ComponentSource | None,
 ) -> ResolvedObjective:
     if (
         config is None
@@ -198,7 +198,7 @@ def resolve_sum(
     Objective.sum(settings)  # Same lightweight validation for remote requests.
     terms = {
         name: registry.resolve_objective(
-            term.definition,
+            term.name,
             model=model,
             config=term.config,
             defaults=cast(Mapping[str, Scalar], term.defaults),
@@ -207,24 +207,24 @@ def resolve_sum(
     }
     installed = _source(terms)
     if source is not None and source != installed:
-        raise ValueError("objective definition source changed: shadowspill/sum@1")
+        raise ValueError("objective component source changed: shadowspill/sum@1")
     fields: dict[tuple[str, ...], TensorField] = {}
     capacities: dict[str, Capacity] = {}
     controls: dict[str, ScalarControl] = {}
     configured_defaults: dict[str, Scalar] = {}
     invariants: dict[str, str] = {}
-    participation = next(iter(terms.values())).definition.participation
+    participation = next(iter(terms.values())).component.participation
     for name, term in terms.items():
-        if not (term.definition.padding_safe or term.definition.physical_batch_loss):
+        if not (term.component.padding_safe or term.component.physical_batch_loss):
             raise ValueError(f"objective term {name} must declare padding safety")
-        if term.definition.participation != participation:
+        if term.component.participation != participation:
             raise ValueError("objective terms must share the same participation field")
         if "weight" in term.controls.fields:
             raise ValueError("objective term control 'weight' is reserved by sums")
         _merge(fields, {tuple(f.path): f for f in term.inputs.fields}, "input schemas")
         _merge(capacities, {c.name: c for c in term.inputs.capacities}, "capacities")
         _merge(
-            invariants, term.definition.allocation_invariants, "allocation invariants"
+            invariants, term.component.allocation_invariants, "allocation invariants"
         )
         controls.update(
             {
@@ -243,7 +243,7 @@ def resolve_sum(
     )
     output_names = {"metrics"}
     for term in terms.values():
-        output_names.update(set(term.outputs) - {term.definition.default_outputs})
+        output_names.update(set(term.outputs) - {term.component.default_outputs})
     outputs = {}
     for output in sorted(output_names):
         selections = {
@@ -263,7 +263,7 @@ def resolve_sum(
     def bind(configured: Any, key: OperationKey) -> Computation:
         return _bind(terms, key)
 
-    objective = ObjectiveDefinition(
+    objective = ObjectiveComponent(
         "shadowspill/sum@1",
         _bind(terms, OperationKey("step", "metrics")),
         schema,
@@ -272,23 +272,21 @@ def resolve_sum(
         bind=bind,
         participation=participation,
         requires=tuple(
-            sorted({cap for term in terms.values() for cap in term.definition.requires})
+            sorted({cap for term in terms.values() for cap in term.component.requires})
         ),
         reduction="sum"
-        if all(term.definition.reduction == "sum" for term in terms.values())
+        if all(term.component.reduction == "sum" for term in terms.values())
         else "custom",
-        padding_safe=all(term.definition.padding_safe for term in terms.values()),
+        padding_safe=all(term.component.padding_safe for term in terms.values()),
         physical_batch_loss=any(
-            term.definition.physical_batch_loss for term in terms.values()
+            term.component.physical_batch_loss for term in terms.values()
         ),
         allocation_invariants=invariants,
     )
     resolved_config = mapping(
         {
             "terms": {
-                name: Objective(
-                    term.definition.id, term.config, term.defaults
-                ).to_dict()
+                name: Objective(term.component.id, term.config, term.defaults).to_dict()
                 for name, term in terms.items()
             }
         },

@@ -56,7 +56,7 @@ def describe_candidate(inventory: TemplateInventory, template: CaptureTemplate) 
             description = defaults[name]
         else:
             policy = Policy.from_dict(value)
-            description = policy.definition
+            description = policy.name
             if policy.config:
                 description += " " + json.dumps(
                     policy.to_dict()["config"], sort_keys=True

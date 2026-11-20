@@ -53,7 +53,38 @@ _ANNOTATED_PROGRAM_PLAN_SCHEMA = artifact_schema("annotated_program_plan")
 
 @dataclass(frozen=True, slots=True)
 class AnnotatedProgramPlan:
-    """The plan a search chose, plus exact fixed-layout and simulator evidence."""
+    """A certified plan: the search's answer, its fixed layout and simulation.
+
+    `memory_search.plan_program` returns one;
+    `AnnotatedProgramPlan.from_json` reads one back.
+
+    Attributes
+    ----------
+    program : ShadowSpillPlanningProblem
+        The problem planned.
+    memory_budgets : MemoryBudgets
+        The device and spill budgets planned for.
+    transfer_bandwidths : TransferBandwidths
+        The copy rates planned with.
+    result : ProgramPlanResult
+        The answer, carrying the certificate's simulation.
+    effective_facts : AdmissionFacts
+        The physical facts the layout was certified against.
+    fixed_layout : FixedPhysicalLayout
+        The certified layout.
+    simulation_admission : SimulationAdmission
+        The physical accounting the certificate simulated with.
+    simulation : SimulationResult
+        The schedule simulated over the fixed layout.
+    attempts : tuple
+        Each layout trial, with its capacities, the bytes it required,
+        whether it was accepted, and its search and admission wall time.
+    plan_from_store : bool
+        Whether the plan was read from the plan store rather than
+        searched for during the call.
+    wall_time_ns : int
+        Wall time of the whole call, in nanoseconds.
+    """
 
     program: ShadowSpillPlanningProblem
     memory_budgets: MemoryBudgets
@@ -76,7 +107,7 @@ class AnnotatedProgramPlan:
 
     @property
     def summary(self) -> PlanSummary:
-        """Estimated behavior of this exact selected and physically certified plan."""
+        """The plan's simulated timing, traffic and memory, as a `PlanSummary`."""
         return replace(
             summarize_selected_plan(replace(self.result, simulation=self.simulation)),
             physical_execution_peak_bytes=(
@@ -86,7 +117,12 @@ class AnnotatedProgramPlan:
 
     @property
     def digest(self) -> str:
-        """Stable selected-plan identity, excluding cache and wall-time evidence."""
+        """SHA-256 hex digest naming the plan, computed once.
+
+        It covers the record `AnnotatedProgramPlan.to_dict` writes, less the
+        summary, whether it came from the store, the search diagnostics and
+        the timing, so the same plan found twice has one digest.
+        """
 
         if not self._digest_cache:
             self._digest_cache.append(self._compute_digest())
@@ -114,24 +150,33 @@ class AnnotatedProgramPlan:
 
     @property
     def search_wall_time_ns(self) -> int:
-        """Cumulative search and cache-resolution wall time."""
+        """Wall time spent searching or reading the store, in nanoseconds."""
 
         return sum(item.search_wall_time_ns for item in self.attempts)
 
     @property
     def physical_admission_wall_time_ns(self) -> int:
-        """Cumulative physical-admission wall time."""
+        """Wall time spent certifying the layout, in nanoseconds."""
 
         return sum(item.physical_admission_wall_time_ns for item in self.attempts)
 
     @property
     def orchestration_wall_time_ns(self) -> int:
-        """Selection overhead outside the measured search and admission calls."""
+        """Wall time of the call outside searching and certifying, in nanoseconds."""
 
         measured = self.search_wall_time_ns + self.physical_admission_wall_time_ns
         return max(0, self.wall_time_ns - measured)
 
     def to_dict(self) -> dict[str, object]:
+        """Write the plan as a JSON-compatible record.
+
+        Returns
+        -------
+        dict
+            The record's ``schema``, the summary, the problem, budgets and
+            rates, the selection, the simulation, the physical admission and
+            the timing.
+        """
         return {
             "schema": _ANNOTATED_PROGRAM_PLAN_SCHEMA,
             "summary": self.summary.as_dict(),
@@ -201,16 +246,38 @@ class AnnotatedProgramPlan:
         }
 
     def to_json(self) -> str:
+        """Write the plan as compact JSON with sorted keys.
+
+        Returns
+        -------
+        str
+            `AnnotatedProgramPlan.to_dict`, encoded.
+        """
         return _canonical_json(self.to_dict())
 
     @classmethod
     def from_dict(cls, value: object) -> AnnotatedProgramPlan:
-        """Restore one annotated plan from its stored record.
+        """Read a plan back from what `AnnotatedProgramPlan.to_dict` wrote.
 
-        One decoder reads one record. It is long because the record is wide,
-        not because it does several things: every line is one key, read in the
-        order the writer emits it. Splitting it would scatter one schema across
-        several files and leave no part easier to check against the writer.
+        The record is checked against itself: the schedule against the
+        program, the layout's digests against the program, schedule and
+        facts, and the timing totals against their parts.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+
+        Returns
+        -------
+        AnnotatedProgramPlan
+            The plan.
+
+        Raises
+        ------
+        ValueError
+            If the schema is another one, a field is missing or malformed, or
+            the record contradicts itself.
         """
 
         from shadowspill.planning.memory_search.admission.refinement import (
@@ -482,6 +549,24 @@ class AnnotatedProgramPlan:
 
     @classmethod
     def from_json(cls, payload: str) -> AnnotatedProgramPlan:
+        """Read a plan back from what `AnnotatedProgramPlan.to_json` wrote.
+
+        Parameters
+        ----------
+        payload : str
+            The JSON text.
+
+        Returns
+        -------
+        AnnotatedProgramPlan
+            The plan.
+
+        Raises
+        ------
+        ValueError
+            If the text is not JSON or `AnnotatedProgramPlan.from_dict` refuses
+            its record.
+        """
         try:
             value = json.loads(payload)
         except json.JSONDecodeError as error:

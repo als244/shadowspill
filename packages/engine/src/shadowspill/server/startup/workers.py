@@ -11,6 +11,7 @@ from shadowspill.orchestration.launch.admission import (
 from shadowspill.orchestration.nodes.hardware import node_hardware
 from shadowspill.orchestration.nodes.selection import select_hardware
 from shadowspill.server.records.requests import RunIdentity
+from shadowspill.server.startup.memory import automatic
 from shadowspill.server.startup.weights import ResolvedWeights
 from shadowspill.training.preparation.planning.records import PreparedPlans
 from shadowspill.training.preparation.setup import ResolvedSetup
@@ -32,6 +33,12 @@ def select_devices(
     pool: str = "default",
 ) -> tuple[str, ...]:
     """Choose compatible assigned devices before acquiring any phase owner."""
+    if automatic(setup.config.memory):
+        # Describing the run sizes them, and the run records the sizes.
+        raise ValueError(
+            "a run is created from settings with sized memory budgets; describe "
+            "settings with an automatic (zero) budget first"
+        )
     selection = select_hardware(
         HardwareInventory((node_hardware(node, pool=pool),)),
         ranks=setup.context.parallelism.world_size,

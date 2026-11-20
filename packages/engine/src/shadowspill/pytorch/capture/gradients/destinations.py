@@ -26,11 +26,24 @@ from .nodes import _CONVERTING, _MOVING_ONLY, _record_value, _undo_move
 
 @dataclass(frozen=True, slots=True)
 class GradientDestination:
-    """One producer output, its final gradient, and its existing destination.
+    """One producer output whose gradient may be written into existing storage.
 
-    ``operations`` runs backwards from the final gradient to the producer's
-    output. It excludes the tuple getitem. A mapper must preserve the meaning
-    of these operations, including casts, scaling and layout changes.
+    `GradientDestinationContext.destinations` holds one for each output a
+    `GradientDestinationRule` mapper may consume.
+
+    Attributes
+    ----------
+    output_index : int
+        The output's position among the producer's results.
+    gradient : torch.fx.Node
+        The node whose value the backward returns as the gradient.
+    destination : torch.fx.Node
+        The node of the gradient storage that already holds earlier
+        contributions.
+    operations : tuple of torch.fx.Node
+        The operations from ``gradient`` back to the output, ``gradient``
+        first and the tuple extraction left out; empty when ``gradient`` is
+        the output itself.
     """
 
     output_index: int
@@ -41,7 +54,19 @@ class GradientDestination:
 
 @dataclass(frozen=True, slots=True)
 class DestinationView:
-    """A storage-preserving operation applied to a supplied destination."""
+    """A storage-preserving operation applied to a gradient destination.
+
+    It is called as ``target(destination, *arguments)``. Capture fails when
+    the result does not share the destination's storage or has overlapping
+    elements.
+
+    Parameters
+    ----------
+    target : callable
+        The operation, such as an operator overload that makes a view.
+    arguments : tuple, default ()
+        Positional arguments after the destination.
+    """
 
     target: Callable[..., Any]
     arguments: tuple[Any, ...] = ()
@@ -49,11 +74,21 @@ class DestinationView:
 
 @dataclass(frozen=True, slots=True)
 class GradientDestinationMapping:
-    """Outputs to consume together, writable views, and provider-specific data.
+    """What a `GradientDestinationRule` mapper chooses for one producer call.
 
-    Each ``views`` entry is applied in order to that output's destination. An
-    empty entry passes the destination itself. Extra ``keywords`` become actual
-    operator arguments, not ignored graph metadata. The mapper does not edit FX.
+    Parameters
+    ----------
+    output_indices : tuple of int
+        The producer outputs to accumulate in place, together in one call;
+        a subset of those the mapper was offered.
+    views : tuple of tuple of DestinationView
+        For each output in ``output_indices``, the operations applied in
+        order to its destination before the call writes it. An empty entry
+        passes the destination itself.
+    keywords : mapping of str to object, default {}
+        Extra keyword arguments of the replacement call. The names
+        ``destinations``, ``output_indices`` and ``contract_version`` are
+        reserved.
     """
 
     output_indices: tuple[int, ...]
@@ -63,7 +98,21 @@ class GradientDestinationMapping:
 
 @dataclass(frozen=True, slots=True)
 class GradientDestinationContext:
-    """Build-only information supplied once for one custom producer."""
+    """What a `GradientDestinationRule` mapper receives for one producer call.
+
+    During build, capture calls the mapper once for each call of the rule's
+    target that has eligible outputs, with one of these.
+
+    Attributes
+    ----------
+    producer : torch.fx.Node
+        The call of the rule's target.
+    destinations : tuple of GradientDestination
+        Its eligible outputs, one per output position.
+    fuse_narrow_gradient_accumulation : bool
+        The build's ``fuse_narrow_gradient_accumulation``: whether a gradient
+        may accumulate into a destination of less than full precision.
+    """
 
     producer: Node
     destinations: tuple[GradientDestination, ...]
@@ -72,28 +121,55 @@ class GradientDestinationContext:
 
 @dataclass(frozen=True, slots=True)
 class GradientDestinationRule:
-    """Map a fresh-output operator to a versioned accumulating overload.
+    """A rule that lets an opaque backward operator add into existing gradient storage.
 
-    Targets are dispatcher names, e.g. ``provider.backward.default``. The
-    replacement takes the original arguments plus named arguments
-    ``destinations: Tensor[]``, ``output_indices: int[]`` and
-    ``contract_version: int``. Its schema must declare the destination list
-    mutable. It preserves the original result tuple and unconsumed outputs;
-    consumed positions may return ``None``, an empty tensor or their destination.
-    Empty tensors let providers use fixed Tensor return schemas supported by
-    automatic functionalization. The graph returns the destinations instead.
-    An originally ``None`` output with no graph consumer may also use an empty
-    tensor placeholder. Observed unconsumed outputs must retain their contract.
+    Where a gradient comes from ``target``'s output and gradient storage
+    already holds earlier contributions, capture replaces the call with
+    one call of ``replacement`` that writes the selected outputs into their
+    destinations; any other output keeps the ordinary in-place addition.
+    `build_forward_backward` and `build_step` take rules as
+    ``gradient_destination_rules``, at most one per target.
 
-    With no mapper, only reversible views/copies at the same dtype are consumed.
-    A mapper may consume a subset and describe a provider's layout/scale/cast
-    epilogue. It must honor the numerical permission in the context; changing
-    a cast or sum's rounding requires explicit support by that provider. Returning
-    ``None`` declines fusion. The normal in-place addition remains available.
+    The replacement takes the original arguments plus ``destinations:
+    Tensor[]``, which its schema declares mutable, ``output_indices: int[]``
+    and ``contract_version: int``. It returns the original result tuple:
+    every unconsumed output unchanged, and at a consumed position None, an
+    empty tensor or the destination. An output that was None and has no
+    consumer may also return an empty tensor.
 
-    The version is passed to the operator and therefore participates in artifact
-    identity and serialization. Changing an adapter's contract requires changing
-    its version. A rule never authorizes duplicate backward evaluation.
+    Parameters
+    ----------
+    target : str
+        The fresh-output operator, as ``namespace.name.overload``, such as
+        ``"provider.backward.default"``.
+    replacement : str
+        The accumulating overload, in the same form.
+    output_indices : tuple of int
+        Positions of ``target``'s outputs that may be consumed. Distinct, at
+        least zero.
+    version : int
+        Version of the replacement's contract, passed as
+        ``contract_version``. Positive. It enters artifact identity, so a
+        changed contract needs a new version.
+    mapper : callable, optional
+        Takes a `GradientDestinationContext` (the producer node, its
+        eligible destinations, and whether narrow-precision accumulation is
+        permitted) and returns a `GradientDestinationMapping`, or None to
+        decline. It must keep the meaning of the operations between the
+        producer's output and the gradient, casts, scaling and layout changes
+        included. By default an output is consumed only when its gradient is
+        reached through views and copies at an unchanged dtype, and, unless
+        narrow-precision accumulation is permitted, only into a destination
+        of full precision.
+
+    Raises
+    ------
+    ValueError
+        If ``target`` or ``replacement`` is not ``namespace.name.overload``,
+        ``version`` is not a positive int, or ``output_indices`` is empty,
+        negative or repeated.
+    TypeError
+        If ``mapper`` is not callable.
     """
 
     target: str

@@ -13,29 +13,53 @@ from shadowspill.errors import CaptureError
 
 @runtime_checkable
 class PartitionPolicy(Protocol):
-    """Choose a contiguous stage number for every executable FX node.
+    """A custom rule that divides a captured graph into contiguous stages.
 
-    Implementations receive the captured graph and its source module and return
-    a complete mapping from executable FX node names to nonnegative integer
-    labels (not booleans). Exclude placeholder/get_attr/output nodes. Labels
-    need not be consecutive, but each must occupy one contiguous graph interval.
-
-    Policies describe boundaries without executing kernels or changing the graph,
-    metadata, or model. Use deterministic structural rules and a stable repr for
-    persisted request identity. The frontend derives inputs, outputs, mutations,
-    aliases and backward graphs; policies do not declare memory or placement.
-
-    See docs/architecture/partitioning.md for the requirements and
-    docs/examples/custom-partitioning.md for a standalone example.
+    `build_forward`, `build_forward_backward` and `build_step` take one as
+    ``partition``, in place of ``"auto"`` or ``"whole"``, to set
+    checkpoint-stage boundaries; `ChunkRegions` takes one to divide each task
+    into execution regions. A policy describes boundaries only: it runs no
+    kernels, changes neither the graph, its metadata nor the model, and
+    follows deterministic structural rules. The frontend derives each stage's
+    inputs, outputs, mutations, aliases and backward graphs; a policy
+    declares no memory or placement.
     """
 
     def assign_stages(
         self,
         graph_module: GraphModule,
         module: nn.Module,
-    ) -> Mapping[str, int]: ...
+    ) -> Mapping[str, int]:
+        """Assign a stage label to every executable node of ``graph_module``.
+
+        Capture fails with `CaptureError` when the mapping is malformed or the
+        graph was changed; an error this method raises becomes one.
+
+        Parameters
+        ----------
+        graph_module : torch.fx.GraphModule
+            The captured graph.
+        module : torch.nn.Module
+            The model the graph was captured from. Under `ChunkRegions`, the
+            task's graph module itself.
+
+        Returns
+        -------
+        mapping of str to int
+            Every executable node's name exactly once, mapped to an integer
+            label of at least zero (not a bool). Placeholder, ``get_attr`` and
+            output nodes are left out. Labels need not be consecutive, but
+            each covers one contiguous run of nodes in graph order.
+        """
+        ...
 
 
+#: What the builders and `ChunkRegions` accept as ``partition``: ``"auto"``,
+#: ``"whole"`` or a `PartitionPolicy`. ``"auto"`` gives each child of the
+#: outermost modules whose children repeat a type (each layer of a layer
+#: stack, for example) its own stage, plus one stage for what precedes them
+#: and one for the modules that follow; without such a module, and with
+#: ``"whole"``, the graph is one stage.
 PartitionSpec = Literal["auto", "whole"] | PartitionPolicy
 
 

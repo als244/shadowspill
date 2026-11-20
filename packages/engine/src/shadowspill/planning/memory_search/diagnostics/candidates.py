@@ -30,11 +30,73 @@ def _steps(value: object, path: str) -> tuple[ReductionStep, ...]:
 
 @dataclass(frozen=True, slots=True)
 class CandidateDiagnostic:
-    """One candidate policy evaluated in one resolved program.
+    """One candidate policy evaluated in one resolved program, and its outcome.
 
-    ``candidate_id`` identifies only the reusable policy: residency strategy,
-    and fetch rule.  ``selection_id`` is the parent-problem
-    reference and is deliberately not part of candidate-policy identity.
+    `ResolvedProgramDiagnostics.candidate_evaluations` holds these.
+
+    Parameters
+    ----------
+    candidate_id : str
+        The policy, as ``"<residency strategy>/<fetch rule>"``, such as
+        ``"headroom-stall/packed-fifo"``. It names the policy only, not the
+        resolved program.
+    selection_id : str
+        The resolved program it was evaluated in.
+    status : str
+        ``"valid"`` when it reached a plan, ``"infeasible"`` when it could
+        not, or ``"exhausted"`` when it stopped at its repair budget.
+    makespan_ns : int, optional
+        The makespan of the plan it answers with, when it reached one.
+    capacity_violation_count : int, default 0
+        Times that plan came up short of capacity and waited for room.
+    placements_attempted : int, default 0
+        Layouts measured for the candidate.
+    placements_admitted : int, default 0
+        How many of those fit the pool.
+    capacity_refinements : int, default 0
+        Times a plan gave back what its layout overran and was rebuilt.
+    repairs_at_best : int, optional
+        Repairs spent when the plan it answers with was placed; None when it
+        placed none.
+    pressure_escalations : int, default 0
+        Pressure repairs that asked for more than the shortfall, because the
+        same failure had repeated at the same task and moment.
+    escalations_taken_back : int, default 0
+        Escalations no cut could meet, retried for the shortfall alone.
+    best_unplaced_makespan_ns : int, optional
+        The fastest plan it simulated whose layout did not fit the pool;
+        None when there was none. Beside ``makespan_ns`` it says what
+        placing cost.
+    unplaced_plans : int, default 0
+        How many such plans it measured.
+    started_ns : int, default 0
+        When the candidate started, in nanoseconds of wall time from the
+        start of the call.
+    finished_ns : int, default 0
+        When it finished, on the same clock.
+    schedule_digest : str, optional
+        The digest of the schedule it answers with.
+    failure_kind : str, optional
+        Why it failed, as a stable word such as ``"analytic_capacity"``,
+        ``"unplaceable"`` or ``"repair_budget_exhausted"``.
+    failure_detail : str, optional
+        A description of the failure.
+    repairs : PlanningRepairDiagnostics, default PlanningRepairDiagnostics()
+        Its repairs, by category.
+    work : PlanningWorkDiagnostics, default PlanningWorkDiagnostics()
+        Its operation counts and section times.
+    steps : tuple of ReductionStep, default ()
+        Every plan it held, in order; empty unless the search was asked to
+        record them.
+
+    Attributes
+    ----------
+    residency_strategy : str
+        The residency strategy, read from ``candidate_id``; ``"unknown"``
+        when it has no ``/``.
+    fetch_rule : str
+        The fetch rule, read from ``candidate_id``; ``"unknown"`` when it has
+        no ``/``.
     """
 
     candidate_id: str
@@ -87,6 +149,17 @@ class CandidateDiagnostic:
         object.__setattr__(self, "fetch_rule", rule)
 
     def to_dict(self) -> dict[str, object]:
+        """Write the evaluation as a JSON-compatible mapping.
+
+        ``selection_id`` is left out: the resolved program the record sits
+        in supplies it.
+
+        Returns
+        -------
+        dict
+            The policy, the outcome, the repairs, the work, the span and the
+            steps, each under its own key.
+        """
         return {
             "candidate_policy": {
                 "candidate_id": self.candidate_id,
@@ -122,9 +195,29 @@ class CandidateDiagnostic:
     def from_value(
         cls, value: object, path: str, selection_id: str
     ) -> CandidateDiagnostic:
-        """Read one candidate. The parent supplies ``selection_id``, which is
-        a reference to the containing problem rather than part of the
-        candidate's own record, so it is not in the payload."""
+        """Read an evaluation back from what `CandidateDiagnostic.to_dict` wrote.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str
+            Where the value sits in its record, for error messages.
+        selection_id : str
+            The resolved program the record sits in, which the record does
+            not hold.
+
+        Returns
+        -------
+        CandidateDiagnostic
+            The evaluation.
+
+        Raises
+        ------
+        ValueError
+            If a field is malformed, or the written policy disagrees with
+            ``candidate_id``.
+        """
 
         data = _mapping(value, path)
         policy = _mapping(data.get("candidate_policy"), f"{path}.candidate_policy")

@@ -14,17 +14,72 @@ from shadowspill.planning.serialization import _integer, _mapping
 
 @dataclass(frozen=True, slots=True)
 class PlanSummary:
-    """Summary attached to an internal ``AnnotatedProgramPlan``.
+    """A selected plan's simulated timing, traffic and memory, as estimates.
 
-    The five time components satisfy:
-    ``simulated_step_seconds == unconstrained_step_seconds +
-    recomputation_overhead_seconds + task_contention_seconds + idle_seconds +
-    terminal_writeback_seconds``. The unconstrained step charges every
-    task-alternative group its cheapest option and no waiting at all — the
-    compute floor the geometry admits. A group counts as a recomputation
-    selection when the option the search chose costs strictly more compute
-    than that group's cheapest, whatever the options are named. The public
-    phase ``Plan.summary`` is a separate mapping.
+    `AnnotatedProgramPlan.summary` gives one. The five times add up to the
+    makespan:
+    ``simulated_step_seconds`` is ``unconstrained_step_seconds`` plus
+    ``recomputation_overhead_seconds``, ``task_contention_seconds``,
+    ``idle_seconds`` and ``terminal_writeback_seconds``.
+
+    Attributes
+    ----------
+    simulated_step_seconds : float
+        The simulated makespan, in seconds.
+    unconstrained_step_seconds : float
+        The compute floor, in seconds: every task-alternative group at its
+        cheapest option, and no waiting.
+    recomputation_overhead_seconds : float
+        Compute the chosen options cost above that floor, in seconds.
+    idle_seconds : float
+        Time outside task intervals before the last task ends, in seconds.
+    terminal_writeback_seconds : float
+        Time after the last task ends, in seconds.
+    recomputing_group_count : int
+        Groups whose chosen option costs strictly more compute than their
+        cheapest, whatever the options are named.
+    task_alternative_group_count : int
+        Task-alternative groups, forced ones included.
+    flexible_group_count : int
+        Groups that are a real choice: the denominator of
+        ``recomputing_group_fraction``.
+    transfer_bytes_fetched : int
+        Bytes the simulation fetched.
+    transfer_bytes_evicted : int
+        Bytes it evicted and wrote back.
+    fetch_busy_ns : int
+        Nanoseconds the fetch lane was busy.
+    evict_busy_ns : int
+        Nanoseconds the evict lane was busy.
+    spill_peak_bytes : int
+        Peak spill use in the simulation, in bytes.
+    fetch_solo_bandwidth_bytes_per_second : int
+        The device's fetch rate with the evict lane idle, as simulated.
+    fetch_concurrent_bandwidth_bytes_per_second : int
+        Its fetch rate while both lanes move bytes.
+    evict_solo_bandwidth_bytes_per_second : int
+        Its evict rate with the fetch lane idle.
+    evict_concurrent_bandwidth_bytes_per_second : int
+        Its evict rate while both lanes move bytes.
+    fetch_latency_ns : int
+        Fetch latency, kept as metadata; timing does not use it.
+    evict_latency_ns : int
+        Evict latency, kept as metadata; timing does not use it.
+    selected_candidate : mapping of str to object
+        The candidate that answered: its ``residency_strategy``,
+        ``fetch_rule``, ``repairs_at_best``, ``best_unplaced_makespan_ns``,
+        ``unplaced_plans`` and ``placement_gap``, the ratio of the makespan to
+        that unplaced plan's. When the plan to beat won, ``incumbent`` with its
+        outcome instead.
+    task_contention_seconds : float
+        Time inside task intervals above their profiled runtimes, in
+        seconds: interference and waits for shared resources.
+    device_peak_bytes : int
+        Peak device use in the simulation, in bytes, without the runtime's
+        fixed costs.
+    physical_execution_peak_bytes : int or None
+        The runtime's fixed costs plus the certified layout's extent, in
+        bytes; None without a certified layout.
     """
 
     simulated_step_seconds: float
@@ -54,10 +109,6 @@ class PlanSummary:
     evict_concurrent_bandwidth_bytes_per_second: int = 0
     fetch_latency_ns: int = 0
     evict_latency_ns: int = 0
-    #: Wall time of each recorded planning phase, in seconds.
-    planning_phase_seconds: Mapping[str, float] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
     #: The candidate whose plan was selected: its residency strategy,
     #: fetch rule, the repairs it had spent when it placed that
     #: plan (``repairs_at_best``), the fastest plan it could not place
@@ -77,6 +128,7 @@ class PlanSummary:
 
     @property
     def idle_fraction(self) -> float:
+        """Idle time over the makespan; zero for a zero makespan."""
         return (
             self.idle_seconds / self.simulated_step_seconds
             if self.simulated_step_seconds
@@ -85,6 +137,7 @@ class PlanSummary:
 
     @property
     def fetch_utilization(self) -> float:
+        """Fetch lane busy time over the makespan; zero for a zero makespan."""
         return (
             self.fetch_busy_ns / (self.simulated_step_seconds * 1e9)
             if self.simulated_step_seconds
@@ -93,6 +146,7 @@ class PlanSummary:
 
     @property
     def evict_utilization(self) -> float:
+        """Evict lane busy time over the makespan; zero for a zero makespan."""
         return (
             self.evict_busy_ns / (self.simulated_step_seconds * 1e9)
             if self.simulated_step_seconds
@@ -101,7 +155,7 @@ class PlanSummary:
 
     @property
     def fetch_blended_bandwidth_bytes_per_second(self) -> float | None:
-        """Bytes / simulated fetch busy time, excluding per-transfer latency."""
+        """Bytes fetched per second of fetch lane busy time; None when idle."""
         return (
             self.transfer_bytes_fetched * 1e9 / self.fetch_busy_ns
             if self.fetch_busy_ns
@@ -110,7 +164,7 @@ class PlanSummary:
 
     @property
     def evict_blended_bandwidth_bytes_per_second(self) -> float | None:
-        """Bytes / simulated evict busy time, excluding per-transfer latency."""
+        """Bytes evicted per second of evict lane busy time; None when idle."""
         return (
             self.transfer_bytes_evicted * 1e9 / self.evict_busy_ns
             if self.evict_busy_ns
@@ -119,11 +173,20 @@ class PlanSummary:
 
     @property
     def recomputing_group_fraction(self) -> float:
+        """Recomputing groups over flexible groups; zero with none flexible."""
         if self.flexible_group_count == 0:
             return 0.0
         return self.recomputing_group_count / self.flexible_group_count
 
     def as_dict(self) -> dict[str, object]:
+        """Write the summary as a JSON-compatible mapping.
+
+        Returns
+        -------
+        dict
+            Every field by name, the derived rates and fractions, the
+            fractions also as percentages, and ``estimate`` set to True.
+        """
         return {
             "estimate": True,
             "device_peak_bytes": self.device_peak_bytes,
@@ -167,19 +230,32 @@ class PlanSummary:
             ),
             "fetch_latency_ns": self.fetch_latency_ns,
             "evict_latency_ns": self.evict_latency_ns,
-            "planning_phase_seconds": dict(self.planning_phase_seconds),
             "selected_candidate": dict(self.selected_candidate),
         }
 
     @classmethod
     def from_dict(cls, value: object, path: str = "plan_summary") -> PlanSummary:
-        """Read back what :meth:`as_dict` wrote.
+        """Read a summary back from what `PlanSummary.as_dict` wrote.
 
-        The inverse exists so a saved search is a record rather than a
-        write-only log: a figure can be redrawn, or a run compared against an
-        older one, without planning anything again. ``recomputing_group_fraction``
-        is written for a reader's convenience and derived here, so it is ignored
-        rather than trusted.
+        Missing numbers read as zero. Derived values that were written, such
+        as ``recomputing_group_fraction``, are ignored and derived again.
+
+        Parameters
+        ----------
+        value : object
+            The mapping.
+        path : str, default "plan_summary"
+            Where the value sits in its record, for error messages.
+
+        Returns
+        -------
+        PlanSummary
+            The summary.
+
+        Raises
+        ------
+        ValueError
+            If a field is malformed.
         """
 
         record = _mapping(value, path)
@@ -193,9 +269,6 @@ class PlanSummary:
         def count(name: str, default: int = 0) -> int:
             return _integer(record.get(name, default), f"{path}.{name}")
 
-        phases = _mapping(
-            record.get("planning_phase_seconds", {}), f"{path}.planning_phase_seconds"
-        )
         candidate = _mapping(
             record.get("selected_candidate", {}), f"{path}.selected_candidate"
         )
@@ -237,18 +310,11 @@ class PlanSummary:
             ),
             fetch_latency_ns=count("fetch_latency_ns"),
             evict_latency_ns=count("evict_latency_ns"),
-            planning_phase_seconds=MappingProxyType(
-                {key: float(item) for key, item in phases.items()}
-            ),
             selected_candidate=MappingProxyType(dict(candidate)),
         )
 
 
-def summarize_selected_plan(
-    result: ProgramPlanResult,
-    *,
-    phase_timings_ns: tuple[tuple[str, int], ...] = (),
-) -> PlanSummary:
+def summarize_selected_plan(result: ProgramPlanResult) -> PlanSummary:
     """Derive one selected plan's :class:`PlanSummary` from its result."""
 
     program = result.program
@@ -328,8 +394,5 @@ def summarize_selected_plan(
         ),
         fetch_latency_ns=device.fetch_latency_ns,
         evict_latency_ns=device.evict_latency_ns,
-        planning_phase_seconds=MappingProxyType(
-            {name: duration / 1e9 for name, duration in phase_timings_ns}
-        ),
         selected_candidate=MappingProxyType(selected),
     )

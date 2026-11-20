@@ -1,1 +1,1 @@
-"""Portable data encodings, independent of framework and model definitions."""
+"""Portable data encodings, independent of framework and model components."""

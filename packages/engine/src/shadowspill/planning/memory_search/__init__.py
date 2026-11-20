@@ -20,7 +20,6 @@ _PUBLIC = {
     "ResolvedProgramDiagnostics": ".diagnostics",
     "TaskAlternativeChoiceDiagnostic": ".diagnostics",
     "plan_program": ".plan",
-    "summarize_plan": ".plan",
     "validate_schedule_feasibility": ".plan",
     "GenericPlanningOptions": ".request",
     "OptionRecord": ".request",

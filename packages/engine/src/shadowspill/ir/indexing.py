@@ -48,12 +48,71 @@ MEMORY_ACTION_CODE = {
 
 @dataclass(frozen=True, slots=True)
 class IndexedProgram:
-    """Indexed lossless projection of a :class:`ShadowSpillProgram`."""
+    """A program as flat arrays, with every identity replaced by its position.
+
+    `index_program` returns it. A record's index is its position in the
+    program, and every array is in that order. A ragged pair ``X_offsets, X``
+    holds row ``i`` as ``X[X_offsets[i]:X_offsets[i + 1]]``, with one row per
+    task or option.
+
+    Attributes
+    ----------
+    device_ids, alias_group_ids, object_ids, profile_ids, task_ids : tuple of str
+        Each record's identity, in program order.
+    task_alternative_group_ids : tuple of str
+        Each alternative group's identity.
+    task_alternative_option_ids : tuple of str
+        Each option's identity, group by group. An option's index is its
+        position here.
+    alias_device : tuple of int
+        Each alias group's device.
+    alias_size_bytes, alias_initial_version : tuple of int
+        Each alias group's size and initial version.
+    alias_retain_spill_copy : tuple of bool
+        Whether each alias group retains its spill copy.
+    alias_shared_residency : tuple of int
+        Each alias group's shared-residency policy: 0 for none, then 1 to 3 for
+        the members of `SharedResidencyPolicy` in declaration order.
+    object_alias_group : tuple of int
+        Each object's alias group.
+    object_offset_bytes, object_size_bytes : tuple of int
+        Each object's byte range in its group.
+    object_role, object_persistence : tuple of int
+        Each object's role and persistence, as the member's position in
+        `ObjectRole` or `Persistence`.
+    profile_runtime_ns, profile_workspace_bytes : tuple of int
+        Each profile's duration and workspace.
+    profile_compatibility_digests : tuple of str
+        Each profile's contract identity.
+    task_device : tuple of int
+        Each task's device.
+    task_resource_kind : tuple of int
+        Each task's resource kind: 0 compute, 1 communication, 2 control.
+    task_resource_lane : tuple of int
+        Each task's lane.
+    task_profile : tuple of int
+        Each task's profile.
+    task_phases : tuple of str
+        Each task's phase label.
+    task_requires_entrypoint : tuple of bool
+        Whether each task requires an entrypoint.
+    dependency_offsets, dependencies : tuple of int
+        Each task's dependencies, as tasks.
+    input_offsets, inputs, output_offsets, outputs : tuple of int
+        Each task's inputs and outputs, as objects.
+    mutation_offsets, mutation_objects : tuple of int
+        Each task's mutations, as objects.
+    mutation_version_deltas : tuple of int
+        Each mutation's version delta, in the order of ``mutation_objects``.
+    group_option_offsets : tuple of int
+        Each group's options, as a range of option indices.
+    option_active_task_offsets, option_active_tasks : tuple of int
+        Each option's active tasks.
+    option_retained_alias_offsets, option_retained_aliases : tuple of int
+        Each option's retained alias groups.
+    """
 
     device_ids: tuple[str, ...]
-    device_process_ids: tuple[str, ...]
-    device_kinds: tuple[str, ...]
-    device_indices: tuple[int, ...]
     alias_group_ids: tuple[str, ...]
     object_ids: tuple[str, ...]
     profile_ids: tuple[str, ...]
@@ -97,7 +156,23 @@ class IndexedProgram:
 
 @dataclass(frozen=True, slots=True)
 class IndexedMemorySchedule:
-    """Indexed lossless projection of a :class:`MemorySchedule`."""
+    """A schedule as flat arrays over a program's indices.
+
+    `index_memory_schedule` returns it. Alias groups and tasks are positions
+    in the program, counting all its tasks.
+
+    Attributes
+    ----------
+    initial_aliases, initial_locations : tuple of int
+        Each initial residency entry's alias group and location: 0 for the
+        device, 1 for spill.
+    action_trigger_tasks, action_aliases : tuple of int
+        Each action's trigger task and alias group.
+    action_kinds : tuple of int
+        Each action's kind: 0 release, 1 evict, 2 fetch, 3 write-back.
+    final_aliases, final_locations : tuple of int
+        Each final residency entry's alias group and location.
+    """
 
     initial_aliases: tuple[int, ...]
     initial_locations: tuple[int, ...]
@@ -110,7 +185,38 @@ class IndexedMemorySchedule:
 
 @dataclass(frozen=True, slots=True)
 class IndexedExecutionPlan:
-    """Indexed runtime admission projection of an :class:`ExecutionPlan`."""
+    """An execution plan as flat arrays and values, as the runtime admits it.
+
+    `index_execution_plan` returns it. Tasks, groups and options are indices
+    into ``program``.
+
+    Attributes
+    ----------
+    program : IndexedProgram
+        The plan's program.
+    schedule : IndexedMemorySchedule
+        The plan's schedule.
+    selection_groups, selection_options : tuple of int
+        Each selection's group and option.
+    entrypoint_tasks : tuple of int
+        Each entrypoint's task.
+    entrypoint_ids, entrypoint_executor_ids : tuple of str
+        Each entrypoint's function and executor.
+    entrypoint_contract_digests : tuple of str
+        Each entrypoint's contract digest.
+    device_budget_bytes, spill_budget_bytes, baseline_bytes : int
+        As in `PhysicalAdmission`.
+    external_headroom_bytes, slab_bytes, workspace_reserve_bytes : int
+        As in `PhysicalAdmission`.
+    spill_reservation_bytes, predicted_fragmentation_bytes : int
+        As in `PhysicalAdmission`.
+    reject_overbudget : bool
+        As in `PhysicalAdmission`.
+    predicted_device_peak_bytes, predicted_spill_peak_bytes : int
+        The `PlanPrediction` peaks.
+    predicted_makespan_ns : int
+        The `PlanPrediction` makespan.
+    """
 
     program: IndexedProgram
     schedule: IndexedMemorySchedule
@@ -165,7 +271,18 @@ def flatten_rows(
 
 
 def index_program(program: ShadowSpillProgram) -> IndexedProgram:
-    """Project a validated program without changing declared order."""
+    """Flatten a program into arrays over its record positions.
+
+    Parameters
+    ----------
+    program : ShadowSpillProgram
+        The program.
+
+    Returns
+    -------
+    IndexedProgram
+        The same facts, in the program's order.
+    """
 
     device_ids = tuple(item.device_id for item in program.devices)
     alias_ids = tuple(item.alias_group_id for item in program.alias_groups)
@@ -208,9 +325,6 @@ def index_program(program: ShadowSpillProgram) -> IndexedProgram:
     )
     return IndexedProgram(
         device_ids=device_ids,
-        device_process_ids=tuple(item.process_id for item in program.devices),
-        device_kinds=tuple(item.kind for item in program.devices),
-        device_indices=tuple(item.index for item in program.devices),
         alias_group_ids=alias_ids,
         object_ids=object_ids,
         profile_ids=profile_ids,
@@ -284,7 +398,25 @@ def index_memory_schedule(
     program: ShadowSpillProgram,
     schedule: MemorySchedule,
 ) -> IndexedMemorySchedule:
-    """Project schedule identities through a program's stable contiguous indices."""
+    """Flatten a schedule into arrays over a program's record positions.
+
+    Parameters
+    ----------
+    program : ShadowSpillProgram
+        The program whose positions the indices are.
+    schedule : MemorySchedule
+        The schedule.
+
+    Returns
+    -------
+    IndexedMemorySchedule
+        The same facts, in the schedule's order.
+
+    Raises
+    ------
+    KeyError
+        If the schedule names an alias group or task the program lacks.
+    """
 
     alias_index = {
         item.alias_group_id: index for index, item in enumerate(program.alias_groups)
@@ -314,7 +446,18 @@ def index_memory_schedule(
 
 
 def index_execution_plan(plan: ExecutionPlan) -> IndexedExecutionPlan:
-    """Project all runtime-facing identities and admission values."""
+    """Flatten an execution plan, its program and its schedule into arrays.
+
+    Parameters
+    ----------
+    plan : ExecutionPlan
+        The plan.
+
+    Returns
+    -------
+    IndexedExecutionPlan
+        The same facts, with admission and prediction as plain values.
+    """
 
     indexed_program = index_program(plan.program)
     task_index = {
