@@ -10,10 +10,10 @@ import pytest
 import torch
 
 from shadowspill.artifacts.tensors import TensorChunk
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill_client import Objective
 from shadowspill_workloads.initialization.decoder import Initialize
-from workload_tests.definitions.test_moe_definitions import (
+from workload_tests.components.test_moe_components import (
     FAMILIES,
     balancing,
     settings,
@@ -24,7 +24,7 @@ from workload_tests.objectives.test_moe_objective import independent
 def options(family="qwen3moe", *, lora=False):
     requested = settings(family, lora=lora)
     registry = load_registry(["shadowspill-workloads"])
-    description = registry.resolve_model(requested.definition, settings=requested)
+    description = registry.resolve_model(requested.name, settings=requested)
     initial = description.create()
     fill = Initialize(family, initial.config, seed=17)
     with torch.no_grad():

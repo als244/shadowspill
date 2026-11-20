@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from importlib import import_module
 
-from shadowspill.training.definitions import ModelInitialization
+from shadowspill.training.components import ModelInitialization
 from shadowspill_workloads.initialization import hub_files, local_files, weight_files
 
 

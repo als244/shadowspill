@@ -105,7 +105,7 @@ parameters and GLM's compressed expert weights.
 
 Select DP or EP during client preparation; runtime commands still submit one
 global batch. The server supplies worker resources and communication bindings.
-See [distributed execution](../../../../docs/python/api/distributed.md) for public
+See the [parallelism reference](../../../../docs/reference/engine/parallelism.rst) for public
 configuration and direct-Executor contracts.
 
 The MoE implementations accept an expert factory for sharded execution. Shared

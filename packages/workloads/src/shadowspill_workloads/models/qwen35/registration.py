@@ -2,7 +2,7 @@
 
 from functools import partial
 
-from shadowspill_workloads.definitions.text_metadata import validate_decoder
+from shadowspill_workloads.components.text_metadata import validate_decoder
 from shadowspill_workloads.models.registration import Family, ParameterInitialization
 
 FAMILY = Family(

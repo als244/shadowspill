@@ -1,6 +1,6 @@
-"""Shared GLM integration with the ordinary installed decoder definitions."""
+"""Shared GLM integration with the ordinary installed decoder components."""
 
-from shadowspill_workloads.definitions.decoder import register as register_decoder
+from shadowspill_workloads.components.decoder import register as register_decoder
 
 from .configuration import build, capture_context, create
 from .initialization import describe

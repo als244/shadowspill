@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from shadowspill.parallelism import Parallelism
-from shadowspill.training.definitions import (
+from shadowspill.training.components import (
     InitializationContext,
     InitializationRuntime,
     load_registry,
@@ -28,7 +28,7 @@ def test_random_base_seed_and_adapter_seed_are_independent(tmp_path, family):
     requested = settings(family)
     requested = replace(requested, config={**requested.config, "lora_seed": 45})
     registry = load_registry(["shadowspill-workloads"])
-    resolved = registry.resolve_model(requested.definition, settings=requested)
+    resolved = registry.resolve_model(requested.name, settings=requested)
     model = resolved.create()
     initial = resolved.describe_initialization(
         InitializationContext(
@@ -60,7 +60,7 @@ def test_adapter_seed_is_a_nonnegative_integer(family, seed):
     requested = settings(family)
     with pytest.raises((TypeError, ValueError), match="lora_seed"):
         registry.resolve_model(
-            requested.definition,
+            requested.name,
             settings=replace(requested, config={**requested.config, "lora_seed": seed}),
         )
 
@@ -71,7 +71,7 @@ def test_adapter_seed_without_adapters_is_rejected(family):
     requested = settings(family)
     with pytest.raises(ValueError, match="lora_seed requires LoRA"):
         registry.resolve_model(
-            requested.definition,
+            requested.name,
             settings=replace(
                 requested, lora=None, config={**requested.config, "lora_seed": 45}
             ),

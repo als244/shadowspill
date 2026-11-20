@@ -2,7 +2,7 @@
 
 from math import ceil
 
-from shadowspill.training.definitions import (
+from shadowspill.training.components import (
     InputAdapter,
     InputView,
     RepresentativePattern,

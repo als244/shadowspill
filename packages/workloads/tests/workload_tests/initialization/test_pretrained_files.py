@@ -9,7 +9,7 @@ from functools import partial
 
 import pytest
 
-from shadowspill.training.definitions import InitializationRuntime
+from shadowspill.training.components import InitializationRuntime
 from shadowspill_workloads.initialization import hub_files, weight_files
 from workload_tests.initialization._hub_server import serve_hub
 from workload_tests.initialization.test_pretrained_metadata import REVISION

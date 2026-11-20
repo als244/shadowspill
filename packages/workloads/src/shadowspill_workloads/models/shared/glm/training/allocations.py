@@ -34,11 +34,11 @@ host count readback, fused shared-expert EP or multi-chunk EP path is covered he
 
 Declarations identify allocation invariance, not byte bounds or numerical
 qualification. The ordinary compiler/profiler and resource admission still apply.
-All implementations and external providers are pinned by the model definition.
+All implementations and external providers are pinned by the model component.
 """
 
 from shadowspill.operator_preparation import OperatorPreparation
-from shadowspill_workloads.definitions.moe_provider import (
+from shadowspill_workloads.components.moe_provider import (
     allocations as moe_allocations,
 )
 
@@ -110,7 +110,7 @@ def contracts(config):
 
 
 def preparations(config):
-    from shadowspill_workloads.definitions.moe_provider import preparations as sonic
+    from shadowspill_workloads.components.moe_provider import preparations as sonic
 
     return (
         OperatorPreparation(factory=SPARSE_FACTORY),

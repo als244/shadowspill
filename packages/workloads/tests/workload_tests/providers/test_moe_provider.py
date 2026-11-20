@@ -4,13 +4,13 @@ import pytest
 
 from shadowspill.artifacts.program import Program
 from shadowspill.ir import DeviceSpec
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.capture.allocation_coverage import (
     allocation_coverage,
 )
 from shadowspill.training.preparation.capture.templates import capture_inventory
-from shadowspill_workloads.definitions import moe_provider, source
-from workload_tests.definitions.test_moe_definitions import FAMILIES, prepared
+from shadowspill_workloads.components import moe_provider, source
+from workload_tests.components.test_moe_components import FAMILIES, prepared
 
 
 @pytest.mark.parametrize("family", FAMILIES)
@@ -40,7 +40,7 @@ def test_prepared_moe_family_retains_provider_lifecycle_and_allocation_scope(
         # Exercise the actual bound-task check before reserving a GPU. This
         # description-only Program isolates preparation activation from kernels.
         program = Program(
-            devices=(DeviceSpec("rank0", "worker", "cuda", 0),),
+            devices=(DeviceSpec("rank0"),),
             alias_groups=(),
             objects=(),
             tasks=(),
@@ -105,9 +105,7 @@ def test_destination_rules_reuse_provider_eligibility_and_exact_allocation_contr
 
 
 @pytest.mark.parametrize("provider", moe_provider.PROVIDERS)
-def test_provider_changes_invalidate_each_supplied_moe_definition(
-    provider, monkeypatch
-):
+def test_provider_changes_invalidate_each_supplied_moe_component(provider, monkeypatch):
     changed = False
 
     def digest(name):

@@ -11,9 +11,9 @@ from types import SimpleNamespace
 import pytest
 
 from shadowspill.parallelism import Parallelism
-from shadowspill.training.definitions import InitializationContext, load_registry
+from shadowspill.training.components import InitializationContext, load_registry
 from shadowspill_client import LoRA, Model, Weights
-from shadowspill_workloads.definitions import pretrained
+from shadowspill_workloads.components import pretrained
 from shadowspill_workloads.initialization import hub, hub_files
 
 REVISION = "a" * 40
@@ -90,9 +90,9 @@ def test_public_resolution_pins_metadata_preserves_overrides_and_rechecks(
         ),
         trainable=["blocks.*"],
     )
-    resolved, definition, _ = registry.resolve_model_reference(requested)
-    assert definition == "shadowspill/huggingface@1"
-    assert resolved.definition == f"shadowspill/{family}@1"
+    resolved, component, _ = registry.resolve_model_reference(requested)
+    assert component == "shadowspill/huggingface@1"
+    assert resolved.name == f"shadowspill/{family}@1"
     assert resolved.initialize == replace(
         Weights.pretrained("fixture/model", revision=REVISION),
         metadata={"files": FILES},
@@ -105,7 +105,7 @@ def test_public_resolution_pins_metadata_preserves_overrides_and_rechecks(
         requested.lora,
         requested.trainable,
     )
-    model = registry.resolve_model(resolved.definition, settings=resolved)
+    model = registry.resolve_model(resolved.name, settings=resolved)
     repeated, _, _ = registry.resolve_model_reference(model.settings)
     assert repeated == model.settings
     assert calls == [("fixture/model", "release"), ("fixture/model", REVISION)]
@@ -264,14 +264,14 @@ def guarded(name, *args, **kwargs):
         raise RuntimeError('framework import: ' + name)
     return original(name, *args, **kwargs)
 builtins.__import__ = guarded
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill_client import Model
 from shadowspill_workloads.initialization import hub, hub_files
 hub.config = lambda *a: ({REVISION!r}, {metadata("qwen35moe")!r})
 hub_files.describe = lambda *a: {FILES!r}
 registry = load_registry(['shadowspill-workloads'])
 model, _, _ = registry.resolve_model_reference(Model.from_pretrained('fixture/model'))
-resolved = registry.resolve_model(model.definition, settings=model)
+resolved = registry.resolve_model(model.name, settings=model)
 assert resolved.config['architecture']['max_seq_len'] == 128
 assert not any(name in sys.modules for name in blocked)
 """
@@ -295,7 +295,7 @@ def test_weight_sources_do_not_change_model_configuration(monkeypatch, family):
         pinned, _, _ = registry.resolve_model_reference(
             Model.from_pretrained(f"fixture/{name}")
         )
-        models.append(registry.resolve_model(pinned.definition, settings=pinned))
+        models.append(registry.resolve_model(pinned.name, settings=pinned))
     assert models[0].settings.initialize != models[1].settings.initialize
     assert models[0].config == models[1].config
     assert (
@@ -312,9 +312,9 @@ def test_pretrained_model_settings_can_select_fresh_random_weights(monkeypatch, 
     pinned, _, _ = registry.resolve_model_reference(
         Model.from_pretrained("fixture/model")
     )
-    resolved = registry.resolve_model(pinned.definition, settings=pinned)
+    resolved = registry.resolve_model(pinned.name, settings=pinned)
     settings = replace(resolved.settings, initialize=Weights.random(seed=5))
-    fresh = registry.resolve_model(settings.definition, settings=settings)
+    fresh = registry.resolve_model(settings.name, settings=settings)
     description = fresh.describe_initialization(
         InitializationContext(
             fresh.settings,

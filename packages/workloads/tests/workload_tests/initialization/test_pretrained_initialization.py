@@ -12,7 +12,7 @@ from safetensors.torch import save_file
 
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.parallelism import Parallelism
-from shadowspill.training.definitions import (
+from shadowspill.training.components import (
     InitializationContext,
     InitializationRuntime,
     load_registry,
@@ -20,11 +20,11 @@ from shadowspill.training.definitions import (
 from shadowspill_client import LoRA, Model, Weights
 from shadowspill_workloads.initialization import headers, hub, hub_files, weight_files
 from shadowspill_workloads.initialization.decoder import Initialize
-from workload_tests.definitions.test_dense_qwen_definitions import (
+from workload_tests.components.test_dense_qwen_components import (
     settings as dense_settings,
 )
-from workload_tests.definitions.test_llama_definition import settings as llama_settings
-from workload_tests.definitions.test_moe_definitions import settings as moe_settings
+from workload_tests.components.test_llama_component import settings as llama_settings
+from workload_tests.components.test_moe_components import settings as moe_settings
 from workload_tests.initialization.test_checkpoints import huggingface_state
 from workload_tests.initialization.test_pretrained_metadata import FAMILIES, REVISION
 
@@ -47,7 +47,7 @@ def test_exported_weights_derived_buffers_require_no_weight_source(tmp_path, fam
     registry = load_registry(["shadowspill-workloads"])
     requested = settings(family)
     requested = replace(requested, initialize=Weights.artifact("model-export"))
-    resolved = registry.resolve_model(requested.definition, settings=requested)
+    resolved = registry.resolve_model(requested.name, settings=requested)
     context = InitializationContext(
         resolved.settings,
         resolved.settings.initialize,
@@ -127,7 +127,7 @@ def test_pretrained_chunks_reproduce_weights_rotary_and_fresh_lora(
     lora = lora_seed is not None
     desired = settings(family, lora=lora)
     base = registry.resolve_model(
-        desired.definition, settings=replace(desired, lora=None)
+        desired.name, settings=replace(desired, lora=None)
     ).create()
     initialize = Initialize(family, base.config, seed=17)
     for name, tensor in (*base.named_parameters(), *base.named_buffers()):
@@ -151,7 +151,7 @@ def test_pretrained_chunks_reproduce_weights_rotary_and_fresh_lora(
         precision={"compute_dtype": dtype, "lora_dtype": "float32"},
     )
     pinned, _, _ = registry.resolve_model_reference(requested)
-    resolved = registry.resolve_model(pinned.definition, settings=pinned)
+    resolved = registry.resolve_model(pinned.name, settings=pinned)
     initial = resolved.describe_initialization(
         InitializationContext(
             resolved.settings,

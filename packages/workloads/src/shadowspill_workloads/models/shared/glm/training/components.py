@@ -1,6 +1,6 @@
 """Coordinates of native FP8 banks and BF16 compute payloads."""
 
-from shadowspill.training.definitions import ComponentLayout
+from shadowspill.training.components import ComponentLayout
 
 
 def layers(architecture):

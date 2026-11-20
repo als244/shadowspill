@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from shadowspill_client.text import build_candidates
-from shadowspill_workloads.definitions.moe_provider import DESTINATION_CONTRACTS
+from shadowspill_workloads.components.moe_provider import DESTINATION_CONTRACTS
 from workload_tests.service.test_moe_bf16_service import bf16_options, qualify
 
 

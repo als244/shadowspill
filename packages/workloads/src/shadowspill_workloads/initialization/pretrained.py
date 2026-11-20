@@ -3,7 +3,7 @@
 from contextlib import contextmanager
 from dataclasses import asdict
 
-from shadowspill.training.definitions import ModelInitialization
+from shadowspill.training.components import ModelInitialization
 
 from . import hub_files, local_files, weight_files
 from .hub import immutable_revision

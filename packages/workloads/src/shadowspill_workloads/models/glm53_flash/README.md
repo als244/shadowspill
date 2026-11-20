@@ -79,5 +79,5 @@ The direct model implementation also contains a vision encoder with axial RoPE,
 patch merging and a projector. `GLMCheckpoint.build_model(include_vision=True)`
 includes it. `prepare_images` accepts preprocessed pixels, CPU geometry metadata
 and expanded image-placeholder tokens; it does not resize or tokenize images.
-The public `glm53_flash` definition declares text inputs. An image/text definition
+The public `glm53_flash` model declares text inputs. An image/text model
 needs its own image input schema and preparation declarations.

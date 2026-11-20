@@ -22,8 +22,8 @@ def test_installed_token_objective_captures_one_fused_head_and_matches_reference
 ):
     from mlops.objectives import clipped_policy, cross_entropy
 
-    from shadowspill_workloads.definitions.token import compute
-    from shadowspill_workloads.definitions.token_evaluation import compute as evaluate
+    from shadowspill_workloads.components.token import compute
+    from shadowspill_workloads.components.token_evaluation import compute as evaluate
 
     torch.manual_seed(211)
     model = MlopsLlama(Config(1, 16, 2, 1, 32, 31, max_seq_len=8))

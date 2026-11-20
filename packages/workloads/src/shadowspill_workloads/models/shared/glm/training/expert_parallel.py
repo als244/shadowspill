@@ -3,8 +3,8 @@
 from dataclasses import asdict
 
 from shadowspill import Resource
-from shadowspill.training.definitions import ModelBuild
-from shadowspill_workloads.definitions.expert_parallel import validate_parameters
+from shadowspill.training.components import ModelBuild
+from shadowspill_workloads.components.expert_parallel import validate_parameters
 
 from .components import layers, layouts
 

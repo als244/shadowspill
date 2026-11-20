@@ -8,14 +8,14 @@ import torch
 from torch.nn import functional as F
 
 from shadowspill.pytorch.capture.objective import capture_training_objective
-from shadowspill.training.definitions import InputAdapter, ModelDefinition, Registry
+from shadowspill.training.components import InputAdapter, ModelComponent, Registry
 from shadowspill.training.preparation.configuration.operations import OperationContract
 from shadowspill_client import Objective
-from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.components import ComponentSource
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.text import text_batch
-from shadowspill_workloads.definitions import moe_objective, token
+from shadowspill_workloads.components import moe_objective, token
 from shadowspill_workloads.lora import configure_lora
 from shadowspill_workloads.models.olmoe.config import Config as OLMoEConfig
 from shadowspill_workloads.models.olmoe.implementations.mlops import Model as OLMoE
@@ -53,7 +53,7 @@ def resolve(model, *, include_padding=False, policy=False, weight_field="weights
     token.register(registry)
     moe_objective.register(registry)
     registry.add_model(
-        ModelDefinition(
+        ModelComponent(
             "external/moe@1",
             dict,
             lambda _: model,
@@ -83,7 +83,7 @@ def resolve(model, *, include_padding=False, policy=False, weight_field="weights
             capabilities=("target_logprobs", "router_statistics"),
             input_adapter=lambda config, layout: InputAdapter(padding_safe=True),
         ),
-        source=DefinitionSource("external", "1", "a" * 64),
+        source=ComponentSource("external", "1", "a" * 64),
     )
     description = registry.resolve_model("external/moe@1")
     config = {
@@ -105,7 +105,7 @@ def resolve(model, *, include_padding=False, policy=False, weight_field="weights
         weights={"balance": 0.001},
     )
     result = registry.resolve_objective(
-        settings.definition,
+        settings.name,
         model=description,
         config=settings.config,
         defaults=settings.defaults,
@@ -206,7 +206,7 @@ def independent(
 
 @pytest.mark.parametrize("split", [False, True])
 def test_text_batch_normalizes_both_objective_losses_and_gradients(model, split):
-    from workload_tests.definitions.test_token_definitions import bound
+    from workload_tests.components.test_token_components import bound
 
     batch = text_batch(
         [[1, 2, 3, 4], [4, 5, 6]],
@@ -415,8 +415,7 @@ def test_all_supervision_masked_has_zero_loss_and_gradients(model, include_paddi
 def test_default_excludes_padding_but_includes_unsupervised_real_prompt_tokens(model):
     _, _, objective = resolve(model)
     assert (
-        objective.definition.padding_safe
-        and not objective.definition.physical_batch_loss
+        objective.component.padding_safe and not objective.component.physical_batch_loss
     )
     controls = {name: torch.tensor(value) for name, value in objective.defaults.items()}
     results, gradients = [], []
@@ -496,14 +495,14 @@ def test_generic_registration_replaces_family_specific_objective(model):
             )
     without = replace(
         description,
-        definition=replace(description.definition, capabilities=("target_logprobs",)),
+        component=replace(description.component, capabilities=("target_logprobs",)),
     )
     with pytest.raises(ValueError, match="capabilit"):
         registry.resolve_objective("shadowspill/moe_balance@1", model=without)
 
 
 def test_materializer_masks_only_artificial_rows_for_default_router_statistics(model):
-    from workload_tests.definitions.test_token_definitions import bound, records
+    from workload_tests.components.test_token_components import bound, records
 
     _, description, objective = resolve(model)
     with bound(

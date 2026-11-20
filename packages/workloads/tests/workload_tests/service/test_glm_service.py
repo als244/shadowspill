@@ -16,7 +16,7 @@ from qualification.numerical.tolerances import (
     LOSS_RELATIVE_TOLERANCE,
     meets_tensor_tolerance,
 )
-from workload_tests.definitions.test_glm_definitions import mark_family
+from workload_tests.components.test_glm_components import mark_family
 from workload_tests.initialization.test_glm53_checkpoint import _write
 
 

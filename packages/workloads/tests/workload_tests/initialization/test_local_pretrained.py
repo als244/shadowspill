@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.training.definitions import InitializationRuntime, load_registry
+from shadowspill.training.components import InitializationRuntime, load_registry
 from shadowspill_client import LoRA, Model
 from shadowspill_workloads.initialization import local_files, weight_files
 from workload_tests.initialization.test_pretrained_metadata import FAMILIES, metadata
@@ -36,9 +36,9 @@ def test_local_resolution_pins_content_and_rechecks_metadata_without_payload_sca
     requested = Model.from_pretrained(
         str(tmp_path), lora=LoRA(2), config={"architecture": {"max_seq_len": 32}}
     )
-    pinned, definition, _ = registry.resolve_model_reference(requested)
-    assert definition == "shadowspill/local_safetensors@1"
-    assert pinned.definition == f"shadowspill/{family}@1"
+    pinned, component, _ = registry.resolve_model_reference(requested)
+    assert component == "shadowspill/local_safetensors@1"
+    assert pinned.name == f"shadowspill/{family}@1"
     assert pinned.lora == requested.lora
     assert pinned.config["architecture"]["max_seq_len"] == 32
     manifest = weight_files.files(pinned.initialize.metadata["files"])
@@ -51,7 +51,7 @@ def test_local_resolution_pins_content_and_rechecks_metadata_without_payload_sca
     monkeypatch.setattr(
         local_files, "_checksum", lambda *a: pytest.fail("payload rescan")
     )
-    resolved = registry.resolve_model(pinned.definition, settings=pinned)
+    resolved = registry.resolve_model(pinned.name, settings=pinned)
     assert registry.resolve_model_reference(resolved.settings)[0] == resolved.settings
     with pytest.raises(ValueError, match="content revision"):
         registry.resolve_model_reference(
@@ -191,15 +191,15 @@ def guarded(name, *args, **kwargs):
         raise AssertionError(name)
     return original(name, *args, **kwargs)
 builtins.__import__ = guarded
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill_client import Model
 from shadowspill_workloads.initialization import hub
 hub.config = lambda *a: (_ for _ in ()).throw(AssertionError('network'))
 registry = load_registry(['shadowspill-workloads'])
-model, definition, source = registry.resolve_model_reference(
+model, component, source = registry.resolve_model_reference(
     Model.from_pretrained(sys.argv[1]))
-assert definition == 'shadowspill/local_safetensors@1'
-resolved = registry.resolve_model(model.definition, settings=model)
+assert component == 'shadowspill/local_safetensors@1'
+resolved = registry.resolve_model(model.name, settings=model)
 assert resolved.config['architecture']['d_model'] == 32
 """
     subprocess.run([sys.executable, "-c", code, str(tmp_path)], check=True, timeout=60)

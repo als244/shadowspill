@@ -168,7 +168,7 @@ def test_the_reader_takes_a_published_config_in_either_rotary_form():
     ],
     ids=["mixture", "bias", "sliding", "activation", "scaling", "parameters"],
 )
-def test_the_reader_refuses_what_the_definition_does_not_reproduce(change):
+def test_the_reader_refuses_what_the_model_does_not_reproduce(change):
     with pytest.raises(ValueError):
         from_huggingface({**QWEN3_1_7B, **change})
 

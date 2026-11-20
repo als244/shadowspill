@@ -5,8 +5,8 @@ from copy import deepcopy
 import pytest
 import torch
 
-from shadowspill.training.definitions import load_registry
-from workload_tests.definitions.test_moe_definitions import settings
+from shadowspill.training.components import load_registry
+from workload_tests.components.test_moe_components import settings
 from workload_tests.objectives.test_moe_objective import independent, physical
 from workload_tests.service.oracles._moe_oracle import WeightGradients, experts
 
@@ -16,7 +16,7 @@ def model(lora, dtype):
     requested = settings("qwen3moe", lora=lora, dtype=dtype)
     result = (
         load_registry(["shadowspill-workloads"])
-        .resolve_model(requested.definition, settings=requested)
+        .resolve_model(requested.name, settings=requested)
         .create()
     )
     if lora:

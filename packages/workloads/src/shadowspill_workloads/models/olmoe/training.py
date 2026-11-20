@@ -1,7 +1,7 @@
 """OLMoE registration using shared decoder preparation and initialization."""
 
-from shadowspill_workloads.definitions.decoder import register as register_decoder
-from shadowspill_workloads.definitions.decoder.configuration import (
+from shadowspill_workloads.components.decoder import register as register_decoder
+from shadowspill_workloads.components.decoder.configuration import (
     Settings as DecoderSettings,
 )
 

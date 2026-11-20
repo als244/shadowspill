@@ -1,4 +1,4 @@
-"""Supplied catalog training uses the same service as external definitions."""
+"""Supplied catalog training uses the same service as external components."""
 
 import json
 import subprocess

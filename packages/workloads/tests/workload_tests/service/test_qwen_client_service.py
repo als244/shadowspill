@@ -10,10 +10,10 @@ import numpy as np
 import pytest
 import torch
 
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill_client import LoRA
 from shadowspill_workloads.initialization.decoder import Initialize
-from workload_tests.definitions.test_moe_definitions import settings
+from workload_tests.components.test_moe_components import settings
 from workload_tests.initialization.test_pretrained_initialization import (
     checkpoint,
     fill,
@@ -36,7 +36,7 @@ def prepare(root, pieces, family="qwen35moe"):
     )
     registry = load_registry(["shadowspill-workloads"])
     base = registry.resolve_model(
-        requested.definition,
+        requested.name,
         settings=replace(requested, lora=None, config={"architecture": architecture}),
     ).create()
     source = root / "base"
@@ -45,7 +45,7 @@ def prepare(root, pieces, family="qwen35moe"):
     for name, value in (*base.named_parameters(), *base.named_buffers()):
         fill(generator, name, value, 257)
     checkpoint(source, family, base)
-    model = registry.resolve_model(requested.definition, settings=requested).create()
+    model = registry.resolve_model(requested.name, settings=requested).create()
     generator = Initialize(
         family, model.config, seed=17, lora_seed=45 if lora else None
     )

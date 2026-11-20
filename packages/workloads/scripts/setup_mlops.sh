@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install mlops, the operation library the workloads models and their AdamW
-# definition use, with its implementation providers, into an environment that
+# component use, with its implementation providers, into an environment that
 # already has PyTorch and ShadowSpill. A checkout named mlops beside this
 # repository is used as it is, with a warning when it is not at the pinned
 # revision below or has uncommitted changes; otherwise the pinned revision is

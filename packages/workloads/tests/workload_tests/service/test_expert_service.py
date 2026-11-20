@@ -12,7 +12,7 @@ import pytest
 import torch
 
 from shadowspill import Parallelism
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training

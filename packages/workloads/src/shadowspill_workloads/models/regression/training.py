@@ -1,21 +1,21 @@
-"""The existing regression model through public, framework-free definitions."""
+"""The existing regression model through public, framework-free components."""
 
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 
-from shadowspill.training.definitions import (
-    ModelDefinition,
+from shadowspill.training.components import (
+    ModelComponent,
     ModelInitialization,
-    ObjectiveDefinition,
+    ObjectiveComponent,
 )
-from shadowspill_client.protocol.definitions import (
+from shadowspill_client.protocol.components import (
     OutputSet,
     Participation,
     TensorOutput,
 )
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
-from shadowspill_workloads.definitions.source import definition_source
+from shadowspill_workloads.components.source import component_source
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ def weighted_squared_error(model, inputs, loss_inputs, loss_params):
 
 
 def register(registry):
-    source = definition_source(
+    source = component_source(
         (
             "models/families.py",
             "models/registration.py",
@@ -76,7 +76,7 @@ def register(registry):
         )
     )
     registry.add_model(
-        ModelDefinition(
+        ModelComponent(
             id="shadowspill/regression@1",
             config=RegressionConfig,
             create=create,
@@ -93,7 +93,7 @@ def register(registry):
         source=source,
     )
     registry.add_objective(
-        ObjectiveDefinition(
+        ObjectiveComponent(
             id="shadowspill/weighted_squared_error@1",
             compute=weighted_squared_error,
             config=RegressionConfig,

@@ -63,7 +63,7 @@ query and key norms included, and a tied head is written once from the
 embedding; a tied checkpoint that also stores the head, as Qwen3-1.7B's does,
 is read only if the stored head equals the embedding. No projection is
 permuted: the rotary tables are computed, and the rotate-half convention
-matches the checkpoint's. A checkpoint that enables what the definition does
+matches the checkpoint's. A checkpoint that enables what the model does
 not reproduce is refused: attention biases, sliding-window attention, a rotary
 scaling such as YaRN, or an activation other than SiLU.
 

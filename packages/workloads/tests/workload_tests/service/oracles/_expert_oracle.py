@@ -16,12 +16,12 @@ from torch.nn import functional as F
 
 from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill.parallelism import InputFieldPlacement, InputPlacement
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill_client import Objective
-from shadowspill_workloads.definitions.expert_parallel import ownership
+from shadowspill_workloads.components.expert_parallel import ownership
 from shadowspill_workloads.initialization.decoder import Initialize as DecoderInitialize
 from shadowspill_workloads.initialization.expert_parallel import BANKS, Initialize
-from workload_tests.definitions.test_expert_definitions import settings
+from workload_tests.components.test_expert_components import settings
 from workload_tests.service.oracles._moe_oracle import WeightGradients as DenseGradients
 
 
@@ -119,7 +119,7 @@ def initial_model(*, grad_dtype="bfloat16"):
     dense = replace(requested, implementation="mlops")
     model = (
         load_registry(["shadowspill-workloads"])
-        .resolve_model(dense.definition, settings=dense)
+        .resolve_model(dense.name, settings=dense)
         .create()
     )
     for block in model.blocks:

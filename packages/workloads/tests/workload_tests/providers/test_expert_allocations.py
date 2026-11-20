@@ -4,12 +4,12 @@ import pytest
 import torch
 
 from engine_tests.training.test_allocation_coverage import compiler_fixture
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.capture.allocation_coverage import (
     allocation_coverage,
 )
-from shadowspill_workloads.definitions import expert_allocations, source
-from workload_tests.definitions.test_expert_definitions import FAMILIES, prepared
+from shadowspill_workloads.components import expert_allocations, source
+from workload_tests.components.test_expert_components import FAMILIES, prepared
 
 
 @pytest.mark.parametrize("family", FAMILIES)
@@ -85,7 +85,7 @@ def test_saved_plan_backing_storage_covers_moonep_vector_writes(grad_dtype):
     assert all(g.dtype == grad_dtype for g in gradients)
 
 
-def test_moonep_changes_invalidate_all_supplied_moe_definitions(monkeypatch):
+def test_moonep_changes_invalidate_all_supplied_moe_components(monkeypatch):
     changed = False
 
     def digest(name):

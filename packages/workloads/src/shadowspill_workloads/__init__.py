@@ -1,1 +1,1 @@
-"""Supplied model definitions and shared training integrations."""
+"""Supplied model components and shared training integrations."""

@@ -16,14 +16,14 @@ from shadowspill_workloads.models.llama3.config import Config
 from shadowspill_workloads.models.llama3.implementations.pytorch import (
     Model as Reference,
 )
-from workload_tests.definitions.test_llama_definition import settings
+from workload_tests.components.test_llama_component import settings
 from workload_tests.service.oracles._llama_oracle import WeightGradients
 
 
 def options(policy=False, *, seed=17, initial_weights=None):
     requested = replace(
         settings(lora=LoRA(2, targets=["blocks.*.attn.wq"]) if policy else None),
-        definition="llama3",
+        name="llama3",
         precision={"compute_dtype": "bfloat16", "lora_dtype": "bfloat16"},
         initialize=Weights.random(seed=seed),
     )

@@ -22,7 +22,7 @@ class Family:
 
     ``presets`` contains (size, description) rows. Shapes
     themselves live in the family's config module. ``training`` names an
-    installed registration hook, imported only when loading definitions.
+    installed registration hook, imported only when loading components.
     """
 
     name: str

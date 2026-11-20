@@ -79,7 +79,7 @@ declares the same model on `meta`. The
 
 ## Objectives
 
-The shared [objective definitions](../../../../../../docs/python/advanced/objectives.md) provide token
+The shared [objective components](../../../../../../docs/python/advanced/objectives.md) provide token
 cross entropy and policy objectives. Their head integration bounds temporary
 logits by processing token rows in chunks; the planner accounts for the retained
 activations and gradients.

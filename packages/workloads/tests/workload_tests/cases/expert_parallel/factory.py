@@ -2,7 +2,7 @@
 
 from functools import partial
 
-from shadowspill_workloads.definitions.expert_parallel import describe, ownership
+from shadowspill_workloads.components.expert_parallel import describe, ownership
 from shadowspill_workloads.initialization.expert_parallel import BANKS, Initialize
 from shadowspill_workloads.models import catalog
 from shadowspill_workloads.models.shared.expert_parallel import resources

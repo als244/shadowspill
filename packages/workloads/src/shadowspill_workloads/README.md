@@ -1,7 +1,7 @@
 # Workloads
 
 `shadowspill-workloads` is the optional library of supplied model architectures,
-checkpoint readers, input adapters and training definitions. Custom packages use
+checkpoint readers, input adapters and training components. Custom packages use
 the same public extension API and do not need this library.
 
 Start with the [training client](../../../../docs/python/client.md) and
@@ -14,7 +14,7 @@ the detailed [architecture catalog](MODELS.md).
 | --- | --- |
 | [models/](models) | One package per family: architecture, configuration, checkpoint mapping, LoRA targets and registration |
 | [models/shared/](models/shared) | Reusable model components and architecture integration shared by related families |
-| [definitions/](definitions) | Shared public registration, preparation and objective hooks |
+| [components/](components) | Shared public registration, preparation and objective hooks |
 | [inputs/](inputs) | Input schemas, processors and packing adapters |
 | [objectives/](objectives) | Reusable losses and metrics |
 | [initialization/](initialization) | Bounded checkpoint loading and parameter initialization |
@@ -35,7 +35,7 @@ they do not add another trainer. Shared process infrastructure lives in
 ## Examples and extension
 
 - [Training examples](../../../../docs/examples/README.md)
-- [Custom definitions](../../../../docs/python/advanced/definitions.md)
-- [Custom integration](../../../../docs/python/advanced/custom-definitions.md)
+- [Component hooks](../../../../docs/python/advanced/components.md)
+- [Writing extensions](../../../../docs/python/advanced/writing-extensions.md)
 - [preparation settings](../../../../docs/python/advanced/service-client.md)
-- [Distributed API](../../../../docs/python/api/distributed.md)
+- [Parallelism reference](../../../../docs/reference/engine/parallelism.rst)

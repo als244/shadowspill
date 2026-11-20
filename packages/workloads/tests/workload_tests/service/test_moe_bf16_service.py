@@ -12,10 +12,10 @@ import pytest
 import torch
 
 from shadowspill.artifacts.tensors import TensorChunk
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.artifacts.bundle import TrainingBundle
 from shadowspill_workloads.initialization.decoder import Initialize
-from workload_tests.definitions.test_moe_definitions import settings
+from workload_tests.components.test_moe_components import settings
 from workload_tests.objectives.test_moe_objective import independent
 from workload_tests.service.oracles._moe_oracle import WeightGradients
 from workload_tests.service.test_moe_service import options
@@ -44,7 +44,7 @@ def bf16_options(lora, *, lora_rank=2, grad_dtype="bfloat16"):
         },
     )
     registry = load_registry(["shadowspill-workloads"])
-    initial = registry.resolve_model(requested.definition, settings=requested).create()
+    initial = registry.resolve_model(requested.name, settings=requested).create()
     fill = Initialize("qwen3moe", initial.config, seed=17)
     with torch.no_grad():
         for name, tensor in (*initial.named_parameters(), *initial.named_buffers()):

@@ -5,9 +5,9 @@ from dataclasses import asdict, dataclass
 from importlib import import_module
 from typing import ClassVar
 
-from shadowspill.training.definitions import ModelBuild
-from shadowspill_workloads.definitions import training_options
-from shadowspill_workloads.definitions.decoder.configuration import (
+from shadowspill.training.components import ModelBuild
+from shadowspill_workloads.components import training_options
+from shadowspill_workloads.components.decoder.configuration import (
     Settings as DecoderSettings,
 )
 from shadowspill_workloads.models.shared.glm.initialization.metadata import DTYPES

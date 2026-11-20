@@ -1,4 +1,4 @@
-"""Family metadata stays lightweight and pins affected training definitions."""
+"""Family metadata stays lightweight and pins affected training components."""
 
 import subprocess
 import sys
@@ -6,8 +6,8 @@ from dataclasses import replace
 
 import pytest
 
-from shadowspill.training.definitions import load_registry
-from shadowspill_workloads.definitions import source
+from shadowspill.training.components import load_registry
+from shadowspill_workloads.components import source
 from shadowspill_workloads.models import families
 
 
@@ -53,7 +53,7 @@ def test_family_registration_changes_invalidate_saved_model_source(monkeypatch, 
     current = load_registry(["shadowspill-workloads"])
     with pytest.raises(ValueError, match="source changed"):
         current.resolve_model(family, source=resolved.source)
-    assert current.resolve_model(other.definition.id).source == other.source
+    assert current.resolve_model(other.component.id).source == other.source
     _, old_source = original.model_reference("shadowspill/huggingface@1")
     with pytest.raises(ValueError, match="source changed"):
         current.model_reference("shadowspill/huggingface@1", source=old_source)

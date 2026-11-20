@@ -8,7 +8,7 @@ from shadowspill.artifacts.tensors import TensorChunk
 from shadowspill_client import Model, Objective
 from shadowspill_workloads.initialization.decoder import Initialize
 from shadowspill_workloads.lora import configure_lora
-from workload_tests.definitions.test_dense_qwen_definitions import settings
+from workload_tests.components.test_dense_qwen_components import settings
 from workload_tests.initialization.test_pretrained_initialization import checkpoint
 
 

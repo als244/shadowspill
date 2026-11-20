@@ -4,7 +4,7 @@ import pytest
 
 from engine_tests.training.test_allocation_coverage import compiler_fixture
 from shadowspill import Parallelism
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.capture.allocation_coverage import (
     allocation_coverage,
 )
