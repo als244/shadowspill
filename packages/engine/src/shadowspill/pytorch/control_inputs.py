@@ -10,6 +10,7 @@ from shadowspill.artifacts.program import Program
 from shadowspill.artifacts.tasks import stage_jobs
 from shadowspill.errors import CaptureError
 
+from .accelerator import is_accelerator
 from .task_inputs import prepare_inputs
 
 
@@ -89,7 +90,7 @@ class ControlInputs:
             snapshot = torch.empty_strided(shape, stride, dtype=dtype, device="cpu")
             snapshot.copy_(value.detach())
             del arguments, leaves, value
-            if target.type == "cuda":
+            if is_accelerator(target):
                 restored = torch.empty_strided(
                     shape, stride, dtype=dtype, device=target
                 )

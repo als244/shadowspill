@@ -54,9 +54,10 @@ class SearchAlgorithm(ABC):
     ----------
     name : str
         The stable name the search is keyed and registered by, such as
-        ``"pressurefit"``. Set by the subclass, independent of its class name, so
-        renaming or moving the class leaves stored plans reachable.
-        Defining a concrete subclass without one raises `TypeError`.
+        ``"pressurefit"``. Set by the subclass, independent of its class name:
+        a stored plan names its search by it, and `SearchOptions.from_dict`
+        finds the class through `SearchAlgorithm.named`. Defining a concrete
+        subclass without one raises `TypeError`.
     """
 
     name: ClassVar[str] = ""
@@ -70,7 +71,14 @@ class SearchAlgorithm(ABC):
 
     def __init_subclass__(cls, **keywords: object) -> None:
         super().__init_subclass__(**keywords)
-        if getattr(cls, "__abstractmethods__", None):
+        # ABCMeta sets __abstractmethods__ only after this hook, so find here,
+        # as it will, whether an abstract method is left.
+        inherited = (getattr(b, "__abstractmethods__", ()) for b in cls.__bases__)
+        names = {n for group in inherited for n in group}
+        if any(
+            getattr(getattr(cls, n, None), "__isabstractmethod__", False)
+            for n in names | set(vars(cls))
+        ):
             return
         if not cls.name:
             raise TypeError(f"{cls.__name__} must name itself")
@@ -289,7 +297,8 @@ class SearchOptions:
         that ships, PressureFit, with its defaults.
     workers : int, default 0
         Threads the search may use: zero for every logical CPU, one for
-        serial evaluation. At least zero. The plan report records it.
+        serial evaluation. At least zero. PressureFit records it in
+        `PlanningDiagnostics.workers`; the planner does not.
     trace_directory : str, optional
         Directory the search records a trace into after planning, through
         `SearchAlgorithm.record_trace`. The plan is unchanged.

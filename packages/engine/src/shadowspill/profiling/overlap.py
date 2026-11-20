@@ -127,9 +127,10 @@ def measure_overlap(
     ------
     ValueError
         If ``trials`` is not a positive integer, the Program was built for
-        another GPU or toolchain, PyTorch's native allocator is not in use,
-        the rendezvous world size differs from the Program's, or the backend
-        setup differs from ``communication_info``'s.
+        another GPU or toolchain, the rendezvous world size differs from the
+        Program's, or the backend setup differs from ``communication_info``'s.
+    RuntimeError
+        If PyTorch's native allocator is not in use.
     """
     program = profiled_program.program
     result = Profiles(setup=plain(program.setup))
@@ -154,7 +155,7 @@ def measure_overlap(
         if plain(program.setup) != build_setup(target):
             raise ValueError("overlap device/toolchain differs from the saved Program")
         if torch.cuda.memory.get_allocator_backend() != "native":
-            raise ValueError(
+            raise RuntimeError(
                 "overlap measurement requires the native PyTorch allocator"
             )
         count = 1 if program.parallelism is None else program.parallelism.world_size

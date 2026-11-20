@@ -1,10 +1,8 @@
 """The accelerator PyTorch drives for ShadowSpill, named once.
 
 PyTorch exposes CUDA and ROCm devices under the same ``"cuda"`` device type
-and the same ``torch.cuda`` frontend, so this is the only place the string
-appears in the PyTorch layer.  Everything else says *device* for tensors,
-placements, and ordinals, and *backend* for streams, events, allocators, and
-the provider library behind them.
+and the same ``torch.cuda`` frontend, so the code of ``shadowspill.pytorch``
+names that device type only here, as `DEVICE_TYPE`.
 """
 
 from __future__ import annotations

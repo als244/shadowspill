@@ -37,7 +37,7 @@ class Allocation:
         `Resources` selects it. Not empty, at most 256 characters.
     controller_only : bool, default False
         Whether this host is only the controller, holding the service's
-        processing and storage, with node daemons supplying every device.
+        processing and storage and offering none of its devices.
 
     Raises
     ------
@@ -87,8 +87,9 @@ class Allocation:
     def controller(cls) -> Allocation:
         """Describe a host that is only the controller.
 
-        The service then runs its processing and storage here, and node
-        daemons supply every device.
+        The service runs its processing and storage here and offers none of
+        this host's devices. Registered node daemons take no runs, so no run
+        can start.
 
         Returns
         -------

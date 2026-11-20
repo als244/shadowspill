@@ -33,7 +33,7 @@ def _manifest(archive: tarfile.TarFile, executor: CheckpointState) -> dict[str, 
     manifest = read_manifest(archive)
     if (
         manifest.get("format") != "shadowspill.checkpoint"
-        or manifest.get("version") != 2
+        or manifest.get("version") != 1
         or manifest.get("byteorder") != sys.byteorder
         or manifest.get("logical_rank", 0) != executor.logical_rank
         or not isinstance(manifest.get("metadata"), dict)

@@ -149,7 +149,7 @@ class GradientDestinationRule:
         least zero.
     version : int
         Version of the replacement's contract, passed as
-        ``contract_version``. Positive. It enters artifact identity, so a
+        ``contract_version``. Positive. It enters executable identity, so a
         changed contract needs a new version.
     mapper : callable, optional
         Takes a `GradientDestinationContext` (the producer node, its

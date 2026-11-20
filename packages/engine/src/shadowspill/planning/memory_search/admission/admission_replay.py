@@ -1,9 +1,10 @@
-"""Cross-task physical admission through the production ``MemoryPool``.
+"""The record types of a physical admission replay.
 
-These records combine exact task-allocation evidence with persistent object
-generations and ordered memory actions into one causal script, which
-:mod:`shadowspill.runtime.admission_replay` runs through the production
-``MemoryPool`` policy itself.
+An `AdmissionReplay` pairs the result of
+`shadowspill.runtime.run_admission_replay`, which runs ordered pool operations
+through the production ``MemoryPool`` policy, with each operation's task-level
+provenance, the ownership transitions that need no pool operation, and the
+causal reuse dependencies.
 """
 
 from __future__ import annotations

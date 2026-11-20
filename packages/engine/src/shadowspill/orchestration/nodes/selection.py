@@ -135,16 +135,14 @@ def select_hardware(
         raise ResourcesUnavailable("compatible assigned workers have live owners")
     if len({node.pool for node, _ in selected}) != 1:
         raise HardwareSelectionError("selected devices span different compute pools")
-    # Explicit heterogeneous selection is expressed with WorkerSettings; this
-    # homogeneous selector must never silently group different GPU classes.
+    # Mixed GPU types are refused, named devices included: every selected
+    # device has one type, capacity and driver (an unknown type is its node's).
     classes = {
         (device.gpu_type or node.id, device.capacity_bytes, node.driver)
         for node, device in selected
     }
     if len(classes) != 1:
-        raise HardwareSelectionError(
-            "mixed GPU types require explicit per-worker settings"
-        )
+        raise HardwareSelectionError("mixed GPU types are refused")
     node, device = selected[0]
     normalized = replace(
         requested,

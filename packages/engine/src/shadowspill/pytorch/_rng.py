@@ -10,6 +10,8 @@ from typing import Any, cast
 
 import torch
 
+from .accelerator import is_accelerator
+
 
 def rng_state(device: torch.device) -> dict[str, Any]:
     state: dict[str, Any] = {
@@ -19,7 +21,7 @@ def rng_state(device: torch.device) -> dict[str, Any]:
     numpy = sys.modules.get("numpy")
     if numpy is not None:
         state["numpy"] = numpy.random.get_state()
-    if device.type == "cuda" and cast(Callable[[], bool], torch.cuda.is_initialized)():
+    if is_accelerator(device) and cast(Callable[[], bool], torch.cuda.is_initialized)():
         state["accelerator"] = torch.cuda.get_rng_state(device)
     return state
 

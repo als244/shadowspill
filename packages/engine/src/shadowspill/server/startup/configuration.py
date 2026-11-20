@@ -177,8 +177,8 @@ class LocalCreationFactory:
     def startable(self) -> HardwareInventory:
         """The hardware a run can start on: this service's own node.
 
-        ``inventory`` also lists registered nodes, which cannot yet run a
-        training worker. Creation selects from this node alone, so a preview
+        ``inventory`` also lists registered nodes, which run no training
+        worker. Creation selects from this node alone, so a preview
         selects from the same hardware and never shows a placement that
         creation would not make.
         """

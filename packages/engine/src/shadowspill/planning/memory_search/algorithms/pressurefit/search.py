@@ -9,7 +9,7 @@ into one answer.
 It knows nothing about which resolutions are worth trying -- that is
 ``toolkit.resolution`` and this package's `ordered_resolutions` -- and nothing
 about certifying the winner's physical layout, which is
-``planner.admission.refinement``.
+``admission.refinement``.
 """
 
 from __future__ import annotations

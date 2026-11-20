@@ -126,7 +126,9 @@ class OperationState:
         if command == "optim_step":
             if not accumulation.open:
                 raise RuntimeError("optim_step requires an open accumulation")
-            participates = accumulation.participating_contributions > 0
+            # Every contribution took part in the loss (forward_backward
+            # refuses one that did not), so an open accumulation updates.
+            participates = True
         if (
             command == "forward_backward"
             and accumulation.open
@@ -138,9 +140,7 @@ class OperationState:
             command,
             before,
             bool(participates),
-            command == "forward_backward"
-            and bool(participates)
-            and accumulation.participating_contributions > 0,
+            command == "forward_backward" and accumulation.open,
         )
         self._pending = pending
         return pending
@@ -171,10 +171,6 @@ class OperationState:
                     *(accumulation.contributions if accumulation.open else ()),
                     pending.request_id,
                 ),
-                participating_contributions=(
-                    accumulation.participating_contributions if accumulation.open else 0
-                )
-                + pending.participates,
             )
         elif command in ("optim_step", "discard", "restore"):
             accumulation = Accumulation(generation=accumulation.generation)

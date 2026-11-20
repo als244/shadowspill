@@ -136,7 +136,7 @@ class RankSave(Record):
             raise ValueError("rank save kind differs from its admitted boundary")
         return {
             "format": "shadowspill." + self.kind,
-            "version": 2 if self.kind == "checkpoint" else 1,
+            "version": 1,
             "logical_rank": self.rank,
             "state": self.state_sha256,
             "program": self.program,

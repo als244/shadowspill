@@ -35,5 +35,5 @@ def test_wire_metadata_uses_engine_artifact_canonical_json_convention():
         RequestIdentity("request", "run", 1, "writer", 1, "server"), "optim_step"
     )
     assert encode(request) == encoded(
-        {"version": 2, "kind": "compute.request", "value": request.to_dict()}
+        {"version": 1, "kind": "compute.request", "value": request.to_dict()}
     )

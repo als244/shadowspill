@@ -169,6 +169,17 @@ result.write_report(sys.argv[2])
     assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
+@pytest.mark.parametrize("budget", ["device_gib", "spill_gib"])
+def test_zero_budgets_are_refused_offline(measured, budget):
+    # Zero means automatic, which only the service can size from its hardware.
+    _, _, inputs, target = measured
+    with pytest.raises(ValueError, match="zero is automatic"):
+        inputs.sweep(**{budget: [1, 0]})
+    memory = Memory(**{"device_gib": 1, "spill_gib": 1, budget: 0})
+    with pytest.raises(ValueError, match="zero is automatic"):
+        inputs.plan(config=replace(target.layouts.setup.config, memory=memory))
+
+
 @pytest.mark.parametrize("values", [[], [0], [-1], [float("inf")], [1, 1], [True]])
 def test_invalid_grids_fail_before_search(measured, values):
     _, _, inputs, _ = measured

@@ -23,7 +23,7 @@ registered a formula; bytes come from the traced geometry. An ATen or prims
 operator without a formula is memory-bound, which is PyTorch's own stance in
 its denylist. A custom operator without a formula is unknown, and unknown is
 treated as compute-bound: a library that declares nothing has its values
-saved, as they always were, and never regenerated on a guess.
+saved, never regenerated on a guess.
 
 The min-cut solver decides the rest. A regenerated value's inputs have to be
 retained instead, and the solver charges for them, so a value is regenerated
@@ -358,8 +358,8 @@ class RetentionPolicy:
             }
         )
         if choices:
-            # Include ATen too: operator_classes normally omits builtins. Old
-            # graph-pair entries without this default must not answer new cuts.
+            # ATen's built-in choice is listed too, since operator_classes
+            # omits builtins: the forward choices enter the capture identity.
             result["forward_choices"] = choices
         if any(rule.module_pattern is not None for rule in self.rules):
             scopes = _resolve_scopes(graph_module, self)

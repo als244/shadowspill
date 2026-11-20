@@ -6,8 +6,10 @@ from typing import Final
 
 ADAPTER_ABI_VERSION: Final = 3
 
-#: Ids the frontend synthesises for work that is not a planned task, copied
-#: from the adapter header, which decodes them in its failure report.
+#: Two id ranges for work that is not a planned task, mirrored from the adapter
+#: header, whose failure report decodes them: allocation scope ids at or above
+#: `PROFILING_SCOPE_BASE`, action-batch task ids at or above
+#: `INITIAL_ACTIONS_TASK_ID`.
 PROFILING_SCOPE_BASE: Final = 1 << 62
 
 INITIAL_ACTIONS_TASK_ID: Final = 1 << 60

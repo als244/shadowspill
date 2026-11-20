@@ -271,7 +271,7 @@ def _manifest(
 ) -> dict[str, Any]:
     return {
         "format": "shadowspill.checkpoint",
-        "version": 2,
+        "version": 1,
         "byteorder": sys.byteorder,
         "state": state_identity(executor),
         "program": executor.plan.program.digest,

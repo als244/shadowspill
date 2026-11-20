@@ -166,8 +166,8 @@ class PlanningInputs:
             Device budgets per worker, in GiB, each positive. By default the
             preparation's.
         spill_gib : float or sequence of float, optional
-            Spill budgets per worker, in GiB, each at least zero. By default
-            the preparation's.
+            Spill budgets per worker, in GiB, each positive. By default the
+            preparation's.
         transfer_scale : float or sequence of float, default 1.0
             Factors on the measured transfer rates, each positive.
 
@@ -181,7 +181,8 @@ class PlanningInputs:
         ------
         ValueError
             If a list of values is empty, repeats a value, or holds a value
-            out of range.
+            out of range. A zero budget is out of range: zero means automatic,
+            which only the service can size.
         """
         from shadowspill.training.preparation.offline.sweep import sweep
 
@@ -232,7 +233,8 @@ class PlanningInputs:
         Raises
         ------
         ValueError
-            If ``config`` differs from the export beyond those settings, an
+            If ``config`` has a zero (automatic) budget, which only the service
+            can size, or differs from the export beyond those settings, an
             edit names an unexported template or changes anything else,
             ``candidates`` names an unknown candidate or repeats one, a Plan
             lacks physical memory admission, or no candidate has every Plan

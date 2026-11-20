@@ -63,6 +63,12 @@ def search(
     communication: Mapping[str, CommunicationInfo] | None = None,
     candidates: Sequence[str] | None = None,
 ) -> LocalSearch:
+    if config.memory.device_gib == 0 or config.memory.spill_gib == 0:
+        raise ValueError(
+            "offline planning needs budgets in GiB: zero is automatic and only "
+            "the service sizes it (the preparation's budgets are in "
+            "inputs.config.memory)"
+        )
     normalized = replace(
         config,
         memory=inputs.config.memory,

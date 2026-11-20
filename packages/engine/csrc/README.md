@@ -54,12 +54,13 @@ csrc/
 │       │                     the quiescence wake-up, and the markers a caller
 │       │                     times its own work with
 │       ├── plan/             a plan's admission, its lifetime, its residue
-│       ├── telemetry/        the trace rings, the profiler, the statistics
+│       ├── telemetry/        the trace rings, allocation events, the profiler
 │       └── worker/           one action handled, dispatched, completed
 ├── backends/              dlopened device backends: mock and provider
 ├── network/               remote pool and RDMA lanes, whose memory is on
 │   └── src/               another machine; loaded the way a backend is
-├── ssd/                   temporary direct-I/O pool and staged fetch/evict lanes
+├── ssd/                   temporary or persistent direct-I/O pool and staged
+│                          fetch/evict lanes
 ├── daemon/                the far side: a process that holds registered
 │   └── src/               memory and the queue pairs a peer reaches it by
 └── adapter/pytorch/       narrow allocator/storage bridge into PyTorch
@@ -77,17 +78,17 @@ csrc/
                            views and caller-owned outputs
 ```
 
-Everything under `src/` compiles into one shared object. The simulator, the
+Everything under `src/` builds into one shared object. The simulator, the
 planner and the runtime have a strict dependency order between them and nothing
 that links them apart, so they share one `SHADOWSPILL_ABI_VERSION` and one
 `ShadowSpillStatus` rather than an ABI and a status vocabulary each.
 
 Backends are separate because that is what they are for: each is dlopened and
-compiled against the backend contract alone, and a provider backend needs a
+built against the backend contract alone, and a provider backend needs a
 toolchain the rest of the tree must not require. The PyTorch adapter is
 separate because it links libtorch, which planning-only callers must not be
-made to carry. Both keep their own ABI version, being genuinely compiled
-elsewhere.
+made to carry. Both keep their own ABI version, since each is built against a
+contract of its own and can differ from the library it is used with.
 
 `network/` implements the runtime's pool-memory and lane contracts and exports
 one symbol, a descriptor read by whatever loads it.
@@ -101,10 +102,11 @@ far side of a remote pool is not a second ShadowSpill but a process that owns a
 registered region. Both it and `network/` build only where verbs headers and
 libraries are available. See [its README](daemon/README.md) for the protocol.
 
-`ssd/` uses the same extension contract. On Linux it builds a temporary file
-pool plus direct-I/O lanes, with bounded pinned staging and Linux AIO syscalls;
-it needs no `libaio` or GPU SDK. Its disk worker never invokes a GPU API.
-The public configuration is `include/shadowspill/ssd.h`; see the
+`ssd/` uses the same extension contract. On Linux it builds a file pool,
+temporary or a persistent image, plus direct-I/O lanes, with bounded pinned
+staging and Linux AIO syscalls; it needs no `libaio` or device SDK. Its disk
+worker never calls the backend. The public configuration is
+`include/shadowspill/ssd.h`; see the
 [SSD C API](../../../docs/c/ssd.md) for registration, ownership and synchronization.
 
 `src/common/platform.h` holds what the library asks of the operating system

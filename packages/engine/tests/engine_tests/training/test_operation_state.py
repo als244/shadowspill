@@ -68,7 +68,6 @@ def test_rejected_empty_parts_preserve_first_write_and_generation():
     last = finish(state, "forward_backward", "last", participates=True)
     assert last.accumulate_gradients
     assert state.boundary.accumulation.contributions == ("first", "last")
-    assert state.boundary.accumulation.participating_contributions == 2
     finish(state, "optim_step", "update")
     assert state.boundary.completed_updates == 1
     assert not state.boundary.accumulation.open

@@ -161,20 +161,22 @@ def _values(
     default: float,
     name: str,
     *,
-    zero: bool = False,
+    budget: bool = False,
 ) -> tuple[float, ...]:
     if value is None:
         value = default
     values = (value,) if isinstance(value, (int, float)) else tuple(value)
     if not values or any(
-        type(v) not in (int, float)
-        or not math.isfinite(v)
-        or (v < 0 if zero else v <= 0)
-        for v in values
+        type(v) not in (int, float) or not math.isfinite(v) or v <= 0 for v in values
     ):
-        raise ValueError(
-            f"{name} requires finite {'nonnegative' if zero else 'positive'} values"
+        # A zero budget is automatic, which only the service can size.
+        hint = (
+            f"; zero is automatic and only the service sizes it, so leave {name} "
+            "out to use the preparation's"
+            if budget
+            else ""
         )
+        raise ValueError(f"{name} requires finite positive values{hint}")
     if len(set(values)) != len(values):
         raise ValueError(f"{name} requires distinct values")
     return tuple(float(v) for v in values)
@@ -225,8 +227,12 @@ def sweep(
     spill_gib: float | Sequence[float] | None,
     transfer_scale: float | Sequence[float],
 ) -> PlanningSweep:
-    devices = _values(device_gib, inputs.config.memory.device_gib, "device_gib")
-    spills = _values(spill_gib, inputs.config.memory.spill_gib, "spill_gib", zero=True)
+    devices = _values(
+        device_gib, inputs.config.memory.device_gib, "device_gib", budget=True
+    )
+    spills = _values(
+        spill_gib, inputs.config.memory.spill_gib, "spill_gib", budget=True
+    )
     transfers = _values(transfer_scale, 1, "transfer_scale")
     rows, details = [], {}
     for point, (device, spill, transfer) in enumerate(

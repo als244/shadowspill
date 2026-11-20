@@ -8,6 +8,7 @@ import torch
 from shadowspill.artifacts.program import Program
 from shadowspill.errors import CaptureError
 
+from .accelerator import DEVICE_TYPE
 from .control_samples import copy_sample
 
 
@@ -52,7 +53,8 @@ def prepare_inputs(
             if arguments[position] is not None
         ]
         geometry = geometries[positions[0]]
-        target = device if geometry["device_type"] == "cuda" else torch.device("cpu")
+        on_device = geometry["device_type"] == DEVICE_TYPE
+        target = device if on_device else torch.device("cpu")
         capacity = max(_extent(geometries[position]) for position in positions)
         storage = (
             existing[0].untyped_storage()
