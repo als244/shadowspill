@@ -9,7 +9,7 @@
 #   setup_mlops.sh --python PATH [--torch-backend BACKEND] [--expert-parallel quack|te|both]
 set -euo pipefail
 
-readonly mlops_revision="8c67a6ea5c422f8bb8b791f953ef6cd793460a31"
+readonly mlops_revision="678250b8536848a5b83a85517d5ea048fa98e859"
 readonly repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 
 python_executable=""
