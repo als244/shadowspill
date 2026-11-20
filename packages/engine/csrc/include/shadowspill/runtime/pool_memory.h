@@ -63,10 +63,12 @@ typedef struct ShadowSpillPoolMemoryDescription {
     /*
      * The way in and the way out. Both **optional**, and optional together:
      * NULL means this process can dereference the region itself, so the
-     * runtime moves the bytes with an ordinary copy. That is what the two
-     * built-in kinds do. A kind whose region this process cannot address
+     * runtime moves the bytes with an ordinary copy. The built-in pinned-host
+     * kind does that. A kind whose region this process cannot address
      * implements both -- and must, because the alternative is a fault at the
-     * first byte.
+     * first byte. The built-in device kind leaves both NULL although its
+     * region is device memory, so `shadowspill_write_object` and
+     * `shadowspill_read_object` must name a pool this process can address.
      *
      * `source` and `destination` are pointers **in the runtime process**, and
      * that is the honest statement of the contract: not "host memory", which

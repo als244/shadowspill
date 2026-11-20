@@ -21,8 +21,7 @@ ShadowSpillStatus shadowspill_allocation_scope_begin(
     }
     /*
      * The id must be one this runtime issued. It need not name a plan that
-     * exists: profiling legitimately runs before a plan is created, and in a
-     * standalone measurement no plan is created at all. What matters for
+     * exists: a standalone measurement creates none. What matters for
      * attribution is that the id came from the minter, so it is unique for the
      * life of the runtime and cannot collide with another plan's.
      */

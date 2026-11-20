@@ -142,7 +142,7 @@ typedef struct ShadowSpillSimulationProgram {
     const uint32_t *reuse_successor_actions;
     /* Optional location-specific sizes and ordered transfer recipes. Empty
        rows retain the ordinary single-copy behavior. Rows are alias*2+direction.
-       Timed phases serialize by resource; host copy bandwidth is occupied only
+       Timed phases serialize by resource; copy-lane bandwidth is occupied only
        during COPY phases. Device/source leases span the complete recipe. */
     const uint64_t *alias_spill_size_bytes;
     uint32_t transfer_phase_count;

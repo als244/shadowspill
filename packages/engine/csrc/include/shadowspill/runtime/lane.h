@@ -341,7 +341,8 @@ typedef struct ShadowSpillLaneDescription {
      * Made once per route at create, released in reverse at close.
      *
      * `base` is the common struct the runtime has already filled -- runtime,
-     * backend, the route's stream, this entry's two kinds, counters at zero.
+     * backend, the route's stream, this entry's two kinds, the two pools'
+     * ranges, counters at zero.
      * A transport allocates its own struct and copies it into the first
      * member:
      *

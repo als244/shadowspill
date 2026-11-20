@@ -99,14 +99,14 @@ typedef struct ShadowSpillRuntimeConfig {
  */
 typedef struct ShadowSpillPlanDescription {
     /*
-     * This plan's identity, chosen by the caller and never interpreted here. It
-     * is carried onto every lease the plan's tasks make, so a pool shared by
-     * several plans can still say which one a range belongs to -- task ids
-     * cannot, being plan-local and therefore shared between plans.
+     * This plan's identity: an id this runtime issued, which plan creation
+     * checks and nothing interprets. It is carried onto every lease the
+     * plan's tasks make, so a pool shared by several plans can still say
+     * which one a range belongs to -- task ids cannot, being plan-local and
+     * therefore shared between plans.
      *
-     * The caller names this same id on every allocation scope it opens for the
-     * plan, so one number spans the whole period the plan owns, the profiling
-     * that precedes its tasks included.
+     * An allocation scope opened for the plan names this same id, so the
+     * allocations it makes are attributed to the plan too.
      *
      * Zero is not a valid plan id: it is what a lease made outside any plan
      * reports, so no plan may hold it.

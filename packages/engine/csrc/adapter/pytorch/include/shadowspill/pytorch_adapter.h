@@ -57,9 +57,9 @@ SHADOWSPILL_PYTORCH_API ShadowSpillStatus shadowspill_pytorch_spill_probe_measur
 );
 SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_spill_probe_destroy(void *handle);
 
-/* Ids the frontend synthesises for work that is not a planned task: the
-   profiling allocation scopes, and the pre-task placement batch. The
-   failure report decodes them, so both sides read one definition. */
+/* Two id ranges for work that is not a planned task: allocation scope ids
+   at or above the profiling scope base, and action-batch task ids at or
+   above the initial-actions id. The failure report decodes both. */
 #define SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE (UINT64_C(1) << 62)
 #define SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID (UINT64_C(1) << 60)
 
@@ -369,10 +369,9 @@ shadowspill_pytorch_abort_task_handle(
 );
 
 /*
- * Attribute isolated profiling allocations without opening a fake task.
- * `plan_id` is the plan these measurements are for, which does not exist yet --
- * profiling is what the plan will be built from - so the caller names it here
- * and again in the description it creates that plan from.
+ * Attribute isolated allocator measurements without opening a fake task.
+ * `plan_id` is the plan these measurements are for: an id the runtime issued,
+ * whose plan need not exist, since a standalone measurement creates none.
  */
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocation_scope_begin(

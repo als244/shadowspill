@@ -1,4 +1,4 @@
-/* Statuses, reasons, and the enumerations every description uses. */
+/* Failure reasons and the enumerations every description uses. */
 
 #ifndef SHADOWSPILL_RUNTIME_VOCABULARY_H
 #define SHADOWSPILL_RUNTIME_VOCABULARY_H
@@ -45,8 +45,8 @@ typedef struct ShadowSpillObjectHandle ShadowSpillObjectHandle;
 /* ------------------------------------------------------------------------
  * Vocabulary
  *
- * Statuses, reasons, and the enumerations every description below
- * uses. Nothing here allocates or holds state.
+ * Failure reasons and the enumerations every description below uses.
+ * Nothing here allocates or holds state.
  */
 
 /*

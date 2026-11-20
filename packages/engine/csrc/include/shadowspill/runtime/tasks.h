@@ -85,22 +85,22 @@ shadowspill_abort_task_handle(
 /* ------------------------------------------------------------------------
  * Allocation scopes
  *
- * Attributing allocations made outside any task - profiling probes,
- * warmup - to a scope that can be closed and audited.
+ * Attributing allocations made outside any task -- isolated allocator
+ * measurements -- to a scope that can be closed and audited.
  */
 
 /*
- * Attribute allocator activity to one non-execution scope. This is used by
- * structural profiling and other isolated measurements that need causal
- * retirement fences without pretending to execute an admitted task. The end
- * call records completion when the scope retired allocations or another task
- * or allocation depends on this task's completion.
+ * Attribute allocator activity to one non-execution scope, for isolated
+ * allocator measurements that need causal retirement fences without
+ * pretending to execute an admitted task. The end call records completion
+ * when the scope retired allocations or another task or allocation depends on
+ * this task's completion.
  *
- * `plan_id` names the plan the measurement is for. A scope deliberately runs
- * outside any task, so there is no task here for the runtime to read a plan
- * from, and the caller names it instead. Without it an allocation made here
- * would be attributable to nothing -- which is the case these ids remove, since
- * a profiling probe's retained workspace can outlive the scope that made it.
+ * `plan_id` names the plan the measurement is for: an id the runtime issued,
+ * whose plan need not exist, since a standalone measurement creates none. A
+ * scope runs outside any task, so there is no task for the runtime to read a
+ * plan from, and the caller names it instead. Without it an allocation that
+ * outlives the scope would be attributable to nothing.
  */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_allocation_scope_begin(
