@@ -236,7 +236,6 @@ plus `recomputation_overhead_seconds` plus `task_contention_seconds` plus `idle_
 | `fetch_solo_bandwidth_bytes_per_second`, `fetch_concurrent_bandwidth_bytes_per_second`, `evict_solo_bandwidth_bytes_per_second`, `evict_concurrent_bandwidth_bytes_per_second` | Coarsened per-direction rates used by the simulator. Payload uses the solo rate while the opposite lane is idle, and the concurrent rate while both move bytes. Raw measurements remain on the transfer profiles. |
 | `fetch_busy_ns`, `evict_busy_ns` | Sum of simulated transfer durations on each lane, excluding per-transfer latency. Utilization uses these intervals, not bytes divided by a fixed bandwidth. |
 | `fetch_latency_ns`, `evict_latency_ns` | Coarsened calibration latency retained with the plan for diagnostics and provenance. The simulator does not use these values for transfer timing. |
-| `planning_phase_seconds` | Wall time of each recorded planning phase, in seconds; empty when no phase timings were supplied. |
 | `selected_candidate` | The candidate whose plan was selected: residency strategy, fetch rule, repairs at best, the fastest plan it could not place (`best_unplaced_makespan_ns`, `unplaced_plans`) and `placement_gap`, the answer over that plan (`None` when every measured plan fit). When the search answered with the plan it was handed, `incumbent` with that plan's outcome instead. |
 
 `device_peak_bytes` is the simulated peak of logical device allocations,

@@ -2,7 +2,7 @@
 
 What happens underneath Executor, between PyTorch's allocator and the
 neutral C runtime. The API this page describes is not called directly: it is
-reached when [Executor](../api/executor.md) creates its runtime and runs a Plan. Read it to understand a failure, a trace, or a profiler
+reached when [Executor](../../reference/engine/execution.rst) creates its runtime and runs a Plan. Read it to understand a failure, a trace, or a profiler
 timeline. The adapter boundary itself is specified in [the PyTorch adapter C
 API](../../c/pytorch-adapter.md).
 

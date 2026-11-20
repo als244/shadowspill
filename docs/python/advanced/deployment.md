@@ -7,7 +7,7 @@ and optional hardware selection.
 
 ## Start a local service
 
-Install the engine and required definition packages on the compute host. With
+Install the engine and required component packages on the compute host. With
 the service credential in `SHADOWSPILL_TOKEN`:
 
 ```python
@@ -47,7 +47,7 @@ scripts work through either connection.
 | `service_root` | Mutable sessions, request outcomes, Plans, reports and checkpoints; preserve it across service restarts |
 | `model_root` | Optional existing frozen checkpoints; separate from mutable run storage |
 | `cache_root` | Temporary preparation/worker staging; defaults to `.cache` under `service_root`; use local SSD |
-| `workload_packages` | Installed definition packages; omission enables the supplied workloads when installed |
+| `workload_packages` | Installed component packages; omission enables the supplied workloads when installed |
 | `allocation` | Already assigned environment and optional pool name |
 | `authentication` | Explicit owner credentials instead of the default `SHADOWSPILL_TOKEN` owner |
 | `limits` | `ServerLimits` for concurrency, host accounting, scratch, artifacts and request I/O |
@@ -105,7 +105,7 @@ address. `server.close()` stops owned work and retains persistent artifacts.
 Closing a client connection does not stop accepted work. See
 [failure handling](failures.md) for run recovery.
 
-## Checkpoint lookup and definition packages
+## Checkpoint lookup and component packages
 
 For an unpinned `Model.from_pretrained("Qwen/Qwen3.5-9B")`, the server looks for
 `model_root/Qwen/Qwen3.5-9B` or `model_root/Qwen3.5-9B`. Distinct matches are an
@@ -117,8 +117,8 @@ configurations retain their exact source; lookup never substitutes a local
 directory for an explicitly pinned remote revision.
 
 An explicit `workload_packages` list replaces the defaults. List only installed
-packages and include any [custom definitions](custom-definitions.md) used by
-clients. Omitting it enables the supplied workloads when installed; it does not
+packages and include every [extension package](writing-extensions.md) whose
+components clients use. Omitting it enables the supplied workloads when installed; it does not
 discover unrelated extension packages.
 
 The public training deployment uses GPUs assigned to one host. The separate

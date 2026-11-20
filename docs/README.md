@@ -10,13 +10,13 @@ model and workers; the client submits batches and reads results.
 - [Models, optimizers and objectives](python/catalog.md): built-ins, LoRA and freezing.
 - [Examples](examples/README.md): standalone training demos and custom workflows.
 - [Advanced usage](python/advanced/README.md): preparation tuning, split updates,
-  custom definitions, recovery and diagnostics.
+  extensions, recovery and diagnostics.
 
 ## Reference
 
 Exact APIs, the engine's design, the C interface and contributor guides.
 
-- [Python API](python/README.md)
+- [Python guides and API reference](python/README.md)
 - [Engine architecture](architecture/README.md)
 - [C API](c/README.md)
 - [Development](development/README.md)

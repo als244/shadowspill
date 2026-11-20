@@ -1,12 +1,9 @@
-Schedules and controls
-======================
+Learning rate schedules
+=======================
 
-Per-update values, such as a learning rate, and how they change over training.
-
-.. autoclass:: shadowspill_client.schedules.Constant
+A schedule gives the learning rate for a zero-based step; pass its value with
+each update, as in ``training.step(batch, optim={"lr": schedule(step)})``.
 
 .. autoclass:: shadowspill_client.schedules.WarmupCosine
 
-.. autoclass:: shadowspill_client.protocol.controls.ControlSchema
-
-.. autoclass:: shadowspill_client.protocol.controls.ScalarControl
+.. autoclass:: shadowspill_client.schedules.Constant

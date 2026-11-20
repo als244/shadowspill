@@ -175,8 +175,8 @@ holds, so an entry holding one endpoint never answers a request for both.
 recorded during differentiation. Changing this capture setting requires a
 different entry even when the exported source graph is unchanged.
 
-`retention_digest` combines both variant policies with the classes each gives
-the stage's custom operators ([below](#save)). PyTorch's own operators
+`retention_digest` combines both variant policies with the class of each of the
+stage's custom operators under each policy's threshold ([below](#save)). PyTorch's own operators
 class the same way under one PyTorch build, which the structural contract
 already names; a custom operator's class moves when its library registers or
 corrects a flop formula, and the digest moves with it, so a policy changed by
@@ -190,9 +190,10 @@ become kernel identity: two repeated blocks with the same resolved selections
 can reuse a pair, while otherwise identical blocks with different selections
 cannot. The lazy AOT partition callback uses these indices to apply rules after
 decomposition; exact operator targets still constrain matches. Scoped policies
-also record per-source custom-operator classifications, so a retained occurrence
-cannot hide a changed cost classification in an unselected occurrence of the
-same overload. Missing provenance and contradictory overlapping rules are
+also record each source occurrence's custom-operator class, because the
+per-operator classes keep one class per overload: a class that changes at an
+unselected occurrence cannot hide behind a selected occurrence of the same
+overload. Missing provenance and contradictory overlapping rules are
 capture errors. The resolved selections are stored in the graph-pair manifest.
 
 The first occurrence constructs or restores them. Equivalent later
@@ -215,8 +216,7 @@ persistent key and manifest. Its explicit node records preserve source tags,
 partitioner phase tags, low-precision rounding barriers and saved-output precision
 descriptors without serializing arbitrary frontend metadata or live tensor values.
 The precision annotations participate in graph compatibility because they change
-compiled arithmetic; source names and phase labels do not. See the
-[artifact fields](../python/api/artifacts.md#aot-graph-pair-cache).
+compiled arithmetic; source names and phase labels do not.
 Capture aligns output descriptors after effect tokens are moved inside the task;
 saved-value positions refer to the resulting explicit output signature. The
 ordered effect chain remains in the graph.
@@ -252,7 +252,7 @@ for the backward what would be expensive to regenerate and regenerates the
 rest. It is the reference variant used to establish the canonical public
 stage-boundary contract.
 
-The builder's [graph-pair policy](../python/api/frontend.md#graph-pair-policies)
+The builder's [graph-pair policy](../reference/engine/frontend.rst)
 controls both cuts independently. Its `save` policy defaults to the cost
 classification below, allowing removals from backward-required forward state.
 A retain default disables cost-based removals. Explicit rules can retain

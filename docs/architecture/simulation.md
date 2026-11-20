@@ -133,7 +133,7 @@ independently of the training step being predicted. Pairwise rates approximate
 contention; they do not explain arbitrary multiway kernel interference, rank
 arrival skew, or host submission delays. The implementation uses the minimum
 applicable rate when more than one modeled peer is active. See the
-[neutral timing API](../python/api/neutral.md) and
+[program reference](../reference/internals/ir.rst) and
 [native tables](../c/simulator.md#task-phases-and-measured-overlap) for the contract.
 
 ## Trigger-time capacity

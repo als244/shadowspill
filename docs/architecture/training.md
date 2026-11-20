@@ -24,13 +24,13 @@ flowchart LR
 | Client application | Data, per-call learning rates, evaluation cadence and result display |
 | `ServiceClient` | Connection, preparation requests, saved Plans and run attachment |
 | `TrainingClient` | Owned input snapshots, local batch validation and asynchronous commands |
-| Installed definitions | Model math, objective semantics, initialization and input adapters |
-| Preparation | Resolve definitions, build candidates, profile and plan, admit the saved family |
+| Catalog components | Model math, objective semantics, initialization and input adapters |
+| Preparation | Resolve components, build candidates, profile and plan, admit the saved family |
 | Run controller | Request ordering, accumulation state, completed updates and worker coordination |
 | Worker Executor | Saved task execution, shared model state, memory pools and bounded tensor access |
 | Service storage | Durable request outcomes, checkpoint generations, logs and reports |
 
-The optional workloads package supplies built-in definitions. External packages
+The optional workloads package supplies built-in components. External packages
 use the same registration API. Neither the engine nor the controller imports a
 particular model family. Independent PyTorch references remain outside the
 production execution path.

@@ -7,10 +7,6 @@ How the service builds, measures and plans a run before training, and what it re
 
 .. autoclass:: shadowspill_client.BuildCandidates
 
-.. autoclass:: shadowspill_client.BuildCase
-
-.. autoclass:: shadowspill_client.BuildOptions
-
 .. autoclass:: shadowspill_client.Policy
 
 .. autoclass:: shadowspill_client.ProfilingOptions
@@ -23,10 +19,6 @@ How the service builds, measures and plans a run before training, and what it re
 
 .. autoclass:: shadowspill_client.preparation.PlanningFuture
 
-.. autoclass:: shadowspill_client.protocol.preview.TrainingPreview
-
-.. autoclass:: shadowspill_client.protocol.preview.PreparationEstimate
-
 .. autoclass:: shadowspill_client.protocol.preparation.ResolvedPreparation
 
-.. autoclass:: shadowspill_client.protocol.training.ResolvedTraining
+.. autoclass:: shadowspill_client.ResolvedTraining

@@ -1,7 +1,7 @@
 # Program and annotated-plan JSON
 
-Public phase artifacts use self-contained archives; see the
-[artifact API](../api/artifacts.md). This page describes the lower-level planner's
+Public phase artifacts use self-contained archives; see
+[`Artifact`](../../reference/engine/build.rst). This page describes the lower-level planner's
 content-addressed JSON records. They are canonical, schema-tagged, validated on load, and designed
 for corpus collection, budget sweeps, inspection, and reproducible planning.
 Every schema below carries the one artifact version
@@ -54,7 +54,7 @@ An abridged `ShadowSpillProgram` has this shape:
 {
   "schema": "shadowspill.program/v1",
   "devices": [
-    {"device_id": "device_0", "process_id": "process_0", "kind": "accelerator", "index": 0}
+    {"device_id": "device_0"}
   ],
   "alias_groups": [
     {"alias_group_id": "alias_0", "device_id": "device_0", "size_bytes": 4096,
@@ -84,7 +84,7 @@ An abridged `ShadowSpillProgram` has this shape:
 | Key | Value |
 |---|---|
 | `schema` | Exact schema label used for versioned parsing. |
-| `devices` | Logical execution devices and their process-local indices. |
+| `devices` | Logical execution devices. |
 | `alias_groups` | Physical logical storage roots; capacity is charged at this level. |
 | `objects` | Named views into alias groups. |
 | `profiles` | Deduplicated task runtime/workspace measurements. |
@@ -95,7 +95,7 @@ An abridged `ShadowSpillProgram` has this shape:
 
 | Record | Keys | Meaning |
 |---|---|---|
-| Device | `device_id`, `process_id`, `kind`, `index` | Logical resource identity. |
+| Device | `device_id` | Logical resource identity. |
 | Alias group | `alias_group_id`, `device_id`, `size_bytes`, `initial_version`, `retain_spill_copy`, `shared_residency`, optional `transfer` | One storage root and its version, spill-retention, optional runtime-global sharing policy, and optional transfer recipe. |
 | Object | `object_id`, `alias_group_id`, `offset_bytes`, `size_bytes`, `role`, `persistence` | One view into a root. |
 
@@ -460,5 +460,5 @@ strip validation evidence to make an artifact load.
 | Preserve one real execution observation | `StepDiagnostics.as_dict()` |
 
 The final two are diagnostic dictionaries, not reloadable planning artifacts.
-The [reusable artifact API](../api/artifacts.md) shows the public constructors and
-planning calls.
+The [engine reference](../../reference/engine/index.rst) documents the public
+constructors and planning calls.

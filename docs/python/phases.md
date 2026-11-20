@@ -6,7 +6,7 @@ for callers who need separate phases or their own model/data integration.
 
 ShadowSpill separates preparing a workload from running it. The phase functions
 are available from `shadowspill`; `Executor` runs the selected Plan. The
-[custom integration guide](advanced/custom-definitions.md) shows how to define
+[extension guide](advanced/writing-extensions.md) shows how to define
 models, objectives and optimizers.
 
 | Phase | Public API | Result | Needs GPU? |
@@ -72,7 +72,7 @@ executor.close()
 
 `fill_tensor` fills bounded CPU views. Each item yielded by `training_batches()`
 supplies one update's inputs, matching the Plan's fixed calls. The caller owns
-its iteration count, schedule and data cursor. The [Executor reference](api/executor.md)
+its iteration count, schedule and data cursor. The [Executor reference](../reference/engine/execution.rst)
 explains state loading, bounded checkpoints and sharing training/evaluation state.
 Its default pinned-host pool uses the required spill peak plus 5%, capped by the
 planned budget.
@@ -81,13 +81,13 @@ planned budget.
 
 | Change | Control | Work needed |
 | --- | --- | --- |
-| Model/objective/optimizer, precision or input shapes | [Build arguments](api/build.md) | Build and profile affected implementations, then plan |
-| Microbatch count using already saved forms | `instantiate_examples` in [planning](api/planning.md) | Instantiate on CPU, reuse compatible profiles, then plan and admit |
-| Checkpoint boundaries, split axes/chunk sizes or retained intermediates | `partition`, `chunking`, `graph_pair_policy` in [frontend policies](api/frontend.md) | Build/profile each candidate, then compare Plans |
-| Timing windows, sample caps or external-memory headroom | [Profiling options](api/profiling.md) | Measure with the requested settings, apply profiles, then plan |
-| Transfer backend, collective layout or communication costs | [Communication measurement](api/communication.md) | Obtain compatible measurements, then plan; changed ownership can also require build |
-| Device/spill budget, microbatch traversal, save-tail choices or search effort | [Planning options](api/planning.md) | Replan existing compatible profiles on CPU |
-| Input values, captured learning-rate controls, logging or checkpoints | [Executor controls](api/executor.md) | Execute the chosen Plan |
+| Model/objective/optimizer, precision or input shapes | [Build arguments](../reference/engine/build.rst) | Build and profile affected implementations, then plan |
+| Microbatch count using already saved forms | `instantiate_examples` in [planning](../reference/engine/planning.rst) | Instantiate on CPU, reuse compatible profiles, then plan and admit |
+| Checkpoint boundaries, split axes/chunk sizes or retained intermediates | `partition`, `chunking`, `graph_pair_policy` in [frontend policies](../reference/engine/frontend.rst) | Build/profile each candidate, then compare Plans |
+| Timing windows, sample caps or external-memory headroom | [Profiling options](../reference/engine/profiling.rst) | Measure with the requested settings, apply profiles, then plan |
+| Transfer backend, collective layout or communication costs | [Communication measurement](../reference/engine/profiling.rst) | Obtain compatible measurements, then plan; changed ownership can also require build |
+| Device/spill budget, microbatch traversal, save-tail choices or search effort | [Planning options](../reference/engine/planning.rst) | Replan existing compatible profiles on CPU |
+| Input values, captured learning-rate controls, logging or checkpoints | [Executor controls](../reference/engine/execution.rst) | Execute the chosen Plan |
 
 Changing a retention policy changes **what each graph saves**. Planning separately
 chooses **which graph runs** and **where saved values live**. Selecting a save
@@ -98,11 +98,12 @@ create or profile candidates. Public-client [preparation settings](advanced/serv
 expose microbatch, chunk and retention candidates. The generic phase APIs accept supported custom
 models directly.
 
-For multi-worker runs, follow [distributed setup](api/distributed.md), including
-communication and overlap calibration. Check `plan.simulation_only_reasons`
-before execution: estimated workspace alone cannot establish a safe physical
-layout. Worker startup also checks dependencies and available memory.
+For multi-worker runs, declare [parallelism](../reference/engine/parallelism.rst)
+at build, and measure communication and overlap on every worker. Check
+`plan.simulation_only_reasons` before execution: estimated workspace alone
+cannot establish a safe physical layout. Worker startup also checks
+dependencies and available memory.
 
-[Artifact reuse](advanced/artifact-store.md), [pool calibration](api/pool-memory.md),
+[Artifact reuse](advanced/artifact-store.md), [pool calibration](../reference/engine/profiling.rst),
 [Plan reports](advanced/plan-report.md), [runtime diagnostics](advanced/step-diagnostics.md) and
 [failure handling](advanced/failures.md) cover inspection and troubleshooting.

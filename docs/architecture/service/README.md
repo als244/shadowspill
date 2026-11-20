@@ -30,7 +30,7 @@ flowchart TB
 
 The controller needs no GPU. An embedded local node daemon provides the same ownership
 and admission rules for a local deployment. Independent node daemons use the remote
-protocol. Model definitions, objectives, packing and optimizer semantics stay in
+protocol. Installed models and objectives, packing and optimizer semantics stay in
 their existing owners; a node daemon has no second training state machine.
 
 ## Discovery begins at the node

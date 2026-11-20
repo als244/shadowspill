@@ -4,7 +4,7 @@ Automatic partitioning follows repeated module structure. Use a custom
 `PartitionPolicy` when the application has a better semantic boundary or must
 control stage granularity explicitly. The [architecture contract](../architecture/partitioning.md)
 defines stage occurrences, derived object contracts and scheduled tasks; the
-[API reference](../python/api/frontend.md#partitionpolicy) documents the argument.
+[API reference](../reference/engine/frontend.rst) documents the argument.
 
 This policy assigns a new stage after a fixed number of executable FX nodes:
 
@@ -110,7 +110,7 @@ build_options = {
 
 Here `sequence_operator_targets` names the application's sequence operations,
 `checkpoint_policy` implements `PartitionPolicy`, and `axis_policy` implements
-[`ChunkPolicy`](../python/api/frontend.md#axis-chunking-policies). Its
+[`ChunkPolicy`](../reference/engine/frontend.rst). Its
 `configure_stage` callback receives each explicit forward or backward region.
 Return `None` for an intact sequence operation, or `AxisChunks` with the region's
 input-axis mappings and chunk size for independent work. Projection and expert
@@ -123,7 +123,7 @@ inner regions through `AxisChunks.regions`; see
 [bounded composition](../architecture/axis-chunking.md). Optional execution
 lifetime rules control movement and explicitly permitted local replay.
 
-[`GraphPairPolicy`](../python/api/frontend.md#graph-pair-policies) separately
+[`GraphPairPolicy`](../reference/engine/frontend.rst) separately
 controls the SAVE and RECOMPUTE cuts. Retention does not pin a tensor to a device:
 the planner still chooses variants, placement and transfers. The service's
 [preparation settings](../python/advanced/service-client.md) let callers search

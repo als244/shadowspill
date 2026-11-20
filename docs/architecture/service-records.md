@@ -28,7 +28,7 @@ waits for workers and their resources to retire.
 
 ## Creation and worker ownership
 
-`Server` owns the allocation, installed definitions, storage and listener.
+`Server` owns the allocation, installed components, storage and listener.
 Construction does not start workers. Starting the service discovers its assigned
 resources and recovers records. The allocation adapter accepts a local machine
 or a single-node Slurm step; it does not request a scheduler allocation.

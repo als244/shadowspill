@@ -37,7 +37,7 @@ implementations, shapes, and compatibility requirements remain fixed.
 keeps each successful Plan plus a winner for each budget. Callers can instead
 write their own loop over `plan_program`. The convenience sweep uses default
 traversal; use an explicit loop to compare orderings. See
-[planning and search options](../python/api/planning.md).
+[planning and search options](../reference/engine/planning.rst).
 
 ```python
 from shadowspill import sweep_programs
@@ -63,7 +63,7 @@ case with diagnostics.
 
 A separate worker loads a selected Plan and supplies its model tensors and
 rank-local inputs. It does not repeat build, measurement, or search. See the
-[Executor reference](../python/api/executor.md) for initialization and execution.
+[Executor reference](../reference/engine/execution.rst) for initialization and execution.
 The Plan archive includes selected task code, schedule, memory layout, logical
 groups and input contracts. Weights and compatible provider libraries remain
 external. Compiler caches are optional and are not part of the artifact store.

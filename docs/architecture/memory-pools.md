@@ -47,7 +47,7 @@ load or link those libraries; the same lookup reaches all four.
 | SSD | a preallocated, unlinked direct-I/O file and a non-dereferenceable address token | closes the file and releases the token and bounded state-I/O scratch |
 
 SSD setup, staging limits and lifecycle are described in the
-[C extension guide](../c/ssd.md) and [Python API](../python/api/ssd.md).
+[C extension guide](../c/ssd.md) and [Python reference](../reference/engine/execution.rst).
 
 Frees and unregistrations carry the byte count, so the backend keeps no size
 table.

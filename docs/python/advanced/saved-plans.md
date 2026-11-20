@@ -63,8 +63,7 @@ The service uses physical GPU 3 as its one visible device. From the laptop:
 ```python
 import json
 from pathlib import Path
-from shadowspill_client import SSH, ServiceClient
-from shadowspill_client.protocol.training import ResolvedTraining
+from shadowspill_client import SSH, ResolvedTraining, ServiceClient
 
 service = ServiceClient(ssh=SSH("target-host", 8000))
 config = ResolvedTraining.from_dict(json.loads(Path("training-config.json").read_text()))
@@ -105,7 +104,7 @@ devices; the client still submits one global batch. No client process per rank,
 `torchrun`, or manual tensor redistribution is needed.
 
 Select only devices assigned to you. A compatible target needs the captured GPU
-architecture/toolchain, installed definition sources, enough memory and the saved
+architecture/toolchain, installed component sources, enough memory and the saved
 logical parallelism. The server checks compatibility before execution; changing
 physical placement does not change the saved logical world size. Predictions
 retain their original measurements, so compare a traced step on the new host

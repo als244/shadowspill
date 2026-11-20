@@ -64,7 +64,7 @@ tensors retain their geometry without requiring a payload callback.
 With supported distributed storage, workers receive only their declared shards.
 Offsets remain relative to the original storage; the runtime initializes internal
 padding. Loading a shard does not require allocating the complete tensor. See
-[distributed execution](../python/api/distributed.md) for supported layouts.
+[parallelism reference](../reference/engine/parallelism.rst) for supported layouts.
 
 `chunk_bytes` bounds the supplied slice, except that one element is indivisible.
 The application must also bound its scratch. A file-backed loader can read only

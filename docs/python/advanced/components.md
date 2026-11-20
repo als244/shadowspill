@@ -1,34 +1,37 @@
-# Model, objective and optimizer hook reference
+# Component hooks
 
-Start with the [step-by-step extension guide](custom-definitions.md) for a complete
+Start with the [step-by-step extension guide](writing-extensions.md) for a complete
 package you can install and train. This page describes the detailed contracts.
 
-Register custom definitions through `shadowspill.training.definitions`.
-Install the engine's `training` extra on the server to use these hooks. Portable
-input and control schemas come from `shadowspill_client.protocol`. Start with
+A component is an installed, named and versioned item of the catalog: a model,
+objective, optimizer, build policy, preparation preset or pretrained-weights
+resolver. An extension package adds components through
+`shadowspill.training.components`. Install the engine's `training` extra on the
+server to use these hooks. The records an extension declares, such as input and
+control schemas, come from `shadowspill_client.extensions`. Start with
 [the catalog](../catalog.md) if you are selecting built-ins or configuring LoRA
 and trainable parameters.
 
-| Extension | What you implement |
+| Component | What you implement |
 | --- | --- |
-| `ModelDefinition` | A configuration type, model factory, input schema and weight initializer; optional packing, precision and LoRA hooks. |
-| `ObjectiveDefinition` | A loss function, its input/control/output declarations and padding semantics. |
-| `OptimizerDefinition` | An optimizer factory and the scalar controls its captured update accepts. |
+| `ModelComponent` | A configuration type, model factory, input schema and weight initializer; optional packing, precision and LoRA hooks. |
+| `ObjectiveComponent` | A loss function, its input/control/output declarations and padding semantics. |
+| `OptimizerComponent` | An optimizer factory and the scalar controls its captured update accepts. |
 
 All three live in your installed server package. Register them in that package's
 `register(registry)` entry point, enable the package in the server configuration,
-then select their names from the client. The engine does not need changes, and
+then select them by name from the client. The engine does not need changes, and
 the client does not import your implementation.
 
-The [external classifier example](../../../packages/engine/tests/engine_tests/fixtures/external_definition.py)
+The [external classifier example](../../../packages/engine/tests/engine_tests/fixtures/external_component.py)
 contains a complete model factory, masked weighted objective, input schemas,
 bounded random initializer and registration. Use its structure with your own
-model and loss. The [optimizer example below](#optimizer-definitions) shows the
+model and loss. The [optimizer example below](#optimizer-components) shows the
 corresponding factory and registration for an update rule.
 
 ## Registration and client selection
 
-Definition authors assign an exact identity, such as `my_project/image_classifier@1`,
+Component authors assign an exact identity, such as `my_project/image_classifier@1`,
 and source provenance. Callers normally select the unique short name:
 
 ```python
@@ -44,13 +47,13 @@ Resolution pins exact IDs and source versions in saved configuration, Plans and
 checkpoints. If two installed packages or versions share a short name, setup
 rejects it and lists the exact IDs you can select instead. It never chooses a
 provider or a newer version implicitly. This applies equally to built-ins and
-custom definitions, including terms inside `Objective.sum(...)`.
+custom components, including terms inside `Objective.sum(...)`.
 
 Publish a registration hook in your package's `pyproject.toml`:
 
 ```toml
-[project.entry-points."shadowspill.definitions"]
-models = "my_project.definitions:register"
+[project.entry-points."shadowspill.components"]
+models = "my_project.components:register"
 ```
 
 After installing that package on the server, include its distribution name in
@@ -60,7 +63,7 @@ the MLOps AdamW; omit it when your package supplies its own optimizer.
 
 ## Model and objective hooks
 
-A model definition describes an ordinary factory, validated configuration and
+A model component describes an ordinary factory, validated configuration and
 input schema. An optional `capture_context(config)` context manager scopes
 provider precision or dispatch settings around construction and capture in the
 build worker. It receives the resolved `ModelBuild.config` and must restore those
@@ -78,30 +81,30 @@ For a forward-only output set, a bound computation can return a mapping of its
 declared tensor outputs and scalar metrics without computing a training loss.
 
 Register both with a `Registry` using `add_model` and `add_objective`. Each
-registration supplies a `DefinitionSource`: distribution name, version and
-SHA-256 digest of the definition's source closure, including model and objective
+registration supplies a `ComponentSource`: distribution name, version and
+SHA-256 digest of the component's source closure, including model and objective
 dependencies. Registered IDs contain an explicit version. Re-registering an ID
 is an error. Lookups do not
 import Python modules named by requests. Supplying an expected source rejects
-changed definitions, including changes in editable installations.
+changed components, including changes in editable installations.
 
 `load_registry(["my-project-workloads"])` loads only the configured distributions,
 calls each `register(registry)` hook in entry-point name order, and returns the
 ordinary `Registry`. Hooks register in place and return `None`; they still supply
 the source closures described above. Missing packages, duplicate package/entry
 names and registration failures are errors. These package names belong to trusted
-server configuration; model and compute requests select installed definitions.
+server configuration; model and compute requests select installed components.
 The supplied workloads wheel publishes the same entry-point group. This is the
 common loader for controller and fresh-phase startup.
 
-## Supplied definitions
+## Supplied components
 
-Every built-in family registers through the same `ModelDefinition` hooks. See
+Every built-in family registers through the same `ModelComponent` hooks. See
 [the catalog](../catalog.md) for selection and
 [workload organization](../../development/workloads.md) for the source pattern.
-Importing a definition's description requires no Torch import; construction and
+Importing a component's description requires no Torch import; construction and
 bounded initialization run in workers. The external classifier and the supplied
-[regression definition](../../../packages/workloads/src/shadowspill_workloads/models/regression/training.py)
+[regression model](../../../packages/workloads/src/shadowspill_workloads/models/regression/training.py)
 use these same interfaces for non-text inputs.
 
 The decoder families share setup and input adapters. Use the
@@ -126,7 +129,7 @@ same capacity share it and retain common parameter state. Family pages describe
 checkpoint storage and architecture-specific precision. They introduce no
 separate service or training loop.
 
-Definitions pin their provider Python sources and installed extension binaries.
+Components pin their provider Python sources and installed extension binaries.
 Build selects supported kernels and records the preparation needed to restore
 those choices. Workers restore them for execution. Each controller or worker
 treats its installed provider snapshot as immutable for its lifetime.
@@ -226,18 +229,18 @@ layout, parallelism and the complete requested layout family, so a shared provid
 buffer can cover all shapes. The same model factory receives the normalized
 settings during capture. Resource creation, binary capture, restoration and cleanup
 remain in the existing phase engine. Description never opens a provider or imports
-a factory named by a compute request; definitions own those source-pinned choices.
+a factory named by a compute request; components own those source-pinned choices.
 Templates save and recheck the resolved construction and actual provider inventory.
 
 `ModelBuild(grad_dtype="float32", ...)` selects the existing engine's captured
 gradient storage and accumulation precision. This differs from parameter or
-operator-internal computation precision. `OptimizerDefinition.master_dtype` is
+operator-internal computation precision. `OptimizerComponent.master_dtype` is
 an optional floating dtype name or CPU function of the resolved optimizer config;
 it enables the existing master-parameter capture. Both choices enter capture
 identity. The ordinary builder retains one compute/optimizer/gradient inventory;
 backward and optimizer-only Plans derive from the same step capture.
 
-`ModelDefinition.capture_context(config)` optionally scopes provider precision or
+`ModelComponent.capture_context(config)` optionally scopes provider precision or
 dispatch during capture. An installed `gradient_destination_rules(config)` factory
 may supply the existing `GradientDestinationRule` contracts for backward operators
 that write into accumulated gradients. Both hooks receive the normalized build
@@ -247,8 +250,8 @@ and saved workers execute the resulting operations without calling the factory.
 Opaque replacements still require their exact allocation contracts. These are
 model integration hooks; runtime clients keep submitting settings and inputs.
 
-An installed `ModelReferenceDefinition` resolves pretrained metadata on CPU and
-pins a model definition and immutable weight revision. It may fill missing fields
+An installed `ModelReferenceComponent` resolves pretrained metadata on CPU and
+pins a model and immutable weight revision. It may fill missing fields
 inside nested configuration or precision mappings. Every explicit value remains
 fixed, including nulls and complete sequences; changed or removed values are
 rejected. The same resolved settings are rechecked when creating a training run.
@@ -347,7 +350,7 @@ Pretrained loaders require a pinned revision. Artifact initialization uses an
 opaque, owner-granted ID resolved by `InitializationRuntime.artifact`; a request
 never supplies a server filesystem path. Runtime cache paths and loader callbacks
 are worker-local and never enter saved Plans or public wire records. Loader code
-and its dependencies belong to the model definition's source closure. Worker
+and its dependencies belong to the model component's source closure. Worker
 checkpoints record that source, the resolved settings and exact weight reference
 when omitting unchanged frozen parameters. The loader must reproduce those weights
 independently of chunk order and rank ownership. On partial restore it receives
@@ -357,7 +360,7 @@ scratch before opening it. Full checkpoints require no base loader.
 
 Tensor wrappers may describe stored component coordinates through
 `ModelBuild(component_layouts=[ComponentLayout(...)])`, importing `ComponentLayout`
-from `shadowspill.training.definitions`. A declaration identifies the exact
+from `shadowspill.training.components`. A declaration identifies the exact
 parameter, its structural `component_path`, the parameter axes used by that
 component, and a versioned `encoding` identity. For example,
 `ComponentLayout("layer.weight", ("payload",), (0, 1), "custom/bf16@1")` declares
@@ -378,7 +381,7 @@ require a separate conversion; matching shapes alone never authorize a component
 mapping. Ordinary tensors need no declaration.
 
 Opaque kernels used by prepared operations need an all-value allocation contract.
-`ModelBuild`, `ObjectiveDefinition` and `OptimizerDefinition` accept
+`ModelBuild`, `ObjectiveComponent` and `OptimizerComponent` accept
 `allocation_invariants`, mapping exact compiled call names to versioned contract
 IDs, for example `{"torch.ops.my_provider.scale.default": "my_provider/scale@1"}`.
 The installed author guarantees identical allocation geometry, output aliases and
@@ -496,13 +499,13 @@ ordering and scalar reductions; unknown fields and capabilities are errors.
 
 The internal operation binder selects only the requested input/control closure,
 checks returned tensor shapes/dtypes and scalar metrics, and applies declared
-logical loss ownership without averaging. It saves definition and layout identity
+logical loss ownership without averaging. It saves component and layout identity
 with each Program. Capture admission verifies actual coefficient reads and rejects
 input mutations, undeclared model-buffer mutations and any model-state mutation
 in evaluation. The existing builders produce optimizer, backward and output-only
 paths; optimizer builds enable the captured final gradient scale.
 
-Installed `PreparationDefinition` functions provide CPU defaults and physical
+Installed `PreparationComponent` functions provide CPU defaults and physical
 buffer geometry for each logical input partition. Register them with the same
 source-pinned registry; a model can name its default with `preparation`. The
 engine supplies `shadowspill/stacked@1` for independent fixed stacked inputs.
@@ -526,7 +529,7 @@ portable setup and rechecks saved configurations on CPU. `prepare_layouts` in
 `shadowspill.training.preparation.configuration.layouts` binds each operation,
 physical buffer and logical worker to its
 input adapter and output geometry, then checks the complete host-staging bound.
-Known staging-limit failures retain candidate reasons; unexpected definition
+Known staging-limit failures retain candidate reasons; unexpected component
 errors propagate. Every requested operation and batch option must retain at
 least one admitted layout; a constructive coverage certificate is recorded
 wherever one can be built. Identical adapter layouts share their resolved
@@ -559,13 +562,13 @@ recoverable candidate failures only while all requested capabilities remain cove
 A completed job reloads and strictly checks its bundle without starting phases.
 It never initializes weights or starts a training loop.
 
-Phase policies use `PolicyDefinition(id, kind, config, create)`. The CPU resolver
+Phase policies use `PolicyComponent(id, kind, config, create)`. The CPU resolver
 validates and fills `Policy` configuration through the registered factory's
 configuration schema, records its source, and rejects unknown policies or a
 wrong phase kind. Reusing the resolved settings rechecks both source and exact
 defaults. Only the build boundary calls `create`, which returns the ordinary
 partition, chunking or graph-pair policy consumed by the existing phase engine.
-Request strings never name modules to import. The built-in partition definition
+Request strings never name modules to import. The built-in partition policy
 supports the engine's `auto` and `whole` choices.
 
 The workloads package registers `shadowspill/text_chunks@1` and
@@ -601,9 +604,9 @@ Factories remain in build workers; setup inspection loads only descriptions and
 source identities. Saved Plans restore the selected execution without recreating
 these policies on each training call.
 
-## Optimizer definitions
+## Optimizer components
 
-`OptimizerDefinition` registers a factory for an ordinary capturable optimizer.
+`OptimizerComponent` registers a factory for an ordinary capturable optimizer.
 The factory receives `(model, config, controls)`, where the build worker provides
 tensor-valued runtime controls. Each advertised control explicitly names its
 captured scalar bindings. After existing `capture_optimizer` runs,
@@ -616,8 +619,8 @@ For example, this factory wraps PyTorch SGD. Put it in your server package and
 call `register_optimizer` from its registration entry point:
 
 ```python
-from shadowspill.training.definitions import OptimizerDefinition
-from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
+from shadowspill.training.components import OptimizerComponent
+from shadowspill_client.extensions import ControlSchema, ScalarControl
 
 
 def create_sgd(model, config, controls):
@@ -632,7 +635,7 @@ def create_sgd(model, config, controls):
 
 def register_optimizer(registry, source):
     registry.add_optimizer(
-        OptimizerDefinition(
+        OptimizerComponent(
             "my_project/sgd@1",
             create_sgd,
             ControlSchema({"lr": ScalarControl(0.01, minimum=0)}),
@@ -642,7 +645,7 @@ def register_optimizer(registry, source):
     )
 ```
 
-`source` is the package's `DefinitionSource`, covering this factory and its
+`source` is the package's `ComponentSource`, covering this factory and its
 implementation dependencies. The default LR is used for preparation and omitted
 controls; callers normally supply `optim={"lr": ...}` to each update. Your
 optimizer's update must be capturable by the existing engine. Custom optimizer
@@ -657,7 +660,7 @@ supply their own optimizers without loading the catalog.
 Registration hashes the installed provider source without importing Torch or
 constructing an optimizer. Construction calls the existing `mlops.optim.AdamW`.
 
-This definition supports one parameter group, selecting only trainable
+This optimizer supports one parameter group, selecting only trainable
 parameters. Runtime controls are `lr`, `beta1`, `beta2`, `eps` and `weight_decay`;
 omitted values use the immutable setup defaults. Structural `config` supports
 `maximize`. `precision` accepts `gradient_dtype` and `opt_state_dtype` (`parameter`,
@@ -678,7 +681,7 @@ dtype adds FP32 copies of BF16 parameters. Both rounding options can be set to
 options fail during description. For FP32 optimizer moments, specify
 `precision={"opt_state_dtype": "float32"}`.
 
-The supplied `regression` definition accepts explicit
+The supplied `regression` model accepts explicit
 `Weights.random(seed=...)` initialization and compatible checkpoints. Seed zero
 reproduces the regression benchmark's initialization, independently of
 worker ownership and loader chunk sizes. Its `predictions` output needs only

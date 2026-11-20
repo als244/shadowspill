@@ -49,10 +49,10 @@ its forward function. Unsupported combinations fail preparation.
 
 ## Defaults for a custom model
 
-Add `parameter_dtypes` to its `ModelDefinition` registration, for example:
+Add `parameter_dtypes` to its `ModelComponent` registration, for example:
 
 ```python
-ModelDefinition(
+ModelComponent(
     "my_project/model@1",
     Config,
     create,
@@ -64,8 +64,8 @@ ModelDefinition(
 No custom base class or `configure` hook is needed for this option. The engine
 handles it before passing other precision options to an optional hook. Default
 patterns may describe layers absent from a particular architecture configuration.
-Include this declaration in the definition's source digest, as described in the
-[custom definition guide](custom-definitions.md).
+Include this declaration in the component's source digest, as described in the
+[extension guide](writing-extensions.md).
 
 For direct PyTorch construction outside the service, use
 `shadowspill.pytorch.precision.apply_parameter_dtypes(model, defaults=..., overrides=...)`

@@ -7,7 +7,7 @@ the frontend's built-in contracts. Opaque operators need explicit additional
 contracts for transformations whose semantics the frontend cannot inspect.
 
 This guide separates basic integration from optional optimizations. See the
-[frontend reference](../api/frontend.md#axis-chunking-policies) for exact chunk-policy
+[frontend reference](../../reference/engine/frontend.rst) for exact chunk-policy
 types and the [axis-chunking architecture](../../architecture/axis-chunking.md) for
 transformation and storage details.
 
@@ -157,7 +157,7 @@ Use the graph pair's retention policies to regenerate such scratch inside each
 chunk while retaining any required ordered routing choices. This applies to
 SAVE as well as RECOMPUTE. Chunking does not shrink the full saved cut or change
 checkpoint boundaries. See [routing retention](../../architecture/routing-retention.md)
-and [graph-pair policies](../api/frontend.md#graph-pair-policies).
+and [graph-pair policies](../../reference/engine/frontend.rst).
 
 An additive output declaration permits summing contributions; it does not prove
 the provider can write directly into an existing gradient. Ordinary accumulation
@@ -169,7 +169,7 @@ mutation/alias behavior of the replacement overload.
 
 Likewise, an axis rule does not authorize scheduling an opaque operation earlier,
 replaying it an extra time, or compacting its inputs. Those permissions belong to
-the separate [execution-lifetime controls](../api/frontend.md#execution-lifetimes).
+the separate [execution-lifetime controls](../../reference/engine/frontend.rst).
 
 ## How the declarations enter build, profile, plan and execute
 

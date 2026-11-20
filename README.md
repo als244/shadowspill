@@ -1,7 +1,6 @@
 # ShadowSpill
 
-Train PyTorch models within a memory budget. ShadowSpill plans which tensors to
-keep on the GPU, spill to other storage, and recompute during backward.
+High throughput training under tight memory budgets.
 
 A lightweight Python client prepares training on a GPU server and submits batches.
 Inspect the plan's estimated step time, execution lanes and memory usage in an
@@ -46,7 +45,7 @@ from shadowspill.server import Server
 Server(service_root="runs/service", model_root="/path/to/models").serve()
 ```
 
-The server uses its visible GPUs and installed built-in definitions. `service_root`
+The server uses its visible GPUs and installed built-in components. `service_root`
 holds sessions, logs, outputs and training checkpoints. The optional `model_root`
 points to existing model directories such as `Qwen3.5-9B/`, read without modification.
 Datasets stay on the client, which submits batches.

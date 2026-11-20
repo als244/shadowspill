@@ -16,7 +16,7 @@ shadowspill/
 ├── packages/workloads/    optional models, objectives and registered setup hooks
 ├── examples/              public-client demos and training applications
 │   ├── demos/             short runnable clients with explicit training settings
-│   ├── extensions/        standalone custom-definition package
+│   ├── extensions/        standalone extension package
 │   └── training/          shared corpus readers and CLI application loops
 ├── tools/                 trace analysis, source checks and corpus applications
 ├── tests/                 repository and cross-package checks
@@ -40,14 +40,14 @@ The throughput gate is the package beside it,
 runs: the manifest and its budgets, the readings taken off the runtime, the
 phases (calibrate, plan, warm, measure), and the verdict each gate reaches.
 
-`shadowspill_workloads` supplies optional architectures, registered definitions,
+`shadowspill_workloads` supplies optional architectures, registered components,
 input/objective implementations and reusable numerical policies. Qualification budgets and
 acceptance rules live under `qualification/`. Build accepts ordinary user models
 and call examples. The public [training client](../python/client.md) submits global
 batches to the installed service, which owns preparation and execution. Generic
 saved-phase preparation lives in `shadowspill.training.preparation`, and bounded
 initialization/copy helpers live in `shadowspill.checkpoint`. The catalog installs
-independently from `packages/workloads`; custom definitions need no catalog.
+independently from `packages/workloads`; custom components need no catalog.
 
 `shadowspill_client` supplies portable settings and Datum records with NumPy as
 its only required dependency. Install `./packages/client` independently of the
@@ -173,7 +173,7 @@ packages/engine/src/shadowspill/
 │   │   └── layout/        certified offsets and completion dependencies
 │   └── timing.py          an instant recorded on a stream, and the time between two
 ├── training/              service preparation, sessions and worker commands
-│   ├── definitions/       public model/objective functions and CPU schema resolution
+│   ├── components/        public model/objective functions and CPU schema resolution
 │   ├── inputs/            owned global input validation and packing
 │   ├── session/           confirmed operation boundaries and participation
 │   ├── worker/            bounded commands and fixed prepared worker bindings

@@ -60,7 +60,7 @@ outside this hierarchy.
 The low-level `shadowspill.runtime.admission_replay` helper raises
 `PhysicalAdmissionError`, a `ValueError` with the failed operation's capacity,
 free-range and live-lease evidence. It directly probes the production memory-pool
-policy; see [the neutral API page](../api/neutral.md#physical-admission).
+policy; see [`run_admission_replay`](../../reference/internals/runtime.rst).
 
 `InputGuardError` is deliberately outside the hierarchy — it is a `ValueError`
 raised at a call, not during planning. So is the `require` store's refusal: a
@@ -90,7 +90,7 @@ afterwards. Pool bounds and device allocation failures are enforced either way.
 Distributed workers whose Programs disagree on what they exchange, or whose
 Plans would issue their collectives in different orders, are refused with a
 `ValueError` before any collective runs; see
-[fresh execution workers](../api/distributed.md#fresh-execution-workers).
+[`Executor`](../../reference/engine/execution.rst).
 
 `PlanInfeasibleError` is a negative feasibility result. `PlanSearchExhaustedError`
 means a bounded search did not establish a result. Neither returns a partial
@@ -109,7 +109,7 @@ The record is organized into five groups:
 | Group | Representative fields |
 |---|---|
 | Failure identity | `operation`, `status`, `status_name`, `device_ordinal` |
-| Why it refused | `reason`, `reason_name`, `refused_action`, `object_state` |
+| Why it refused | `reason`, `reason_name` |
 | Memory state | `pool_id`, `requested_bytes`, `free_bytes`, `largest_free_range_bytes`, `object_id`, `allocation_id` |
 | Task identity | `task_id`, the runtime's id for the task the failure happened in |
 | Allocation contract | task live bytes and limits, maximum-request limits, contract operation index, and expected/actual operation, ordinal, size, charge, and alignment |
@@ -212,5 +212,5 @@ them and retry close. Completed outputs remain valid until explicitly released.
 
 The allocator shim is process-global. After runtime teardown it stays closed,
 so further GPU work belongs in another fresh worker. See the
-[execution reference](../api/executor.md), [allocator guide](allocator.md) and
+[execution reference](../../reference/engine/execution.rst), [allocator guide](allocator.md) and
 [memory runtime](../../architecture/memory-runtime.md#failure-and-teardown).

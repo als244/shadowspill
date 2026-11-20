@@ -28,7 +28,8 @@ guides. Entry pages should help readers choose a task, not enumerate every
 implementation detail. Keep the supported training guide in
 `docs/python/client.md`, the custom-model and phase guides under
 `docs/python/`, and specialized guides under `docs/python/advanced/`.
-Put signatures and constraints under `docs/python/api/`, design invariants under
+Put signatures and constraints in the public docstrings, from which
+`docs/reference/` generates the API reference; design invariants go under
 `docs/architecture/`, and library-specific adapters under `docs/integrations/`.
 Keep the native API in `docs/c/` and complete examples under `docs/examples/`.
 

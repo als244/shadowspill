@@ -74,7 +74,7 @@ For evaluation during training, save a forward Plan with compatible parameter
 names/layouts and pass it to `Executor(training_plan, plans={"evaluation": evaluation_plan})`.
 Call `executor.run(plan="evaluation", ...)` to evaluate current model tensors
 using the shared execution workspace; see
-[shared Plans](../python/api/executor.md#sharing-state-across-plans).
+[shared Plans](../reference/engine/execution.rst).
 `run(..., profiler_annotations=True)` optionally adds semantic task/transfer
 ranges for an external profiler. See the
 [preparation settings](../../docs/python/advanced/service-client.md).

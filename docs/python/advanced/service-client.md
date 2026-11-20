@@ -25,7 +25,7 @@ Operator setup and storage are in [Service deployment](deployment.md).
 
 Connect to a running endpoint with a client credential in `SHADOWSPILL_TOKEN`.
 Client and service exchange protocol version 2 and reject any other version.
-For listener setup, storage, definition packages and local checkpoint lookup, see
+For listener setup, storage, component packages and local checkpoint lookup, see
 [Service deployment](deployment.md). Those operator settings are separate from
 the training configuration below.
 
@@ -66,7 +66,7 @@ server worker execution; client submission/completion timestamps also reflect
 upload, queueing and result delivery.
 
 The setup keywords are documented in the [client guide](../client.md#create-a-training-run).
-They describe the model, objective, optimizer, global batch limits and memory budget. Definitions must already
+They describe the model, objective, optimizer, global batch limits and memory budget. Components must already
 be installed on the server. Omitted initialization remains omitted; a preview
 does not choose fresh weights. `config=` rechecks an exact earlier configuration
 and cannot be mixed with setup keywords. The preview reports physical geometry
@@ -207,7 +207,7 @@ chunking never changes sequence attention boundaries. See the complete
 preset defaults to 8× `ceil(microbatch_tokens / max_sequence_length)` sequences
 per microbatch, capped by the global limit. An explicit
 `max_sequences_per_microbatch=128` overrides that choice in `build_candidates`.
-For generic definitions the corresponding field is `BuildCase.max_datums`.
+For other models the corresponding field is `BuildCase.max_datums`.
 Padding gets separate entries. The supplied text adapters use
 `BatchConfig.limits["max_sequence_length"]` as the kernel length bound and keep
 actual sequence lengths as input tensors. Call `validate_batch()` to check actual
@@ -319,7 +319,7 @@ only supplies inputs, per-call controls and consumes results.
 `optim` and `loss_params` override installed optimizer/objective defaults for this
 call. They do not rewrite the saved configuration. An objective may expose
 multiple named terms through `Objective.sum(...)`; its per-term controls retain
-their names. See [definitions and objective composition](definitions.md).
+their names. See [component hooks and objective composition](components.md).
 
 Normalization is explicit. For an additive objective that sums one loss per
 record, either call `step(batch, grad_scale=1 / len(batch))`, or submit all pieces
@@ -363,6 +363,10 @@ poll behind it.
 are handles in `result.outputs`; their `.download(path).result()` is explicit.
 The durable outcome remains in `result.record`. A `TrainingRequestError` preserves
 the server's failure record, including known execution effects and accumulation.
+When its `failure.state_valid` is false, the run's live training state is lost:
+the run then accepts only `close`, and every request submitted afterwards,
+`load_checkpoint` included, fails with `state_unavailable`. Continue in a new run with
+`service.create_training_client(plans=training.plans, checkpoint=checkpoint)`.
 
 `training.plans.summary().result()` reads saved metadata, including the selected
 operation/batch candidates and rank Plans, chunk/policy choices, representative
@@ -397,7 +401,7 @@ by a metadata result.
 without contacting workers. `service.get_metrics(run_id, ...)` provides the same
 inspection after reconnect or service restart, without loading a training client.
 Each record has its request identity, history, completed update count, loss and
-objective metrics. Skipped and failed requests remain visible. If required tensor
+objective metrics. Failed requests remain visible. If required tensor
 publication fails after scalar collection, the terminal failure and metric history
 retain the verified loss and metrics alongside the confirmed execution effect and
 counters. Unavailable scalars stay absent, including a crash before the terminal
@@ -413,17 +417,16 @@ journal positions remain increasing and histories stay distinct. Page limits are
 Inputs and tensor outputs are not downloaded or logged by this query.
 
 `training.metrics.export_jsonl("metrics.jsonl").result()` streams a fixed snapshot
-to a new local file. The first line is a portable `MetricSnapshot` record naming
-the run and journal range; subsequent lines are `MetricRecord` values. Use
-`shadowspill_client.protocol.codec.decode` to read each line. Optional `after`,
+to a new local file. Each line is one `MetricRecord` as an ordinary JSON object,
+keyed by its field names; read a line with `json.loads`. Optional `after`,
 `through` and `limit` have the same meanings as the query. Export keeps one bounded
 page in memory, preserves existing files and removes its incomplete destination
 on failure. Later results do not change the chosen snapshot; another explicit
-export can start after its `through` boundary.
+export can start after the last exported record's `position`.
 
 Record evaluation or reward scalars with
 `training.log_metrics({"eval/reward": reward}, request_id=result.request_id).result()`.
-The request must already have a completed, skipped or failed outcome. The saved
+The request must already have a completed or failed outcome. The saved
 annotation keeps that request's original history and update count, even if the run
 has since restored an earlier checkpoint. Queries and JSONL include these entries
 with `source="caller"`; automatic measurements use `source="engine"`. Caller
@@ -525,7 +528,7 @@ initialization. Optimizer moments, gradient buffers and controls use fresh defau
 RNG streams use the new run's `Execution.seed`, and its update count starts at zero.
 Partial exports retain their exact frozen-base dependency. Complete exports need
 no historical weight source. Derived buffers, such as rotary position tables,
-are recreated from the installed model definition. Custom artifact formats still
+are recreated from the installed model. Custom artifact formats still
 use the installed model's initializer.
 
 For the same computation, reuse the saved Plans and change only initialization:
@@ -554,7 +557,8 @@ and validates every worker's native state layout before releasing any restore.
 An open accumulation must be optimized or discarded first. A confirmed load
 restores the saved update count and starts a new history while request sequences
 continue increasing. `result.metadata` contains the saved caller metadata.
-Validation failure preserves state; failure after worker release invalidates it.
+Validation failure preserves state; failure after worker release invalidates it,
+and the run then accepts only `close`.
 Publication failure reports the confirmed restore count and history without replay.
 
 Directory download verifies each immutable rank file, streams serially and writes
@@ -665,8 +669,7 @@ Configure Nsight at creation with
 The one-based window counts complete optimizer updates. For split training it
 starts at the first contributing `forward_backward` and ends after the selected
 terminal `optim_step`; evaluation between contributions stays inside the window.
-Masked calls do not advance the count. Capture does not restart after a restore
-or interrupted window. Device metrics default to enabled and require support and
+Capture does not restart after a restore or interrupted window. Device metrics default to enabled and require support and
 permission on the assigned GPU; `gpu_metrics_frequency` selects their rate.
 Omitting `nsys` launches ordinary workers without a collector.
 

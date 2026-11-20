@@ -92,7 +92,7 @@ Detailed tracing is opt-in with `runtime_trace=True`; Executor prepares and
 releases its buffers for that invocation. An untraced call uses a completion
 marker but does not collect the detailed task/transfer ledger.
 
-See [timelines](timelines.md), [the timing API](../python/api/timing.md), and
+See [timelines](timelines.md) and
 [step diagnostics](../python/advanced/step-diagnostics.md) for the recorded fields.
 
 ---

@@ -4,8 +4,8 @@ Use `save(path)` and `load(path)` on `Program`, `Profiles`, `ProfiledProgram`,
 `Plan` and `SweepResult` to pass results between phases. Each archive is
 self-contained; a `ProfiledProgram` includes its Program, and a Plan includes
 its selected code and applied profiles. Checkpoint tensors and compatible
-runtime/provider libraries remain external. See the
-[artifact API](../api/artifacts.md#persistence-and-reports).
+runtime/provider libraries remain external. See
+[`Artifact`](../../reference/engine/build.rst).
 
 `write_report(result, path)` writes human-readable tables and timelines into the
 directory `path`.

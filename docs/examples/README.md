@@ -14,7 +14,7 @@ visible and saves predicted and measured HTML reports.
 | Accumulate gradients, evaluate and resume | [Complete workflow](../python/advanced/training-workflow.md) |
 | Train long contexts with computation chunks | [Long-context LoRA](../python/advanced/long-context.md) |
 | Compare hypothetical budgets or transfer speeds locally | [Offline sweeps](../python/advanced/offline-sweeps.md) |
-| Supply a model, objective or optimizer | [Custom definitions](../python/advanced/custom-definitions.md) |
+| Supply a model, objective or optimizer | [Writing extensions](../python/advanced/writing-extensions.md) |
 
 The [catalog](../python/catalog.md) lists built-in models, optimizers and objectives.
 

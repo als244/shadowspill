@@ -17,5 +17,6 @@ ShadowSpill.
    schedules
    checkpoints
    diagnostics
-   definitions
+   extensions
    errors
+   records

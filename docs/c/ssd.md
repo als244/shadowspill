@@ -83,8 +83,8 @@ the configured buffers exceed the cap.
 
 Control counters, framework initialization scratch and compiler/profiling
 workspace are additional. The cap is not a limit on whole-process host memory.
-The [Python API](../python/api/ssd.md) applies additional configuration bounds
-and supplies a complete runtime example.
+The Python [`SSDPool`](../reference/engine/execution.rst) applies additional
+configuration bounds.
 
 ## State access and lifecycle
 

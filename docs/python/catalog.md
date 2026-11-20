@@ -1,7 +1,9 @@
 # Models, optimizers and objectives
 
-Choose an installed definition by name. Built-ins and custom definitions use the
-same `Model`, `Optimizer` and `Objective` settings.
+The catalog is the set of components installed on the server: the models,
+optimizers and objectives you choose by name, such as the model `llama3`.
+Built-ins and the components an extension package adds use the same `Model`,
+`Optimizer` and `Objective` settings.
 
 ## Model architectures
 
@@ -37,7 +39,7 @@ choice: use `Weights.random(seed=...)` to train from scratch, or
 server. The seed alone decides random weights: a model starts from the same
 values whatever its parallelism, its number of workers or which worker owns
 which parameters. Configuration, precision and initialization details are in the
-[definition reference](advanced/definitions.md#supplied-definitions).
+[component reference](advanced/components.md#supplied-components).
 
 ## Optimizers
 
@@ -89,7 +91,7 @@ By default, MoE balancing shares the primary token weights, so `text_batch()`
 normalizes both terms over the global supervised-token count. Advanced callers
 can select an independent `weight_field` in the balancing objective.
 See the [objective recipes](advanced/objectives.md) and
-[objective settings and inputs](advanced/definitions.md#text-objectives).
+[objective settings and inputs](advanced/components.md#text-objectives).
 
 ## LoRA and trainable parameters
 
@@ -119,9 +121,11 @@ selection, so include adapter patterns when you want to train them. Unmatched
 patterns are errors; tied parameter names still refer to one shared parameter.
 Choose this during setup, before preparation and the training loop.
 
-## Custom definitions
+## Extensions
 
-Install your package on the server and register its definitions, then select
-`Model("my_model")`, `Optimizer("my_optimizer")` or `Objective("my_objective")`.
-Your client needs no model or optimizer implementation installed. The
-[Advanced guide](advanced/definitions.md) covers authoring and registering all three.
+An extension package adds components to the catalog. Install it on the server
+and enable it, then select `Model("my_model")`, `Optimizer("my_optimizer")` or
+`Objective("my_objective")`. Your client needs no model or optimizer
+implementation installed. [Writing extensions](advanced/writing-extensions.md)
+builds one step by step, and the [component hooks](advanced/components.md) give
+the full contracts.

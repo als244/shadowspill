@@ -87,7 +87,7 @@ values from their actual producers or the caller. Fixed-shape arithmetic-only
 statistics may use generated profiling representatives after all downstream
 uses pass a restricted ATen check. This does not alter runtime values or dtypes.
 Public builders replay the required compiled producers during finalization and
-[profiling](../python/api/profiling.md#task-measurement); they do not run the whole
+[profiling](../reference/engine/profiling.rst); they do not run the whole
 model during partitioning to obtain them. Compatible later microbatches reuse
 representatives after checking geometry.
 
@@ -133,7 +133,7 @@ workload PartitionPolicy
 ```
 
 Planning chooses among the resulting variants. Comparing different partitions
-requires building different Programs. Workload definitions can supply partition
+requires building different Programs. Workload components can supply partition
 policies through their preparation hooks; the engine does not infer them from
 architecture names.
 

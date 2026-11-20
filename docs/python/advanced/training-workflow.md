@@ -131,5 +131,5 @@ The [CLI applications](../../../examples/training/README.md) add schedules,
 evaluation and checkpoint continuation. Their setup/runtime helpers and corpus
 code sit outside the model implementations.
 For a new architecture, implement the public
-[model and objective definitions](definitions.md); the engine does not
+[model and objective components](components.md); the engine does not
 require the supplied catalog.

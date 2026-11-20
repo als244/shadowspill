@@ -22,7 +22,7 @@ preserve its coordinates through flattening, reshaping and permutation.
 A checkpoint stage can contain whole-axis operations and several chunked
 regions. Execution-region edges live only within one task call, but a cut can
 still materialize a full-axis intermediate. A cut alone does not reduce memory.
-The [policy reference](../python/api/frontend.md#axis-chunking-policies) defines
+The [policy reference](../reference/engine/frontend.rst) defines
 the public controls; [operator integration](../python/advanced/operator-integration.md)
 explains the declarations required from a library.
 
@@ -112,7 +112,7 @@ overhead; only complete-task profiling establishes physical admission.
 Resolved choices, used semantic versions and copy origins enter executable
 identity. Callbacks run during build, including after structural reuse, and are
 absent from saved execution. See the
-[lifetime reference](../python/api/frontend.md#execution-lifetimes) for selectors
+[lifetime reference](../reference/engine/frontend.rst) for selectors
 and refusal conditions.
 
 ## Gradient destinations and precision
@@ -185,7 +185,7 @@ code does not permit reusing a different parent's profile. Changed inner sizes
 require measuring the resulting parent before planning and admission.
 
 A saved Plan needs neither model nor policy callbacks nor compiler caches.
-[`row_chunks` metadata](../python/api/artifacts.md#axis-task-metadata) records the
+`row_chunks` metadata records the
 resolved axis description; `execution_regions` records child bindings and local
 releases. These records do not choose residency. Planning remains framework
 independent, and the parent is its unit of timing and memory admission.

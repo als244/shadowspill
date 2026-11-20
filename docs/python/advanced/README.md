@@ -1,7 +1,7 @@
 # Advanced guides
 
 Start with the [basic training example](../../examples/client-training.md).
-These guides cover optional controls, custom definitions and detailed diagnostics.
+These guides cover optional controls, extensions and detailed diagnostics.
 
 ## Training through the service
 
@@ -13,9 +13,9 @@ Setup, objectives, recovery and the service itself.
 | Pretrain, fine-tune, run GRPO/PPO actor updates or distill responses | [Objectives](objectives.md) |
 | Tune preparation (microbatches, orderings, chunk sizes, retention), reuse Plans or reconnect | [Service client reference](service-client.md) |
 | Inspect hardware and select a compute pool or devices | [Compute resources](compute-resources.md) |
-| Configure the endpoint, storage and definition packages | [Service deployment](deployment.md) |
+| Configure the endpoint, storage and component packages | [Service deployment](deployment.md) |
 | Download Plans and start on other physical GPUs | [Saved Plans](saved-plans.md) |
-| Supply a model, objective, optimizer or build policy | [Step-by-step guide](custom-definitions.md), [hook reference](definitions.md) |
+| Supply a model, objective, optimizer or build policy | [Writing extensions](writing-extensions.md), [component hooks](components.md) |
 | Work directly with build/profile/plan/execute | [Phase guide](../phases.md) |
 
 ## Tune training and search
@@ -27,8 +27,8 @@ Precision, long sequences and the planner's choices.
 | Override model tensor dtypes | [Parameter precision](precision.md) |
 | Train long sequences with explicit computation chunks | [Long-context LoRA](long-context.md) |
 | Compare memory budgets and hypothetical transfer speeds on a laptop | [Offline sweeps](offline-sweeps.md) |
-| Separate checkpoint regions from execution chunks | [Partitioning example](../../examples/custom-partitioning.md), [build policies](../api/frontend.md) |
-| Replan saved profiles across budgets and search choices | [Reusable planning](../../examples/reusable-planning.md), [planning API](../api/planning.md) |
+| Separate checkpoint regions from execution chunks | [Partitioning example](../../examples/custom-partitioning.md), [build policies](../../reference/engine/frontend.rst) |
+| Replan saved profiles across budgets and search choices | [Reusable planning](../../examples/reusable-planning.md), [planning API](../../reference/engine/planning.rst) |
 | Measure an executable saved Plan | [Plan measurement](../../../tools/measure_plan/README.md) |
 
 ## Inspect artifacts and execution

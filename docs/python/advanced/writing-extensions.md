@@ -1,14 +1,16 @@
-# Add a model, objective or optimizer
+# Writing extensions
 
-An extension is an installed server package. It describes the computation;
-the engine handles preparation, packing, workers, updates and checkpoints.
-The client selects your definitions by name, just like built-ins.
+An extension is an installed server package that adds components to the
+catalog: models, objectives, optimizers and the other kinds the
+[component hooks](components.md) describe. The package describes the
+computation; the engine handles preparation, packing, workers, updates and checkpoints. The
+client selects your components by name, just like built-ins.
 
 This guide builds a small regression example with a custom model, weighted loss
 and SGD optimizer. The complete runnable package is in
 [`examples/extensions/custom_training`](../../../examples/extensions/custom_training).
 It uses the public extension API and does not depend on `shadowspill-workloads`.
-Use the [hook reference](definitions.md) for the full contracts.
+Use the [hook reference](components.md) for the full contracts.
 
 ## 1. Create the package
 
@@ -29,13 +31,15 @@ custom_training/
 The example's `pyproject.toml` publishes one registration hook:
 
 ```toml
-[project.entry-points."shadowspill.definitions"]
+[project.entry-points."shadowspill.components"]
 training = "example_training:register"
 ```
 
 Registration and configuration must work without constructing a model or importing
 Torch. Keep framework imports inside the model, objective, initialization and
-optimizer functions that execute in workers.
+optimizer functions that execute in workers. The records a component declares
+about its inputs, controls, outputs and source, such as `InputSchema` and
+`ControlSchema`, come from `shadowspill_client.extensions`.
 
 ## 2. Define the model and its inputs
 
@@ -69,11 +73,11 @@ prediction per example. A different model with that contract can reuse the loss.
 For a language model, expose the token outputs required by the selected objective
 and reuse suitable text input and preparation helpers. Custom packing or operator
 resources are optional hooks; add them when your architecture requires them.
-See [input adapters](definitions.md#input-adapters) and
-[build descriptions](definitions.md#geometry-aware-model-builds).
+See [input adapters](components.md#input-adapters) and
+[build descriptions](components.md#geometry-aware-model-builds).
 
 If some tensors need a different storage dtype, declare defaults with
-`ModelDefinition(parameter_dtypes={"projection.bias": "float32"}, ...)` during
+`ModelComponent(parameter_dtypes={"projection.bias": "float32"}, ...)` during
 registration. Users can override them with `Model.precision["parameter_dtypes"]`.
 The shared setup applies this before initialization and capture; no special
 model base class or casting hook is needed. See [parameter precision](precision.md)
@@ -95,7 +99,7 @@ For a pretrained architecture, provide the mapping from checkpoint names/layouts
 to model parameters and fill the requested slices through the existing bounded
 I/O APIs. Declare any temporary buffers that must be regenerated. Native training
 checkpoint save/restore is handled by the engine; it does not need a second
-model-specific checkpoint loop. See [bounded initialization](definitions.md#bounded-model-initialization).
+model-specific checkpoint loop. See [bounded initialization](components.md#bounded-model-initialization).
 
 ## 4. Define the objective
 
@@ -130,7 +134,7 @@ implicit averaging.
 
 You only need a new objective when the existing ones do not express your loss.
 Compatible objectives can be combined with `Objective.sum(...)`; they need not
-be built into the model. [Objective contracts](definitions.md#model-and-objective-hooks)
+be built into the model. [Objective contracts](components.md#model-and-objective-hooks)
 describe controls, output selection and model-aware binding.
 
 ## 5. Define the optimizer
@@ -157,16 +161,17 @@ on each `step` or `optim_step` call.
 
 Keep the update capturable and select only trainable parameters. An existing
 optimizer such as `adamw` needs no custom factory. See
-[optimizer definitions](definitions.md#optimizer-definitions) for precision and
+[optimizer components](components.md#optimizer-components) for precision and
 control details.
 
 ## 6. Register and install
 
 [`register(registry)`](../../../examples/extensions/custom_training/src/example_training/__init__.py)
-adds the model, objective and optimizer with their corresponding definition
-records. Each has an exact identity, such as `example/linear_regressor@1`.
-Clients use the unique short name, `linear_regressor`; saved Plans retain the
-exact identity and source digest.
+adds the model, objective and optimizer as `ModelComponent`,
+`ObjectiveComponent` and `OptimizerComponent` records. Each has an exact
+identity, such as `example/linear_regressor@1`. Clients use the unique short
+name, `linear_regressor`; saved Plans retain the exact identity and source
+digest.
 
 The example hashes all Python implementation files in its package and records
 the installed distribution version. If you add an external implementation
@@ -192,7 +197,7 @@ from shadowspill.server import Allocation, Server
 server = Server(
     allocation=Allocation.from_environment(),
     service_root="./custom-training-data",
-    workload_packages=["example-training-definitions"],
+    workload_packages=["example-training-components"],
 )
 server.serve(host="127.0.0.1", port=8000)
 ```
@@ -200,10 +205,10 @@ server.serve(host="127.0.0.1", port=8000)
 Set the same `SHADOWSPILL_TOKEN` on the server and client. Start
 [`server.py`](../../../examples/extensions/custom_training/server.py) inside your
 GPU server. Adding `"shadowspill-workloads"` to `workload_packages` enables the
-optional model catalog and its MLOps AdamW definition. This example needs
+optional model catalog and its MLOps AdamW optimizer. This example needs
 neither.
 
-## 7. Select the definitions and train
+## 7. Select the components and train
 
 The ordinary client settings select your installed implementation:
 
@@ -261,5 +266,5 @@ keep preparation and execution in the engine. Specialized kernels may also need
 
 For a contribution to the built-in catalog, follow the
 [family organization guide](../../development/workloads.md). The same public
-definition hooks apply; each built-in family keeps its integration metadata in
+component hooks apply; each built-in family keeps its integration metadata in
 one declaration beside its architecture.

@@ -216,7 +216,7 @@ module.
 Captured location describes where a value is used, not where a template was
 initialized. An opaque optimizer can start with CPU/meta templates while its
 spillable state has fake device geometry; CPU counters remain CPU bindings.
-[Profiling](../python/api/profiling.md#task-measurement) materializes authentic
+[Profiling](../reference/engine/profiling.rst) materializes authentic
 control producers on each value's captured device. Generated representatives
 for proven arithmetic-only statistics do not change runtime values.
 

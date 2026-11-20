@@ -39,7 +39,7 @@ The service owns pool membership and selection policy.
 
 Preview checks compatible entries without reserving them. Creation rechecks and
 claims the complete selected set. Join reports capabilities; preparation and
-saved-Plan admission check exact installed definitions, source identities and
+saved-Plan admission check exact installed components, source identities and
 target requirements. Different GPU types may use different compatible binaries
 and Plans. Never infer measured bandwidth or performance from a network address.
 

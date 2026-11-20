@@ -16,21 +16,8 @@ Submit training operations and read their results.
 
 .. autoclass:: shadowspill_client.results.TrainingResult
 
-.. autoclass:: shadowspill_client.protocol.results.OperationResult
-
-.. autoclass:: shadowspill_client.protocol.results.Accumulation
-
-.. autoclass:: shadowspill_client.protocol.results.ArtifactIssue
-
-.. autoclass:: shadowspill_client.protocol.results.Acceptance
-
 .. autoclass:: shadowspill_client.protocol.operations.OperationKey
-
-.. autoclass:: shadowspill_client.protocol.requests.RequestIdentity
 
 .. autoclass:: shadowspill_client.training.RequestQueries
 
-.. autoclass:: shadowspill_client.protocol.results.RequestStatus
-
 .. autoclass:: shadowspill_client.protocol.results.Failure
-

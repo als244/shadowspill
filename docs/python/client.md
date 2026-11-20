@@ -68,8 +68,8 @@ per-update settings. The [data guide](../examples/client-training.md) shows
 tokenization and batch construction for the supplied training examples.
 
 The [catalog](catalog.md) lists built-in models, optimizers and objectives, with
-examples for LoRA, freezing parameters and combining objectives. Installed custom
-definitions use the same settings.
+examples for LoRA, freezing parameters and combining objectives. Components an
+extension package installs use the same settings.
 
 ## Inspect the plan
 

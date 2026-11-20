@@ -161,7 +161,7 @@ selected-task span = sum of selected task-event durations
 | `real_invocation_seconds` | Measured origin through the last required compute or transfer completion; `None` without all transfer timestamps. |
 | `real_terminal_tail_seconds` | Measured last computation through that completion; `None` without all transfer timestamps. |
 | `simulator_terminal_tail_seconds` | Simulated work after the last selected compute task. |
-| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the marker recorded there once its required terminal work has drained. A traced invocation is isolated, so the cycle holds no caller work before the next run; `None` when nothing closed the cycle. See [timing](../api/timing.md). |
+| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the marker recorded there once its required terminal work has drained. A traced invocation is isolated, so the cycle holds no caller work before the next run; `None` when nothing closed the cycle. See [timelines](../../architecture/timelines.md). |
 | `entry_delay_seconds` | Origin to the first task's compute start: the first task's readiness waits and frontend preparation. |
 | `exposed_tail_seconds` | Last task's compute end to the cycle's end: the invocation's terminal work, such as writeback, after its last task. `None` with `cycle_seconds`. |
 | `call_seconds` | The whole planned call on the host clock. |

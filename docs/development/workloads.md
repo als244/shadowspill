@@ -1,9 +1,9 @@
 # Workload organization and adding a model family
 
 `shadowspill_workloads` is the optional built-in model library. The engine runs
-installed model definitions through the same hooks whether they come from this
+installed model components through the same hooks whether they come from this
 library or an external package. An external integration can follow the
-[definition guide](../python/advanced/definitions.md) without editing this repository.
+[component guide](../python/advanced/components.md) without editing this repository.
 
 ## Package layout
 
@@ -23,7 +23,7 @@ shadowspill_workloads/
     shared/                  # Reusable layers and integration shared by families
       glm/                   # Shared GLM computation, loading and setup hooks
     catalog/                 # Lookups derived from family declarations
-  definitions/               # Shared registration, objective and setup helpers
+  components/                # Shared registration, objective and setup helpers
     decoder/                 # Shared packed decoder registration and setup hooks
   inputs/                    # Schemas, processors and input adapters
   objectives/                # Reusable objective computations
@@ -35,7 +35,7 @@ scripts/
   setup_mlops.sh             # Installs MLOps: a checkout beside the repository, else the pin
 ```
 
-The catalog's models and its AdamW definition use MLOps, so this package owns
+The catalog's models and its AdamW component use MLOps, so this package owns
 MLOps: its revision is pinned in `scripts/setup_mlops.sh`, which the repository's
 setup runs. The engine neither imports nor installs it.
 
@@ -64,7 +64,7 @@ client configuration and runtime commands stay in the shared guides.
 2. Add `checkpoint.py` for pretrained weight mappings and bounded copying.
    Add `lora.py` if adapter targeting depends on the architecture. Keep parameter
    storage precision explicit. Declare selective defaults in
-   `FAMILY.parameter_dtypes` and pass them into the public `ModelDefinition`;
+   `FAMILY.parameter_dtypes` and pass them into the public `ModelComponent`;
    shared setup applies the [dtype policy](../python/advanced/precision.md).
 3. Supply a public model-registration hook. Reuse the existing input schema,
    adapter, objectives and preparation hooks when they describe the model's inputs
@@ -72,11 +72,11 @@ client configuration and runtime commands stay in the shared guides.
    does not implement another training loop. The
    [Qwen3 settings](../../packages/workloads/src/shadowspill_workloads/models/qwen3/training.py)
    and [OLMoE settings](../../packages/workloads/src/shadowspill_workloads/models/olmoe/training.py)
-   reuse [shared decoder hooks](../../packages/workloads/src/shadowspill_workloads/definitions/decoder).
+   reuse [shared decoder hooks](../../packages/workloads/src/shadowspill_workloads/components/decoder).
    They supply the family, catalog and architecture-specific checks. A different
    constructor can be supplied directly, as in
    [Llama](../../packages/workloads/src/shadowspill_workloads/models/llama3/training.py).
-   Use the public definition hooks for architectures with different input or
+   Use the public component hooks for architectures with different input or
    initialization requirements; do not force them into decoder-specific settings.
 4. Declare `FAMILY` in `registration.py`. The
    [Qwen3 declaration](../../packages/workloads/src/shadowspill_workloads/models/qwen3/registration.py)
@@ -84,10 +84,10 @@ client configuration and runtime commands stay in the shared guides.
    initialization choices and the installed registration hook in one place.
    Add the package name once in
    [models/families.py](../../packages/workloads/src/shadowspill_workloads/models/families.py).
-   Catalog lookups, pretrained identification and definition loading derive from
+   Catalog lookups, pretrained identification and component loading derive from
    these declarations; do not add another family map elsewhere.
 5. Include the family declaration and all code used by its hooks in its
-   definition source identity. Metadata inspection must not import Torch,
+   component source identity. Metadata inspection must not import Torch,
    kernels or model implementations. Import those inside worker hooks.
 6. Check configuration resolution, meta construction, checkpoint tensor mappings,
    bounded initialization and losses/gradients against the independent reference.

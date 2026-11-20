@@ -193,7 +193,7 @@ need not share token IDs for this recipe because the responses are retokenized.
 
 Soft-target distillation instead needs teacher distributions aligned to the
 student vocabulary and a model/output contract exposing the needed student
-distribution. Implement that as a [custom objective](custom-definitions.md), with
+distribution. Implement that as a [custom objective](writing-extensions.md), with
 explicit temperature, reduction and masking. The built-in `cross_entropy` recipe
 above consumes token targets, not full teacher logits.
 

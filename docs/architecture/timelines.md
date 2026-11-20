@@ -112,7 +112,7 @@ measures required work; the cycle's exposed tail also includes caller and
 instrumentation delays. These quantities are kept separate.
 
 Markers are reused round-robin. Reading a closed cycle waits for its closing
-event. See the [timing API](../python/api/timing.md) and
+event. See [`Marker`](../reference/internals/runtime.rst) and
 [step boundaries](step-boundaries.md).
 
 ## What an untraced step pays

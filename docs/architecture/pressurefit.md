@@ -8,7 +8,7 @@ transfer or make more room. The answer is the fastest valid plan it found.
 
 This page describes the algorithm. The surrounding planner contract is in
 [plan search](search.md), the option types are in the
-[Python API](../python/api/neutral.md), and the
+[memory search reference](../reference/internals/memory-search.rst), and the
 [C API](../c/pressurefit.md) describes the indexed interface.
 
 ## Built-in candidate policies
