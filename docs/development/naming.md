@@ -34,8 +34,9 @@ simulator, or runtime semantics.
 
 The default execution-pool factory is named `device()` because its contract is
 accelerator memory usable by PyTorch. Provider-specific APIs remain in their
-backend. PyTorch allocator callback symbols retain the provider spelling
-required by the framework hook.
+backend. The allocator callbacks are named for the backend
+(`shadowspill_pytorch_backend_malloc`, `_free` and `_record_stream`); only the
+framework's hook that loads them carries the provider name.
 
 ## Avoid
 
@@ -43,16 +44,17 @@ required by the framework hook.
 - `topology` for something that is not one; admission takes facts.
 - `progress` for the runtime thread; use `worker`.
 - `native` as a synonym for the C library.
-- `callable` anywhere in `csrc/`. It is the frontend's word for the span a
-  plan covers, and the C sources already have a word for that: `plan`. One
-  word per concept is what lets a struct field, a C parameter and a Python
-  attribute be read as the same thing.
+- `callable` anywhere in `packages/engine/csrc/`. It is the frontend's word for
+  the span a plan covers, and the C sources already have a word for that:
+  `plan`. One word per concept is what lets a struct field, a C parameter and a
+  Python attribute be read as the same thing.
 - `core` for the invariant part of something; say what makes it invariant.
 - `compiled` for the C library. It means what torch.compile produced.
-- `context` for a search's own input, which is a problem. The word has exactly
-  two uses: a driver context, and `ShadowSpillScheduleContext`, the part of a
-  planning problem that is not about how it is searched. A backend's opaque
-  handle is its state.
+- `context` for a search's own input, which is a problem. The word means a
+  driver context; `ShadowSpillScheduleContext`, the part of a planning problem
+  that is not about how it is searched; `ShadowSpillTraceContext`, what a trace
+  knows about the calling thread's work; and the `void *context` a C callback
+  is handed back. A backend's opaque handle is its state.
 - `host` for the secondary pool, which is generic; use `spill`. Keep it only
   where it means the CPU a backend runs on - `pinned_host()` names a pool
   that really is host memory, and a driver call that synchronizes the host
@@ -74,12 +76,13 @@ explanations and runtime labels use the same two words.
 ## Backend and device, never a provider name
 
 A provider's platform name belongs to that provider's backend directory under
-`csrc/backends/` and to the few PyTorch attributes that carry it (`torch.<provider>.*`,
-`<provider>_stream`, `<provider>_event`, `is_<provider>`). The one place the
-PyTorch layer names the accelerator's device type is
-`shadowspill.pytorch.accelerator`. Everything else says *backend* for streams,
-events, allocators, the provider library, and its statistics and capabilities,
-and *device* for tensors, placements, and ordinals.
+`packages/engine/csrc/backends/` and to the few PyTorch attributes that carry
+it (`torch.<provider>.*`, `<provider>_stream`, `<provider>_event`,
+`is_<provider>`). In `shadowspill.pytorch`, only the code of
+`shadowspill.pytorch.accelerator` names the accelerator's device type, as
+`DEVICE_TYPE`. Everything else says *backend* for streams, events, allocators,
+the provider library, and its statistics and capabilities, and *device* for
+tensors, placements, and ordinals.
 
 ## Memory accounting names
 
@@ -95,3 +98,13 @@ always do. It never changes pool sizing or disables pool bounds.
 
 Use **persistent in-pool allocations** for retained allocations inside that
 pool. They consume `fixed_execution_bytes`, not external headroom.
+
+## What the audit checks
+
+`tools/check_naming.py`, which `tests/repository/test_naming.py` runs, checks
+part of this page over the engine's Python and C sources. Everywhere it
+refuses `backing`, `h2d` and `d2h`, and `progress` names for the worker; in
+the neutral packages its `NEUTRAL_ROOTS` lists, it also refuses provider
+names, "tensor" and framework names. The serialized keys in its
+`FROZEN_LITERALS` are exempt, and a listed root that holds no source files
+fails the audit. Review keeps the rest of this page.

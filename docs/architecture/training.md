@@ -2,7 +2,7 @@
 
 The client connects to one service endpoint, prepares a model and submits global
 batches. Preparation and worker startup are separate from the live training
-commands. Both use the existing build/profile/plan/Executor engine.
+commands. Both use the build/profile/plan/Executor engine.
 
 ```mermaid
 flowchart LR

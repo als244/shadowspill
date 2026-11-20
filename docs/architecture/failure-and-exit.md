@@ -58,7 +58,7 @@ checkpoint in a fresh worker.
 ## A failure in the runtime
 
 `shadowspill_runtime_close` rejects new work, waits until two counters reach
-zero or a failure is latched, synchronizes every transfer lane, joins the
+zero or a failure is latched, synchronizes every route's stream, joins the
 worker, and releases everything it owns. It is synchronizing and idempotent,
 and it returns the first latched failure. Draining is correct here because the
 process continues: outstanding transfers can still complete, and a caller may
@@ -101,7 +101,7 @@ can block:
 | skipped | why it would block |
 |---|---|
 | the drain | outstanding work cannot complete once exit handlers are running, and the wait's only escape is a latched failure that will never appear when the exit came from elsewhere |
-| lane synchronization | waiting on the device for the work it just declined to finish |
+| stream synchronization | waiting on the device for the work it just declined to finish |
 | aborting the open task scope | finalizing retirements takes the pool's foreground lock, which the worker may hold and may never release |
 
 **What it still does.** Abandoning stops the worker, joins it, and releases
@@ -109,8 +109,8 @@ what the runtime owns: every route's lane and stream, both event pools, the
 transfer profiles, and every memory pool -- each pool giving its region back
 through its own kind's `release`, whatever that kind requires. Nothing is
 leaked that a running program would have kept. Lane destructors stop their own
-workers without waiting for an unfinished GPU producer. A transport must still
-cancel or retire submitted OS I/O before releasing the memory it references;
+workers without waiting for an unfinished device producer. A transport must
+still cancel or retire submitted OS I/O before releasing the memory it references;
 resource release is not a hard timeout guarantee against a failed driver or
 filesystem.
 
@@ -136,7 +136,7 @@ A child that stops making progress is not distinguishable from a child that is
 working, so anything running planning or execution in a subprocess should bound
 it in time and require the artifact it promised, rather than trusting an exit
 status alone. Program collection and planning evaluation do; see
-[benchmarking](../../tools/README.md).
+[planner experiments](../../tools/planning/README.md).
 
 ---
 

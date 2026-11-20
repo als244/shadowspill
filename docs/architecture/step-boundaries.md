@@ -12,7 +12,7 @@ The PyTorch frontend emits fresh plans: imported model state and external
 inputs begin in spill, and every needed device copy is a scheduled fetch.
 Fresh is a description of the state, not a placement policy or CLI option.
 
-The neutral planner also accepts explicitly GPU-resident inputs through
+The neutral planner also accepts explicitly device-resident inputs through
 `initial_residency`. Those inputs need no fetch. The declaration must match
 execution: a missing or stale device value is an error, and an unexpected
 live allocation is not silently overwritten. Shared objects retain their

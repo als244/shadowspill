@@ -46,9 +46,10 @@ active `copy` hands back a handle naming the transfer, and when the worker's
 nonblocking poll later sees the completion event it asks the lane, once, what
 that transfer did. The answer goes into the transfer's completion record, and
 the question retires the handle. A compound transfer is the exception: the
-worker brackets its whole conversion on the route's stream and reports that
-interval in place of the lane's answer, because the copy alone would leave out
-the gather or reduction around it.
+worker brackets its whole conversion on the route's stream, and that interval
+is the transfer's completion record, because the copy alone would leave out the
+gather or reduction around it. The lane's answer for the copy alone is recorded
+beside it.
 
 It is arranged that way because a lane is the only thing that knows how its
 bytes move. The built-in lane brackets its copy with a **stream interval**: one

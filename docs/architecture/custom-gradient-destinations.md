@@ -7,10 +7,10 @@ regions, execution regions, full/tail chunks and subsequent microbatches. The
 first contribution creates the gradient; later contributions write into its
 canonical buffer. One replacement call handles all eligible outputs together.
 
-The empty tuple is the default. Existing ATen multiply fusion and ordinary
-in-place additions apply when no custom rule matches. A rule does not change
-checkpoint retention or select chunk axes, region boundaries or chunk sizes;
-those remain independent build controls.
+The empty tuple is the default. The built-in matrix-multiply fusion and
+ordinary in-place additions apply when no custom rule matches. A rule does not
+change checkpoint retention or select chunk axes, region boundaries or chunk
+sizes; those remain independent build controls.
 
 ## Accumulating overload requirements
 
@@ -49,8 +49,8 @@ It runs once for all selected outputs, preserves the other outputs, and returns
 `None`, a zero-element tensor, or the corresponding destination in consumed
 positions. `custom_op` implementations cannot return input aliases. Prefer a
 fixed `Tensor` return schema with zero-element tensors for consumed positions:
-PyTorch's current automatic functionalization rejects mixed optional-Tensor
-returns on mutable custom operators. A zero-element placeholder allocates no
+PyTorch's automatic functionalization rejects mixed optional-Tensor returns on
+mutable custom operators. A zero-element placeholder allocates no
 tensor storage and its unused extraction is removed. A provider with its own
 functionalization may support other permitted forms.
 The graph returns the prior buffers in place of the consumed gradients.
@@ -78,10 +78,10 @@ account for every transformation, including scale, dtype rounding, padding and
 index order. It cannot silently reinterpret a raw gradient as the final
 parameter gradient.
 
-`fuse_narrow_gradient_accumulation` retains its existing meaning. The default
-mapper declines narrow destinations when this permission is false. A custom
-mapper must honor the same setting, either preserving the original rounding or
-declining fusion. An explicit mapping must be writable without overlapping
+`fuse_narrow_gradient_accumulation` permits accumulating into a destination
+narrower than its computation dtype, such as BF16. The default mapper declines
+such destinations when it is false. A custom mapper must honor the same
+setting, either preserving the original rounding or declining fusion. An explicit mapping must be writable without overlapping
 elements; definite overlap is rejected. Layouts whose overlap cannot be decided
 statically remain the provider's responsibility.
 

@@ -108,7 +108,9 @@ result = pending.result()
 ```
 
 Use one input call per example declared in the Program. Each group has its own
-binding, such as `optimizer_group.1.lr`. Per-call schedules use those same names.
+binding, such as `optimizer_group.1.lr`. Low-level callers pass these binding
+names in `hyperparams`; the training service takes the optimizer's control
+names, such as `lr`, and maps each to its bindings.
 The original Python optimizer is not a live execution handle: mutating it
 after build does not change a saved Plan.
 
@@ -116,12 +118,13 @@ Executor accepts CPU values of the saved shape, validates every supplied name an
 shape before changing any control, and uses the captured default for omitted
 values. A tensor binding without a saved default must be supplied. Unknown names
 and settings captured as constants cannot be changed through `hyperparams`.
-This interface covers saved optimizer bindings, not arbitrary model buffers.
-Model inputs and their static arguments keep the ordinary builder/input contract.
+`hyperparams` also fills a persistent model buffer, named as registered, with
+one int or float. Model inputs and their static arguments keep the ordinary
+builder/input contract.
 
 Bounded CPU counters and controls can stay on the host when the captured update
 supports that layout. Their values are read at execution, rather than becoming
-separate GPU transfers merely because they belong to an optimizer.
+separate device transfers merely because they belong to an optimizer.
 
 ## Ordering and distributed ownership
 
@@ -136,10 +139,10 @@ publication have separate IR cost records, but execute consecutively on the same
 ordered compute resource. Local update build/profile requires no process group;
 communication timing and memory evidence come from `CommunicationInfo`.
 
-Parameter fetch and gradient eviction retain the native compound-transfer
-completion boundary. Final optimizer reduction writes a separate owned output,
-so a concurrent spill of the original accumulator remains valid. This design
-does not introduce independently scheduled optimizer communication streams.
+A sharded parameter's fetch and a sharded gradient's eviction each complete as
+one compound transfer: the gather or reduction runs on the route's stream, and one completion covers
+the conversion and the copy. Final optimizer reduction writes a separate owned
+output, so a concurrent spill of the original accumulator remains valid.
 
 Flat sharding requires each flat slice to be independently updatable: the
 frontend accepts the elementwise Adam, AdamW and SGD it knows, and any other

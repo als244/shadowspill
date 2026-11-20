@@ -41,11 +41,11 @@ concrete class with no `name` is refused at definition.
 A class attribute. A stable string, chosen by you, that identifies this
 search in a plan key and in a plan manifest.
 
-It is **not** the Python class's name. Renaming or moving the class must
-not orphan a stored corpus, so the string is written once and left alone.
-Defining the class records the string, which is how a plan read back from an
-archive is given the search that made it; two searches answering to one name
-would make a stored plan ambiguous, so pick something specific.
+It is **not** the Python class's name: the key names the search, not where
+its code lives. Defining the class records the string, and
+`SearchAlgorithm.named` finds the class by it when a plan is read back from an
+archive, so keep it fixed once chosen. Two searches answering to one name would
+make a stored plan ambiguous, so pick something specific.
 
 ```python
 class Beam(SearchAlgorithm):
@@ -71,7 +71,9 @@ of a sweep and every worker of a search, concurrently.
 
 ### `preflight(...) -> None`
 
-Refuse a machine no schedule can fit, before a search is paid for.
+Refuse a machine no schedule can fit, without searching.
+`validate_schedule_feasibility` calls it; the planner does not call it before
+`__call__`.
 
 | argument | type | meaning |
 |---|---|---|
@@ -148,8 +150,8 @@ checks their outcomes against the ordinary search; see [cut traces](../python/ad
 with its own defaults. `workers` defaults to zero, one thread per logical
 CPU, and is **not** part of the plan key: it says how much machine to spend
 rather than what to decide, so two runs at different worker counts ask the
-same question and read back the same answer. The plan report records what
-was used.
+same question and read back the same answer. The plan report shows the count
+a search records in `PlanningDiagnostics.workers`; the planner does not set it.
 
 `trace_directory` and `trace_candidates` default to `None`. They request
 diagnostic output and are excluded from serialized search options and plan
@@ -251,8 +253,8 @@ plan = plan_program(
 )
 ```
 
-`preflight` is left out, so the inherited one runs and says nothing.
-Nothing in that file imports from inside
+`preflight` is left out, so `validate_schedule_feasibility` gets the inherited
+one, which says nothing. Nothing in that file imports from inside
 `shadowspill.planning.memory_search.algorithms.pressurefit`, and nothing is
 registered. The planner keys the answer under `"first_fit"`, records
 `FirstFitOptions` beside it, and holds the result to any incumbent exactly

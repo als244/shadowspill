@@ -55,10 +55,10 @@ Each rate is a finite fraction of isolated progress in `(0, 1]`. During an
 overlap lasting `dt`, remaining isolated work decreases by `rate * dt`.
 Outside overlap the rate returns to one. Completion times are recalculated
 when either participant starts or stops; queued work does not consume progress.
-Rates do not scale workspace, payload size, or host-copy bandwidth.
+Rates do not scale workspace, payload size, or copy-lane bandwidth.
 
 The Python projection interpolates measured message sizes before entering C;
-native search reuses compact per-profile tables across all candidates. With
+the C search reuses compact per-profile tables across all candidates. With
 multiple simultaneous modeled transfers or compute lanes, the evaluator uses
 the minimum applicable pair rate. This is a pairwise approximation, not a
 calibrated model of arbitrary multiway interference. Task phases on different
@@ -88,12 +88,14 @@ matching status (`SHADOWSPILL_STATUS_INVALID_RELEASE`, `_INVALID_EVICT`,
 preconditions.
 Stall masks distinguish input residency, device capacity, source readiness,
 spill capacity, physical memory reuse, a busy lane, and a timed phase waiting
-its turn on a transfer resource. Two of those sound alike and are not: memory
-reuse is an ordering wait the plan created, for the eviction or release that
-frees the allocation about to be reused, while device capacity is a shortfall
--- no room at all for a fetch to land or for a task's outputs and workspace. A
-plan that arranges its own capacity waits on the first and never reaches the
-second.
+its turn on a transfer resource: the bits `SHADOWSPILL_STALL_INPUT_RESIDENCY`,
+`_DEVICE_CAPACITY`, `_SOURCE_READINESS`, `_SPILL_CAPACITY`, `_MEMORY_REUSE`,
+`_LANE_BUSY` and `_TRANSFER_RESOURCE`. Two of those sound alike and are not:
+memory reuse is an ordering wait the plan created, for the eviction or release
+that frees the allocation about to be reused, while device capacity is a
+shortfall -- no room at all for a fetch to land or for a task's outputs and
+workspace. A plan that arranges its own capacity waits on the first and never
+reaches the second.
 
 A busy lane is the one wait a plan does not arrange and cannot avoid: the
 copy is eligible and the lane is carrying another. It is set on the copy at
@@ -138,16 +140,23 @@ const uint8_t *alias_flags, ShadowSpillScheduleCheck *result)` holds the
 schedule bound into `program` to the schedule's own rules, independent of
 timing, and writes the first refusal to `result`, or
 `SHADOWSPILL_SCHEDULE_REFUSAL_NONE`. The rules are the ones
-`MemorySchedule.validate` states, in the same order: the initial residency
-names no runtime-owned group; every action moves a movable group that holds
-bytes, in trigger order; every input is on the device when its task reads it;
-a fetch needs a current spill copy and no device copy, and an evict, release
-or write-back needs a device copy; a release may not drop the only current
-copy of a value a later task reads or the final residency names; and the final
-residency names no runtime-owned group and is reached. `alias_flags` holds one
-`ShadowSpillAliasCheckFlags` value per alias for what the compiled program does
-not carry: whether the runtime owns the group's residency, whether it holds no
-bytes, and whether it keeps its spill copy. `index` names the initial or final
+`MemorySchedule.validate` states, in the same order, each with the
+`ShadowSpillScheduleRefusal` it reports, named here without its
+`SHADOWSPILL_SCHEDULE_REFUSAL_` prefix: the initial residency names no
+runtime-owned group (`INITIAL_RUNTIME_OWNED`); every action moves a movable
+group that holds bytes, in trigger order (`ACTION_RUNTIME_OWNED`,
+`ACTION_ZERO_SIZE`, `ACTION_ORDER`); every input is on the device when its task
+reads it (`INPUT_NOT_RESIDENT`); a fetch needs a current spill copy and no
+device copy (`FETCH_WITHOUT_HOST_COPY`, `FETCH_ALREADY_RESIDENT`), and an
+evict, release or write-back needs a device copy (`NOT_DEVICE_RESIDENT`); a
+release may not drop the only current copy of a value a later task reads or the
+final residency names (`RELEASE_ONLY_COPY`); and the final residency names no
+runtime-owned group and is reached (`FINAL_RUNTIME_OWNED`,
+`FINAL_NOT_REACHED`). `alias_flags` holds one `ShadowSpillAliasCheckFlags`
+value per alias for what the program's arrays do not carry: whether the
+runtime owns the group's residency (`SHADOWSPILL_ALIAS_SHARED`), whether it
+holds no bytes (`SHADOWSPILL_ALIAS_ZERO_SIZE`), and whether it keeps its spill
+copy (`SHADOWSPILL_ALIAS_RETAINED`). `index` names the initial or final
 residency entry, the action, or the task the refusal points at, and `alias` the
 group. The call returns `SHADOWSPILL_STATUS_OK` once the check has run,
 whatever its verdict, and `SHADOWSPILL_STATUS_INVALID_ARGUMENT` for a malformed

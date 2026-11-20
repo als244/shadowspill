@@ -1,8 +1,9 @@
 # Transfers
 
-Routes, queues, lanes, and calibration live in `csrc/src/runtime/transfers/`.
-A backend supplies streams and directional copies; the runtime decides which
-copy goes on which lane, in what order, and measures what it built.
+Routes, queues, lanes, and calibration live in
+`packages/engine/csrc/src/runtime/transfers/`. A backend supplies streams and
+directional copies; the runtime decides which copy goes on which lane, in what
+order, and measures what it built.
 
 ## Routes, queues, and lanes
 

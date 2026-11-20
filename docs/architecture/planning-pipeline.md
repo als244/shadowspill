@@ -42,10 +42,11 @@ plan.save("plan.ssp")
 write_report(plan, "report")
 ```
 
-`execution_bytes` is the total per-rank GPU allowance, including recorded fixed
-overhead and reserved headroom. `spill_bytes` is a separate per-rank spill
-capacity. The planner subtracts overhead before fitting task tensors and
-workspace; it does not silently allocate extra GPU memory beyond the allowance.
+`execution_bytes` is the total per-rank device memory allowance, including
+recorded fixed overhead and reserved headroom. `spill_bytes` is a separate
+per-rank spill capacity. The planner subtracts overhead before fitting task
+objects and workspace; it does not silently allocate extra device memory beyond
+the allowance.
 
 The returned Plan exposes `summary`, `schedule`, `selections`, `timeline`,
 `memory_layout` and `diagnostics`. Infeasible requests raise
@@ -78,8 +79,9 @@ default.
 
 Save/recompute alternatives remain open until search chooses a legal assignment.
 The search also chooses fetch, eviction and residency decisions under the supplied
-capacities and costs. `search_options` configures the existing native planner and
-simulator; it performs no build or measurement work.
+capacities and costs. `search_options` chooses the search
+([PressureFit](pressurefit.md) by default) and its options; it performs no build
+or measurement work.
 
 Logical fit is not sufficient for execution. Physical admission assigns ranges,
 checks allocation contracts and range-reuse dependencies, and re-simulates the
@@ -96,7 +98,7 @@ models.
 
 ## Communication costs
 
-`CommunicationInfo` contains host fetch/evict rates and latencies, optional
+`CommunicationInfo` contains fetch/evict rates and latencies, optional
 concurrent rates, topology, scale-up/out rates and measured collective timings.
 It is separate from compute Profiles, so a saved ProfiledProgram can be replanned
 under different communication assumptions.
@@ -108,12 +110,12 @@ prefers matching measurements and estimates gaps from the supplied rates and
 topology, recording the assumptions. Unknown memory is never silently zero.
 
 Optimizer reductions and publication remain ordered with local updates on the
-compute resource. Native fetch includes host-shard copy and all-gather; native
-gradient eviction includes reduction and host-shard copy. Their completion
-boundaries cover all constituent work. Simulation distinguishes collective bytes
-and time from host traffic. Ordinary DP compute profiling can therefore run on
-one representative GPU, while real calibration/execution uses the declared
-participants.
+compute resource. A sharded parameter's fetch includes its spill-shard copy and
+all-gather; a sharded gradient's eviction includes its reduction and spill-shard
+copy. Their completion boundaries cover all constituent work. Simulation
+distinguishes collective bytes and time from fetch/evict traffic. Ordinary DP
+compute profiling can therefore run on one representative GPU, while real
+calibration/execution uses the declared participants.
 
 ## Persistence and reports
 

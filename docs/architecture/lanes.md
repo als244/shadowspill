@@ -4,11 +4,12 @@ A lane moves bytes between two pools and says when they have landed. It is the
 one thing in the runtime that knows how a transfer is actually performed, and
 the only contract a new kind of transport has to implement.
 
-`csrc/include/shadowspill/runtime/lane.h` declares it, and
-`csrc/include/shadowspill/runtime/lane_base.h` the struct an implementation
-embeds; the built-in implementation is
-`csrc/src/runtime/transfers/pinned_host_device_lane.c`, and
-`csrc/src/runtime/transfers/lanes.c` is how the runtime finds one.
+`packages/engine/csrc/include/shadowspill/runtime/lane.h` declares it, and
+`packages/engine/csrc/include/shadowspill/runtime/lane_base.h` the struct an
+implementation embeds; the built-in implementation is
+`packages/engine/csrc/src/runtime/transfers/pinned_host_device_lane.c`, and
+`packages/engine/csrc/src/runtime/transfers/lanes.c` is how the runtime finds
+one.
 
 ## A lane, a queue, and a stream are three things
 
@@ -96,10 +97,11 @@ absent; everything else is required.
 ### The handle, and what it is for
 
 `copy` hands back a handle naming the transfer, and **0 means the lane is
-keeping nothing about it** — which is what every lane answers when no trace is
-running, so nothing is recorded that nothing will read. The handle rides the
-action to completion, where the runtime asks `transfer` once. **That query
-retires the handle**: a lane may release whatever it kept the moment it answers,
+keeping nothing about it**. The built-in and SSD lanes answer 0 when no trace
+is running, so nothing is recorded that nothing will read; the remote lane
+names every transfer, traced or not. A nonzero handle rides the action to
+completion, where the runtime asks `transfer` once. **That query retires the
+handle**: a lane may release whatever it kept the moment it answers,
 and the runtime will not ask again. That is the whole lifetime rule, and it is
 why there is no release entry beside it.
 
@@ -144,7 +146,7 @@ A lane whose waits are device-side always enqueues and never returns 1. A lane
 that cannot express a device dependency at all has to observe the event
 completing instead, and 1 is how it says so. The action then goes back to the
 **head** of its queue, not the tail, so a retry cannot reorder what the task
-boundaries triggered, and the existing poll cadence
+boundaries triggered, and the worker's poll cadence
 (`worker_poll_nanoseconds`) revisits it. Only the wait on an action's trigger
 is retried: the wait on a reserved destination's dependency is enqueued while
 the reservation is taken, before the action is claimed, so there is no head to
@@ -226,7 +228,7 @@ blocks the worker until the device drains the queue, holding every action
 behind it, including evicts whose triggers have completed, while the
 simulator assumes dispatch is free. The staged piece is therefore sized so
 that the bursts a plan makes stay well inside the queue, rather than for the
-wire, which is near line rate at any of the sizes involved.
+wire.
 
 ## Create, probe, and teardown
 
@@ -258,19 +260,19 @@ with a route that cannot move a byte.
 
 Normal close drains work before destroying lanes. Abandon skips those device
 completion waits, so `destroy` must stop its own worker even when a producer
-dependency will never complete; it must not call `synchronize` again. Submitted
+dependency will never complete; it must not call `synchronize`. Submitted
 OS I/O must be canceled or retired before freeing the memory it references.
 
 ## Remote lane tuning
 
 The remote lane takes its tuning from the environment, read when a remote pool
-or one of its lanes is created (`csrc/network/src/tuning.c`): these are
-properties of a NIC and a fabric, not of a plan. Every name below carries the
-`SHADOWSPILL_NETWORK_` prefix. `DEVICE` names a device; every other value in
-the table is a number in C notation -- a `0x` prefix reads hexadecimal, a
-leading `0` octal -- where an empty one counts as unset and a malformed one
-prints a warning and takes the default. When a remote pool opens its connection
-it prints most of the resolved values on one line to stderr.
+or one of its lanes is created (`packages/engine/csrc/network/src/tuning.c`):
+these are properties of a NIC and a fabric, not of a plan. Every name below
+carries the `SHADOWSPILL_NETWORK_` prefix. `DEVICE` names a device; every other
+value in the table is a number in C notation -- a `0x` prefix reads
+hexadecimal, a leading `0` octal -- where an empty one counts as unset and a
+malformed one prints a warning and takes the default. When a remote pool opens
+its connection it prints most of the resolved values on one line to stderr.
 
 | variable | default | what it controls |
 |---|---|---|
@@ -304,14 +306,15 @@ to a trace do not depend on it.
 
 ## SSD staging
 
-The SSD extension in `csrc/ssd/` implements both directions through bounded
-pinned-host rings. Fetch reads a chunk from SSD, then copies it to the device.
-Evict copies from the device, then writes the chunk to SSD. Disk reads themselves
-wait for the producer dependency, not just the later device copy. Each slot is
-reused only after its consumer finishes: H2D for fetch, disk I/O for evict.
+The SSD extension in `packages/engine/csrc/ssd/` implements both directions
+through bounded pinned-host rings. Fetch reads a chunk from SSD, then copies it
+to the device. Evict copies from the device, then writes the chunk to SSD. Disk
+reads themselves wait for the producer dependency, not just the later device
+copy. Each slot is reused only after its consumer finishes: H2D for fetch, disk
+I/O for evict.
 
-The disk worker makes no GPU calls. Stream value waits and host-visible counters
-connect disk completion to ordinary backend events. Fetch completion includes
+The disk worker makes no backend calls. Stream value waits and host-visible
+counters connect disk completion to ordinary backend events. Fetch completion includes
 H2D; evict completion includes the SSD write. Errors latch the ordinary runtime
 failure before releasing pending waits. Configuration and cleanup are in the
 [SSD extension guide](../c/ssd.md).

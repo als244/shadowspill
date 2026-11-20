@@ -49,8 +49,8 @@ without a process group. Communication costs come from `CommunicationInfo`:
 compatible measurements take precedence over estimates from rates and topology.
 Model-owned distributed operations may require their own group-aware preparation.
 
-See [the phase APIs](../python/phases.md) for signatures, examples, supported
-parallelism and current limitations.
+See [the phase guide](../python/phases.md) for examples and the
+[engine reference](../reference/engine/index.rst) for signatures.
 
 ## Artifacts, costs and execution
 
@@ -83,8 +83,8 @@ builds.
 `Executor.run()` returns a result handle; `.result()` waits and returns
 caller-owned outputs. One invocation is active at a time per Executor. The next
 `run()` waits for the previous one. The training service binds prepared Plans to
-workers and submits commands through this interface. Forward, backward and
-optimizer Plans share model state. Preparation runs before worker execution.
+workers and submits commands through this interface. The Plans one Executor
+admits share model state. Preparation runs before worker execution.
 
 ## Source organization
 
@@ -102,10 +102,16 @@ PyTorch or install the execution allocator.
 | `communication/` | Communication costs, calibration and worker group binding. |
 | `planning/` | Public planning/sweeps, ordering, cost assembly and admission inputs. |
 | `execution/` | Saved-plan setup, storage, bounded initialization/export and dispatch. |
-| `training/`, `checkpoint/` | Service preparation, command/session handling, schedules and bounded checkpoints. |
+| `training/`, `checkpoint/` | Service preparation and microbatch-schedule expansion, command/session handling and bounded checkpoints. |
+| `server/` | The service endpoint: routes, durable records, artifacts and startup. |
+| `orchestration/` | Worker launch, node daemons and host coordination. |
+| `operator_preparation/` | Explicit provider binary preparation. |
+| `network/` | Pool memory on another machine. |
+| `serialization/` | Portable data encodings. |
 | `reporting/` | CPU reports from saved planning results. |
 | `pytorch/` | PyTorch capture, AOT graph pairs, storage contracts, kernel choices, saved-code restoration and runtime adapters. |
-| `ir/`, `planner/`, `simulator/`, `runtime/` | Framework-neutral IR and native-library interfaces. |
+| `ir/`, `planning/memory_search/`, `simulator/`, `runtime/` | Framework-neutral IR, memory search and the C-library interfaces. |
+| `step/`, `task/`, `diagnostics/`, `store/` | Framework-neutral step and task descriptions, traced-step evidence and content-addressed caches. |
 
 Service preparation, developer tools and qualification runners compose the same public phases.
 Low-level IR and runtime APIs support tooling; they do not provide a separate
@@ -114,8 +120,8 @@ model-preparation path.
 ## Planning and memory ownership
 
 The public `Program` packages task definitions and executable metadata around the
-framework-neutral IR. Planning supplies costs and policy inputs to the native
-search/simulator. The lower-level `ShadowSpillProgram` and planning-problem types
+framework-neutral IR. Planning supplies costs and policy inputs to the search
+and the simulator. The lower-level `ShadowSpillProgram` and planning-problem types
 are internal representations, not additional preparation steps for users.
 
 | Component | Question answered |
@@ -132,9 +138,9 @@ not its current address. Lowering keeps one canonical object across tasks;
 planning determines its residency and physical ranges. Execution binds current
 lease generations and publishes new ones after writes.
 
-Compute, gradient-reduction and optimizer-publication tasks currently retain
-ordered completion on the compute resource. Host fetch/evict transfers use the
-runtime's tracked lanes and readiness events. Arbitrary independent task lanes
+Compute, gradient-reduction and optimizer-publication tasks retain ordered
+completion on the compute resource. Fetch/evict transfers use the runtime's
+tracked lanes and readiness events. Arbitrary independent task lanes
 with concurrent readers are not qualified by this distributed path.
 
 The following invariants apply throughout:
@@ -149,7 +155,7 @@ The following invariants apply throughout:
 - Transfer, lease and object generations prevent stale completion from modifying
   a successor.
 
-## Native libraries
+## C libraries
 
 | Library | Responsibility |
 |---|---|
@@ -160,8 +166,8 @@ The following invariants apply throughout:
 
 The neutral runtime is handed backend, pool and lane contracts; it does not load
 provider libraries or interpret model semantics. The PyTorch adapter binds those
-contracts. A Python dispatcher launches compiled tasks, while the native worker
-progresses eligible transfers and publishes completion.
+contracts. A Python dispatcher launches compiled tasks, while the runtime's worker
+thread progresses eligible transfers and publishes completion.
 
 At each task boundary, `before_task()` acquires storage and inserts readiness and
 reuse waits. The task enqueues numerical work. `after_task()` publishes outputs,
@@ -180,7 +186,7 @@ implementation boundary:
 - [Task boundaries](task-boundaries.md), [memory pools](memory-pools.md),
   [transfers](transfers.md), [backends](backends.md), [PyTorch adapter](adapter.md).
 
-The [documentation index](../README.md) links the remaining implementation pages.
+The [architecture index](README.md) links the remaining pages.
 
 ---
 

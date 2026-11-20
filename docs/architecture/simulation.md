@@ -6,8 +6,8 @@ physical admission. It never invokes the planner. A [search](search.md) calls
 it while evaluating candidates, and the same public API can evaluate a
 supplied schedule independently.
 
-Runtime-global shared aliases retain their true sizes in the `ShadowSpillProgram`, but
-are projected out of the callable's movable alias set. Their execution and
+Runtime-global shared aliases retain their true sizes in the `ShadowSpillProgram`,
+but are projected out of the plan's movable alias set. Their execution and
 retained-spill footprints are subtracted from available capacity before the C
 simulation runs and added back to decoded physical peaks. They therefore
 consume real budget exactly once without acquiring plan-owned actions.
@@ -20,11 +20,12 @@ The model includes:
 - independent fetch and evict **lanes** -- one serial byte-moving resource per
   route. A simulated lane stands for the runtime's queue and
   [lane](lanes.md) taken together: copies on one route are ordered and do not
-  overlap each other, and the two routes can overlap. Their payload rates depend on whether the reverse lane is also moving bytes. It is not the
-  runtime's lane *contract*, which the simulator has no model of and does not
-  need -- what it prices is occupancy, not transport. A copy that is eligible
-  while the lane carries another records a `lane-busy` stall, so queueing is
-  told apart from the waits a plan arranges for itself;
+  overlap each other, and the two routes can overlap. Their payload rates
+  depend on whether the reverse lane is also moving bytes. A simulated lane is
+  not the runtime's lane *contract*, which the simulator has no model of and
+  does not need -- what it prices is occupancy, not transport. A copy that is
+  eligible while the lane carries another records a `lane-busy` stall, so
+  queueing is told apart from the waits a plan arranges for itself;
 - calibrated solo and concurrent directional bandwidth;
 - object residency and task input readiness;
 - physical allocation deltas and reuse dependencies.
@@ -86,6 +87,11 @@ opening fetches and terminal writebacks. Queueing, source-readiness, and memory
 waits still apply. Queued or source-blocked copies do not contend. Reverse lanes
 on different logical devices do not affect each other.
 
+An alias group with transfer phases moves through them in order: a copy phase
+moves its bytes at these rates, and a timed phase occupies its named serial
+resource for its recorded duration, whatever the rates. Readiness is published
+once every phase has completed.
+
 For example, a 100-byte fetch starts at 2 bytes/ns. An evict starts 25 ns later,
 when 50 fetch bytes remain. If the concurrent fetch rate is 1 byte/ns and the
 evict stays active, fetch finishes at 75 ns. If the evict finishes earlier,
@@ -118,15 +124,18 @@ waiting for the queue retains task memory but consumes no compute work.
 An overlap sample gives two progress rates: task and timed transfer. While the
 operations overlap for `dt`, each completes `rate * dt` of its isolated work.
 It resumes rate one when the other operation completes. The model changes
-timing, not object sizes, sharded host payloads, or copy bandwidth. Missing
+timing, not object sizes, sharded spill payloads, or copy bandwidth. Missing
 samples retain isolated timing. Task phases, rates, and message sizes are
 serialized with the program and affect every candidate's simulation.
 
-These fields arrive on supplied task profiles. A custom caller can measure and
-supply them; the public phase pipeline measures tasks and communications
-independently and measures no pairwise interference, so its programs keep
-isolated timing. A collective task takes its timing from `CommunicationInfo`
-and carries neither field.
+These fields arrive on task profiles. A custom caller can measure and supply
+them. Among the public phases, the optional `measure_overlap` measures overlap
+costs, and service preparation runs it before saving calibrated profiles. A
+program keeps isolated timing when that phase is skipped; `measure_overlap`
+returns an empty overlay for a Program with no sharded collective transfers or
+with model-owned communication resources. A collective task takes its timing
+from `CommunicationInfo`, as one phase on the collective queue, and has no
+overlap costs.
 
 Calibration must measure the actual compiled task and communication operation
 independently of the training step being predicted. Pairwise rates approximate
@@ -134,7 +143,7 @@ contention; they do not explain arbitrary multiway kernel interference, rank
 arrival skew, or host submission delays. The implementation uses the minimum
 applicable rate when more than one modeled peer is active. See the
 [program reference](../reference/internals/ir.rst) and
-[native tables](../c/simulator.md#task-phases-and-measured-overlap) for the contract.
+[C tables](../c/simulator.md#task-phases-and-measured-overlap) for the contract.
 
 ## Trigger-time capacity
 

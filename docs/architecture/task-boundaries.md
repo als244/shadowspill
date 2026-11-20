@@ -164,11 +164,12 @@ accounts for all three outcomes:
 | Outcome | Ownership after close |
 |---|---|
 | Freed during the scope | Retired against its completion fence; reusable only after safe completion |
-| Explicitly promoted | Held by the caller, such as a returned objective tensor |
+| Explicitly promoted | Held by the caller, such as a returned objective value |
 | Retained by the framework/library | Still attributed to the originating scope until its owner releases it |
 
-Scope closure does not revoke a live tensor. Audits report retained allocations'
-offsets, sizes and originating scopes so unexpected retention is diagnosable.
+Scope closure does not revoke a live frontend value. Audits report retained
+allocations' offsets, sizes and originating scopes so unexpected retention is
+diagnosable.
 Compiled libraries may retain state, but that state must have explicit accounting
 and placement. A provider's own stateless interface may impose stricter rules.
 
@@ -180,7 +181,7 @@ For a PyTorch tensor, the release chain is:
 last owning reference disappears
     -> tensor storage frees its address
     -> pluggable allocator maps address to allocation
-    -> memory_pool_free releases or defers the lease
+    -> shadowspill_memory_pool_free releases or defers the lease
     -> worker returns the range after its completion fence
 ```
 
@@ -207,7 +208,7 @@ pending releases. The worker cannot repair an impossible destination later.
 ## Frontend storage bindings
 
 CPU-valued outputs, controls and literals remain ordinary CPU bindings. Their
-GPU object/alias extents are zero, and mixed-device results transfer ownership
+device object/alias extents are zero, and mixed-device results transfer ownership
 only for unique device roots. CPU values receive neither device allocation
 ordinals nor automatic spill-pool placement. Training republishes CPU root
 bindings each step, including Export-lifted literals absent from the original

@@ -28,7 +28,7 @@ execute. A hand-authored program with no alternatives resolves to exactly one,
 and nothing below can tell the difference.
 
 Each resolved program is its own problem: nothing derived here — task set,
-template, facts, floor — is shared with another. What *is* shared is the answer,
+template, facts — is shared with another. What *is* shared is the answer,
 because a plan placed under any resolved program bounds the search under every
 other. How the shipped search exploits that is [workers and the unit of
 work](pressurefit.md#workers-and-the-unit-of-work).
@@ -43,9 +43,7 @@ it:
   accesses;
 - the **compiled simulation template**, derived from that task set;
 - the **admission facts**, derived from the template — per-task
-  allocation steps, fresh outputs, replacements, storage handoffs, alignment;
-- the **compute floor**, the critical path through the selected tasks, which
-  no schedule for this resolved program can beat.
+  allocation steps, fresh outputs, replacements, storage handoffs, alignment.
 
 Only the schedule varies below that, so a measurement is a function of the
 setup and one schedule. Holding the setup once is what says plainly which
@@ -131,8 +129,9 @@ memory *actions* — see [that distinction](physical-admission.md#two-vocabulari
 one action implies about three operations, and a task acquires and retires
 leases with no action at all.
 
-`csrc/src/planner/admission/operations.c` derives the sequence in causal
-order. Each operation records where it sits and why the lease exists.
+`packages/engine/csrc/src/planner/admission/operations.c` derives the
+sequence in causal order. Each operation records where it sits and why the
+lease exists.
 
 ### Where an operation sits
 
@@ -254,7 +253,7 @@ and counts it in `dynamic_reserve_bytes`. For a training step those are the
 values the loop itself reads back.
 
 **Persistent in-pool allocations.** An allocation that outlives its task and
-is not a returned tensor (`persistent_after_task and not output_leaf_indices`)
+is not a returned value (`persistent_after_task and not output_leaf_indices`)
 is state a library retains, such as a workspace. Runtime initialization creates
 the libraries' retained workspaces while the pool is otherwise empty and
 charges them as `fixed_execution_bytes`, inside the allocation pool and
@@ -262,19 +261,22 @@ excluded from the capacity available for task layouts. A warmed task that still
 retains an anonymous allocation is refused at capture, as resource setup left
 unresolved.
 
-**External memory.** Pool creation reserves the larger of the observed cold
-process baseline and the mature process-external footprint from the saved
-profile, then adds `external_headroom_bytes`. The measured external component
-is distinct from retained framework/provider tensors served inside the pool;
-passing all fixed overhead as an external floor would charge those tensors
-twice. Named Plans share the maximum external floor, not the sum.
+### External memory
 
-Low-level callers can set `DevicePool.external_baseline`; its default zero
-preserves observed-baseline sizing. Profiles without a separate external
-observation also preserve that behavior. The observed baseline and the reserved
-baseline are both reported. Raw external-growth statistics continue to measure
-growth from the observed baseline; their allowance includes the difference
-between reserved and observed baselines plus headroom.
+Beside the two dynamic cases sits memory outside the pool. Pool creation
+reserves the larger of the observed cold process baseline and the mature
+process-external footprint from the saved profile, then adds
+`external_headroom_bytes`. The measured external component is distinct from
+retained framework and provider allocations served inside the pool; passing all
+fixed overhead as an external floor would charge those allocations twice. Named
+Plans share the maximum external floor, not the sum.
+
+Low-level callers set the profiled footprint as `DevicePool.external_baseline`.
+At its default, zero, and for a profile without a separate external
+observation, the pool is sized from the observed baseline alone. The observed
+baseline and the reserved baseline are both reported. Raw external-growth
+statistics measure growth from the observed baseline; their allowance includes
+the difference between reserved and observed baselines plus headroom.
 
 Zero headroom reserves no additional growth allowance. Independently, `reject_overbudget=False`
 reports external and whole-process overruns; `True` rejects them. Pool bounds

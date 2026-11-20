@@ -9,7 +9,7 @@ ordinary runtime mechanisms.
 ## Build and registration
 
 The extension builds on Linux with the main project. It uses direct file I/O,
-Linux AIO syscalls and pthreads; it needs neither `libaio` nor a GPU SDK. The
+Linux AIO syscalls and pthreads; it needs neither `libaio` nor a device SDK. The
 selected backend must support pinned-host registration and stream value
 waits/writes. Unsupported filesystem or backend operations fail setup; there
 is no silent buffered-I/O fallback.
@@ -44,9 +44,10 @@ typedef struct ShadowSpillSSDConfiguration {
 } ShadowSpillSSDConfiguration;
 ```
 
-Set a spill pool's `kind` to `SHADOWSPILL_SSD_POOL_KIND`, its `capacity` to the
-SSD byte budget, and its `configuration` to this struct. Supply every field;
-the C struct has no implicit defaults. These values match the Python defaults:
+Set a spill pool's `kind` to `SHADOWSPILL_SSD_POOL_KIND`, its `capacity_bytes`
+to the SSD byte budget, and its `configuration` to this struct. Supply every
+field; the C struct has no implicit defaults. These values match the Python
+defaults:
 
 ```c
 ShadowSpillSSDConfiguration ssd = {
@@ -66,8 +67,8 @@ No per-route SSD configuration is needed.
 
 | Setting | Meaning |
 |---|---|
-| Pool `capacity` | Bytes reserved on SSD; the file reservation rounds up to direct-I/O alignment. Must fit a signed 64-bit file offset. |
-| `directory` | Directory for the unlinked pool file. Choose a local SSD filesystem for local SSD performance. |
+| Pool `capacity_bytes` | Bytes reserved on SSD; the file reservation rounds up to direct-I/O alignment. Must fit a signed 64-bit file offset. |
+| `directory` | Directory for the unlinked temporary file under `NONE` and `ADOPT`; required in every mode. Choose a local SSD filesystem for local SSD performance. |
 | `staging_bytes` | Shared cap on host payload buffers for state I/O and all lanes using this pool. |
 | `chunk_bytes` | Positive pipeline chunk size, divisible by the filesystem's direct-I/O alignment (at least 4096 bytes). |
 | `queue_depth` | Positive number of chunk slots per directional lane. |
@@ -132,8 +133,8 @@ previous objects' H2D copies. Device copies and completion events remain ordered
 on the route stream. Neither extra whole-object staging nor another ring is
 allocated.
 
-The runtime calling thread enqueues all GPU operations, including readiness
-events. The I/O worker never calls the GPU backend; it uses host-visible
+The runtime calling thread enqueues all device operations, including readiness
+events. The I/O worker never calls the backend; it uses host-visible
 counters to publish disk progress and release stream waits. Workers actively
 poll while work is pending, avoiding scheduler sleep delays between chunks;
 they sleep on a condition variable when idle. Each active lane can use one
@@ -142,7 +143,7 @@ covers the entire transfer. An I/O error latches runtime failure before
 releasing pending waits, so failed work cannot silently pass as successful.
 
 Normal close drains first. Abandon stops the disk worker without waiting for
-an unfinished GPU producer; submitted OS I/O is canceled or retired before
+an unfinished device producer; submitted OS I/O is canceled or retired before
 its staging memory is freed. Per-transfer trace instants use the runtime's
 host/device clock anchor. Byte and chunk counters are always available;
 aggregate lane timing is optional and is not implemented by this extension.

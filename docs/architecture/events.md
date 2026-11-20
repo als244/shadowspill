@@ -1,8 +1,9 @@
 # Events
 
-The runtime's synchronization objects live in `csrc/src/runtime/sync/`. They
-are built on the backend's event and stream calls and own every event the
-runtime uses, so a backend never pools, seals, or measures anything itself.
+The runtime's synchronization objects live in
+`packages/engine/csrc/src/runtime/sync/`. They are built on the backend's event
+and stream calls and own every event the runtime uses, so a backend never
+pools, seals, or measures anything itself.
 
 ## Event leases
 
@@ -58,20 +59,21 @@ with its event.
 Traced transfers are measured with timing events, the kind that carries a
 device timestamp. They come from a second pool the runtime keeps apart from
 the dependency pool, reserved when a trace is prepared with a fixed number of
-events per lane, and sealed like the first. **A lane draws on it for a plain
-transfer, not the worker**: a lane whose bytes move on a stream takes two
-leases per traced transfer, records the first before its copy and the second
+events per lane, and sealed like the first. **Lanes draw on it, and so does the
+worker for a compound transfer.** A lane whose bytes move on a stream takes two
+leases per traced copy, records the first before the copy and the second
 after, and reads both against the step's origin marker with
-`elapsed_nanoseconds` when the runtime asks what that transfer did. A pool
+`elapsed_nanoseconds` when the runtime asks what that copy did. A pool
 that runs out leaves later transfers unmeasured, never a transfer failed. A
 lane whose bytes move elsewhere never touches this pool at all: it has no copy
 on a stream to bracket, and places its own host-clock instants on the origin's
-axis through the anchor the runtime samples beside the origin event. A
-compound transfer is measured by the worker instead: it takes the two leases
-itself and brackets the whole conversion on the route's stream, whatever the
-lane, so the interval it reports covers the conversion as well as the copy. An
-untraced step never touches it either -- a lane asks
-`shadowspill_lane_trace_active()` first, and keeps nothing when the answer is
+axis through the anchor the runtime samples beside the origin event. For a
+compound transfer the worker also takes two leases and brackets the whole
+conversion on the route's stream, whatever the lane. That interval is the
+transfer's `TRANSFER_COMPLETED` record; the lane's interval for the copy alone,
+when it reports one, is recorded just before it as `TRANSFER_COPIED`. An
+untraced step never touches the pool -- a lane and the worker ask
+`shadowspill_lane_trace_active()` first, and keep nothing when the answer is
 no. How the instants become a timeline is in [timelines](timelines.md).
 
 The same pool answers a caller timing its own work. A marker is one lease,

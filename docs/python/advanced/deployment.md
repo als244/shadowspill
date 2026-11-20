@@ -121,6 +121,6 @@ packages and include every [extension package](writing-extensions.md) whose
 components clients use. Omitting it enables the supplied workloads when installed; it does not
 discover unrelated extension packages.
 
-The public training deployment uses GPUs assigned to one host. The separate
-[node-daemon architecture](../../architecture/service/README.md) describes the
-multi-node protocol; it is not an available public training deployment.
+The public training deployment uses GPUs assigned to one host. Node daemons can
+register further machines, which appear in the hardware inventory and take no
+runs; see [Service and node daemons](../../architecture/service/README.md).

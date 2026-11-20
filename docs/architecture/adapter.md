@@ -23,11 +23,10 @@ The allocator exception wrapper, the storage operators, and the hooks that
 observe PyTorch's allocator and collectives use C++ because libtorch requires
 it. Bootstrap, task scopes and the neutral runtime remain C. Public
 headers included through `shadowspill/runtime.h` must therefore also compile as
-C++. Anything in that set must therefore stay valid C++, which rules out
-`_Atomic`. Where a header's contents are of no use to a caller -- a layout only
-an implementation needs -- the answer is to keep it out of the umbrella rather
-than to write it twice: [`lane_base.h`](lanes.md), the struct a lane
-implementation embeds, stays out of the umbrella for that reason.
+C++, which rules out `_Atomic`. Where a header's contents are of no use to a
+caller -- a layout only an implementation needs -- the answer is to keep it out
+of the umbrella rather than to write it twice: [`lane_base.h`](lanes.md), the
+struct a lane implementation embeds, stays out of the umbrella for that reason.
 
 ## What it is made of
 
@@ -56,11 +55,14 @@ torch allocator hooks     objects and storage views     task boundaries
 
 ## How the source is laid out
 
-`csrc/adapter/pytorch/` has the runtime's shape: an `internal.h` saying what
-a directory holds wherever its files share declarations, one file per concern.
+`packages/engine/csrc/adapter/pytorch/` has the runtime's shape: an
+`internal.h` saying what a directory holds wherever its files share
+declarations, one file per concern.
 
 - `lifecycle/` — bootstrap from a config, loading the backend library by
-  name, close, the process-exit hook, and the physical-memory ledger.
+  name and the extension libraries that register pool kinds and lanes (each
+  held until the runtime closes), close, the process-exit hook, and the
+  physical-memory ledger.
 - `allocator/` — the three callbacks PyTorch's pluggable allocator makes, and
   the C++ wrapper that turns a failed one into a typed exception.
 - `failure/` — what a failed call latches, and the report a person reads.

@@ -10,8 +10,9 @@ shadowspill/
 ├── packages/client/       lightweight service/training clients and portable records
 ├── packages/engine/       installable engine distribution
 │   ├── src/shadowspill/   Python phase APIs and runtime bindings
-│   ├── csrc/             native planner, runtime, backends and adapter
-│   ├── CMakeLists.txt    native build entry point
+│   ├── csrc/             C library, backends, adapter and extensions
+│   ├── tests/            engine tests, under engine_tests/
+│   ├── CMakeLists.txt    CMake build entry point
 │   └── pyproject.toml    engine metadata and dependencies
 ├── packages/workloads/    optional models, objectives and registered setup hooks
 ├── examples/              public-client demos and training applications
@@ -114,7 +115,7 @@ packages/engine/src/shadowspill/
 │   │   ├── diagnostics/   search evidence, counters and summaries
 │   │   ├── algorithms/    concrete memory search implementations
 │   │   │   └── pressurefit/
-│   │   │       └── candidates/  native problem records and decoded results
+│   │   │       └── candidates/  C problem records and decoded results
 │   │   └── toolkit/       shared search traversals and graph-pair resolution
 │   ├── plan_store/        request identity, validated cache I/O and search reuse
 │   └── serialization/     neutral planning artifact encode/decode
@@ -135,7 +136,7 @@ packages/engine/src/shadowspill/
 │   │                      is read against
 │   ├── timing.py          what one invocation measures about itself: the
 │   │                      markers, the armed records, the invocation timelines
-│   ├── collection/        task/transfer joins, native evidence and timing summaries
+│   ├── collection/        task/transfer joins, runtime evidence and timing summaries
 │   ├── transfer_phases/   event matching, lane regions and payload throughput
 │   └── occupancy/         pool attribution, clocks and timeline rendering
 ├── profiling/             ordinary-allocator timing and memory measurement
@@ -222,19 +223,20 @@ modules are avoided.
 
 ## The C tree
 
-[csrc/README.md](../../packages/engine/csrc/README.md) draws the layout of `csrc/`: the
-public headers, the one library under `src/` (common, simulator, planner,
-runtime with a directory per runtime component), the backends, and the
+The [C tree guide](../../packages/engine/csrc/README.md) draws the layout of
+`packages/engine/csrc/`: the public headers, the one library under `src/`
+(common, simulator, planner, runtime with a directory per runtime component),
+the backends, the network and SSD extensions, the memory daemon, and the
 PyTorch adapter.
 
-Everything under `csrc/src/` builds into one library. The backends share one
-`CMakeLists.txt`, which builds the mock backend always and every provider
-whose toolchain is installed, or the providers named in `SHADOWSPILL_BACKENDS`
-(`-DSHADOWSPILL_BACKENDS=<provider>`, or through pip
+Everything under `packages/engine/csrc/src/` builds into one library. The
+backends share one `CMakeLists.txt`, which builds the mock backend always and
+every provider whose toolchain is installed, or the providers named in
+`SHADOWSPILL_BACKENDS` (`-DSHADOWSPILL_BACKENDS=<provider>`, or through pip
 `--config-setting cmake.define.SHADOWSPILL_BACKENDS=<provider>`). The PyTorch
 adapter has its own `CMakeLists.txt` and links no provider: it loads a backend
 library by name at bootstrap. Provider dependencies stay inside
-`backends/<provider>/`.
+`packages/engine/csrc/backends/<provider>/`.
 
 A private header named `internal.h` belongs to the directory holding it and is
 included by path from anywhere else, so `"internal.h"` always means this
@@ -255,10 +257,10 @@ tests/
 └── repository/     packaging, naming, documentation and boundary checks
 ```
 
-Engine and workload tests live under their respective package roots. The engine
-keeps native and fresh-process canaries under `tests/engine_tests/native` and
+Client, engine and workload tests live under their respective package roots. The engine
+keeps C and fresh-process canaries under `tests/engine_tests/native` and
 `tests/engine_tests/integration`; [test ownership](../../tests/README.md) describes
-the complete layout. Root `conftest.py` and `pyproject.toml` configure all three
+the complete layout. Root `conftest.py` and `pyproject.toml` configure all four
 test roots, including dtype selection and subprocess imports.
 
 Long numerical and throughput runs belong in `qualification/`, not the unit

@@ -8,6 +8,8 @@ what it must pass, and the words every surface uses.
   build commands a change has to pass.
 - [Naming conventions](naming.md) — the vocabulary every surface shares, the
   words to avoid and why, and what stays generic outside a backend.
+- [Workload organization](workloads.md) — the workloads package layout, the
+  MLOps pin, and adding a model family.
 
 The [Python](../python/README.md) and [C](../c/README.md) references document
 the surfaces a change must keep working.
@@ -31,7 +33,7 @@ implementation detail. Keep the supported training guide in
 Put signatures and constraints in the public docstrings, from which
 `docs/reference/` generates the API reference; design invariants go under
 `docs/architecture/`, and library-specific adapters under `docs/integrations/`.
-Keep the native API in `docs/c/` and complete examples under `docs/examples/`.
+Keep the C API in `docs/c/` and complete examples under `docs/examples/`.
 
 Use current behavior and concrete names. Explain what a control changes and
 which phase consumes it. Preserve shape, ownership and compatibility limits;

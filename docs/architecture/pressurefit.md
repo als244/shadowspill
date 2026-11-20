@@ -67,7 +67,7 @@ pool capacity, and alignment. The physical pool capacity and the logical
 object capacity offered to the reducer are separate quantities. A caller can
 also supply an incumbent plan to beat.
 
-## Current algorithm
+## Algorithm
 
 A resolved program fixes the program's [task alternatives](program.md#task-alternatives).
 PressureFit expands the configured resolutions, orders them by descending
@@ -196,7 +196,9 @@ $$
 f_a=\left\lceil\frac{10^9s_a}{\max(B_{\mathrm{fetch,solo}},B_{\mathrm{fetch,concurrent}})}\right\rceil.
 $$
 
-The eviction estimate $v_a$ uses the corresponding eviction bandwidths.
+The eviction estimate $v_a$ uses the corresponding eviction bandwidths. An
+alias with transfer phases is estimated as the sum of its phases instead: a
+copy phase takes its bytes at that rate, a timed phase its recorded duration.
 Durations are in nanoseconds. Route latency is excluded from these estimates.
 These are local estimates; simulation measures the resulting schedule with
 its actual lane contention and task readiness.
@@ -326,7 +328,7 @@ transfers nor maintains the emitter's refreshed-spill-copy history. In
 particular, $W$ remains a conservative write-back flag; the emitter decides
 the actual departure action. The score does not add a hard fetch-trigger
 constraint: fetch rules can still choose earlier legal triggers, and the
-existing simulator/placement/repair loop checks their memory effects.
+simulator/placement/repair loop checks their memory effects.
 
 The ranking also compares **signed slack**:
 
@@ -338,7 +340,7 @@ Slack is maximized. It is not clamped: positive spare time
 and negative deficits remain distinguishable. Unlike $E$, slack can let
 surplus overlap on one transfer offset a deficit on the other, which is why
 it only breaks ties after $E$. Clean releases set $Wv_a=0$ but retain the
-eviction-side window in the requested formula. Queue contention is absent
+eviction-side window in the slack formula above. Queue contention is absent
 from both metrics.
 
 The keys rank **lexicographically, ascending**. The first differing
@@ -641,10 +643,10 @@ step: makespan, planning capacity, required layout bytes, repair count, and
 what happened to the plan.
 
 `SearchOptions.trace_directory` adds the detailed
-[PressureFit cut trace](../python/advanced/pressurefit-trace.md). The normal API finds
-the winner first and reruns that candidate deterministically for recording.
-Explicit resolution/policy pairs can request more candidates without changing
-the selected plan or its cache key. Each trace includes:
+[PressureFit cut trace](../python/advanced/pressurefit-trace.md). With
+`deterministic=True` on one device, the normal API finds the winner first and
+reruns that candidate for recording. Explicit resolution/policy pairs can
+request more candidates without changing the selected plan or its cache key. Each trace includes:
 
 - the seed and every cut, with enough pressure updates to replay the spans;
 - winning and rejected cut rankings, and the top three over-budget boundaries;
@@ -667,7 +669,7 @@ counter definitions.
 
 ## Implementation map
 
-Paths below are relative to `csrc/src/planner/search/algorithms/pressurefit/`:
+Paths below are relative to `packages/engine/csrc/src/planner/search/algorithms/pressurefit/`:
 
 | Component | Source |
 |---|---|
@@ -681,7 +683,10 @@ Paths below are relative to `csrc/src/planner/search/algorithms/pressurefit/`:
 | Candidate cycle, repairs, capacity refinement, kept answer | `candidates/search.c` |
 | Per-candidate jobs and per-problem winner | `candidates/workers.c` |
 
-Python resolution expansion and final materialization live in
+Python resolution expansion and ordering live in `ordered_resolutions`, in
+`packages/engine/src/shadowspill/planning/memory_search/algorithms/pressurefit/__init__.py`,
+over `packages/engine/src/shadowspill/planning/memory_search/toolkit/resolution.py`.
+Evaluating the resolutions and materializing the winner live in
 `packages/engine/src/shadowspill/planning/memory_search/algorithms/pressurefit/search.py`.
 
 ---

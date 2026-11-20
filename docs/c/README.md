@@ -11,16 +11,15 @@ the inventory and the reference index.
 
 | Component | Header | Reference | What the page covers |
 |---|---|---|---|
-| Runtime | [`runtime.h`](../../packages/engine/csrc/include/shadowspill/runtime.h) | [Runtime API](runtime.md) | Creating a runtime and its pools and routes, reserving the records a hot path must never allocate, admitting a plan, the two task boundaries, allocation scopes, tracing, and the statistics and first-failure snapshots |
-| Admission replay | [`admission_replay.h`](../../packages/engine/csrc/include/shadowspill/admission_replay.h) | [Runtime API](runtime.md#admission-replay) | Replaying a schedule's pool ownership transitions through the production allocator policy, with no backend and no device |
-| Backend | [`backend.h`](../../packages/engine/csrc/include/shadowspill/backend.h) | [Backends](backends.md) | The driver-level call table a provider shared object implements, the two symbols it exports, and what a new provider directory has to build |
+| Runtime | [`runtime.h`](../../packages/engine/csrc/include/shadowspill/runtime.h), [`admission_replay.h`](../../packages/engine/csrc/include/shadowspill/admission_replay.h) | [Runtime API](runtime.md) | Creating a runtime and its pools and routes, reserving the records a hot path must never allocate, admitting a plan, the two task boundaries, allocation scopes, tracing, the statistics and first-failure snapshots, and replaying a schedule's pool ownership transitions through the production allocator policy with no backend and no device |
+| Backend | [`backend.h`](../../packages/engine/csrc/include/shadowspill/backend.h) | [Backends](backends.md) | The driver-level call table a provider shared object implements, the two symbols it exports, what a new provider directory has to build, and the mock backend's test hooks |
 | Lane | [`runtime/lane.h`](../../packages/engine/csrc/include/shadowspill/runtime/lane.h), [`runtime/lane_base.h`](../../packages/engine/csrc/include/shadowspill/runtime/lane_base.h) | [Lane contract](lanes.md) | What moves bytes between two pools: the table a transport implements, the struct it embeds, the obligation it is under, and how a route resolves one from its two pools' kinds |
-| Pool memory | [`runtime/pool_memory.h`](../../packages/engine/csrc/include/shadowspill/runtime/pool_memory.h) | [Pool memory contract](pool-memory.md) | Where a pool's region comes from: the acquire/release pair a kind of memory implements, and why nothing reads through the address it returns |
-| SSD extension | [`ssd.h`](../../packages/engine/csrc/include/shadowspill/ssd.h), [`runtime/library.h`](../../packages/engine/csrc/include/shadowspill/runtime/library.h) | [SSD pool and lanes](ssd.md) | Extension registration, temporary direct-I/O storage, bounded host staging, stream ordering, cleanup and calibration |
-| Planner | [`planner.h`](../../packages/engine/csrc/include/shadowspill/planner.h) | [Planner API](planner.md) | The planning question in indexed form and the certification a schedule passes whichever search found it: exact schedule admission, the admission operations a schedule implies, the lease lifetimes those resolve to, and fixed-offset placement |
+| Pool memory | [`runtime/pool_memory.h`](../../packages/engine/csrc/include/shadowspill/runtime/pool_memory.h) | [Pool memory contract](pool-memory.md) | Where a pool's region comes from: the acquire/release pair a kind of memory implements, and the write/read pair a region this process cannot address needs |
+| SSD extension | [`ssd.h`](../../packages/engine/csrc/include/shadowspill/ssd.h), [`runtime/library.h`](../../packages/engine/csrc/include/shadowspill/runtime/library.h) | [SSD pool and lanes](ssd.md) | Extension registration, temporary or persistent direct-I/O storage, bounded host staging, stream ordering, cleanup and calibration |
+| Planner | [`planner.h`](../../packages/engine/csrc/include/shadowspill/planner.h) | [Planner API](planner.md) | The planning question in indexed form and the certification a schedule passes whichever search found it: exact schedule admission, the admission operations a schedule implies, the lease lifetimes those resolve to, fixed-offset placement, and the reuse dependencies a placed layout implies |
 | PressureFit | [`pressurefit/pressurefit.h`](../../packages/engine/csrc/include/shadowspill/pressurefit/pressurefit.h) | [PressureFit API](pressurefit.md) | The search that ships: residency/fetch policies, fixed cut scoring, tracing, per-candidate diagnostics, preflight, and the shared placed-plan record |
 | Simulator | [`simulator.h`](../../packages/engine/csrc/include/shadowspill/simulator.h) | [Simulator API](simulator.md) | The one call that times an already selected schedule, and the intervals, peaks, stalls and capacity shortfalls it reports |
-| PyTorch adapter | [`pytorch_adapter.h`](../../packages/engine/csrc/adapter/pytorch/include/shadowspill/pytorch_adapter.h) | [PyTorch adapter](pytorch-adapter.md) | Only what needs PyTorch: bootstrap and the physical ledger, the pluggable-allocator callbacks, storage validation, and the stream-wrapping task boundaries |
+| PyTorch adapter | [`pytorch_adapter.h`](../../packages/engine/csrc/adapter/pytorch/include/shadowspill/pytorch_adapter.h) | [PyTorch adapter](pytorch-adapter.md) | Only what needs PyTorch: bootstrap and the physical ledger, the pluggable-allocator callbacks, storage validation, the stream-wrapping task boundaries, and spill-calibration probes |
 
 ## ABI use
 
@@ -36,10 +35,18 @@ if (shadowspill_abi_version() != SHADOWSPILL_ABI_VERSION) {
 }
 ```
 
-What versions separately is what is compiled separately: the backend
-contract in `<shadowspill/backend.h>`, including the profiler a backend supplies,
-and the PyTorch adapter. Check those against the plugin you loaded. Do not
-hardcode a numeric ABI value.
+Two contracts version on their own, because what implements them is built
+apart from the library and can differ from it: the backend contract,
+`SHADOWSPILL_BACKEND_ABI_VERSION` in `<shadowspill/backend.h>`, including the
+profiler a backend supplies, and the PyTorch adapter,
+`SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION`. Check those against the plugin you
+loaded. Pool and lane extensions are built apart too, but implement the
+runtime's own contracts and carry `SHADOWSPILL_ABI_VERSION`. Do not hardcode a
+numeric ABI value.
+
+`SHADOWSPILL_ARTIFACT_VERSION`, in the same header, is the version every stored
+artifact carries; it enters the schedule digest, and
+`shadowspill.schema.ARTIFACT_VERSION` mirrors it.
 
 Every function in `libshadowspill` returns a `ShadowSpillStatus` unless its
 signature is explicitly `void` or it is an accessor, constructor, or query
@@ -53,10 +60,11 @@ whose return value is the answer itself - `shadowspill_abi_version`,
 and `shadowspill_planner_struct_size`. Two return a plain `int`, 0 on success:
 `shadowspill_trace_event_instant`, which passes on the backend's
 `elapsed_nanoseconds` answer, and `shadowspill_transfer_duration_ns`. The two
-separately compiled contracts differ: a backend's table entries and its two
-exported symbols return `int`, and one more call returns the answer itself
-rather than a status -- `shadowspill_pytorch_backend_malloc` (the address),
-which PyTorch's allocator signature forces.
+contracts built apart differ. A backend's table entries return `int` unless
+[the table](backends.md#the-table) says otherwise; of its two exported symbols,
+`shadowspill_backend_create` returns `int` and `shadowspill_backend_destroy`
+nothing. In the adapter, `shadowspill_pytorch_backend_malloc` returns the
+address rather than a status, as PyTorch's allocator signature requires.
 
 One vocabulary covers the whole library: the three codes every component agrees
 on sit at 0-2, and each component owns a band after that, so a status decodes to
@@ -67,8 +75,9 @@ category; retain structured result fields for diagnostics.
 ## Reading a header
 
 `runtime.h` is the large one, and it is an umbrella: it includes one header
-per subsystem from `include/shadowspill/runtime/`, in the order a program uses
-them. `vocabulary.h` is the statuses, reasons and enumerations; [`lane.h`](lanes.md) the contract
+per subsystem from `<shadowspill/runtime/>`, in the order a program uses
+them. `vocabulary.h` is the failure reasons and the enumerations the
+descriptions use (statuses are in `<shadowspill/status.h>`); [`lane.h`](lanes.md) the contract
 for what moves bytes between two pools and [`pool_memory.h`](pool-memory.md) the
 one for where a pool's memory comes from; `library.h` the descriptor an
 extension library exports to offer either or both; `descriptions.h` what a caller fills in; `diagnostics.h` the records the runtime fills in; then
@@ -89,10 +98,10 @@ the umbrella into.
 `pytorch_adapter.h` follows the same convention at a smaller scale, in the
 order its reference page describes.
 
-`planner.h` carries no banners. It is ordered too, but in a repeating shape
-rather than in phases: each problem's structures come first and the call that
-consumes them immediately after, from schedule admission through admission
-operations and lease lifetimes to placement.
+`planner.h` carries no banners. It runs problem by problem: schedule admission,
+admission operations, lease lifetimes, placement and layout reuse, each
+problem's structures before the call that consumes them;
+`shadowspill_place_lifetimes` is declared last.
 
 `pressurefit/pressurefit.h` sits beside it and holds one search's own surface,
 in the order a caller meets it: policy codes, options,
@@ -126,11 +135,11 @@ the translation unit is building the library itself, which the build says with
 The implementation is a different matter. It uses pthreads and C11 atomics
 directly, and reaches the operating system for four things - a monotonic
 clock, a thread yield, a thread name, and the logical CPU count - which
-`csrc/src/common/platform.h` supplies for both platforms, and for two it does
-not: the pinned-host pool maps its region with POSIX `mmap`, and device-local
-NUMA placement (`csrc/src/runtime/numa.c`) uses Linux's affinity and
-memory-policy calls and on any other system warns and keeps the operating
-system's placement. So a Windows build needs pthreads and `<stdatomic.h>` from
+`packages/engine/csrc/src/common/platform.h` supplies for both platforms, and
+for two it does not: the pinned-host pool maps its region with POSIX `mmap`,
+and device-local NUMA placement (`packages/engine/csrc/src/runtime/numa.c`)
+uses Linux's affinity and memory-policy calls and on any other system warns
+and keeps the operating system's placement. So a Windows build needs pthreads and `<stdatomic.h>` from
 its toolchain - MinGW-w64 or clang provides both, MSVC needs
 `/experimental:c11atomics` and a pthreads shim - and an `mmap` for the
 pinned-host pool. Linux is what every test and gate here runs on; Windows is
@@ -139,12 +148,14 @@ portable by construction rather than by test.
 ## Build boundaries
 
 `libshadowspill` and the mock backend build without PyTorch or a
-device-provider SDK. Provider code is confined to `csrc/backends/` and the
-PyTorch adapter, which stay separate libraries for that reason. See the
+device-provider SDK. Provider code is confined to
+`packages/engine/csrc/backends/` and the PyTorch adapter, which stay separate
+libraries for that reason. See the
 [C tree guide](../../packages/engine/csrc/README.md) for source layout and build
 dependencies.
 
-Pool/lane extensions compile separately against the runtime's public contracts
-and share `SHADOWSPILL_ABI_VERSION`. The Linux-only SSD extension uses direct
-I/O and AIO syscalls without a GPU SDK; the network extension requires ibverbs.
-Their platform requirements are separate from those of the neutral core.
+Pool/lane extensions are built separately against the runtime's public
+contracts and share `SHADOWSPILL_ABI_VERSION`. The Linux-only SSD extension
+uses direct I/O and AIO syscalls without a device SDK; the network extension
+requires ibverbs. Their platform requirements are separate from those of the
+neutral core.

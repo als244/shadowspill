@@ -34,10 +34,11 @@ reference.
 
 ## The table
 
-`ShadowSpillBackend` carries `abi_version` -- 1; the check exists so a library
-and a header from different builds cannot be paired -- the provider object
-`state` that every entry receives, and these entries. Each returns 0 on success and
-nonzero on failure unless noted.
+`ShadowSpillBackend` carries `abi_version`, which must equal
+`SHADOWSPILL_BACKEND_ABI_VERSION` so a library and a header from different
+builds cannot be paired; the provider object `state` that every entry receives;
+and these entries. Each returns 0 on success and nonzero on failure unless
+noted.
 
 | group | entries |
 |---|---|
@@ -46,6 +47,7 @@ nonzero on failure unless noted.
 | streams | `create_stream(&stream)`, `destroy_stream(stream)`, `synchronize_stream(stream)`, `resolve_stream(stream_handle)` returning the word this backend knows that stream by |
 | copies | `copy_host_to_device(device, host, bytes, stream)`, `copy_device_to_host(host, device, bytes, stream)`, `copy_device_to_device(destination, source, bytes, stream)` |
 | events | `create_event(&event, timing)`, `destroy_event(event)`, `record_event(event, stream)`, `query_event(event, &complete)`, `wait_event(stream, event)`, `synchronize_event(event)`, `elapsed_nanoseconds(from, to, &nanoseconds)` |
+| locality, optional | `host_numa_node(&node)`; see [host NUMA locality](#host-numa-locality) |
 | facts | `capabilities(&out)`, `physical_memory(&out)`, and `statistics(&out)`, the one entry here that returns nothing |
 | profiler, optional | `name_thread(name)`, `name_stream(stream, name)`, `profiler_enable(enabled)`, `range_begin(name)` returning a range, `range_end(range)`; the rest return nothing |
 
@@ -98,6 +100,14 @@ a whole stream.
 
 Profiler entries are best-effort diagnostics and never change execution
 semantics; a NULL entry is a no-op.
+
+### Host NUMA locality
+
+`host_numa_node(&node)` returns the OS host-memory node nearest the selected
+device: zero plus a nonnegative node ID means known; nonzero means unavailable.
+A null entry means host locality is inapplicable, as with a simulated backend.
+The runtime implements host placement policy. The device query must respect
+the backend's logical device selection.
 
 ## Signals, and waiting on one
 
@@ -170,20 +180,37 @@ separate streams, so streams must be independent.
 
 ## Adding a backend
 
-A new provider is a directory `csrc/backends/<provider>/` compiled against
-this header alone, built as `libshadowspill_backend_<provider>.so` beside the
-runtime library, exporting the two symbols. `csrc/backends/CMakeLists.txt`
-builds every provider whose toolchain is installed, or the ones named in
-`SHADOWSPILL_BACKENDS`. `Runtime(backend="<provider>")` selects it by name;
-`Runtime(backend=None)` selects the one accelerator backend installed. The
-tree holds one accelerator backend and the accelerator-free mock backend
-(`mock/`), which the C canaries and sanitizer tests use, and whose extra test
-hooks live in `<shadowspill/backend_mock.h>`.
+A new provider is a directory `packages/engine/csrc/backends/<provider>/` built
+against this header alone, as `libshadowspill_backend_<provider>.so` beside the
+runtime library, exporting the two symbols.
+`packages/engine/csrc/backends/CMakeLists.txt` builds every provider whose
+toolchain is installed, or the ones named in `SHADOWSPILL_BACKENDS`.
+`Runtime(backend="<provider>")` selects it by name; `Runtime(backend=None)`
+selects the one accelerator backend installed. The tree holds one accelerator
+backend and the accelerator-free mock backend (`mock/`), which the C canaries
+and sanitizer tests use.
 
-### Host NUMA locality
+## The mock backend
 
-An optional `host_numa_node(state, &node)` entry returns the OS host-memory node
-nearest the selected device: zero plus a nonnegative node ID means known;
-nonzero means unavailable. A null entry means host locality is inapplicable,
-as with a simulated backend. The runtime implements host placement policy.
-The device query must respect the backend's logical device selection.
+The mock implements the table with host memory standing in for the device and
+streams, events and copies simulated with delays on a monotonic clock. A
+stream is a real ordered queue, so an entry behind an unsatisfied value wait
+has not happened yet. `<shadowspill/backend_mock.h>` adds two calls that set
+one up and four test hooks:
+
+- `shadowspill_mock_backend_create(config, &backend)` makes a mock with the
+  fetch, evict and event delays in a `ShadowSpillMockBackendConfig`;
+  `shadowspill_backend_create()` makes one with none, and
+  `shadowspill_backend_destroy()` releases either.
+- `shadowspill_mock_runtime_topology(...)` fills a
+  `ShadowSpillMockRuntimeTopology` with one device pool, one pinned-host pool
+  and the fetch and evict routes between them, ready for
+  `shadowspill_runtime_create()`.
+- `shadowspill_mock_enqueue_compute(backend, stream, duration)` queues a delay
+  standing for compute work on a stream.
+- `shadowspill_mock_fail_operation(backend, n)` makes the mock's `n`th
+  operation fail, once; `shadowspill_mock_fail_next_operation(backend)` makes
+  the next one fail.
+- `shadowspill_mock_backend_statistics(backend, &statistics)` reports
+  `operation_count`, the operations performed so far, for choosing which to
+  fail.

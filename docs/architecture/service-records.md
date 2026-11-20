@@ -10,7 +10,7 @@ components are described in [training composition](training.md).
 
 ## Authenticated transport
 
-`server.http.HTTPService` exposes the existing run controller and artifact store
+`server.http.HTTPService` exposes the run controller and artifact store
 through authenticated HTTP. Bearer credentials resolve to an owner; every
 session, run, request and artifact lookup checks that owner. Reachable listeners
 require TLS. Loopback HTTP can use the client's OpenSSH forward, which retains
@@ -19,12 +19,17 @@ ordinary SSH key and host verification.
 Control metadata and binary tensor payloads have separate bounded codecs.
 Handlers reserve their scratch and concurrency slots before reading payloads.
 Exchange deadlines bound incomplete network I/O without imposing a timeout on
-accepted training. Artifact downloads stream immutable bytes with content hashes;
-the client verifies the completed transfer.
+accepted training: each exchange has the request timeout, and an artifact
+download restarts it with every block, so only a stalled download is cut.
+Artifact downloads stream immutable bytes with content hashes; the client
+verifies the completed transfer.
 
 Closing a client connection stops its polling and transfers. Accepted work
-continues on the server. `training.close()` is a separate ordered operation that
-waits for workers and their resources to retire.
+continues on the server. `training.close()` is a separate ordered operation. It
+resolves once the run's workers and resources have retired, or, while a cleanup
+attempt has failed, once the run's end is recorded after its workers exit; the
+service keeps retrying the cleanup and holds the resources until it succeeds. A
+run that could not record its end answers `retirement_failed`.
 
 ## Creation and worker ownership
 
@@ -97,7 +102,7 @@ publication. Private staged files become visible together with their manifest;
 failed production publishes none of them. Immutable earlier generations survive
 updates to friendly names such as `latest`.
 
-Checkpoint saves use the existing bounded rank encoder. Every worker reports its
+Checkpoint saves use the bounded rank encoder. Every worker reports its
 state identity and exact archive size before the service releases encoding. The
 server receives rank archives, records completion and atomically publishes the
 complete checkpoint generation. Saves include registered RNG state and retain

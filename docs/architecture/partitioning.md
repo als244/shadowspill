@@ -39,8 +39,15 @@ def assign_stages(self, graph_module, module) -> Mapping[str, int]:
     ...
 ```
 
-The policy receives a captured FX graph and its source module. It returns a
-mapping from **FX node name** to stage label.
+`"auto"` gives each child of the outermost modules whose children repeat a
+type (each layer of a layer stack) its own stage, plus one stage for what
+precedes them and one for what follows. `"whole"`, or `"auto"` without such a
+module, makes the graph one stage. The built-in `IsolateOperations` policy
+gives each call of listed operators its own stage over a base partition; see
+the [frontend reference](../reference/engine/frontend.rst).
+
+A custom policy receives a captured FX graph and its source module. It returns
+a mapping from **FX node name** to stage label.
 
 1. Assign every executable node exactly once. Exclude `placeholder`,
    `get_attr` and `output` nodes.
@@ -133,9 +140,12 @@ workload PartitionPolicy
 ```
 
 Planning chooses among the resulting variants. Comparing different partitions
-requires building different Programs. Workload components can supply partition
-policies through their preparation hooks; the engine does not infer them from
-architecture names.
+requires building different Programs. In the training service, a component
+package registers a partition policy as a `PolicyComponent` of kind
+`"partition"`, and `BuildOptions(partition=...)` or a preparation component's
+defaults select it by name; see
+[component hooks](../python/advanced/components.md#preparation-and-capture).
+The engine does not infer a policy from architecture names.
 
 The [custom partitioning example](../examples/custom-partitioning.md) shows a
 small standalone policy. Larger workload policies belong beside their models;

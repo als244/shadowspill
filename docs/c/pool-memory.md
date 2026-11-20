@@ -1,6 +1,6 @@
 # Pool memory contract
 
-`include/shadowspill/runtime/pool_memory.h` — where a pool's memory comes from,
+`<shadowspill/runtime/pool_memory.h>` — where a pool's memory comes from,
 and how the runtime finds out. A kind of memory implements it; the runtime
 calls it and never asks what kind it is.
 
@@ -42,8 +42,8 @@ offset. Whether that yields something this machine can read is the kind's
 business; see [what the runtime never does with a pool
 address](../architecture/memory-pools.md#nothing-reads-through-a-pool-address).
 
-For example, the [SSD extension](ssd.md) returns an address token over an
-unlinked file. The range allocator uses its offsets normally; callers access
+For example, the [SSD extension](ssd.md) returns an address token over its
+file. The range allocator uses its offsets normally; callers access
 payload through `read`/`write` or an SSD/device lane, never by dereferencing it.
 
 ## Crossing the pool's edge
@@ -56,10 +56,12 @@ int (*read)(void *state, uint64_t offset,
 ```
 
 **Optional, and optional together.** Leaving both NULL says this process can
-dereference the region, so the runtime moves bytes with an ordinary copy; both
-built-in kinds do that. A kind whose region is not in this address space
+dereference the region, so the runtime moves bytes with an ordinary copy; the
+pinned-host kind does that. A kind whose region is not in this address space
 implements both, and must, because the alternative is a fault on the first
-byte.
+byte. The built-in device kind is the exception: it leaves both NULL although
+its region is device memory, so `shadowspill_write_object()` and
+`shadowspill_read_object()` must name a pool this process can address.
 
 `source` and `destination` are pointers **in the runtime process**. That is the
 honest statement of it: not "host memory", which would promise something about

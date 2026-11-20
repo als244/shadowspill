@@ -64,11 +64,6 @@ Identically named resources are shared by admitted training/evaluation Plans;
 conflicting descriptions or source identities are rejected. Resources close in
 reverse initialization order before their process groups are destroyed.
 
-The generic lifecycle is qualified with a non-distributed custom operator through
-all three builders and fresh Executor workers. Each distributed backend needs
-its own target-hardware qualification; this interface alone does not certify
-EP transport or a provider's transitive native dependencies.
-
 ---
 
 Previous: [The optimizer](optimizer.md) ·

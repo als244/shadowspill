@@ -24,7 +24,7 @@ Operator setup and storage are in [Service deployment](deployment.md).
 ## Connection and setup
 
 Connect to a running endpoint with a client credential in `SHADOWSPILL_TOKEN`.
-Client and service exchange protocol version 2 and reject any other version.
+Client and service exchange protocol version 1 and reject any other version.
 For listener setup, storage, component packages and local checkpoint lookup, see
 [Service deployment](deployment.md). Those operator settings are separate from
 the training configuration below.

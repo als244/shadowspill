@@ -1,8 +1,9 @@
 # Memory pools
 
-The runtime's memory objects live in `csrc/src/runtime/memory/`. They are
-ShadowSpill's: everything with a lifetime or a policy is here. Where a pool's
-region *comes from* is a kind's business, and only some kinds ask the
+The runtime's memory objects live in
+`packages/engine/csrc/src/runtime/memory/`. They are ShadowSpill's: everything
+with a lifetime or a policy is here. Where a pool's region *comes from* is a
+kind's business, and only some kinds ask the
 [backend](../c/backends.md) for it. Routes are in
 [transfers](transfers.md), what moves bytes between two pools in
 [lanes](lanes.md), and the events that protect a range in [events](events.md).
@@ -54,8 +55,9 @@ table.
 
 Two entries claiming one kind fails `shadowspill_runtime_create()`, and so does
 a pool whose kind no entry serves. **That lookup is the only place a kind is
-judged**; there is no range check on the enum, which is a list of the kinds
-shipped here rather than a bound.
+judged**; there is no range check on the enum, which is a list rather than a
+bound: it names the device, pinned-host and remote kinds, and the SSD kind is
+defined in `shadowspill/ssd.h`.
 
 Whatever a kind needs to remember in order to give the region back -- a
 connection, a key, a handle -- it returns from `acquire` as an opaque state
@@ -74,23 +76,23 @@ Transfer [lanes](lanes.md) access the two pool kinds they connect. Bounded objec
 read/write calls use the [pool-memory contract](../c/pool-memory.md), which routes
 non-addressable storage through the kind's callbacks. Executor's `SpillStorage`
 uses these calls for initialization and checkpoint I/O. The object registry
-tracks registrations and leases; it does not stage tensor payloads.
+tracks registrations and leases; it does not stage object payloads.
 
 Execution-pool addresses are deliberately exposed to compiled tasks. Their
 lifetimes follow the Plan's allocation and completion dependencies. A remote or
-SSD address is never exposed as a local tensor pointer.
+SSD address is never exposed as a local pointer.
 
-## Execution owns tensor values
+## Executor fills the pools
 
 Build and planning record geometry, dependencies and memory requirements without
 creating runtime pools. Executor creates the pools, reserves the declared initial
-storage, then fills it through bounded tensor requests. Checkpoint loading and
+storage, then fills it through bounded requests. Checkpoint loading and
 random initialization use the same interface; see [initialization](state-import.md).
 
 Addressable spill pools are filled in place. For remote memory and SSD, each
-request uses a bounded host buffer and publishes it through the backend's write
-operation. Scratch is reused for the next chunk. No model-sized staging copy is
-required, including for optimizer tensors and distributed shards.
+request uses a bounded host buffer and publishes it through the pool kind's
+write callback. Scratch is reused for the next chunk. No model-sized staging
+copy is required, including for optimizer state and distributed shards.
 
 Export uses bounded read buffers. Checkpoint helpers stream those buffers to a
 separate archive; the temporary spill pool itself is not a checkpoint. Releasing
@@ -115,7 +117,7 @@ callers can also supply rates directly. Model/task profiling uses the ordinary
 framework allocator and needs no runtime pool.
 
 A fresh execution worker installs the allocator, creates its pools and admits
-the saved Plan before initializing tensor values. It uses the saved costs and
+the saved Plan before filling its persistent state. It uses the saved costs and
 layout without recalibrating or replanning. This keeps large spill allocations
 independent of anonymous full-model initialization and preserves the phase boundary.
 

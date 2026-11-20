@@ -48,7 +48,9 @@ Construction consumes:
 - the differentiable output positions that seed the vector-Jacobian product;
 - whether terminal unit cotangents may be specialized away;
 - the independent retention policies for `save` and `recompute`;
-- the builder that defines the variant set.
+- the variants to build, a subset of `save` and `recompute`;
+- the gradient dtype, whether the step accumulates, and
+  `fuse_narrow_gradient_accumulation`.
 
 It returns an immutable `TaskGraphPairs`:
 
@@ -62,9 +64,10 @@ TaskGraphPairs
     └── GraphPairVariant("recompute", memory_budget=0.0, pair=...)
 ```
 
-The record supports any number of uniquely named variants, and the default
-builder defines two. “Every legal variant” therefore means every variant that
-builder defines, not every mathematically possible cut of the AOT joint graph.
+The record supports any number of uniquely named variants; construction
+builds at most the two endpoints, `save` and `recompute`. “Every legal variant”
+therefore means those endpoints, not every mathematically possible cut of the
+AOT joint graph.
 
 ## Accumulating onto gradients that already exist
 
@@ -165,15 +168,19 @@ Before AOT capture, ShadowSpill computes the stage structural contract from:
 
 ```text
 (structural_contract, differentiable_root_positions, specialize_unit_tangents,
- retention_digest, gradient_roots_policy, variants, emulate_precision_casts)
+ retention_digest, gradient_roots_policy, variants, emulate_precision_casts,
+ numerical_settings)
 ```
 
 `gradient_roots_policy` names the root rule [above](#differentiation-roots),
 outputs connected to the objective, and `variants` the variants the entry
 holds, so an entry holding one endpoint never answers a request for both.
 `emulate_precision_casts` fixes the low-precision pointwise rounding barriers
-recorded during differentiation. Changing this capture setting requires a
-different entry even when the exported source graph is unchanged.
+recorded during differentiation. `numerical_settings` records the framework's
+numerical backend settings, such as deterministic algorithms and matrix-multiply
+precision: an autograd formula can choose operations from them. Changing either
+setting requires a different entry even when the exported source graph is
+unchanged.
 
 `retention_digest` combines both variant policies with the class of each of the
 stage's custom operators under each policy's threshold ([below](#save)). PyTorch's own operators
@@ -237,9 +244,9 @@ Both variants come from PyTorch's min-cut rematerialization partitioner over
 the joint graph, with independent policies derived from its two base cuts. Values
 the backward is handed are returned by the forward graph and become inputs to
 its paired backward graph; the rest of what the backward needs it computes
-again. The budget, and the partitioner options the `save` variant sets, are
-bound inside the lazy partition callback AOTAutograd invokes, so ambient
-Functorch configuration cannot change the generated pair.
+again. The budget and the lifted partitioner bans are bound inside the lazy
+partition callback AOTAutograd invokes, so ambient Functorch configuration
+cannot change the generated pair.
 
 Both variants retain supported [forward routing choices](routing-retention.md)
 by default: top-k expert indices and selected weights survive recomputation.
@@ -249,8 +256,9 @@ This applies to each candidate policy pair and remains independent of residency.
 
 The `save` variant is budget `1.0`: the min-cut over saved bytes, which retains
 for the backward what would be expensive to regenerate and regenerates the
-rest. It is the reference variant used to establish the canonical public
-stage-boundary contract.
+rest. Whenever it is built, it is the reference variant that fixes the
+canonical public stage-boundary contract; a recompute-only build uses
+`recompute`.
 
 The builder's [graph-pair policy](../reference/engine/frontend.rst)
 controls both cuts independently. Its `save` policy defaults to the cost
@@ -428,29 +436,32 @@ that evidence.
 ## Pseudocode
 
 ```text
-ConstructGraphPairs(partitioned_export):
+ConstructGraphPairs(partitioned_export, variants):
     repository = structural graph-pair repository
     stages = []
 
     for occurrence in partitioned_export.stages:
         roots = differentiable_stage_roots(occurrence)
         terminal = occurrence is final stage
-        key = structural_contract(occurrence, roots, terminal,
-                                  graph_pair_policy.digest(occurrence.graph))
+        built = variants if a later forward stage reads occurrence
+                else variants + {save}          # a forward sink keeps save
+        key = (structural_contract(occurrence), roots, terminal,
+               graph_pair_policy.digest(occurrence.graph), built,
+               numerical_settings)
 
         graph_pairs = repository.lookup(key)
         if graph_pairs is absent:
-            variants = []
-            for name, budget in (("save", 1.0), ("recompute", 0.0)):
+            pairs = []
+            for name in built:                  # save at 1.0, recompute at 0.0
                 pair = AOTAutograd(
                     occurrence.graph,
                     roots,
-                    partition=policy_cut(budget, graph_pair_policy.variant(name)),
+                    partition=policy_cut(budget(name), graph_pair_policy.variant(name)),
                 )
                 validate_public_boundary(pair)
                 classify_saved_storage_roots(pair)
-                variants.append(named_variant(name, budget, pair))
-            graph_pairs = TaskGraphPairs(key, roots, variants)
+                pairs.append(named_variant(name, budget(name), pair))
+            graph_pairs = TaskGraphPairs(key, roots, pairs)
             repository.store(graph_pairs)
         else:
             graph_pairs = rebind_occurrence_values(graph_pairs, occurrence)
@@ -501,12 +512,16 @@ from allocator pointers or FakeTensor storage identity.
 | Module | Responsibility |
 |---|---|
 | `shadowspill.pytorch.partition` | Produce ordered stages and authentic examples. |
+| `shadowspill.pytorch.graph_pairs.training` | Partition and differentiate one captured objective. |
 | `shadowspill.pytorch.graph_pairs.capture` | Choose differentiation roots and bind occurrences to their graph pairs. |
+| `shadowspill.pytorch.graph_pairs.policy` | `GraphPairPolicy`: each variant's retention policy and its digest. |
 | `shadowspill.pytorch.capture.retention` | Class every operator by arithmetic intensity, mark what a partition retains, and record what it regenerated. |
 | `shadowspill.pytorch.graph_pairs.build` | Define the default variant set and invoke AOT capture at each budget. |
 | `shadowspill.pytorch.graph_pairs.artifacts` | Immutable pair, variant, task-graph-pairs, and differentiated-stage records. |
 | `shadowspill.pytorch.graph_pairs.footprint` | Classify saved input, boundary, and internal storage roots. |
-| `shadowspill.pytorch.graph_pairs.store` | Structural cache identity, persistence, and occurrence rebinding. |
+| `shadowspill.pytorch.graph_pairs.store` | Structural cache identity, persistence, and the derived gradient-dtype and accumulating forms. |
+| `shadowspill.pytorch.graph_pairs.serialization` | Value-free records of cached graph pairs. |
+| `shadowspill.pytorch.graph_pairs.rebind` | Occurrence rebinding of a structural entry. |
 | `shadowspill.build` | Finalize each unique forward/backward artifact in a Program. |
 | `shadowspill.profiling` | Measure saved task implementations with the ordinary allocator. |
 | `shadowspill.build.lowering.training` | Bind all variants to canonical objects and save stage templates. |

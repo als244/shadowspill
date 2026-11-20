@@ -25,17 +25,19 @@ flattened into C inputs at the planner, simulator and runtime boundaries.
 
 A `ShadowSpillProgram` contains immutable logical facts:
 
+- `DeviceSpec` values;
 - `ObjectSpec` values and alias groups;
-- `TaskSpec` values in execution order;
-- per-task `TaskProfile` timing and memory measurements;
+- `TaskSpec` values in execution order, each on a compute, communication or
+  control queue;
+- `TaskProfile` timing and memory measurements, which tasks reference by
+  `profile_id`;
 - mutations and persistence;
-- compute and transfer resources;
 - task alternatives, as `TaskAlternativeGroup` values.
 
-An object denotes one logical alias bundle, not one observed pointer. Views of
-the same storage root share an object and retain their own geometry. Program
-identity is deterministic and independent of diagnostic wall times or cache
-paths.
+An alias group is one storage root. Each view of it is an object with its own
+offset and size in that group. Objects are logical values, not observed
+pointers. Program identity is deterministic and independent of diagnostic wall
+times or cache paths.
 
 An alias group may declare one runtime-global shared-residency policy.
 [Shared objects](shared-objects.md) is how the mechanism underneath works --
@@ -43,9 +45,9 @@ objects, their per-pool locations, and the leases those locations hold:
 
 | Policy | Contract |
 |---|---|
-| `SHARED_READ_ONLY` | The execution-pool lease is shared by callables and may never be mutated or replaced. |
+| `SHARED_READ_ONLY` | The execution-pool lease is shared by plans and may never be mutated or replaced. |
 | `SHARED_WRITABLE_CAUSAL` | The lease is shared; every reader/writer acquires the current generation and its readiness dependency. |
-| `SHARED_WRITABLE_UNORDERED` | The lease is shared and may be mutated in place; cross-callable read/write visibility is intentionally unordered. |
+| `SHARED_WRITABLE_UNORDERED` | The lease is shared and may be mutated in place; cross-plan read/write visibility is intentionally unordered. |
 
 Shared aliases are not plan-owned residency. They cannot appear in memory
 actions, initial/final schedule residency, or a task-alternative option's

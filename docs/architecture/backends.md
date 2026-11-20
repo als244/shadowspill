@@ -92,13 +92,13 @@ ones named in `SHADOWSPILL_BACKENDS`.
 
 ## Adding a provider
 
-1. Create `csrc/backends/<provider>/` and compile it against
+1. Create `packages/engine/csrc/backends/<provider>/` and compile it against
    `<shadowspill/backend.h>` alone.
 2. Implement every required entry of the table; report zero for counters the
    platform has no notion of, and leave `export_dma_buf`, `host_numa_node` and
    the profiler entries NULL where the platform has no such mechanism.
 3. Export the two symbols and register the provider in
-   `csrc/backends/CMakeLists.txt` so it builds as
+   `packages/engine/csrc/backends/CMakeLists.txt` so it builds as
    `libshadowspill_backend_<provider>.so` next to the others.
 4. Run the contract canary against the library, then the runtime canaries and
    the PyTorch canaries with `Runtime(backend="<provider>")`.

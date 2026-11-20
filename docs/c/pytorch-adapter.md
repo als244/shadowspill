@@ -1,10 +1,11 @@
 # PyTorch adapter C API
 
 Include `<shadowspill/pytorch_adapter.h>`. This is the one library that knows
-PyTorch allocator and storage conventions. It does four things:
-installs PyTorch's allocator, bootstraps the process-global neutral runtime and
-publishes its handle, wraps provider streams and profiler ranges at task
-boundaries, and validates PyTorch storage views.
+PyTorch allocator and storage conventions. It bootstraps the process-global
+neutral runtime and publishes its handle, provides the callbacks PyTorch's
+pluggable allocator calls, wraps provider streams and profiler ranges at task
+boundaries, validates PyTorch storage views, and runs spill-calibration probes
+outside that runtime.
 
 It deliberately does not restate the neutral runtime. Anything reachable with a
 handle the neutral runtime already owns is called there directly, so this
@@ -19,7 +20,7 @@ allocation scopes; failure and recovery. Every symbol is prefixed
 `shadowspill_pytorch_`. The headings with no banner behind them are the two on
 what bootstrap loads, [Profiling](#profiling), which is here to say the adapter
 exposes none, and [Independent spill
-calibration](#independent-spill-calibration), whose three calls open the header
+calibration](#independent-spill-calibration), whose seven calls open the header
 ahead of the first banner.
 
 ## What the adapter requires of a backend
@@ -76,30 +77,33 @@ the pool the allocator is bound to, inside) and
 `ShadowSpillPytorchAdapterFailure` (the first failure, with the runtime's
 record inside). `SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION` versions all of it.
 
-Adapter ABI2 added `external_baseline_bytes` to the bootstrap configuration and
-`reserved_baseline_bytes` to physical admission. The latter is the maximum of
-the observed `baseline_bytes` and the requested mature process-external floor.
-Pool sizing subtracts this reservation plus the existing external headroom.
-The floor excludes in-pool retained state and does not change the enforcement
-default. Adapter ABI3 adds independent `physical_limit_bytes` and
-`unattributed_reservation_bytes` to configuration and admission, plus observed
-`available_process_bytes` and resolved `effective_limit_bytes` to admission.
-A zero physical limit preserves process-budget-only sizing. Otherwise the arena
-respects both the saved allowance and current free-plus-own-process capacity
-less the global reservation. The declared process budget remains unchanged.
-Invalid physical counters are backend failures, not fabricated OOM reports.
-Rebuild the adapter and Python bindings together; ABI1/ABI2 are refused.
+The bootstrap configuration also bounds the allocator pool's sizing.
+`external_baseline_bytes` is the mature process-external footprint, excluding
+in-pool retained state; physical admission reports `reserved_baseline_bytes`,
+the larger of it and the observed `baseline_bytes`. The sizing limit is
+`device_budget_bytes`; a nonzero `physical_limit_bytes` lowers it to the
+smallest of the budget, the physical limit, and the device's free bytes plus
+this process's own less `unattributed_reservation_bytes`, which needs a
+nonzero physical limit. Physical admission reports the free-plus-own capacity
+as `available_process_bytes` and the limit as `effective_limit_bytes`; the
+declared budget is unchanged. Invalid physical counters are backend failures,
+not out-of-memory reports. Bootstrap refuses a configuration whose
+`abi_version` is not `SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION`, so the adapter
+and the Python bindings are rebuilt together.
 
-Two ids the frontend synthesises for work that is not a planned task are
-defined here so the failure report can decode them: allocation scopes take
-ids at or above `SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE`, and the pre-task
-placement batch runs as `SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID`. The
-frontend copies both.
+Two id ranges for work that is not a planned task are defined here so the
+failure report can decode them: allocation scope ids at or above
+`SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE`, and action-batch task ids at or
+above `SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID`. The Python bindings
+mirror both.
 
 ## Bootstrap, physical admission and close
 
-- `shadowspill_pytorch_allocator_bootstrap()` installs the allocator and
-  process-owned runtime from explicit pool and directed-route registries.
+- `shadowspill_pytorch_allocator_bootstrap()` creates and binds the
+  process-owned runtime from explicit pool and directed-route registries. It
+  is called before PyTorch initializes the accelerator; the Python frontend
+  then installs the allocator callbacks through PyTorch's pluggable-allocator
+  hook.
 - `shadowspill_pytorch_allocator_close()` permanently closes the installed
   runtime, joins its worker, releases its routes, pools, and backend, and
   closes the backend library. It refuses while any caller-owned allocation is
@@ -125,7 +129,7 @@ frontend copies both.
   bytes to the backend's minimum allocation alignment. If no aligned bytes remain,
   or the budget exceeds the device, bootstrap refuses with
   `SHADOWSPILL_STATUS_OUT_OF_MEMORY` and latches
-  the bytes held as `requested_bytes`, the budget as `free_bytes` and the
+  the bytes held as `requested_bytes`, the sizing limit as `free_bytes` and the
   allocator pool as `pool_id`, from which the Python bootstrap says which it
   was. Pool sizing preserves partial physical pages, rounding only to that
   backend alignment. Driver allocation padding is observed in the physical
@@ -154,8 +158,7 @@ frontend copies both.
 The first three are the symbols PyTorch's pluggable allocator is pointed at.
 A nonzero allocation failure is surfaced as a typed frontend exception before
 compiled code can use an invalid address. The fourth is the read-only lookup
-that says which allocation a pointer belongs to, used to classify profiled
-task outputs.
+that says which allocation a pointer belongs to.
 
 ## Objects and storage
 
@@ -168,17 +171,13 @@ the frontend calls those with the handle from
 
 - `shadowspill_register_object()` creates runtime objects, resident in a pool
   or as placeholders, and `shadowspill_write_object()` populates them.
-- `shadowspill_unregister_object()` and `shadowspill_rekey_object()` manage
-  identity.
-- `shadowspill_plan_publish_initial_allocation()` and
-  `shadowspill_task_publish_allocation()` publish initial and repeated task
-  storages through immutable plan/task records.
+- `shadowspill_unregister_object()` removes one.
+- `shadowspill_task_publish_allocation()` publishes repeated task storages
+  through immutable task records.
 - `shadowspill_pytorch_validate_object_binding()` validates each non-owning CPU
   view of a current pool lease. Device storage acquisition is validated by its admitted task
   or object-acquisition handle before the adapter installs the returned
   address.
-- `shadowspill_write_object()` and `shadowspill_read_object()` move persistent
-  state through an explicitly selected pool.
 - `shadowspill_acquire_objects_handle()` acquires the objects an admitted
   acquisition names for a consumer stream. It is the neutral runtime's: it
   takes the integer its caller names the stream by and asks the backend which
@@ -199,22 +198,14 @@ the frontend calls those with the handle from
 
 ## Task boundaries and allocation scopes
 
-The pre-task action batch is `shadowspill_submit_action_batch_handle()`, the
-neutral runtime's: it takes the integer its caller names the trigger stream by
-and asks the backend which stream that is, so no adapter entry point is needed
-to reach it. The same is true of object acquisition under
-[Objects and storage](#objects-and-storage).
+Plan admission needs nothing but handles the neutral runtime already owns, so
+the frontend calls those on the neutral library, passing the runtime from
+`shadowspill_pytorch_runtime_handle()`:
 
-Everything else in plan admission needs nothing but handles the neutral runtime
-already owns, so the frontend calls those on the neutral library, passing the
-runtime from `shadowspill_pytorch_runtime_handle()`:
-
-- `shadowspill_plan_bind_object()`, `shadowspill_plan_admit_task()`,
-  `shadowspill_plan_publish_initial_allocation()`
+- `shadowspill_plan_bind_object()`, `shadowspill_plan_admit_task()`
 - `shadowspill_plan_admit_fixed_layout()`,
   `shadowspill_plan_seal_fixed_layout()`
-- `shadowspill_plan_admit_object_acquisition()`,
-  `shadowspill_plan_admit_action_batch()`, `shadowspill_plan_create()`
+- `shadowspill_plan_admit_object_acquisition()`, `shadowspill_plan_create()`
 - `shadowspill_object_handle_acquire()`
 - `shadowspill_plan_close()`, `shadowspill_plan_destroy()`,
   `shadowspill_plan_clear_tasks()`, `shadowspill_plan_wait_idle()`
@@ -249,13 +240,14 @@ Task calls mirror the neutral runtime:
   scope and its profiler range after frontend execution aborts.
 - `shadowspill_pytorch_allocation_scope_begin()`,
   `shadowspill_pytorch_allocation_scope_end()`, and
-  `shadowspill_pytorch_allocation_scope_abort()` attribute isolated profiling
-  allocations without creating a fake execution task. `begin` takes the plan the
-  measurements are for alongside the scope id, and refuses an id the runtime did
-  not issue; the plan itself need not exist yet, since profiling is what it is
-  built from. A scope runs outside any task, so the runtime has none to read the
-  plan from, and anything a probe leaves behind would otherwise be attributable
-  to nothing. See [plan identity](../architecture/plan-identity.md).
+  `shadowspill_pytorch_allocation_scope_abort()` attribute allocations made
+  outside any task, on the allocator pool, without creating a fake execution
+  task. `begin` takes the plan the allocations are for alongside the scope id,
+  and refuses an id the runtime did not issue; the plan itself need not exist,
+  as in a standalone allocator measurement. A scope runs outside any task, so
+  the runtime has none to read the plan from, and anything left behind would
+  otherwise be attributable to nothing. See
+  [plan identity](../architecture/plan-identity.md).
 
 Fixed placement uses the plan-owned admission and sealing calls above. The
 certificate and its runtime projection are described in [Physical admission
@@ -295,15 +287,16 @@ and only a latched NO_PROGRESS failure can be cleared.
 
 `shadowspill_pytorch_spill_probe_create()`,
 `shadowspill_pytorch_spill_probe_measure()` and
-`shadowspill_pytorch_spill_probe_destroy()` own a bounded native
-runtime with the selected spill extension and its fetch/evict lanes. They never
+`shadowspill_pytorch_spill_probe_destroy()` own a bounded runtime with the
+selected spill extension and its fetch/evict lanes. They never
 install or modify the adapter's global PyTorch allocator. The Python public entry
 point is `measure_communication(spill=...)`; returned rates and latencies include
 backend staging/completion and can be saved independently of execution pools.
 
 Calibration also uses the split lifecycle below once before it measures: open,
-acquire minimal pinned-host pools with NUMA binding enabled, destroy. Runtime
-creation is what places the process, and the placement outlives the probe.
+acquire minimal pools, a pinned-host spill pool among them, with NUMA binding
+enabled, destroy. Runtime creation is what places the process, and the
+placement outlives the probe.
 
 Capacity-bound memory observations use a split lifecycle on the same probe:
 
@@ -328,13 +321,13 @@ Capacity-bound memory observations use a split lifecycle on the same probe:
    before unloading libraries and closing the handle.
 
 Serialize calls on each handle, and destroy it before starting execution.
-Configuration storage must remain valid through acquisition. The existing
-`create()` entry point retains its equal-capacity behavior. These additions
-change no existing ABI structures and do not bind the global allocator.
+Configuration storage must remain valid through acquisition.
+`shadowspill_pytorch_spill_probe_create()` sizes both pools to one capacity.
+None of these calls binds the global allocator.
 
 The internal Python `profiling.pool_probe.PoolProbe` exposes this lifecycle
 and refuses persistent SSD images. Use disposable configurations for probes;
-the native layer forwards configuration unchanged and cannot decide whether a
+the C layer forwards configuration unchanged and cannot decide whether a
 backend resource is safe to create. Raw observations are not a saved physical
 admission certificate: configuration identity, deployment scope, uncertainty,
 interference and transient peaks still need to be resolved by a higher layer.

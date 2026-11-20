@@ -73,13 +73,15 @@ compute a selection spends above the cheapest option of every group.
 ### Where the name applies
 
 A graph pair is a forward graph and its backward graph, so this whole family
-is training vocabulary. The neutral tree does not use it. `shadowspill.ir`,
-`shadowspill.planning.memory_search`, `shadowspill.simulator` and `shadowspill.runtime` plan
-any **resolved program** — a program with every alternative fixed, leaving one
-concrete task set — and an inference program resolves a forward partition with
-no pair in sight. So the IR names the general case: a `TaskAlternativeGroup`
-owns mutually exclusive `TaskAlternativeOption` values, and a
-`TaskAlternativeChoice` fixes one option for one group.
+is training vocabulary. `shadowspill.ir`, `shadowspill.planning.memory_search`,
+`shadowspill.simulator` and `shadowspill.runtime` plan any **resolved
+program** — a program with every alternative fixed, leaving one concrete task
+set — and an inference program resolves a forward partition with no pair in
+sight. So the IR names the general case: a `TaskAlternativeGroup` owns mutually
+exclusive `TaskAlternativeOption` values, and a `TaskAlternativeChoice` fixes
+one option for one group. The neutral tree uses graph-pair names only in
+reporting: `GraphPairOutcome`, in the memory-search diagnostics, describes each
+evaluated selection in those terms.
 
 A graph-pair selection is the training-specific instance of that. The frontend
 builds each group's options from the forward/backward pairs of one structural
@@ -89,11 +91,10 @@ leases](admission-leases.md) are written in terms of resolved programs while
 this page is written in terms of graph pairs: the same object, named from
 whichever side of the boundary is speaking.
 
-The serialized keys spell three of these differently — `task_alternative_groups`
-in the program JSON, `resolved_program` and `resolved_programs` in
-the planning store. Those keys are identity rather than prose: `ShadowSpillProgram.digest`
-is computed over the program's own JSON, and every planning-store key derives
-from it, so a key moves only with a schema version and a recollected corpus.
+The serialized keys use the IR's names — `task_alternative_groups` in the
+program JSON, `resolved_program`, `resolved_programs` and
+`task_alternative_choices` in the search diagnostics — because they name the
+general concept rather than its training instance.
 
 ## Inputs and output
 
@@ -114,8 +115,7 @@ consequences after the resolutions have been built.
 
 ## Cost summaries
 
-For group $g$ and option $o$, the current implementation derives two
-deterministic summaries:
+For group $g$ and option $o$, selection derives two deterministic summaries:
 
 \[
 \operatorname{retained}(g,o)=
@@ -133,7 +133,7 @@ These summaries order non-binary fallback choices. They are not standalone
 makespan estimates because they omit transfer overlap, residency interaction,
 and contention; [simulation](simulation.md) evaluates those jointly.
 
-## The current selection policy
+## Selection policy
 
 The resolution options are the caller's to name: the fractions of flexible
 groups to recompute, one selection per fraction. They are an option of the
@@ -153,16 +153,18 @@ search plans residency and transfers for the one task set it already has.
 
 ### Small products
 
-Selection first applies any required terminal-save choices, then computes
-the product of the remaining option counts. If the product is at most 64, it
+Selection first applies the forced choices of the groups that are not a
+decision ([forward sinks](#terminal-forward-groups) and
+[equal-retention groups](#groups-that-are-not-a-decision)), then computes the
+product of the remaining option counts. If the product is at most 64, it
 enumerates every legal combination in deterministic group/option order.
 
 ### Large binary save/recompute products
 
-If every flexible group has exactly one `save` and one `recompute` option,
-one selection is emitted per resolution option, the option being the target
-fraction of flexible groups recomputed. The default options are every
-quarter:
+If every group, forced ones included, has exactly one `save` and one
+`recompute` option, one selection is emitted per resolution option, the option
+being the target fraction of flexible groups recomputed. The default options
+are every quarter:
 
 ```text
 0%, 25%, 50%, 75%, 100%
@@ -175,18 +177,18 @@ deterministic gate a rung answers the same in every set of options it belongs
 to, so a superset is never worse than its subset, only slower.
 
 `PressureFitOptions.tail_save_counts` adds a crossed planning dimension. Its
-default `(0,)` keeps the original distribution. With `(0, 2, 8)`, every resolution
-share is tried with no tail, the last two eligible forward invocations retained
-in each pass, and the last eight retained in each pass. Repeat the chosen count
-at every depth. Required saves do not consume the tail count. The resolution
-share applies to the remaining flexible groups, so tails and even mixtures can
-coexist in a single selection. For two passes of eight flexible groups, tail two
+default `(0,)` adds no tail. With `(0, 2, 8)`, every resolution share is tried
+with no tail, the last two eligible forward invocations retained in each pass,
+and the last eight retained in each pass. One count applies to every pass.
+Forced groups do not consume the tail count. The resolution share applies to
+the remaining flexible groups, so tails and even mixtures can coexist in a
+single selection. For two passes of eight flexible groups, tail two
 and recompute share one-half save four tail groups plus six earlier groups.
 
 The traversal uses task phases and task order, without model, operator or stage
-names. It ignores required terminal groups, including paired loss, and refuses
-interleaved or unlabelled sweeps when nonzero tails are requested. Counts saturate
-at each pass's eligible length; complete selections are deduplicated. Small
+names. It ignores forced groups, including the paired loss, and refuses
+interleaved or unlabelled sweeps when nonzero tails are requested. Counts
+saturate at each pass's eligible length; complete selections are deduplicated. Small
 products remain exhaustive. No build or profiling work is added by this control.
 
 Shares are exact fractions in $[0, 1]$, sorted and deduplicated, and the count
@@ -207,8 +209,8 @@ search over arbitrary subsets.
 
 ### Large non-binary products
 
-For groups with more than the binary endpoints, the fallback constructs and
-deduplicates:
+When some group is not exactly a `save`/`recompute` pair, the fallback
+constructs and deduplicates:
 
 - the first option in every group;
 - the last option in every group;
@@ -252,12 +254,13 @@ identity.
 ## Pseudocode
 
 ```text
-Resolutions(program, shares):
+Resolutions(program, shares, tail_save_counts):
     groups = program.task_alternative_groups
     if groups is empty:
         return [empty selection]
 
-    required = terminal_forward_sink_save_options(program)
+    required = forward_sink_save_options(program)
+             + fastest_option_of_equal_retention_groups(program)
     legal_indices = option indices per group, restricted by required
 
     if product(len(indices) for indices in legal_indices) <= 64:
@@ -265,11 +268,13 @@ Resolutions(program, shares):
 
     if every group is exactly {save, recompute}:
         resolutions = []
-        for fraction in shares:
-            flexible = groups not fixed by required
-            chosen = centered_evenly_spaced_subset(flexible, fraction)
-            resolutions.append(save_or_recompute_each_group(chosen, required))
-        return resolutions
+        for tail in tail_save_counts:
+            saved = required + save for the last `tail` flexible groups of each pass
+            flexible = groups not fixed by saved
+            for fraction in shares:
+                chosen = centered_evenly_spaced_subset(flexible, fraction)
+                resolutions.append(save_or_recompute_each_group(chosen, saved))
+        return stable_deduplicate(resolutions)
 
     costs = retained_bytes_and_profiled_runtime(program, groups)
     raw = [
@@ -294,9 +299,9 @@ each share it was given, and it does not use a search's feedback to refine a
 selection. Consequently, the best schedule among the emitted resolutions may
 be worse than a legal selection that was not emitted.
 
-That limitation belongs here, not inside the search. A richer recomputation
-policy can generate a different finite set of resolutions without changing the
-program, residency, action, simulation, or runtime contracts.
+That limitation belongs here, not inside the search. Selection alone decides
+which resolutions exist; the program, residency, action, simulation and runtime
+contracts do not depend on how they were chosen.
 
 Graph-pair construction and profiling are described in the dedicated
 [graph-pair construction](graph-pair-construction.md) page. The IR

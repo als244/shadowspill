@@ -1,7 +1,7 @@
 # Shared objects
 
 One value, several plans, charged once. A model's parameters do not want a copy
-per plan, and a tensor one plan produces is sometimes the tensor another
+per plan, and a value one plan produces is sometimes the value another
 consumes. A shared object is how a value outlives the plan that created or
 imported it, and how more than one plan reaches the same bytes.
 
@@ -43,19 +43,23 @@ created, no bytes are charged, and the plan does not gain storage by binding.
 Two plans binding the same object therefore name one set of locations under two
 plan-local ids, which is exactly the point.
 
-Leases arrive by one of three routes:
+Leases arrive by one of four routes:
 
 - **Resident registration.** `shadowspill_register_object` with
   `initially_resident` reserves storage in the pool `initial_pool_id` names, and
   the object owns that lease. One that is not resident holds no lease until a
   task publishes into it.
+- **Placed registration.** `shadowspill_register_placed_object` registers a
+  resident object at an offset inside a range the caller reserved with
+  `shadowspill_memory_pool_reserve_range()`. Its lease borrows that range, so
+  unregistering the object leaves the range reserved.
 - **A fetch.** A plan's fetch action reserves the destination lease in the
   execution pool at the task boundary, so that lease records the plan whose
   action moved the bytes.
 - **A task publication.** A task allocates, writes, and publishes into a
   non-resident object, promoting its own allocation into that object's location.
 
-The middle route is why a shared object's device copy is not anonymous: it is
+The fetch route is why a shared object's device copy is not anonymous: it is
 attributable to the plan that asked for it, even though the object is not.
 
 ## Lifetime
@@ -95,7 +99,7 @@ A closing plan releases the ranges its own scopes made. A shared object's
 storage is the case that must survive that, and how it is recognised depends on
 the route the lease came by:
 
-- Storage the runtime reserved at registration records its own scope,
+- A registration lease, reserved or placed, records the runtime's own scope,
   `SHADOWSPILL_RUNTIME_OBJECT_SCOPE_ID`, and **no plan**. No plan may reclaim it,
   because no plan made it.
 - A fetch destination records the plan whose action moved the bytes, so a device
@@ -134,8 +138,8 @@ Three consequences, all from that one fact:
 
 - `shadowspill_memory_pool_live_allocations` asked of a spill pool succeeds and
   reports nothing.
-- `allocation_for_pointer` cannot resolve a spill address, because the pointer
-  index is built at publication.
+- `shadowspill_memory_pool_allocation_for_pointer` cannot resolve a spill
+  address, because the pointer index is built at publication.
 - A registered object's storage is absent from the enumeration in *either* pool.
   Its `SHADOWSPILL_RUNTIME_OBJECT_SCOPE_ID` is recorded on the lease, and read
   through the object registry rather than through the pool's lease list.

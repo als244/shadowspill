@@ -8,31 +8,32 @@ library or an external package. An external integration can follow the
 ## Package layout
 
 ```text
-shadowspill_workloads/
-  models/
-    families.py              # The list of built-in family packages
-    registration.py          # The small family declaration type
-    <family>/
-      registration.py        # Presets, reader, checkpoint IDs, training hook
-      config.py              # Architecture and named shapes
-      implementations/       # Model computation
-      checkpoint.py          # Checkpoint names and tensor layouts
-      lora.py                # Architecture-specific adapter targets
-      training.py            # Family settings/hooks, when needed
-      README.md
-    shared/                  # Reusable layers and integration shared by families
-      glm/                   # Shared GLM computation, loading and setup hooks
-    catalog/                 # Lookups derived from family declarations
-  components/                # Shared registration, objective and setup helpers
-    decoder/                 # Shared packed decoder registration and setup hooks
-  inputs/                    # Schemas, processors and input adapters
-  objectives/                # Reusable objective computations
-  initialization/            # Bounded weight loading and parameter generation
-  lora/                      # Shared adapter application and targeting
-  policies/                  # Chunking, retention and execution choices
-  integrations/              # MLOps operator facts as generic build options
-scripts/
-  setup_mlops.sh             # Installs MLOps: a checkout beside the repository, else the pin
+packages/workloads/
+  src/shadowspill_workloads/
+    models/
+      families.py            # The list of built-in family packages
+      registration.py        # The small family declaration type
+      <family>/
+        registration.py      # Presets, reader, checkpoint IDs, training hook
+        config.py            # Architecture and named shapes
+        implementations/     # Model computation
+        checkpoint.py        # Checkpoint names and tensor layouts
+        lora.py              # Architecture-specific adapter targets
+        training.py          # Family settings/hooks, when needed
+        README.md
+      shared/                # Reusable layers and integration shared by families
+        glm/                 # Shared GLM computation, loading and setup hooks
+      catalog/               # Lookups derived from family declarations
+    components/              # Shared registration, objective and setup helpers
+      decoder/               # Shared packed decoder registration and setup hooks
+    inputs/                  # Schemas, processors and input adapters
+    objectives/              # Reusable objective computations
+    initialization/          # Bounded weight loading and parameter generation
+    lora/                    # Shared adapter application and targeting
+    policies/                # Chunking, retention and execution choices
+    integrations/            # MLOps operator facts as generic build options
+  scripts/
+    setup_mlops.sh           # Installs MLOps: a checkout beside the repository, else the pin
 ```
 
 The catalog's models and its AdamW component use MLOps, so this package owns

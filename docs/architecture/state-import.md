@@ -197,8 +197,8 @@ of its selected source. Collective reconstruction reads the restored host shards
 instead of rereading the archive and uses bounded host transfer buffers.
 `Executor.initialize(replicated_copies={name: (source_name, group_ref)})` is the
 underlying initialization primitive; it is separate from archive parsing and
-requires every worker to participate. Version 2 archives encode this contract;
-older archives without it are not accepted.
+requires every worker to participate. A checkpoint manifest has version 2, and
+load refuses any other.
 
 For large export chunks, BLAKE3 hashing overlaps the archive write in one CPU
 worker and uses four native hashing threads. The same native pool is reused
@@ -209,9 +209,6 @@ directory synchronization remain part of the synchronous save operation.
 Reads fill the destination directly, without an additional archive-sized or
 chunk-sized byte-string copy. The immutable Program identity is cached, so
 repeated saves do not serialize the entire graph again merely for provenance.
-
-This version change concerns training checkpoints only. Saved Programs, Profiles
-and Plans keep their existing artifact format.
 
 ```python
 from shadowspill import load_checkpoint, save_checkpoint

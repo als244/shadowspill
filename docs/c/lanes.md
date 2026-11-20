@@ -1,15 +1,16 @@
 # Lane contract
 
-`include/shadowspill/runtime/lane.h` — what moves bytes between two pools, and
+`<shadowspill/runtime/lane.h>` — what moves bytes between two pools, and
 how the runtime finds one. A transport implements this table; the runtime calls
 it and never asks what kind of transport it is.
-`include/shadowspill/runtime/lane_base.h` is its companion: the struct a
+`<shadowspill/runtime/lane_base.h>` is its companion: the struct a
 transport embeds. Only an implementation needs it, which is why it is a second
 header rather than part of the umbrella.
 
 The contract is **runtime-owned**, the way the [backend contract](backends.md)
 is: the types are fields on `ShadowSpillRuntimeConfig`, and a lane written
-elsewhere is built against these headers with nothing else in view.
+elsewhere is built against these headers with nothing else in view. It is
+versioned by `SHADOWSPILL_ABI_VERSION`, with the rest of the runtime.
 
 For what a lane is and why the contract has the shape it does, see
 [lanes](../architecture/lanes.md).
@@ -85,9 +86,9 @@ int  (*timing)(const ShadowSpillLane *lane, ShadowSpillLaneTiming *timing);
 - **`copy`** moves bytes between addresses in the two pools this lane connects.
   Nothing but the lane dereferences either. It writes `handle`, naming the
   transfer for the two entries below; **0 means the lane kept nothing about
-  it**, which is what a lane answers when no trace is running.
-  `shadowspill_lane_trace_active()` is how it asks, being outside the runtime
-  and unable to read that state itself.
+  it**. A lane that keeps a record only for a trace asks
+  `shadowspill_lane_trace_active()`, being outside the runtime and unable to
+  read that state itself.
 - **`signal`** makes `event` complete once everything issued on this lane so far
   has landed. Downstream sees an ordinary backend event whatever the lane did,
   which is what keeps completion tracking and retirement in one form. A lane
@@ -105,7 +106,7 @@ int  (*timing)(const ShadowSpillLane *lane, ShadowSpillLaneTiming *timing);
 
 `synchronize` drains accepted work. `destroy` releases lane resources and stops
 its workers; it must also work during abandon, without waiting for an unfinished
-GPU producer or calling `synchronize` again. Submitted OS I/O must stop using
+device producer or calling `synchronize` again. Submitted OS I/O must stop using
 staging memory before that memory is released. `timing` is with the statistics
 it fills, under [what a lane has moved](#what-a-lane-has-moved).
 
@@ -118,7 +119,7 @@ omit it. The callback uses this lane's `copy` and `join`. The conversion must
 enqueue all work on, or join it to, the supplied stream before returning. Runtime
 readiness and buffer reuse wait for the final `signal`, covering both transport
 and conversion. Traces retain that complete interval, while lane byte counts
-describe the physical spill payload. This contract is native ABI version 3.
+describe the physical spill payload.
 
 **There is no entry for the runtime to drive a lane with.** A lane makes the
 event given to `signal` complete when the bytes have landed, by whatever means
@@ -166,6 +167,8 @@ message, so which pair collided is not reported.
     go there, and a lane whose bytes move elsewhere puts its ordering there.
   - `from_kind`, `to_kind` — the pair this entry was registered under, and
     where a transport reads its direction.
+  - `from_range`, `to_range` — where the two pools live, in the order of the
+    kinds.
 - `configuration` — passed through untouched. Whoever registers the entry
   decides what it means. Neither built-in lane needs one.
 

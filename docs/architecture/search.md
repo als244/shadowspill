@@ -87,6 +87,10 @@ expand alternatives. None of that reaches the planner.
 
 ## What the planner promises
 
+These are the promises of `shadowspill.planning.memory_search.plan_program`;
+[where it plugs in](#where-it-plugs-in) says which the public
+`shadowspill.plan_program` keeps.
+
 **More memory never plans worse.** A plan that fits in less memory fits in
 more, so a sweep that plans budgets ascending hands each point the best
 plan below it. The guarantee is structural rather than a promise each
@@ -100,13 +104,15 @@ itself, and the check agrees with it.
 program, the boundaries, the machine, the pool a layout must fit, the
 generic options, the name of the search that ran, and what that search was
 told. Change any of them and it is a different question with a different
-answer. Two things are deliberately outside the key: `workers`, and the
-plan in hand, which is provenance — so a run that replans a budget without
-the sweep's plan still reads back the sweep's answer.
+answer. What changes how much work a call does or what it records stays
+outside the key: `workers`, `progress`, `keep_resolutions`, the trace options,
+and the plan in hand, which is provenance — so a run that replans a budget
+without the sweep's plan still reads back the sweep's answer.
 
 The key records a search's `name`, a stable string the search chooses, and
-never the Python class's name, so renaming or moving the class leaves a
-stored corpus reachable.
+never the Python class's name: the key names the search, not where its code
+lives. `SearchOptions.from_dict` finds an archived search through
+`SearchAlgorithm.named`, so the name stays fixed once chosen.
 
 **The winner is physically admitted.** What comes back from the planner has
 passed [physical admission](physical-admission.md), not only the simulator.
@@ -133,8 +139,11 @@ CPU-only: they neither build nor measure tasks. They take `memory_budgets` and
 plan store or hands one budget's plan to the next: the plan key, stored answers
 and incumbent replay above belong to `shadowspill.planning.memory_search.plan_program`, which
 plans a `ShadowSpillPlanningProblem` against an artifact store and takes the
-plan to beat as `incumbent`. See the [phase API guide](../python/phases.md) for
-the complete workflow.
+plan to beat as `incumbent`. `shadowspill.plan_program` admits its winner only
+when the profiles carry allocation evidence and the Program carries executables;
+otherwise it returns a simulation-only Plan, whose `simulation_only_reasons`
+say what is missing. See the [phase API guide](../python/phases.md) for the
+complete workflow.
 
 ## Writing one
 

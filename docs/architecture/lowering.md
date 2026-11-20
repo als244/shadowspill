@@ -51,10 +51,9 @@ Inductor offset and a valid nonnegative storage offset, without a copy. Offsets
 introduced only for optimizer-shard alignment do not change the task contract.
 
 Code, contracts and memory facts share one AOT cache entry. A foreign entry
-missing build facts is recompiled in a temporary compiler cache. There is no
-separate manifest sidecar cache. Finalization warms complete tasks with valid
-inputs, resolves provider choices and packages the selected kernels. Isolated
-stage tracing uses this same task compiler.
+missing build facts is recompiled in a temporary compiler cache. Finalization
+warms complete tasks with valid inputs, resolves provider choices and packages
+the selected kernels. Isolated stage tracing uses this same task compiler.
 
 ## Cross-task binding
 
@@ -81,7 +80,7 @@ cover values that skip stages. See [task boundaries](task-boundaries.md).
 
 Build uses compiler geometry and observed output placement to exclude host-only
 leaves from device storage. Such values still have identities and dependencies;
-they simply require no GPU residency or transfer.
+they simply require no device residency or transfer.
 
 `measure_program` runs finalized tasks with the ordinary device allocator and
 supplies missing memory evidence and durations. Its inputs preserve aliases and

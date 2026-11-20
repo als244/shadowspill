@@ -41,11 +41,17 @@ retains only backward-required outputs. It does not certify effects, layouts,
 axis independence, or the correctness of an opaque operator's backward.
 It cannot reveal choices hidden inside a whole-MoE kernel.
 
-The resolved declaration is included in capture identity and in the resulting
-saved cut. Explicit user rules and model checkpoint annotations keep their
-existing precedence. Saved execution does not query the declaration again.
+The resolved declaration, `aten.topk.default` included, enters capture
+identity, so a cut is never served from a graph-pair entry built under a
+different declaration. Saved execution does not query the declaration again.
 The provider owns its declaration; core does not recognize provider namespaces
 or router names. Use matching provider sources when rebuilding workloads.
+
+For each operation, a model checkpoint annotation decides first (an explicit
+rule that contradicts it is refused), then an explicit rule, then this default,
+then the variant's `default`, then cost classification. Every cut but a plain
+recompute from the checkpoint inputs retains the results of operations that use
+random state or ordered effects; a rule asking to regenerate one fails capture.
 
 ## Advanced overrides
 
@@ -65,30 +71,18 @@ policy = GraphPairPolicy(
 ```
 
 Such an override accepts possible branch changes when replayed inputs differ.
-Model checkpoint annotations retain their existing precedence; contradictory
-explicit rules are rejected. There is no additional policy candidate or
-architecture-specific chunk setting for routing retention.
+There is no additional policy candidate or architecture-specific chunk setting
+for routing retention.
 
 ## Memory and the offline pipeline
 
-Saved routing tensors are ordinary saved activations. PressureFit chooses
-their residency and spill placement. They can use the pinned host pool, and
-they are not forced to stay on the GPU. Chunking slices the saved tensors using
-their declared output axes; expert-local permutations and offsets can be
-regenerated from the saved IDs.
-
-For batch one and top-k eight, an int32 ID tensor plus an FP32 weight tensor
-uses eight bytes per selected assignment. At 128K tokens the pair occupies
-8 MiB per MoE layer, or 320 MiB across 40 layers. At 256K it occupies 640 MiB
-across 40 layers. These are logical tensor sizes, excluding allocator padding,
-additional routing-derivative state and other saved activations. A provider
-using int64 IDs uses more memory.
-
-The default is recorded in capture identity, including ATen calls, so graph-pair
-cache entries built before this behavior cannot supply the new cut. The final
-graphs expose their saved tensors normally to compilation, profiling, planning,
-physical admission and serialization. Existing saved Programs and Plans retain
-their original behavior; rebuild and profile to obtain the new default.
+Saved routing tensors are ordinary saved activations: one ID and one weight
+per selected assignment. PressureFit chooses their residency and spill
+placement; they are not forced to stay on the device. Chunking slices the saved
+tensors using their declared output axes; expert-local permutations and offsets
+can be regenerated from the saved IDs. The final graphs expose their saved
+tensors normally to compilation, profiling, planning, physical admission and
+serialization.
 
 ---
 

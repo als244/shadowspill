@@ -1,23 +1,25 @@
 # Assignments and recovery
 
-The service owns one ordered training run across its selected node daemons. Node daemons
-own local resources and processes. This division preserves the existing training
+The service owns one ordered training run on the devices of its own host, and
+the run's processes and resources there. This division preserves the training
 state machine and [durable result semantics](../service-records.md).
 
-## Select, claim and start
+## Select, reserve and start
 
-1. Resolve the client's logical parallelism and optional resource selectors
-   against fresh registry entries. Automatic selection uses equivalent compatible
-   devices; mixing hardware types requires explicit setup.
-2. Record the full logical-worker mapping and request each node's complete local
-   resource claim in parallel. Local admission reserves devices and host capacity
-   atomically before launching children.
-3. If any node refuses, stop/release successful partial claims. No collective work
-   starts. Resources without confirmed cleanup stay unavailable.
-4. Stage verified Plans/inputs and launch owned processes. For distributed work,
-   preflight actual peer connectivity and communicator startup with a deadline.
-5. Wait for all members to become ready, then release the phase. A receipt from
-   a node daemon is not proof that its worker is ready or that training completed.
+1. Resolve the client's logical parallelism and optional `Resources` selectors
+   against the service's own node. Automatic selection uses equivalent devices;
+   a selection that mixes GPU types is refused.
+2. Unless the client supplied saved Plans, run the preparation phases on the
+   selected devices.
+3. Reserve every worker's device and host capacity, and its startup files and
+   logs, before launching any child. Resources without confirmed cleanup stay
+   unavailable.
+4. Stage the verified Plans and launch the owned worker processes. Distributed
+   workers rendezvous through a file the run owns.
+5. Wait for every worker to report ready. A worker that exits is seen at once;
+   `worker_startup_seconds` bounds one that hangs.
+
+Registered node daemons take no part: no run is placed on them.
 
 Preview is advisory and makes no claims. Creation may fail if capacity has become
 busy; waiting is explicit. Exact-device selection never silently remaps devices.
@@ -31,12 +33,12 @@ fetches, gradient spills and optimizer tasks, not only explicit model operations
 
 Distributed training candidates share a traversal ordering. Its `depth` is the
 number of complete forward/backward passes; `breadth` is the number of
-microbatches visited within each pass. Select these jointly across workers,
-including heterogeneous workers, while allowing their token capacities to differ.
-An independently fastest depth on each GPU can repeat sharded-weight fetches a
-different number of times. Equal depth is only an initial constraint: final
-Plans must still agree on collective participation and issue order, since
-different spill decisions can introduce incompatible communication.
+microbatches visited within each pass. Every worker's Plan for a candidate uses
+the same ordering. An independently fastest depth on each GPU can repeat
+sharded-weight fetches a different number of times. Equal depth is only an
+initial constraint: final Plans must still agree on collective participation and
+issue order, since different spill decisions can introduce incompatible
+communication.
 
 Matching collective order does not require matching local schedules. Workers
 may retain or recompute different intermediates and fetch or spill at different
@@ -56,58 +58,47 @@ This fallback restricts local scheduling choices and can sacrifice some
 worker-specific optimization; it does not require equal wall-clock timings,
 tensor sizes, kernel implementations or physical memory offsets.
 
-## Runtime commands and workload shares
+## Runtime commands
 
-The client continues to submit a global batch through `step()`,
-`forward_backward()` or `forward()`, and optimizer controls through `optim_step()`.
-Packing and worker selection happen automatically. `validate_batch()` uses the
-prepared layouts to reject batches that cannot fit before submission.
+The client submits a global batch through `step()`, `forward_backward()` or
+`forward()`, and optimizer controls through `optim_step()`. Packing and worker
+selection happen automatically. `validate_batch()` uses the prepared layouts to
+reject batches that cannot fit before submission. Batch limits bound the whole
+batch across workers, and scheduled padding counts toward them.
 
-Advanced heterogeneous setup associates each worker with resource constraints,
-memory/preparation settings and an optional relative input share. This is input
-capacity, not a measured speed ratio. It applies to independent input partitions;
-cooperating copies do not multiply the global input count.
-
-For example, four 24K buffers and four 8K buffers represent a 3:1 share and 128K
-scheduled positions. Whole-sequence packing can change the ratio of real input
-tokens. Padding still counts against the global cap. Global objective scaling
-and requested batch membership stay unchanged. Different counts must not let a
-worker skip a required collective; all complete schedules must agree on their
-collective participation.
-
-The preview reports resolved shapes/counts/capacities before preparation. Actual
-step-time predictions require measured profiles. Runtime calls do not receive
-node addresses, worker settings, workload ratios or Plan choices.
+The preview reports resolved shapes, counts and capacities before preparation;
+step-time predictions require measured profiles. Runtime calls receive no device
+placements or Plan choices.
 
 ## Failure and recovery
 
-Heartbeats renew a membership lease using local monotonic clocks; synchronized
-wall clocks are unnecessary. Renewals are correlated, and the node daemon bounds an
-extension from its request-send time so a delayed reply cannot grant authority
-indefinitely. An operator's allocation expiry bounds all leases.
+Heartbeats renew a node daemon's membership lease using local monotonic clocks;
+synchronized wall clocks are unnecessary. Renewals are correlated, and the node
+daemon bounds an extension from its request-send time so a delayed reply cannot
+grant authority indefinitely.
 
 | Event | Required behavior |
 | --- | --- |
-| Individual HTTP exchange fails | Retry transport with bounded backoff while membership is valid; reconcile receipts without recreating commands |
-| Heartbeats become stale | Exclude the node from new selection |
-| Membership lease expires | Fence the membership permanently and stop its owned workers |
-| Node daemon dies | Local supervision/watchdog stops owned children; restart confirms cleanup before offering resources |
-| Executing member is lost | Fail the group, stop peers and preserve durable completed outcomes |
-| Controller restarts | Use a new incarnation; interrupt active runs and reject old assignment messages |
+| Individual node HTTP exchange fails | Retry while membership is valid; return receipts again without repeating commands |
+| Heartbeats stop | Expire the membership and drop the node from the inventory |
+| Membership lease expires | Fence the membership permanently; the node daemon releases its claims |
+| Node daemon dies | A restart takes its ownership locks and reconciles its predecessor before joining again |
+| A run's worker is lost | Fail the group, stop the other workers and preserve durable completed outcomes |
+| Controller restarts | Use a new incarnation; mark active runs stopped and reject old membership messages |
 | Cleanup fails | Record the run's outcome, keep resources unavailable and retain owners for a cleanup retry |
 
-A lease timeout alone never proves that a worker stopped. The controller waits
-for confirmed cleanup before reusing resources. The node daemon's local ownership lock
-and supervisor must cover crashes as well as graceful shutdown.
+A lease timeout alone never proves that a node's claims were released: the
+registry keeps claimed capacity owned until a confirmed stop, a leave or a
+reconciliation.
 
 An uncertain optimizer update is never replayed. Recovery creates a fresh worker
-group from a completed checkpoint. This protocol does not claim exactly-once
+group from a completed checkpoint. The service does not claim exactly-once
 execution after a crash, automatic live failover between controllers or changes
 to a running world's size.
 
 Normal shutdown drains or cancels work, stops children, closes outstanding file
-owners and only then releases claims. `Stop` is idempotent within its membership.
-Unregistering does not release the operator's scheduler allocation.
+owners and only then releases resources. `stop` is idempotent within a
+membership. Leaving does not release the operator's scheduler allocation.
 
 ---
 

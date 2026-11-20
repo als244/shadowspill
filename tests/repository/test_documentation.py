@@ -440,7 +440,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
         "## Inputs",
         "## Output",
         "## Mathematical formulation",
-        "## Current algorithm",
+        "## Algorithm",
         "## Pseudocode",
         "SearchOptions",
         "ProgramPlanResult",
@@ -453,7 +453,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
     recomputation = (DOCS / "architecture" / "graph-pair-selection.md").read_text()
     for required in (
         "## Inputs and output",
-        "## The current selection policy",
+        "## Selection policy",
         "## Pseudocode",
         "TaskAlternativeGroup",
         "TaskAlternativeOption",

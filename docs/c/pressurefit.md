@@ -213,7 +213,7 @@ own base reduction; a reduction a repair forces is charged to `repair_ns`, which
 is what pays for it.
 
 What each section covers is walked through stage by stage in
-[PressureFit](../architecture/pressurefit.md#current-algorithm).
+[PressureFit](../architecture/pressurefit.md#algorithm).
 
 Each candidate diagnostic carries its own `sections` covering just that
 candidate. A problem's sections are the sum of its candidates', totals and

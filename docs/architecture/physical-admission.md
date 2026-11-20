@@ -2,8 +2,8 @@
 
 Physical admission proves that one logical schedule can be assigned real ranges
 inside its configured memory pools without unsafe overlap. It runs after a
-search has chosen tasks, residency and memory actions, and before an executable
-callable is published.
+search has chosen tasks, residency and memory actions, and before a plan can
+execute.
 
 Admission is search-agnostic. It takes a schedule and the facts about the
 machine it must fit, and certifies that pair; which search produced the
@@ -26,8 +26,8 @@ dynamic regions for caller-owned terminal outputs and optional scratch. The
 spill pool is dynamically allocated and is checked against its simulated
 physical peak.
 
-Runtime-global shared leases lie outside a callable's physical layout. Their
-bytes are subtracted before the callable-owned pool slice is constructed, while
+Runtime-global shared leases lie outside a plan's physical layout. Their
+bytes are subtracted before the plan-owned pool slice is constructed, while
 diagnostics keep both the shared footprint and residual movable capacity.
 Admission never assigns a second offset or transfer destination to a shared
 alias.
@@ -42,7 +42,7 @@ Physical admission consumes:
 | `AdmissionFacts` | Pool capacity, task allocation geometry, output/replacement ownership, handoffs, and alignment. |
 | `TaskAllocationContract` values | Stable task-local invariant allocation/free identities and geometry. |
 | Dynamic-scratch reserve | Bounded capacity for optional allocator operations outside the invariant path. |
-| Terminal caller-owned aliases | Final execution leases that may outlive a later callable invocation. |
+| Terminal caller-owned aliases | Final execution leases that may outlive a later invocation. |
 
 It returns `FixedLayoutAdmission`, which contains:
 
@@ -75,8 +75,8 @@ measurement's template rather than indexing the program again.
 
 ### The certificate holds columns
 
-A step's layout places leases by the million, and so does its set of reuse
-dependencies. The certificate therefore holds its placements, its reuse
+A step's layout can place very many leases, and its reuse dependencies are as
+numerous. The certificate therefore holds its placements, its reuse
 dependencies and its task-allocation leases as columns: one array per field,
 indexed alike, with task and alias names held once in tables the index columns
 point into and purposes held as codes. Building, storing and reading a
@@ -103,12 +103,13 @@ execution plan has been resolved.
 Let:
 
 - $B_e$ be the public execution-memory budget;
-- $F$ be the process-persistent execution bytes excluded before callable
-  admission — the driver's baseline, external memory and persistent in-pool state, itemized by
-  field under [two things called
-  dynamic](admission-leases.md#two-things-called-dynamic);
+- $F$ be the process-persistent execution bytes excluded before plan
+  admission — the process baseline, external memory and persistent in-pool
+  state, itemized under [two things called
+  dynamic](admission-leases.md#two-things-called-dynamic) and [external
+  memory](admission-leases.md#external-memory);
 - $H$ be runtime-global shared execution-resident bytes;
-- $P=B_e-F-H$ be the callable's physical execution-pool capacity;
+- $P=B_e-F-H$ be the plan's physical execution-pool capacity;
 - $C$ be the logical object capacity presented to the search;
 - $B_s$ be the public spill-memory budget.
 
@@ -191,7 +192,7 @@ There is no synthetic physical sequence. Creating an executable set of facts
 requires an explicit trace for every structural profile, including an
 explicitly empty trace for a task that performs no allocation. Workspace
 extents are computed from the trace after persistent outputs and replacements
-are identified; returned but unretained tensors therefore remain anonymous
+are identified; returned but unretained values therefore remain anonymous
 workspace for their real lifetime. A nonempty workspace, fresh output, or
 replacement without corresponding allocation steps fails before the search
 runs.
@@ -249,8 +250,8 @@ any action at all.
 Everything downstream keeps the distinction: `action_index` always identifies a
 memory action, a lease is created and retired by operations, and the reuse
 diagnostics report an operation's `purpose` beside the `action_kind` that
-triggered it. `csrc/src/planner/admission/operations.c` derives the operations;
-`candidate.c` replays them.
+triggered it. `packages/engine/csrc/src/planner/admission/operations.c`
+derives the operations; `candidate.c` replays them.
 
 ### The script
 
@@ -302,7 +303,7 @@ For every non-dynamic lease $l$, define:
 - alignment $a_l>0$;
 - predicted half-open lifetime $[t_l^0,t_l^1)$;
 - causal birth and retirement boundaries $[q_l^0,q_l^1]$;
-- relative offset $o_l$ in the callable slice.
+- relative offset $o_l$ in the plan's slice.
 
 Every placement must satisfy
 
@@ -381,17 +382,17 @@ Several offsets coexist, but they are not interchangeable:
 
 | Offset | Coordinate system | Meaning |
 |---|---|---|
-| Runtime slice offset | Execution `MemoryPool` | Where the callable's one parent fixed slice was dynamically reserved. |
-| Fixed placement offset | Callable fixed slice | Where one admitted lease lives relative to the parent slice. |
+| Runtime slice offset | Execution `MemoryPool` | Where the plan's one parent fixed slice was dynamically reserved. |
+| Fixed placement offset | Plan fixed slice | Where one admitted lease lives relative to the parent slice. |
 | Absolute slab offset | Execution `MemoryPool` | `slice_offset + placement_offset`; used internally and in allocator telemetry. |
-| Tensor view offset | One semantic storage root | Byte/element displacement of a view from its root; defined by `TaskStorageContract`. |
+| View offset | One semantic storage root | Byte/element displacement of a view from its root; defined by `TaskStorageContract`. |
 | Spill-pool offset | Spill `MemoryPool` | Dynamic lease position selected by the spill allocator; not fixed by this certificate. |
 
-Physical layout never changes tensor view semantics. All leaves that share one
+Physical layout never changes view semantics. All leaves that share one
 storage root bind to the same lease, and their view offsets are reconstructed
 relative to that lease's base pointer.
 
-The runtime does not assume that the callable slice begins at slab offset
+The runtime does not assume that the plan's slice begins at slab offset
 zero. It reserves one compatible parent range from the runtime-owned execution
 pool, then adopts borrowed subleases at the certified relative offsets. A
 borrowed fixed lease does not independently own or free the parent range.
@@ -437,7 +438,7 @@ its Plans keep the strict contract. Each task's live allocation limits carry
 
 Only the final execution generation of an alias returned to the caller is
 excluded from the reusable fixed slice. It uses a dynamic lease so the caller
-may retain that tensor across a later invocation. Earlier generations of the
+may retain that value across a later invocation. Earlier generations of the
 same alias remain ordinary fixed lifetimes.
 
 ### Persistent in-pool state
@@ -446,7 +447,7 @@ Process-persistent in-pool state is measured and removed from $P$ before the
 layout is built. It is neither task workspace nor dynamic scratch. Its
 allocator operations may still carry a dynamic task-allocation policy so a
 valid observed first-use path can be checked without assigning persistent
-state a callable-relative address.
+state a slice-relative address.
 
 ## Runtime adoption and validation
 
@@ -476,12 +477,15 @@ pointer reaches a backend kernel.
 ## Sharing a slab
 
 `Executor(training_plan, plans={"evaluation": evaluation_plan})` admits the saved
-layouts into one arena. The joint memory calculation takes the largest fixed
-slice and the largest dynamic and scratch reserve among its invocation paths,
-including the continuing-gradient path. It also reserves the maximum measured
-external footprint, maximum headroom, and largest sum of retained profile cost
-and communication scratch. Those maxima can belong to different Plans; taking only
-the maximum total fixed cost can understate what one worker reserves.
+layouts into one shared execution slice. The joint memory calculation takes the
+largest fixed slice and the largest dynamic and scratch reserve among its
+invocation paths, including the continuing-gradient path. Beside them it
+reserves the largest external footprint, headroom and communication scratch,
+the communicator startup reservation, the calibrated spill pool's process
+reservation, and retained state as a union: identical retained inventories
+once at their largest, each path's private remainder added. Those maxima can
+belong to different Plans; taking only the maximum total fixed cost can
+understate what one worker reserves.
 
 Communicator startup follows the same accounting as runtime startup. The worker
 creates each process group once and warms the union of its Plans' collective
@@ -493,18 +497,18 @@ calibration covers the union, or its memory evidence is incomplete, distinct
 records remain additive. Startup is excluded from the per-path communication
 remainder so it is not counted twice. Profile overhead
 without a component breakdown stays undivided; admission does not
-invent a measured split. Spill is charged with shared model tensors once and
+invent a measured split. Spill is charged with shared model state once and
 every Plan's own persistent spill storage beside the active Plan's peak. The C
-runtime validates every layout against that arena through
+runtime validates every layout against that slice through
 `shadowspill_plan_admit_fixed_layout_in()`.
 
 Plans execute sequentially. Each invocation waits for the previous invocation
 and requires an empty execution layout before placing values into it. The plan
-that owns the arena closes after the plans sharing it. `plan_slices()` reports
+that owns the slice closes after the plans sharing it. `plan_slices()` reports
 the actual layouts and their shared owner.
 
 Build, profiling and planning happen before worker setup. They do not use runtime
-pools or borrow admitted arenas. The worker only binds the saved layouts, tensor
+pools or borrow admitted slices. The worker only binds the saved layouts, storage
 contracts and executable payloads, then checks physical capacity. Communication
 calibration is a separate phase; worker setup does not repeat it.
 
@@ -527,10 +531,9 @@ win:
    the extent, when a move can free the overrun, and measures again;
 5. and only when no such move exists gives capacity back and plans again.
 
-Step 4 answers a miss in the currency it arrives in. An extent that overruns
-by a few tens of megabytes is a handful of leases overlapping, while capacity
-given back is charged to every boundary and paid in residency the reducer
-cuts. [PressureFit](pressurefit.md#place-the-layout)
+Step 4 answers a miss in the currency it arrives in. A small overrun comes from
+a few overlapping leases, while capacity given back is charged to every
+boundary and paid in residency the reducer cuts. [PressureFit](pressurefit.md#place-the-layout)
 specifies which fetch moves and what bounds the moving.
 
 Capacity is therefore a property of a plan, not of the search: two plans can
@@ -606,16 +609,19 @@ the supported contract.
 |---|---|
 | `shadowspill.planning.memory_search.admission` | Immutable framework-neutral task and pool facts. |
 | `shadowspill.planning.memory_search.admission.setup` | Compile the schedule-invariant half of one resolved program. |
-| `shadowspill.planning.memory_search.admission.admission_replay` | Build the timing-free causal step script and ownership transitions. |
-| `shadowspill.planning.memory_search.admission.layout.lifetimes` | Combine causal operations with selected task/transfer intervals. |
+| `shadowspill.planning.memory_search.admission.indexing` | Index the facts against one resolved program and encode a schedule against them. |
+| `shadowspill.planning.memory_search.admission.operations` | Derive the pool operations a schedule implies, through the planner library. |
+| `shadowspill.planning.memory_search.admission.lifetimes` | Combine those operations with the selected task and transfer intervals into lease lifetimes. |
+| `shadowspill.planning.memory_search.admission.admission_replay` | The replay's record types: lease purposes, ownership transitions and causal dependencies. |
+| `shadowspill.planning.memory_search.admission.layout.lifetimes` | Name the leases the library reported, decoding an index only when asked. |
 | `shadowspill.planning.memory_search.admission.placement` | Deterministic aligned interval placement. |
 | `shadowspill.planning.memory_search.admission.layout.dependencies` | Prove shared-range reuse and project the simulator edges that cross between compute and transfer. |
 | `shadowspill.planning.memory_search.admission.layout.build` | Measure a layout, certify it, or both. |
 | `shadowspill.planning.memory_search.admission.refinement` | Certify the fixed layout of the plan the search placed. |
 | `shadowspill.runtime.plan.layout` | Translate semantic placements to indexed runtime identities. |
-| `csrc/src/planner/admission/` | Operations, lifetimes, placement, and the pool replay, over a `ShadowSpillScheduleContext`. |
-| `csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
-| `csrc/src/runtime/memory/memory_pool/` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |
+| `packages/engine/csrc/src/planner/admission/` | Operations, lifetimes, placement, and the pool replay, over a `ShadowSpillScheduleContext`. |
+| `packages/engine/csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
+| `packages/engine/csrc/src/runtime/memory/memory_pool/` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |
 
 ---
 

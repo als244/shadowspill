@@ -71,7 +71,8 @@ being published. [Shared objects](shared-objects.md) has the detail.
 ## The registry
 
 The runtime keeps one slot per plan id that has ever named a plan, holding that
-plan's record while it exists. `csrc/src/runtime/plan/registry.c` is all of it.
+plan's record while it exists.
+`packages/engine/csrc/src/runtime/plan/registry.c` is all of it.
 
 It answers two questions. `shadowspill_runtime_plan` maps an id to its record,
 and `shadowspill_runtime_plan_state` says what became of an id:

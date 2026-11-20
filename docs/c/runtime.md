@@ -1,10 +1,9 @@
 # Runtime C API
 
 Include `<shadowspill/runtime.h>`, which is the umbrella over one header per
-subsystem in `<shadowspill/runtime/>`; the section below each heading names the
-part it comes from. The runtime owns memory pools, object residency,
-allocation records, transfer lanes, completion frontiers, the worker, trace
-buffers, and first-failure state.
+subsystem in `<shadowspill/runtime/>`. The runtime owns memory pools, object
+residency, allocation records, transfer lanes, completion frontiers, the
+worker, trace buffers, and first-failure state.
 
 ## Lifecycle and calibration
 
@@ -20,8 +19,8 @@ buffers, and first-failure state.
   [`pool_memory`](pool-memory.md) with `pool_memory_count`, saying where each
   kind's memory comes from, and [`lanes`](lanes.md) with `lane_count`, saying
   which lane serves each directional kind pair; the worker's poll interval;
-  `background_transfer_window_bytes`, how far a lane may run ahead with
-  transfers the plan did not schedule (zero removes the bound); and
+  `background_transfer_window_bytes`, how far a route's queue may run ahead
+  with transfers the plan did not schedule (zero removes the bound); and
   `disable_numa_binding`, which at zero has create narrow the process's
   threads to the CPUs of the host node nearest the device (see
   [host NUMA locality](backends.md#host-numa-locality)) and prefer that node
@@ -81,7 +80,7 @@ buffers, and first-failure state.
 
 `shadowspill_runtime_abandon()` skips the normal work-completion waits: no
 drain or lane synchronization. It is for a process that is already exiting,
-where waiting for an unfinished GPU producer prevents the
+where waiting for an unfinished device producer prevents the
 exit rather than delaying it, and where everything a drain protects is
 reclaimed at process exit anyway. It still stops the worker and releases every
 route, event pool, and memory pool, which is what unregisters pinned host
@@ -127,7 +126,7 @@ semantics](../architecture/simulation.md#solo-and-concurrent-bandwidth).
   the runtime's lifetime, for state that already lies there, such as a pool
   image; placed objects borrow leases inside it and releasing them does not
   free it. It fails when any of the range is in use.
-- `shadowspill_memory_pool_base()` returns the address a pool's offset 0
+- `shadowspill_memory_pool_base()` writes the address a pool's offset 0
   presents, which every lease pointer in the pool is an offset from; for a
   pool this process cannot dereference it is the same token the pointers are
   built on.
@@ -151,6 +150,16 @@ can satisfy it; otherwise it returns a structured no-progress status.
   [operations](lanes.md#operations)) -- and `shadowspill_unregister_object()`
   removes an object that is spill-only or released, with no live allocation
   and no queued action.
+
+  The runtime copies the `ShadowSpillObjectTransfer` and holds its `context`,
+  through `retain` and `release`, until the object is destroyed.
+  `spill_size_bytes` is the payload's size in the spill pool, and `enqueue`
+  submits one transfer's work on the lane stream. `collective_directions`
+  marks the directions whose conversions run collectives, bit 0 for fetch and
+  bit 1 for eviction; a task boundary submits those in a fixed order,
+  evictions before fetches. Task admission refuses a write-back of an object
+  whose eviction is collective, because the conversion may reduce into its
+  source allocation.
 - `shadowspill_register_placed_object()` admits an initially resident object
   whose lease lies at a given offset of its initial pool, inside a range
   reserved with `shadowspill_memory_pool_reserve_range()`: nothing is written,
@@ -158,11 +167,13 @@ can satisfy it; otherwise it returns a structured no-progress status.
 - `shadowspill_rekey_object()` changes the public identity without changing
   the retained object record.
 - `shadowspill_write_object()` and `shadowspill_read_object()` move bytes
-  between a caller's memory and one pool copy of an object: an ordinary copy
-  where that pool is in this address space, and the kind's `write` or `read`
-  where it is not. They are how state enters and leaves a pool outside a plan,
-  and no route is involved -- a route carries a *planned* transfer between two
-  pools, which is a different question.
+  between a caller's memory and one pool copy of an object: through the kind's
+  `write` or `read` when it supplies them, and otherwise by an ordinary copy,
+  which needs a pool this process can address -- not a device pool (see
+  [pool memory](pool-memory.md#crossing-the-pools-edge)). They are how state
+  enters and leaves a pool outside a plan, and no route is involved -- a route
+  carries a *planned* transfer between two pools, which is a different
+  question.
 - `shadowspill_write_object_range()` and `shadowspill_read_object_range()` use
   byte offsets within that pool payload (the local shard for sharded objects).
   They permit bounded initialization/export without allocating a full object
@@ -234,12 +245,12 @@ plan at all, report `SHADOWSPILL_RUNTIME_NO_ID` for the scope, and are not a
 plan's to reclaim.
 
 `shadowspill_allocation_scope_begin()` takes the same id, and refuses zero and
-any id the runtime did not issue. The id need not name a plan yet: profiling
-runs before the plan it measures is created, and a standalone measurement
-creates none.
+any id the runtime did not issue. The id need not name a plan: a standalone
+allocator measurement creates none.
 
-The registry behind these is `csrc/src/runtime/plan/registry.c`, with its own
-lock so asking what an id means never waits behind plan creation or teardown.
+The registry behind these is
+`packages/engine/csrc/src/runtime/plan/registry.c`, with its own lock so asking
+what an id means never waits behind plan creation or teardown.
 See [plan identity](../architecture/plan-identity.md) for the reasoning.
 
 ## Task and execution API
@@ -345,7 +356,8 @@ runtime's pool, route, event, and object owners:
   anything, nothing is admitted into it, and no slice is reserved in the pool.
   `shadowspill_plan_reclaim_fixed_layout()` takes it back at the offset it had,
   and refuses while anything allocated in the meantime still lies in it.
-  Saved-plan Executor setup keeps its arenas reserved and does not use these calls.
+  Saved-plan Executor setup keeps its slices reserved and does not use these
+  calls.
 - `shadowspill_plan_clear_tasks()` discards admitted records and bindings.
 - `shadowspill_plan_wait_idle()` actively waits for only that plan's claimed
   task scopes, submitted actions, and task-owned retirements. Other plans on
@@ -389,9 +401,9 @@ a dedicated boundary:
 
 Allocation scopes do not resolve task records, publish object mutations,
 decode actions, or enter the task API. They let qualification compare the
-execution allocator's allocation and retirement behavior with ordinary GPU
-measurement. Public `measure_program` uses the ordinary device allocator and
-does not require a runtime or its pools.
+execution allocator's allocation and retirement behavior with a measurement
+under the ordinary device allocator. Public `measure_program` uses the
+ordinary device allocator and does not require a runtime or its pools.
 
 Execution-allocator telemetry uses:
 

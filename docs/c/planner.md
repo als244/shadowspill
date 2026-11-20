@@ -168,18 +168,26 @@ answer. Input pointers are borrowed; output structs are the caller's.
   must wait for. Leases are taken in causal order, a predecessor must have
   retired before its successor is acquired, in operation order, and its
   retirement must publish a completion dependency; a layout where either
-  fails is refused with `SHADOWSPILL_STATUS_INVALID_OPERATIONS` and the
-  result's `refusal` naming why and which pair. The dependencies are
-  reported as columns ordered by successor, dependency and predecessor; a
-  result too small for them is refused with the count the caller needs.
+  fails is refused with `SHADOWSPILL_STATUS_INVALID_OPERATIONS`. The result's
+  `refusal` then names why, as an `enum ShadowSpillLayoutReuseRefusal` value
+  (`SHADOWSPILL_LAYOUT_REUSE_REFUSAL_OVERLAP`, `_NO_DEPENDENCY`,
+  `_PREDECESSOR_WITHOUT_TASK` or `_SUCCESSOR_WITHOUT_CONSUMER`; `_NONE`
+  otherwise), and `refusal_predecessor` and `refusal_successor` name which
+  pair. The dependencies are reported as columns ordered by successor,
+  dependency and predecessor; a result too small for them is refused with the
+  count the caller needs.
   Why causal order is what makes a shared address safe is specified in
   [fixed-offset placement](../architecture/fixed-placement.md).
-- `shadowspill_planner_struct_size()` reports the compiled size of one
-  planner structure, named by `enum ShadowSpillPlannerStruct`, and zero for a
-  value it does not know. The enum spans this header and whichever searches
-  ship, since a caller mirroring either set of layouts — the Python bindings
-  mirror both — can then compare sizes at load and refuse a library it does
-  not match. Drift is otherwise silent: the mirror reads one field where the
+- `shadowspill_planner_struct_size()` reports the size, as the library was
+  built, of one planner structure, named by `enum ShadowSpillPlannerStruct`,
+  and zero for a value it does not know. This header names
+  `SHADOWSPILL_STRUCT_ADMISSION_FACTS`,
+  `SHADOWSPILL_STRUCT_LAYOUT_REUSE_PROBLEM` and
+  `SHADOWSPILL_STRUCT_LAYOUT_REUSE_RESULT`, and a search's header continues
+  the numbering, so one call answers for this header and whichever searches
+  ship: a caller mirroring either set of layouts — the Python bindings mirror
+  both — can then compare sizes at load and refuse a library it does not
+  match. Drift is otherwise silent: the mirror reads one field where the
   library wrote another and reports corrupted counters rather than an error.
 
 `shadowspill_abi_version()` and `shadowspill_status_string()` cover loading

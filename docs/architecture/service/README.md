@@ -1,22 +1,20 @@
 # Service and node daemons
 
 One service endpoint coordinates the compute assigned to it. A client connects
-to that endpoint, selects training settings and submits global batches. Node
-addresses, process launch and physical worker placement belong to the service.
+to that endpoint, selects training settings and submits global batches. Process
+launch and physical worker placement belong to the service.
 
-This section specifies the multi-node architecture and its component contracts.
-The public training deployment currently uses GPUs assigned to one host, as
-described in [Advanced deployment](../../python/advanced/deployment.md). The
-node-daemon design below is not a public multi-node training deployment API.
+A training run uses the devices of the service's own host: a local machine or a
+single-node Slurm step, as described in [Advanced
+deployment](../../python/advanced/deployment.md). Node daemons register further
+machines with the service. Their hardware appears in its inventory, and no run
+is placed on them.
 
 ```mermaid
 flowchart TB
     C[Client] -->|Setup, batches, results| S[Service endpoint]
-    A[Node daemon A] -->|Authenticated outbound registration and control| S
-    B[Node daemon B] -->|Authenticated outbound registration and control| S
-    A --> WA[Local phase processes and workers]
-    B --> WB[Local phase processes and workers]
-    WA <-->|Direct worker communication| WB
+    S --> W[Phase processes and workers on the service's host]
+    A[Node daemon] -->|Authenticated outbound registration| S
 ```
 
 ## Component responsibilities
@@ -24,14 +22,13 @@ flowchart TB
 | Component | Responsibility |
 | --- | --- |
 | Client | Own data, inspect hardware/Plans, submit training commands and read results |
-| Service | Authenticate clients/nodes, maintain inventory, select resources, coordinate preparation and own ordered runs and durable outcomes |
-| Node daemon | Offer assigned capacity, claim local resources, stage artifacts, supervise owned processes and confirm cleanup |
-| Worker | Run existing build/profile/plan phases or the Executor using its assigned logical rank |
+| Service | Authenticate clients/nodes, maintain inventory, select devices on its own host, coordinate preparation and own ordered runs and durable outcomes |
+| Node daemon | Register an operator-assigned machine, keep its membership alive, and reserve or release its local resources on command |
+| Worker | Run build/profile/plan phases or the Executor using its assigned logical rank |
 
-The controller needs no GPU. An embedded local node daemon provides the same ownership
-and admission rules for a local deployment. Independent node daemons use the remote
-protocol. Installed models and objectives, packing and optimizer semantics stay in
-their existing owners; a node daemon has no second training state machine.
+On its own host the service applies `NodeAdmission`, the same admission a node
+daemon wraps, directly. Installed models and objectives, packing and optimizer
+semantics stay with their owners; a node daemon has no training state machine.
 
 ## Discovery begins at the node
 
@@ -51,18 +48,12 @@ worker readiness and failure handling.
 
 ## Three kinds of traffic
 
-Control messages carry membership, assignments and existing worker envelopes.
-Admitted artifact streams carry Plans, inputs, results and logs. Worker
-collectives exchange model state directly between participating workers.
-Neither the laptop nor the service relays these collectives.
-
-A node daemon can register through an outbound HTTPS connection across the Internet
-or NAT. A distributed run additionally needs worker-to-worker rendezvous and
-collective reachability, normally through a private routed network or VPN.
-Registration success alone does not establish this. The chosen worker interfaces
-must be tested before expensive distributed preparation; communication libraries
-can fail or hang on an interface that is up but cannot reach peers.
-See [NCCL's networking guidance](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/troubleshooting/networking_troubleshooting.html).
+Node control messages carry membership and resource commands. Admitted artifact
+streams carry Plans, inputs, results and logs between client and service.
+Worker collectives exchange model state directly between a run's workers;
+neither the client nor the service relays them. A node daemon registers through
+an outbound HTTPS connection, so it can reach the service across the Internet or
+NAT.
 
 ## Source ownership
 
@@ -74,11 +65,6 @@ See [NCCL's networking guidance](https://docs.nvidia.com/deeplearning/nccl/user-
 | `training/preparation/` | Target-specific phase work and compatible Plan families |
 | `training/session/` | Ordered training commands and optimizer/accumulation state |
 | `training/worker/` | Training envelopes, rank bindings and Executor ownership |
-
-The laptop SDK remains lightweight. The existing phase engine and generic
-parallelism interfaces remain the execution foundation. Optional launch backends
-can use the node boundary without changing `step()`, `forward_backward()`,
-`optim_step()` or `forward()`.
 
 ---
 

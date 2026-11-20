@@ -19,10 +19,11 @@ whatever the configured `pool_memory` entries serve, and nothing between the
 configuration and the pool asks.
 
 A `DevicePool`'s `physical_capacity` is the complete process-attributable
-accelerator sizing budget. External headroom and the driver's own baseline
-are subtracted from that budget, and the runtime reports the suballocatable pool capacity it derives
-after initialization. Planning budgets may reduce configured capacities but
-cannot exceed them.
+accelerator sizing budget. [External memory
+reservation](#external-memory-reservation-and-enforcement) says what pool sizing
+subtracts from it; the runtime reports the suballocatable pool capacity it
+derives after initialization. Planning budgets may reduce configured capacities
+but cannot exceed them.
 
 A `MemoryLease` owns one range for one residency generation. Objects keep a
 lease per pool location; aliases and views share the same object and lease.
@@ -40,12 +41,12 @@ ends](task-boundaries.md#what-a-scope-owes-when-it-ends) states the contract and
 why the position matters more than the size.
 
 Runtime-global shared leases are physically charged once and retained outside
-any one callable's movable-object schedule; which mutations and orderings each
+any one plan's movable-object schedule; which mutations and orderings each
 shared-residency policy permits is in [the program](program.md), and how the
 object, its per-pool locations and their leases relate is in [shared
 objects](shared-objects.md).
 
-Every callable uses its own plan-local alias IDs and fixed-layout slice. A
+Every plan uses its own plan-local alias IDs and fixed-layout slice. A
 shared-input binding maps one of those local aliases to an existing
 runtime-global object handle. Physical admission validates that the alias is
 externally resident but assigns it no plan-owned offset. Closing either plan
@@ -77,7 +78,7 @@ schedule-managed allocations:
 - persistent outputs and mutation replacements;
 - fetch and evict destinations.
 
-Offsets are relative to the callable's admitted slice of the runtime pool.
+Offsets are relative to the plan's admitted slice of the runtime pool.
 The layout models actual allocation/free geometry and causal overlap; it does
 not collapse a task into one synthetic workspace block. Runtime callbacks
 validate the allocation contract before returning a planned range.
@@ -87,7 +88,7 @@ Two cases remain dynamic by design:
 - bounded optional anonymous allocations use the admitted dynamic
   scratch reserve;
 - terminal caller-owned outputs use dynamic leases so they may outlive a
-  later callable invocation.
+  later invocation.
 
 Ordinary profiling requires stable allocation requests and models their complete
 lifetimes. The low-level planner also accepts an explicit
@@ -145,7 +146,7 @@ Steady-state execution performs no host allocation and creates or destroys no
 backend event, because cold plan adoption reserves every inventory the hot path
 draws on: event leases with their backend events ([events](events.md)),
 retirement queue entries, `MemoryLease` records, and lease-use records. A later
-callable sharing the runtime may grow these only at the same cold boundary.
+plan sharing the runtime may grow these only at the same cold boundary.
 
 Retirement reservations count task allocation generations as well as physical
 leases. One slot reused repeatedly inside a task can leave several retirement
@@ -211,8 +212,8 @@ actions run where, and exactly what is still in flight when the dispatching
 thread returns.
 
 What matters here is the concurrency they permit. Multiple plan and task
-handles may coexist in the runtime. Distinct callables own distinct admitted
-task records and may remain active together; one callable permits one
+handles may coexist in the runtime. Distinct plans own distinct admitted
+task records and may remain active together; one plan permits one
 outstanding submitted invocation, because its physical layout and preallocated
 validation and action records are reused. A second concurrent invocation of the
 same mutable handle fails closed rather than sharing that state.
@@ -222,7 +223,7 @@ invocation ownership. Dispatch runs immediately and returns an `InvocationResult
 `result()` is the single synchronization point for that invocation's public
 result.
 
-Reusing or closing a callable waits only for that plan's claimed task scopes,
+Reusing or closing a plan waits only for that plan's claimed task scopes,
 actions, and task-owned retirements, never for unrelated plans.
 
 The Executor's task dispatch (`shadowspill.execution.dispatch`) adds the
@@ -241,7 +242,7 @@ the task's label and runtime id, the request, pool state, and first cause in the
 library, so no-progress OOM, allocation-contract mismatch, worker failure, and
 backend failure remain distinguishable.
 
-Planned callables close their admitted execution state. Python
+Each plan closes its admitted execution state. Python
 `Runtime.close()` requires no active plan or plan setup, public object
 reference, or caller-owned device output. It then calls the C
 close/destroy path, which stops and joins the worker, destroys every route's
@@ -273,8 +274,11 @@ timing, and overflow handling.
 
 ## External memory reservation and enforcement
 
-Pool sizing subtracts the initial process baseline and `external_headroom`
-(default 512 MiB) from `physical_capacity`. Zero reserves no external allowance.
+Pool sizing starts from `physical_capacity`, or from less when `physical_limit`
+is set, and subtracts the larger of the process's device memory at open and
+`external_baseline` (the profiled external footprint), then
+`external_headroom` (default 512 MiB). Zero headroom reserves no external
+allowance.
 `reject_overbudget=False` independently selects reporting of external and
 whole-process memory overruns; `True` rejects them. Pool bounds and actual
 device allocation failures remain enforced in both modes. Admission records
@@ -285,7 +289,8 @@ distinguish a sizing budget from an enforced whole-process limit.
 
 The backend exposes an optional `host_numa_node` query for its selected device.
 The neutral runtime owns Linux CPU-affinity and memory-policy handling in
-`csrc/src/runtime/numa.c`; framework adapters only forward configuration.
+`packages/engine/csrc/src/runtime/numa.c`; framework adapters only forward
+configuration.
 Initialization narrows existing thread masks within their current restrictions,
 sets a preferred-memory policy on the calling thread, and applies an explicit
 preferred policy to each pinned-host pool mapping before registration. A
