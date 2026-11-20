@@ -1,7 +1,11 @@
 """A model-independent weighted regression objective with explicit padding."""
 
-from shadowspill_client.protocol.definitions import OutputSet, Participation
-from shadowspill_client.protocol.inputs import InputSchema, TensorField
+from shadowspill_client.extensions import (
+    InputSchema,
+    OutputSet,
+    Participation,
+    TensorField,
+)
 
 INPUTS = InputSchema(
     fields=[

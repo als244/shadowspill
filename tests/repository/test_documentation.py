@@ -17,22 +17,17 @@ from tests.repository.files import repository_files
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE = ROOT / "packages/engine"
 DOCS = ROOT / "docs"
-PYTHON_API = DOCS / "python" / "api"
+# The engine reference: the public pages and the internals pages.
+ENGINE_REFERENCE = (DOCS / "reference" / "engine", DOCS / "reference" / "internals")
 
 _MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 _MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 _PYTHON_FENCE = re.compile(r"```python\n(.*?)\n```", re.DOTALL)
 _JSON_FENCE = re.compile(r"```json\n(.*?)\n```", re.DOTALL)
-_SIGNATURE = re.compile(
-    r"<!-- source-signature: ([^:]+):([A-Za-z0-9_.]+) -->\s*"
-    r"```text\n(.*?)\n```",
-    re.DOTALL,
-)
-_OPTIONS_TABLE = re.compile(
-    r"<!-- api-options: ([^:]+):([A-Za-z0-9_.]+) -->\s*"
-    r"((?:\|[^\n]*\n)+)"
-)
 _C_FUNCTION = re.compile(r"\b(shadowspill_[A-Za-z0-9_]+)\s*\(")
+_REFERENCE_ENTRY = re.compile(
+    r"^\.\. auto(?:class|exception|function|data|type):: (\S+)$", re.MULTILINE
+)
 
 _MEMORY_MODULE = ENGINE / "src" / "shadowspill" / "memory.py"
 _PYTORCH_MODULE = ENGINE / "src" / "shadowspill" / "pytorch" / "__init__.py"
@@ -74,25 +69,6 @@ _PUBLIC_C_REFERENCES = {
     / "include"
     / "shadowspill"
     / "pytorch_adapter.h": DOCS / "c" / "pytorch-adapter.md",
-}
-
-_REQUIRED_SIGNATURES = {
-    "packages/engine/src/shadowspill/pytorch/chunking/policy.py:ChunkPolicy.configure_stage",
-    "packages/engine/src/shadowspill/ssd.py:ssd",
-    "packages/engine/src/shadowspill/planning/memory_search/plan.py:plan_program",
-    "packages/engine/src/shadowspill/planning/memory_search/plan.py:summarize_plan",
-    "packages/engine/src/shadowspill/planning/memory_search/algorithms/pressurefit/__init__.py:PressureFit.__call__",
-    "packages/engine/src/shadowspill/pytorch/runtime.py:Runtime.__init__",
-    "packages/engine/src/shadowspill/runtime/core.py:Runtime.__init__",
-}
-
-_REQUIRED_OPTIONS_TABLES = {
-    "packages/engine/src/shadowspill/build/step.py:build_step",
-    "packages/engine/src/shadowspill/profiling/measure.py:measure_program",
-    "packages/engine/src/shadowspill/communication/measure.py:measure_communication",
-    "packages/engine/src/shadowspill/profiling/overlap.py:measure_overlap",
-    "packages/engine/src/shadowspill/planning/plan.py:plan_program",
-    "packages/engine/src/shadowspill/planning/sweep.py:sweep_programs",
 }
 
 
@@ -161,138 +137,14 @@ def _documented_symbol(reference: str, name: str) -> bool:
     return re.search(rf"`{re.escape(name)}(?:`|\()", reference) is not None
 
 
-def _python_page_expectations() -> dict[Path, set[str]]:
-    expectations = {
-        PYTHON_API / "runtime.md": set(_all_exports(_MEMORY_MODULE)),
-        PYTHON_API / "frontend.md": set(),
-        PYTHON_API / "artifacts.md": set(),
-        PYTHON_API / "diagnostics.md": set(_all_exports(_REPORTING_MODULE)),
-        PYTHON_API / "neutral.md": set(),
-    }
-    for path in _CORE_PYTHON_MODULES:
-        expectations[PYTHON_API / "neutral.md"].update(_all_exports(path))
-
-    exports = set(_all_exports(_PYTORCH_MODULE))
-    tree = ast.parse(_PYTORCH_MODULE.read_text(), filename=str(_PYTORCH_MODULE))
-    found: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        if node.level == 0:
-            # A name the frontend re-exports from the neutral tree is documented
-            # where it lives, on the neutral page.
-            module = node.module or ""
-            if not module.startswith("shadowspill.runtime"):
-                continue
-            page = PYTHON_API / "neutral.md"
-        elif node.level == 1:
-            page = {
-                "diagnostics": PYTHON_API / "diagnostics.md",
-                "program": PYTHON_API / "artifacts.md",
-                "runtime": PYTHON_API / "runtime.md",
-                "invocation": PYTHON_API / "runtime.md",
-            }.get(node.module, PYTHON_API / "frontend.md")
-        else:
-            continue
-        for alias in node.names:
-            public_name = alias.asname or alias.name
-            if public_name in exports:
-                expectations[page].add(public_name)
-                found.add(public_name)
-    assert found == exports, (
-        f"unclassified shadowspill.pytorch exports: {exports - found}"
-    )
-    return expectations
-
-
-def _find_callable(path: Path, qualified_name: str) -> ast.FunctionDef:
-    nodes: list[ast.stmt] = ast.parse(path.read_text(), filename=str(path)).body
-    found: ast.AST | None = None
-    for part in qualified_name.split("."):
-        found = next(
-            (
-                node
-                for node in nodes
-                if isinstance(node, (ast.ClassDef, ast.FunctionDef))
-                and node.name == part
-            ),
-            None,
-        )
-        if found is None:
-            raise AssertionError(f"{path}: no callable {qualified_name}")
-        nodes = found.body if isinstance(found, ast.ClassDef) else []
-    if not isinstance(found, ast.FunctionDef):
-        raise AssertionError(f"{path}: {qualified_name} is not a function")
+def _reference_objects() -> set[int]:
+    """The identities of the objects the engine reference has an entry for."""
+    found: set[int] = set()
+    for page in (page for root in ENGINE_REFERENCE for page in root.glob("*.rst")):
+        for path in _REFERENCE_ENTRY.findall(page.read_text()):
+            module, _, name = path.rpartition(".")
+            found.add(id(getattr(importlib.import_module(module), name)))
     return found
-
-
-def _canonical_default(node: ast.expr | None) -> str | None:
-    if node is None:
-        return None
-    return ast.dump(node, annotate_fields=False, include_attributes=False)
-
-
-def _source_parameters(path: Path, qualified_name: str) -> list[tuple[str, str | None]]:
-    function = _find_callable(path, qualified_name)
-    arguments = function.args
-    positional = [*arguments.posonlyargs, *arguments.args]
-    positional_defaults: list[ast.expr | None] = [None] * (
-        len(positional) - len(arguments.defaults)
-    ) + list(arguments.defaults)
-    parameters = [
-        (argument.arg, _canonical_default(default))
-        for argument, default in zip(positional, positional_defaults, strict=True)
-        if argument.arg not in {"self", "cls"}
-    ]
-    parameters.extend(
-        (
-            argument.arg,
-            _canonical_default(default),
-        )
-        for argument, default in zip(
-            arguments.kwonlyargs, arguments.kw_defaults, strict=True
-        )
-    )
-    return parameters
-
-
-def _documented_parameters(signature: str) -> list[tuple[str, str | None]]:
-    match = re.search(r"\((.*)\)", signature, re.DOTALL)
-    if match is None:
-        raise AssertionError(f"invalid documented signature: {signature!r}")
-    parameters: list[tuple[str, str | None]] = []
-    raw_parameters: list[str] = []
-    start = 0
-    depth = 0
-    quote: str | None = None
-    body = match.group(1)
-    for index, character in enumerate(body):
-        if quote is not None:
-            if character == quote and (index == 0 or body[index - 1] != "\\"):
-                quote = None
-            continue
-        if character in {'"', "'"}:
-            quote = character
-        elif character in "([{":
-            depth += 1
-        elif character in ")]}":
-            depth -= 1
-        elif character == "," and depth == 0:
-            raw_parameters.append(body[start:index])
-            start = index + 1
-    raw_parameters.append(body[start:])
-    for raw in raw_parameters:
-        value = raw.strip()
-        if not value or value in {"*", "/"}:
-            continue
-        name_value, separator, default_value = value.partition("=")
-        name = name_value.partition(":")[0].strip().lstrip("*")
-        default = None
-        if separator:
-            default_node = ast.parse(default_value.strip(), mode="eval").body
-            default = _canonical_default(default_node)
-        parameters.append((name, default))
-    return parameters
 
 
 def test_all_local_markdown_links_and_anchors_resolve() -> None:
@@ -445,24 +297,21 @@ def test_failure_guide_covers_public_boundaries_and_cleanup() -> None:
         assert required in reference
 
 
-def test_every_public_python_export_appears_on_its_api_page() -> None:
-    missing = {
-        page.relative_to(ROOT).as_posix(): sorted(
-            name for name in names if not _documented_symbol(page.read_text(), name)
+def test_every_public_python_export_appears_in_the_engine_reference() -> None:
+    documented = _reference_objects()
+    undocumented = []
+    for path in _PUBLIC_PYTHON_MODULES:
+        parts = path.relative_to(ENGINE / "src").with_suffix("").parts
+        module = importlib.import_module(
+            ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
         )
-        for page, names in _python_page_expectations().items()
-    }
-    missing = {path: names for path, names in missing.items() if names}
-    assert not missing, f"misplaced or undocumented public Python exports: {missing}"
-
-    all_exports = {
-        name for path in _PUBLIC_PYTHON_MODULES for name in _all_exports(path)
-    }
-    all_reference = "\n".join(path.read_text() for path in PYTHON_API.glob("*.md"))
-    undocumented = sorted(
-        name for name in all_exports if not _documented_symbol(all_reference, name)
-    )
-    assert not undocumented, f"undocumented public Python exports: {undocumented}"
+        undocumented.extend(
+            f"{module.__name__}.{name}"
+            for name in _all_exports(path)
+            if not inspect.ismodule(value := getattr(module, name))
+            and id(value) not in documented
+        )
+    assert not undocumented, f"exports absent from the engine reference: {undocumented}"
 
 
 def test_every_public_c_function_appears_on_its_component_page() -> None:
@@ -478,73 +327,10 @@ def test_every_public_c_function_appears_on_its_component_page() -> None:
     assert not missing, f"misplaced or undocumented public C functions: {missing}"
 
 
-def test_documented_python_signatures_match_source() -> None:
-    observed: set[str] = set()
-    mismatches: list[str] = []
-    for document in _normative_markdown_files():
-        for relative_path, qualified_name, signature in _SIGNATURE.findall(
-            document.read_text()
-        ):
-            identity = f"{relative_path}:{qualified_name}"
-            observed.add(identity)
-            source = ROOT / relative_path
-            expected = _source_parameters(source, qualified_name)
-            actual = _documented_parameters(signature)
-            if actual != expected:
-                mismatches.append(
-                    f"{document.relative_to(ROOT)} {identity}: "
-                    f"documented={actual!r}, source={expected!r}"
-                )
-    assert observed == _REQUIRED_SIGNATURES, (
-        f"signature marker mismatch: missing={_REQUIRED_SIGNATURES - observed}, "
-        f"unexpected={observed - _REQUIRED_SIGNATURES}"
-    )
-    assert not mismatches, "stale documented Python signatures:\n" + "\n".join(
-        mismatches
-    )
-
-
-def test_phase_and_trainer_option_tables_match_source() -> None:
-    observed: set[str] = set()
-    for document in _normative_markdown_files():
-        for relative_path, qualified_name, table in _OPTIONS_TABLE.findall(
-            document.read_text()
-        ):
-            identity = f"{relative_path}:{qualified_name}"
-            assert identity not in observed, f"duplicate option reference: {identity}"
-            observed.add(identity)
-            actual: dict[str, str | None] = {}
-            for row in table.splitlines()[2:]:
-                name, default, *_ = row.strip("|").split("|")
-                name, default = name.strip().strip("`"), default.strip().strip("`")
-                assert name not in actual, f"{document}: duplicate argument {name}"
-                actual[name] = (
-                    None
-                    if default == "Required"
-                    else _canonical_default(ast.parse(default, mode="eval").body)
-                )
-            expected = dict(_source_parameters(ROOT / relative_path, qualified_name))
-            assert actual == expected, (
-                f"{document.relative_to(ROOT)} {identity}: "
-                f"documented={actual!r}, source={expected!r}"
-            )
-    assert observed == _REQUIRED_OPTIONS_TABLES
-
-
 def test_normative_python_examples_compile_and_use_valid_public_keywords() -> None:
     failures: list[str] = []
-    public_parameters: dict[str, set[str]] = {}
     for document in _normative_markdown_files():
-        for relative_path, qualified_name, signature in _SIGNATURE.findall(
-            document.read_text()
-        ):
-            display_name = signature.split("(", 1)[0].strip()
-            public_parameters[display_name] = {
-                name
-                for name, _ in _source_parameters(ROOT / relative_path, qualified_name)
-            }
-    for document in _normative_markdown_files():
-        parameters = dict(public_parameters)
+        parameters: dict[str, set[str]] = {}
         modules = {}
         for index, source in enumerate(_PYTHON_FENCE.findall(document.read_text())):
             try:
@@ -790,12 +576,7 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
             ROOT / "tools/planning/corpus/README.md",
             ROOT / "tools/measure_plan/README.md",
             ROOT / "packages/engine/src/shadowspill/orchestration/README.md",
-            DOCS / "python/api/build.md",
-            DOCS / "python/api/communication.md",
-            DOCS / "python/api/executor.md",
-            DOCS / "python/api/distributed.md",
-            DOCS / "python/api/profiling.md",
-        }  # These document the concrete framework/device phase boundaries.
+        }
     }
     violations = {path: values for path, values in violations.items() if values}
     assert not violations, (

@@ -16,7 +16,7 @@ packages/engine/tests/engine_tests/
 packages/workloads/tests/workload_tests/
 ├── models/         architectures and family registration
 ├── initialization/ checkpoint mapping, loading and dtype policy
-├── definitions/    public model/objective registration and preparation settings
+├── components/     public model/objective registration and preparation settings
 ├── inputs/         runtime sequence metadata and packed input execution
 ├── objectives/     losses and fused head math
 ├── policies/       chunking and retention behavior

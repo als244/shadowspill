@@ -34,7 +34,7 @@ def _fixture(duration):
     compute = ResourceSpec("gpu", ResourceKind.COMPUTE)
     comm = ResourceSpec("gpu", ResourceKind.COMMUNICATION)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("gpu", "worker", "cuda", 0),),
+        devices=(DeviceSpec("gpu"),),
         alias_groups=(AliasGroupSpec("fetched", "gpu", 16),),
         objects=(ObjectSpec("input", "fetched", 0, 16),),
         profiles=(

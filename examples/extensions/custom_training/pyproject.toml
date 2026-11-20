@@ -3,12 +3,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "example-training-definitions"
+name = "example-training-components"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = ["shadowspill[training]", "shadowspill-client"]
 
-[project.entry-points."shadowspill.definitions"]
+[project.entry-points."shadowspill.components"]
 training = "example_training:register"
 
 [tool.hatch.build.targets.wheel]

@@ -13,7 +13,7 @@ from examples.train_llama3 import arguments, main
 from examples.training.application.setup import read_resume, start
 from examples.training.llama3.settings import APPLICATION, Settings
 from examples.training.text_data import TokenBatches
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client.protocol.requests import ArtifactRef
@@ -69,7 +69,7 @@ def test_corpus_masks_use_one_global_supervised_target_denominator(tmp_path):
         TokenBatches(data, 4, 3)
 
 
-def test_setup_uses_installed_definitions_and_caps_scheduled_padding(tmp_path):
+def test_setup_uses_installed_components_and_caps_scheduled_padding(tmp_path):
     settings = Settings(
         str(tmp_path),
         model="llama3-tiny",

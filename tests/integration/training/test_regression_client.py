@@ -14,7 +14,7 @@ from examples.training.application.setup import start
 from examples.training.regression.data import SyntheticBatches
 from examples.training.regression.settings import APPLICATION, Settings, parallelism
 from shadowspill.parallelism import Parallelism
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client.protocol.requests import ArtifactRef

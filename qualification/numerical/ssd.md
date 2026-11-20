@@ -25,4 +25,4 @@ interfaces. Results, Plans and reference checkpoints remain separate from the
 spill file and are retained.
 
 The SSD matrix runs only when named; the default gate run spills to pinned host
-memory. See the [SSD API](../../docs/python/api/ssd.md) for pool details.
+memory. See [`SSDPool`](../../docs/reference/engine/execution.rst) for pool details.

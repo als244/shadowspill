@@ -1,6 +1,6 @@
 """Wrap an existing optimizer; the engine captures and executes its update."""
 
-from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
+from shadowspill_client.extensions import ControlSchema, ScalarControl
 
 CONTROLS = ControlSchema({"lr": ScalarControl(0.01, minimum=0)})
 BINDINGS = {"lr": ("optimizer_group.0.lr",)}

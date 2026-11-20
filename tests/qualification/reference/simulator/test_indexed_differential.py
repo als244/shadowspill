@@ -143,7 +143,7 @@ def test_large_integer_transfer_runtime_does_not_overflow() -> None:
     bandwidth = (1 << 63) + 101
     resource = ResourceSpec("cuda_0", ResourceKind.CONTROL)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(AliasGroupSpec("storage", "cuda_0", size),),
         objects=(ObjectSpec("object", "storage", 0, size),),
         profiles=(TaskProfile("trigger_profile", 0, 0, "trigger_abi"),),
@@ -237,7 +237,7 @@ def test_random_linear_programs_match(
         for index in range(count)
     )
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=aliases,
         objects=objects,
         profiles=profiles,

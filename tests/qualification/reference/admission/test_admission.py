@@ -149,7 +149,7 @@ def test_compiled_selected_admission_matches_python_oracle() -> None:
 def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=(
             AliasGroupSpec("released", "cuda_0", 64),
             AliasGroupSpec("fetched", "cuda_0", 64),
@@ -272,7 +272,7 @@ def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> Non
 def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=tuple(
             AliasGroupSpec(alias, "cuda_0", 32) for alias in ("a", "b", "c")
         ),
@@ -339,7 +339,7 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     aliases = ("first", "second", "third")
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=tuple(AliasGroupSpec(alias, "cuda_0", 8) for alias in aliases),
         objects=tuple(ObjectSpec(alias, alias, 0, 8) for alias in aliases),
         profiles=(
@@ -413,7 +413,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     sizes = {"hole_6": 6, "separator": 2, "hole_10": 10, "tail": 2, "out": 6}
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=tuple(
             AliasGroupSpec(alias, "cuda_0", size) for alias, size in sizes.items()
         ),
@@ -578,7 +578,7 @@ def test_search_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     sizes = {"a": 64, "b": 32, "c": 32, "d": 64}
     program = ShadowSpillProgram(
-        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        devices=(DeviceSpec("cuda_0"),),
         alias_groups=tuple(
             AliasGroupSpec(
                 alias,

@@ -1,6 +1,6 @@
-# Custom training definitions
+# Custom training extension
 
-Follow the [step-by-step guide](../../../docs/python/advanced/custom-definitions.md)
+Follow the [step-by-step guide](../../../docs/python/advanced/writing-extensions.md)
 to install this server package and run its client. It supplies a small regression
 model, a weighted objective and SGD through the public extension API.
 

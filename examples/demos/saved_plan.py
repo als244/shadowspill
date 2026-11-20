@@ -4,9 +4,8 @@ import json
 from itertools import repeat
 
 from examples.training.text_data import ConversationBatches
-from shadowspill_client import SSH, ServiceClient
+from shadowspill_client import SSH, ResolvedTraining, ServiceClient
 from shadowspill_client.display import CommandTable
-from shadowspill_client.protocol.training import ResolvedTraining
 from shadowspill_client.text import text_batch_statistics
 
 from ._options import arguments

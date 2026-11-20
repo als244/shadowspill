@@ -4,12 +4,12 @@ from hashlib import sha256
 from importlib.metadata import version
 from pathlib import Path
 
-from shadowspill.training.definitions import (
-    ModelDefinition,
-    ObjectiveDefinition,
-    OptimizerDefinition,
+from shadowspill.training.components import (
+    ModelComponent,
+    ObjectiveComponent,
+    OptimizerComponent,
 )
-from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.extensions import ComponentSource
 
 from . import model, objective, optimizer
 
@@ -22,14 +22,14 @@ def source():
     for path in sorted(root.rglob("*.py")):
         digest.update(path.relative_to(root).as_posix().encode() + b"\0")
         digest.update(sha256(path.read_bytes()).digest())
-    package = "example-training-definitions"
-    return DefinitionSource(package, version(package), digest.hexdigest())
+    package = "example-training-components"
+    return ComponentSource(package, version(package), digest.hexdigest())
 
 
 def register(registry):
     identity = source()
     registry.add_model(
-        ModelDefinition(
+        ModelComponent(
             "example/linear_regressor@1",
             model.Config,
             model.create,
@@ -40,7 +40,7 @@ def register(registry):
         source=identity,
     )
     registry.add_objective(
-        ObjectiveDefinition(
+        ObjectiveComponent(
             "example/weighted_mse@1",
             objective.compute,
             inputs=objective.INPUTS,
@@ -52,7 +52,7 @@ def register(registry):
         source=identity,
     )
     registry.add_optimizer(
-        OptimizerDefinition(
+        OptimizerComponent(
             "example/sgd@1", optimizer.create, optimizer.CONTROLS, optimizer.BINDINGS
         ),
         source=identity,

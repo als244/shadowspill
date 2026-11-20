@@ -137,7 +137,7 @@ def write_json(path, value):
 @logged_phase("Check training setup and checkpoint")
 def preflight(data, output, requested, *, cache_root=None):
     from shadowspill.checkpoint.file_digest import checksum_cache
-    from shadowspill.training.definitions import load_registry
+    from shadowspill.training.components import load_registry
     from shadowspill.training.preparation.capture.templates import (
         capture_inventory,
     )

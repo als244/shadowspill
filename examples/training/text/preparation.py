@@ -7,15 +7,15 @@ def resolve(
     service,
     request,
     *,
-    definition=None,
+    model=None,
     defaults_from_model=None,
     resolution_options=None,
     tail_save_counts=None,
 ):
     request = dict(request)
     preview = service.describe_training(**request).result()
-    if definition is not None and preview.config.model.definition != definition:
-        raise ValueError(f"this application requires model definition {definition}")
+    if model is not None and preview.config.model.name != model:
+        raise ValueError(f"this application requires the model {model}")
     defaults = dict(request["objective"].defaults)
     for name, path in (defaults_from_model or {}).items():
         value = preview.config.model.config

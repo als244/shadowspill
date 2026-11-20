@@ -17,12 +17,12 @@ from examples.training.qwen.settings import Settings, qwen3_settings
 from examples.training.qwen.setup import resolve
 from examples.training.text_data import TokenBatches
 from shadowspill.parallelism import Parallelism
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client.parallelism import MIN_SHARD_BYTES
 from shadowspill_client.protocol.requests import ArtifactRef
-from shadowspill_workloads.definitions.expert_parallel import ownership
+from shadowspill_workloads.components.expert_parallel import ownership
 from workload_tests.initialization.test_local_pretrained import checkpoint
 
 
@@ -143,7 +143,7 @@ def test_qwen3_full_defaults_preserve_global_update_and_existing_ownership(kind)
     assert parallel.inputs.partitions.groups == tuple((r,) for r in range(8))
     registry = load_registry(["shadowspill-workloads"])
     setup = resolve_training(registry, **{**request, "parallelism": parallel})
-    assert setup.config.model.definition == "shadowspill/qwen3moe@1"
+    assert setup.config.model.name == "shadowspill/qwen3moe@1"
     assert setup.config.model.config["architecture"]["d_model"] == 2048
     assert setup.config.preparation.external_headroom_bytes == 768 << 20
     assert setup.config.execution.reject_overbudget is False

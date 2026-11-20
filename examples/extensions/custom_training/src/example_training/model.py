@@ -3,8 +3,8 @@
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from shadowspill.training.definitions import ModelInitialization
-from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
+from shadowspill.training.components import ModelInitialization
+from shadowspill_client.extensions import Capacity, InputSchema, TensorField
 
 
 @dataclass(frozen=True)

@@ -5,6 +5,6 @@ from shadowspill.server import Allocation, Server
 server = Server(
     allocation=Allocation.from_environment(),
     service_root="./custom-training-data",
-    workload_packages=["example-training-definitions"],
+    workload_packages=["example-training-components"],
 )
 server.serve(host="127.0.0.1", port=8000)

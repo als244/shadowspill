@@ -54,10 +54,7 @@ def replay(copies, *, rates=(2 * G, G, 2 * G, G), latencies=(0, 0)):
         for i, (_, size, _, device) in enumerate(copies)
     )
     program = ShadowSpillProgram(
-        devices=tuple(
-            DeviceSpec(device, "process_0", "cuda", i)
-            for i, device in enumerate(device_ids)
-        ),
+        devices=tuple(DeviceSpec(device) for device in device_ids),
         alias_groups=aliases,
         objects=tuple(
             ObjectSpec(f"o{i}", a.alias_group_id, 0, a.size_bytes)

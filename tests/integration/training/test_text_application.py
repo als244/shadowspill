@@ -7,7 +7,7 @@ import pytest
 from examples.training.text.preparation import resolve
 from examples.training.text.settings import TextSettings
 from shadowspill.parallelism import Parallelism
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
 from shadowspill_client import Model, Objective
@@ -85,7 +85,7 @@ def test_common_settings_prepare_multiple_models_with_the_same_scheduled_cap(fam
     preview = resolve(
         SimpleNamespace(describe_training=describe),
         request,
-        definition=model.definition,
+        model=model.name,
         defaults_from_model={"routing.weight": ("architecture", "router_aux_loss_coef")}
         if checkpoint_coefficient
         else None,
@@ -94,7 +94,7 @@ def test_common_settings_prepare_multiple_models_with_the_same_scheduled_cap(fam
     )
     assert len(calls) == 2
     assert request["model"] is model and request["objective"] is objective
-    assert calls[1]["model"].definition == model.definition
+    assert calls[1]["model"].name == model.name
     if family != "llama3":
         assert objective.defaults["routing.weight"] == 0.25
         expected = (

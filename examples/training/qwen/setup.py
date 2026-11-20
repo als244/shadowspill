@@ -7,7 +7,7 @@ def resolve(service, settings):
     return preparation.resolve(
         service,
         settings.request(),
-        definition=f"shadowspill/{settings.family}@1",
+        model=f"shadowspill/{settings.family}@1",
         defaults_from_model={"balance.weight": ("architecture", "router_aux_loss_coef")}
         if settings.balance_weight is None
         else None,

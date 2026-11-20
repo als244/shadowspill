@@ -4,7 +4,7 @@ import json
 from contextlib import contextmanager
 from pathlib import Path
 
-from shadowspill_client.protocol.requests import ArtifactRef
+from shadowspill_client import ArtifactRef
 
 from .records import record
 

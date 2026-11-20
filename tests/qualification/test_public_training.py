@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from qualification.public_training import settings
-from shadowspill.training.definitions import load_registry
+from shadowspill.training.components import load_registry
 from shadowspill.training.preparation.capture.templates import capture_inventory
 from shadowspill.training.preparation.configuration.layouts import prepare_layouts
 from shadowspill.training.preparation.setup import resolve_training
