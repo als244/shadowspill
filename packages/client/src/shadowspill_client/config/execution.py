@@ -16,12 +16,11 @@ class Execution(Record):
         Seed of each worker's Python, NumPy and framework random streams in a
         fresh run, at least zero. A restored checkpoint keeps its saved seed
         and state. Initial weights take their seed from `Weights`.
-    max_staging_bytes : int, default 2147483648
+    max_staging_bytes : int, default 2 << 30
         Bound, in bytes (2 GiB by default), on host staging: the service's
         buffer for submitted inputs, shared by pending requests, and each
-        worker's input, initialization and output copies. The service admits
-        it against host memory when creating the run; smaller requests use
-        less.
+        worker's input, initialization and output copies. Creating the run
+        counts the whole bound against host memory.
     max_pending_requests : int, default 2
         Maximum number of submitted requests not yet complete, at least one.
         A further submission waits for one to complete.
@@ -40,7 +39,7 @@ class Execution(Record):
         Whether a worker fails when its process holds more device memory
         than the budget, or more outside its execution pool than the
         headroom allows. False reports such overruns and continues. Pool
-        bounds and allocation failures are enforced either way.
+        bounds are enforced either way.
     """
 
     seed: int = 0

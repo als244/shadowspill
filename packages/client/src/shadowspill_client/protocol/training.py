@@ -7,30 +7,30 @@ from typing import Literal
 
 from .._records import Record, Value, mapping, record, text
 from ..config import BatchConfig, Execution, Memory, Model, Objective, Optimizer
+from .components import ComponentSource, OutputSet, Participation
 from .controls import ControlSchema
-from .definitions import DefinitionSource, OutputSet, Participation
 from .inputs import InputSchema
 from .operations import OperationKey
 from .preparation import ResolvedPreparation
 
-type Origin = Literal["explicit", "definition", "preset", "engine_default"]
+type Origin = Literal["explicit", "component", "preset", "engine_default"]
 
 
 @dataclass(frozen=True)
 class ResolvedTraining(Record):
-    """A run's settings with every default filled in from the installed definitions.
+    """A run's settings with every default filled in from the installed components.
 
     Returned as the ``config`` of `TrainingPreview` and by
     `TrainingClient.get_config`, and accepted as ``config`` by the
     `ServiceClient` methods that describe or create a run. It holds no
-    hardware selection, weights or run state. A model without ``initialize``
+    hardware selection, weight values or run state. A model without ``initialize``
     stays without one; creating a training run from it then needs a
     checkpoint.
 
     Parameters
     ----------
     model : Model
-        The model, with its installed ``definition`` named.
+        The model, named by its exact versioned ID.
     objective : Objective
         The objective, with its configuration and defaults filled in.
     optimizer : Optimizer or None
@@ -38,7 +38,8 @@ class ResolvedTraining(Record):
     batches : sequence of BatchConfig
         The batch options, at least one.
     memory : Memory
-        Device and spill budgets of each worker.
+        Device and spill budgets of each worker. Describing the run sizes
+        automatic budgets, so a preview's settings hold the sizes.
     parallelism : mapping
         The parallelism declaration, with its input placement filled in.
     execution : Execution
@@ -48,14 +49,14 @@ class ResolvedTraining(Record):
         when ``forward_backward`` is prepared with an optimizer.
     preparation : ResolvedPreparation
         Build, profiling and planning settings.
-    definition_sources : mapping of str to DefinitionSource
-        Pinned sources of the definitions, by role: ``"model"``,
+    component_sources : mapping of str to ComponentSource
+        Pinned sources of the components, by role: ``"model"``,
         ``"objective"``, and ``"optimizer"`` and ``"reference"`` when present.
-    policy_sources : mapping of str to DefinitionSource
+    policy_sources : mapping of str to ComponentSource
         Pinned sources of the build policies the cases use, by policy name.
-    engine_source : DefinitionSource
+    engine_source : ComponentSource
         Pinned source of the service's engine.
-    client_source : DefinitionSource
+    client_source : ComponentSource
         Pinned source of the client package the service resolved with.
     inputs : InputSchema
         The input fields each datum provides, for the model and objective.
@@ -70,11 +71,12 @@ class ResolvedTraining(Record):
         How the objective marks the data that count toward the loss.
     origins : mapping of str to str
         Where each setting came from, by dotted setting name such as
-        ``"model.initialize"``: ``"explicit"``, ``"definition"``,
-        ``"preset"`` or ``"engine_default"``.
-    reference_definition : str, optional
-        The definition that resolved the model's pretrained weights. Set
-        exactly when the model initializes from pretrained weights.
+        ``"model.initialize"``: ``"explicit"``, ``"component"`` (the
+        installed component's default), ``"preset"`` or ``"engine_default"``.
+    reference_component : str, optional
+        ID of the installed component that resolved the model's pretrained
+        weights. Set exactly when the model initializes from pretrained
+        weights.
     """
 
     model: Model
@@ -86,17 +88,17 @@ class ResolvedTraining(Record):
     execution: Execution
     operations: Sequence[OperationKey]
     preparation: ResolvedPreparation
-    definition_sources: Mapping[str, DefinitionSource]
-    policy_sources: Mapping[str, DefinitionSource]
-    engine_source: DefinitionSource
-    client_source: DefinitionSource
+    component_sources: Mapping[str, ComponentSource]
+    policy_sources: Mapping[str, ComponentSource]
+    engine_source: ComponentSource
+    client_source: ComponentSource
     inputs: InputSchema
     loss_controls: ControlSchema
     optimizer_controls: ControlSchema | None
     outputs: Mapping[str, OutputSet]
     participation: Participation
     origins: Mapping[str, Origin]
-    reference_definition: str | None = None
+    reference_component: str | None = None
 
     def __post_init__(self) -> None:
         for name, cls in (
@@ -105,15 +107,15 @@ class ResolvedTraining(Record):
             ("memory", Memory),
             ("execution", Execution),
             ("preparation", ResolvedPreparation),
-            ("engine_source", DefinitionSource),
-            ("client_source", DefinitionSource),
+            ("engine_source", ComponentSource),
+            ("client_source", ComponentSource),
             ("inputs", InputSchema),
             ("loss_controls", ControlSchema),
             ("participation", Participation),
         ):
             object.__setattr__(self, name, record(cls, getattr(self, name), name))
-        if self.model.definition is None:
-            raise ValueError("resolved model requires its installed definition")
+        if self.model.name is None:
+            raise ValueError("resolved model requires its installed component")
         if self.optimizer is not None:
             object.__setattr__(
                 self, "optimizer", record(Optimizer, self.optimizer, "optimizer")
@@ -131,14 +133,14 @@ class ResolvedTraining(Record):
         sources = {"model", "objective"} | (
             {"optimizer"} if self.optimizer is not None else set()
         )
-        if self.reference_definition is not None:
-            text(self.reference_definition, "reference_definition")
+        if self.reference_component is not None:
+            text(self.reference_component, "reference_component")
             sources.add("reference")
         pretrained = (
             self.model.initialize is not None
             and self.model.initialize.kind == "pretrained"
         )
-        if pretrained != (self.reference_definition is not None) or (
+        if pretrained != (self.reference_component is not None) or (
             pretrained
             and self.model.initialize is not None
             and self.model.initialize.revision is None
@@ -146,20 +148,20 @@ class ResolvedTraining(Record):
             raise ValueError(
                 "pretrained metadata requires its resolver and pinned revision"
             )
-        for name in ("definition_sources", "policy_sources"):
+        for name in ("component_sources", "policy_sources"):
             object.__setattr__(
                 self,
                 name,
                 MappingProxyType(
                     {
-                        text(k, name): record(DefinitionSource, v, k)
+                        text(k, name): record(ComponentSource, v, k)
                         for k, v in getattr(self, name).items()
                     }
                 ),
             )
-        if self.definition_sources.keys() != sources:
+        if self.component_sources.keys() != sources:
             raise ValueError(
-                "resolved setup requires exactly its definition source pins"
+                "resolved setup requires exactly its component source pins"
             )
         if not isinstance(self.batches, (tuple, list)) or not self.batches:
             raise ValueError("resolved setup requires explicit batch options")
@@ -207,7 +209,7 @@ class ResolvedTraining(Record):
         if any(
             not isinstance(k, str)
             or not k
-            or v not in ("explicit", "definition", "preset", "engine_default")
+            or v not in ("explicit", "component", "preset", "engine_default")
             for k, v in origins.items()
         ):
             raise ValueError("unknown resolved setting origin")

@@ -18,9 +18,8 @@ if TYPE_CHECKING:
 class NsightCapture:
     """One worker's Nsight Systems capture: its status and report.
 
-    `TrainingClient.nsys` and `ServiceClient.get_nsys` return it. Reports
-    finalize after the workers exit, so after closing the run, query again
-    until ``record.status`` is no longer ``"pending"``.
+    `TrainingClient.nsys` and `ServiceClient.get_nsys` return it. Its report
+    stays pending until the worker exits.
 
     Attributes
     ----------
@@ -37,7 +36,6 @@ class NsightCapture:
         """The native report file, or None when the capture has none.
 
         A ready capture has one, and a failed capture may keep a partial one.
-        Downloading it is explicit, with `ArtifactHandle.download`.
         """
         return (
             None

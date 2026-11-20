@@ -23,6 +23,8 @@ from .config import (
     Weights,
 )
 from .datum import Datum
+from .protocol.requests import ArtifactRef
+from .protocol.training import ResolvedTraining
 
 if TYPE_CHECKING:
     from .service import ServiceClient as ServiceClient
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
 __version__ = "0.1.0.dev0"
 __all__ = [
     "SSH",
+    "ArtifactRef",
     "BatchConfig",
     "BuildCandidates",
     "BuildCase",
@@ -48,6 +51,7 @@ __all__ = [
     "Policy",
     "Preparation",
     "ProfilingOptions",
+    "ResolvedTraining",
     "Resources",
     "ServiceClient",
     "TrainingClient",

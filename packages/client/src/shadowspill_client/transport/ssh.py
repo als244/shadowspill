@@ -49,7 +49,7 @@ class SSH:
     Raises
     ------
     ValueError
-        A value is not a valid destination, host, port or path.
+        If a value is not a valid destination, host, port or path.
     """
 
     host: str

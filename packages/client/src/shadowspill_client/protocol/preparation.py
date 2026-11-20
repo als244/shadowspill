@@ -7,7 +7,7 @@ from typing import Literal
 
 from .._records import Record, Value, integer, mapping, record, text
 from ..config.preparation import BuildCase, PlanningOptions, ProfilingOptions
-from .definitions import DefinitionSource
+from .components import ComponentSource
 
 PREPARATION_MEDIA_TYPE = "application/vnd.shadowspill.operator_preparation+zip"
 
@@ -22,7 +22,7 @@ class ResolvedPreparation(Record):
     ----------
     preset : str
         The preparation preset that supplied the defaults.
-    source : DefinitionSource
+    source : ComponentSource
         The pinned source of that preset.
     cases : sequence of BuildCase
         Every build case, each with its ``partition``, ``chunking`` and
@@ -39,13 +39,13 @@ class ResolvedPreparation(Record):
     reuse : mapping, default {}
         Earlier measurements to reuse, as from `PreparationHandle.reuse`.
         Empty when none.
-    external_headroom_bytes : int, default 536870912
+    external_headroom_bytes : int, default 512 << 20
         Device memory reserved on each worker outside its execution pool, in
         bytes (512 MiB by default), as in `Preparation`.
     """
 
     preset: str
-    source: DefinitionSource
+    source: ComponentSource
     cases: Sequence[BuildCase]
     profiling: ProfilingOptions
     planning: PlanningOptions
@@ -57,7 +57,7 @@ class ResolvedPreparation(Record):
         text(self.preset, "preset")
         integer(self.external_headroom_bytes, "external_headroom_bytes")
         for name, kind in (
-            ("source", DefinitionSource),
+            ("source", ComponentSource),
             ("profiling", ProfilingOptions),
             ("planning", PlanningOptions),
         ):

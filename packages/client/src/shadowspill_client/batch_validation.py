@@ -33,10 +33,7 @@ MAX_VALIDATION_METADATA = 16 << 20
 class BatchValidation:
     """The outcome of checking a batch against a run's prepared layouts.
 
-    `TrainingClient.validate_batch` returns it; the compute calls run the same
-    checks before they upload. Values and limits are always checked. Packing
-    is checked as well, unless the model groups inputs on the service before
-    packing.
+    `TrainingClient.validate_batch` returns it.
 
     Parameters
     ----------

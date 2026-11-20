@@ -45,12 +45,11 @@ class PlansHandle(ArtifactHandle):
 
         The page is standalone and works offline. The service renders it once
         for these Plans and ``max_bytes`` and stores it; repeating the call
-        returns the stored report. Nothing is downloaded until
-        `ArtifactHandle.download` is called on the result.
+        returns the stored report.
 
         Parameters
         ----------
-        max_bytes : int, default 67108864
+        max_bytes : int, default 64 << 20
             Largest report size, in bytes (64 MiB by default), up to 1 GiB.
             Rendering a larger report fails.
 
@@ -62,8 +61,7 @@ class PlansHandle(ArtifactHandle):
         Raises
         ------
         ValueError
-            The handle has no run ID, or ``max_bytes`` is below one or above
-            1 GiB.
+            If ``max_bytes`` is below one or above 1 GiB.
         """
         if self._run_id is None:
             raise ValueError("Plan reports require a training or saved-name handle")
@@ -86,8 +84,8 @@ class PlansHandle(ArtifactHandle):
         """Give these Plans a name within their run.
 
         The service records the name only: nothing is copied or downloaded,
-        and no training request is queued. Saving the same name again gives
-        the same Plans. Later, `ServiceClient.get_plans` finds them by run and
+        and no training request is queued. Saving the same name again changes
+        nothing. `ServiceClient.get_plans` finds them by run and
         name from any connection to the same session. Plan names are separate
         from checkpoint names.
 
@@ -104,8 +102,8 @@ class PlansHandle(ArtifactHandle):
         Raises
         ------
         ValueError
-            The handle has no run ID, or ``name`` is empty, has surrounding
-            spaces, exceeds 256 characters or cannot be encoded as UTF-8.
+            If ``name`` is empty, has surrounding spaces, exceeds 256
+            characters or cannot be encoded as UTF-8.
         """
         if self._run_id is None:
             raise ValueError("saving Plans requires a training or saved-name handle")
@@ -124,8 +122,7 @@ class PlansHandle(ArtifactHandle):
         """Read one page of the metadata saved with these Plans.
 
         Pages are numbered from 0; follow `PlanSummaryPage.next_page` until it
-        is None. Reading a page does not download the bundle, run the planner
-        or queue a training request.
+        is None.
 
         Parameters
         ----------
@@ -140,7 +137,7 @@ class PlansHandle(ArtifactHandle):
         Raises
         ------
         ValueError
-            ``page`` is negative.
+            If ``page`` is negative.
         """
         route = "/v1/artifacts/" + summary_id(self.reference, page)
 

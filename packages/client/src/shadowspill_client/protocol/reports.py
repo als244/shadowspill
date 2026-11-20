@@ -29,8 +29,8 @@ class ReportSettings(Record):
         journal's end when the service makes the report; a `ReportDocument`
         holds the position it resolved to.
     max_records : int, default 10000
-        Most records the report may hold, from 1 to 100000.
-    max_bytes : int, default 67108864
+        Maximum number of records the report may hold, from 1 to 100000.
+    max_bytes : int, default 64 << 20
         Largest report size, in bytes (64 MiB by default), up to 1 GiB.
     """
 

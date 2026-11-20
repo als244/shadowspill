@@ -168,7 +168,6 @@ def test_state_commands_reject_compute_inputs_and_controls(options, operation):
         {"metrics": {"value": 1}},
         {"outputs": {"value": PAYLOAD}},
         {"loss": 0},
-        {"outcome": "skipped"},
         {"grad_scale": 1},
         {"optim": {"lr": 1}},
         {"loss_params": {"temperature": 1}},
@@ -232,7 +231,7 @@ def test_decoder_rejects_unknown_versions_types_fields_and_duplicate_keys():
         ({"version": 3}, "unsupported protocol version"),
         ({"version": True}, "unsupported protocol version"),
         ({"kind": "os.system"}, "unknown protocol record"),
-        ({"value": {"definition": "x", "unknown": 1}}, "unknown fields"),
+        ({"value": {"name": "x", "unknown": 1}}, "unknown fields"),
     ):
         encoded = json.loads(encode(Model("x")))
         encoded.update(patch)
@@ -242,7 +241,7 @@ def test_decoder_rejects_unknown_versions_types_fields_and_duplicate_keys():
         decode(b'{"version":2,"version":2,"kind":"config.model","value":{}}')
     with pytest.raises(ProtocolError, match="nonfinite"):
         decode(
-            b'{"version":2,"kind":"config.model","value":{"definition":"x","config":{"x":NaN}}}'
+            b'{"version":2,"kind":"config.model","value":{"name":"x","config":{"x":NaN}}}'
         )
     with pytest.raises(ProtocolError, match="unregistered"):
         encode(Datum(inputs={"pixels": [[1, 2]]}))

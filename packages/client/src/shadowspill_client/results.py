@@ -31,15 +31,7 @@ class TrainingRequestError(RuntimeError):
     Attributes
     ----------
     failure : Failure
-        The service's failure record. ``code`` and ``message`` say what
-        failed. ``execution_effect`` is ``"not_started"`` (nothing ran),
-        ``"completed"`` (the operation took effect but its result could not
-        be published; do not submit it again) or ``"unknown"`` (it may have
-        partly run). ``state_valid`` says whether the run's training state is
-        still usable; once it is False the run accepts only ``close``.
-        ``failed_dependencies`` names the earlier requests whose failure
-        stopped this one. ``completed_updates``, ``accumulation``,
-        ``history_id``, ``loss`` and ``metrics`` are set when known.
+        The service's failure record.
     """
 
     def __init__(self, status: RequestStatus) -> None:
@@ -69,8 +61,7 @@ class TrainingResult:
         ``"step"``, ``"forward_backward"``, ``"optim_step"``, ``"forward"``,
         ``"discard"``, ``"save"``, ``"restore"`` or ``"close"``.
     outcome : str
-        ``"completed"``, or ``"skipped"`` for an update none of whose
-        accumulated contributions took part in the loss; nothing then ran.
+        Always ``"completed"``.
     history_id : str
         The training history the request belongs to. Loading a checkpoint
         starts a new one.

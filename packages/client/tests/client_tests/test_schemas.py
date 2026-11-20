@@ -4,13 +4,13 @@ import json
 
 import pytest
 
-from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
-from shadowspill_client.protocol.definitions import (
-    DefinitionSource,
+from shadowspill_client.protocol.components import (
+    ComponentSource,
     OutputSet,
     Participation,
     TensorOutput,
 )
+from shadowspill_client.protocol.controls import ControlSchema, ScalarControl
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 
 
@@ -45,7 +45,7 @@ from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorFiel
         Participation(("valid",)),
         TensorOutput("float32", (3,), "global", reduction="sum"),
         TensorOutput("float32", ("n",), "aligned", "n", source=("inputs", "tokens")),
-        DefinitionSource("external-models", "1.0", "0" * 64),
+        ComponentSource("external-models", "1.0", "0" * 64),
     ],
 )
 def test_schema_json_roundtrip(record):
@@ -90,7 +90,7 @@ def test_schema_json_roundtrip(record):
         lambda: ScalarControl(True, "float"),
         lambda: ScalarControl(1.2, "int"),
         lambda: ScalarControl(True, "bool", minimum=0),
-        lambda: DefinitionSource("external", "1", "short"),
+        lambda: ComponentSource("external", "1", "short"),
     ],
 )
 def test_invalid_schema_is_rejected_before_input_processing(factory):

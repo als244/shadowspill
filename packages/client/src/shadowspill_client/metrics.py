@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -13,7 +14,6 @@ from .protocol.metrics import (
     MetricAnnotation,
     MetricPage,
     MetricRecord,
-    MetricSnapshot,
     metric_cursor,
 )
 from .protocol.requests import identifier
@@ -106,7 +106,7 @@ class MetricQueries:
             Last journal position to read. By default the journal's current
             end.
         limit : int, default 100
-            Most records in the page, from 1 to 128. The service may return
+            Maximum number of records in the page, from 1 to 128. The service may return
             fewer to keep the page within its metadata size bound.
 
         Returns
@@ -117,7 +117,7 @@ class MetricQueries:
         Raises
         ------
         ValueError
-            ``after`` or ``through`` is not a nonnegative int below 2**63,
+            If ``after`` or ``through`` is not a nonnegative int below 2**63,
             ``through`` is below ``after``, or ``limit`` is outside 1 to 128.
         """
         _query(after, through, limit)
@@ -154,13 +154,10 @@ class MetricQueries:
     ) -> CallFuture[Path]:
         """Write one fixed snapshot of the metric journal to a new JSON Lines file.
 
-        The first line is a `MetricSnapshot` record naming the session, the
-        run and the range ``after`` to ``through``; each further line is one
-        `MetricRecord`, in journal order; ``decode`` from
-        ``shadowspill_client.protocol.codec`` reads each line back. Pages are
-        read one at a time, and records finished later are not added. An
-        existing file is never overwritten, and a failure removes the partial
-        file.
+        Each line is one `MetricRecord` as an ordinary JSON object, keyed by
+        its field names, in journal order. A snapshot without records writes
+        an empty file. Pages are read one at a time, and records finished
+        later are not added. A failure removes the partial file.
 
         Parameters
         ----------
@@ -183,7 +180,7 @@ class MetricQueries:
         Raises
         ------
         ValueError
-            ``after``, ``through`` or ``limit`` is invalid, as in `query`.
+            If ``after``, ``through`` or ``limit`` is invalid, as in `query`.
         """
         _query(after, through, limit)
         destination = Path(path)
@@ -196,18 +193,11 @@ class MetricQueries:
                 try:
                     with stream:
                         page = self._read(after, through, limit)
-                        stream.write(
-                            encode(
-                                MetricSnapshot(
-                                    self.session_id, self.run_id, after, page.through
-                                )
-                            )
-                            + b"\n"
-                        )
                         while True:
                             self._service._work.check()
                             for row in page.records:
-                                stream.write(encode(row) + b"\n")
+                                line = json.dumps(row.to_dict(), allow_nan=False)
+                                stream.write(line.encode() + b"\n")
                             if page.next_cursor is None:
                                 break
                             cursor, snapshot = page.next_cursor, page.through

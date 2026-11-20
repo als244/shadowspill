@@ -31,7 +31,7 @@ def test_settings_own_nested_inputs_and_return_independent_json_values():
     with pytest.raises(TypeError):
         model.config["attention"]["window"] = 1
     with pytest.raises(FrozenInstanceError):
-        model.definition = "other"
+        model.name = "other"
     exported = model.to_dict()
     exported["config"]["layers"].append(7)
     assert model.config["layers"] == (2, 3)
@@ -70,6 +70,7 @@ def test_resolved_weight_metadata_is_owned_and_roundtrips_with_the_model():
         Optimizer("adamw", defaults={"lr": 0.001}, groups={"head": ["head.weight"]}),
         BatchConfig(limits={"max_examples": 64}, typical={"height": 224}),
         Memory(device_gib=1, spill_gib=0),
+        Memory(device_gib=0, spill_gib=0),
         Execution(),
         Execution(reject_overbudget=True),
         Operation("logprobs", mode="training"),
@@ -108,6 +109,8 @@ def test_nonportable_configuration_is_refused(value):
         lambda: BatchConfig(limits={"max_examples": -1}),
         lambda: Memory(float("inf"), 1),
         lambda: Memory(10**1000, 1),
+        lambda: Memory(-1, 1),
+        lambda: Memory(1, -0.5),
         lambda: Execution(max_pending_requests=0),
         lambda: Execution(idle_timeout_seconds=0),
         lambda: Execution(reject_overbudget=1),
@@ -121,8 +124,8 @@ def test_invalid_settings_fail_before_preparation(factory):
 
 
 def test_unknown_record_fields_are_not_silently_ignored():
-    with pytest.raises(ValueError, match=r"unknown fields.*definiton"):
-        Model.from_dict({"definition": "external/model@1", "definiton": "typo"})
+    with pytest.raises(ValueError, match=r"unknown fields.*nmae"):
+        Model.from_dict({"name": "external/model@1", "nmae": "typo"})
 
 
 def test_omitted_budget_enforcement_matches_the_executor_reporting_default():

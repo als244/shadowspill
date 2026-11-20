@@ -7,7 +7,7 @@ import pytest
 from client_tests.test_checkpoints import manifest
 from shadowspill_client import Model, Weights
 from shadowspill_client.protocol.codec import decode, encode
-from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.components import ComponentSource
 from shadowspill_client.protocol.frozen import FrozenBase
 from shadowspill_client.protocol.requests import ArtifactRef
 
@@ -15,7 +15,7 @@ from shadowspill_client.protocol.requests import ArtifactRef
 def base():
     return FrozenBase(
         Model("external/model@1", initialize=Weights.random(seed=17)),
-        DefinitionSource("external-model", "1", "a" * 64),
+        ComponentSource("external-model", "1", "a" * 64),
     )
 
 

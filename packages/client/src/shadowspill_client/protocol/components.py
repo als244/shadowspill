@@ -12,26 +12,26 @@ from .inputs import DTYPES, shape
 
 
 @dataclass(frozen=True)
-class DefinitionSource(Record):
-    """The installed package and source digest of a definition.
+class ComponentSource(Record):
+    """The installed package and source digest of a component.
 
-    A run's resolved configuration records one for every definition it uses,
+    A run's resolved configuration records one for every component it uses,
     and for the engine and the client.
 
     Parameters
     ----------
     distribution : str
-        Name of the installed distribution that provides the definition.
+        Name of the installed distribution that provides the component.
     version : str
         The distribution's version.
     digest : str
-        SHA-256 digest of the definition's source files and dependencies, as
+        SHA-256 digest of the component's source files and dependencies, as
         64 lowercase hexadecimal digits.
 
     Raises
     ------
     ValueError
-        ``distribution`` or ``version`` is empty, or ``digest`` is not 64
+        If ``distribution`` or ``version`` is empty, or ``digest`` is not 64
         lowercase hexadecimal digits.
     """
 
@@ -45,7 +45,7 @@ class DefinitionSource(Record):
         if len(self.digest) != 64 or any(
             c not in "0123456789abcdef" for c in self.digest
         ):
-            raise ValueError("definition source requires a lowercase SHA-256 digest")
+            raise ValueError("component source requires a lowercase SHA-256 digest")
 
 
 @dataclass(frozen=True)
@@ -70,9 +70,9 @@ class TensorOutput(Record):
         ``shape`` along which the output follows its input field.
     source : sequence of str, optional
         Path of the input field the output follows, starting with
-        ``"inputs"`` or ``"loss_inputs"``. Needed when more than one field
-        could be followed; only for an output with a symbolic dimension that
-        is not ``"global"``.
+        ``"inputs"`` or ``"loss_inputs"``. Allowed only for a ``"datum"`` or
+        ``"aligned"`` output with a symbolic dimension, and needed when more
+        than one field could be followed.
     reduction : str, optional
         For ``"global"`` only, and required there: how the values of the
         batch's physical buffers combine: ``"sum"``, ``"min"``, ``"max"`` or
@@ -81,9 +81,9 @@ class TensorOutput(Record):
     Raises
     ------
     ValueError
-        The dtype or ordering is unknown, a ``"global"`` shape has a symbolic
-        dimension, or ``alignment``, ``source`` or ``reduction`` does not suit
-        the ordering.
+        If the dtype or ordering is unknown, a ``"global"`` shape has a
+        symbolic dimension, or ``alignment``, ``source`` or ``reduction`` does
+        not suit the ordering.
     """
 
     dtype: str
@@ -157,7 +157,7 @@ class OutputSet(Record):
     Raises
     ------
     ValueError
-        A path is empty or repeated, a control is repeated, a tensor and a
+        If a path is empty or repeated, a control is repeated, a tensor and a
         metric share a name, a metric's reduction is unknown, or ``forward``
         has its own ``forward``.
     """
@@ -225,9 +225,9 @@ class Participation(Record):
     """Which inputs take part in a training call's loss.
 
     An objective declares it. A ``step`` or ``forward_backward`` call whose
-    batch has no participating position is refused. Participation counts
-    validity only, whatever the loss values, weights, advantages or gradient
-    scale, and padding never participates.
+    batch has no participating position is refused. It depends on ``path``
+    alone, not on loss values, weights or gradient scale; padding never
+    participates.
 
     Parameters
     ----------
@@ -238,9 +238,9 @@ class Participation(Record):
     Raises
     ------
     TypeError
-        ``path`` is not a list or tuple.
+        If ``path`` is not a list or tuple.
     ValueError
-        A path component is empty or has surrounding spaces.
+        If a path component is empty or has surrounding spaces.
     """
 
     path: Sequence[str] = ()

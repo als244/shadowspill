@@ -31,9 +31,9 @@ class Datum:
     Raises
     ------
     TypeError
-        ``inputs`` or ``loss_inputs`` is not a mapping.
+        If ``inputs`` or ``loss_inputs`` is not a mapping.
     ValueError
-        A top-level key is not a nonempty str.
+        If a top-level key is not a nonempty str.
     """
 
     inputs: Mapping[str, Any]

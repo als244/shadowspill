@@ -42,23 +42,33 @@ class BatchConfig(Record):
 class Memory(Record):
     """Memory budgets for each worker, in GiB.
 
+    A budget of zero is automatic: the service sizes it when it describes the
+    run, and the resolved settings hold the size. An automatic budget is 90%
+    of the worker's share of the memory: its GPU's memory for ``device_gib``,
+    and its node's host memory divided evenly among the node's GPUs for
+    ``spill_gib``.
+
     Parameters
     ----------
     device_gib : float
-        Device memory budget per worker, in GiB. Positive. It covers the
-        Plan's execution pool and fixed overhead, including the headroom
-        `Preparation` reserves.
+        Device memory budget per worker, in GiB. At least zero; zero is
+        automatic. It covers the Plan's execution pool and fixed overhead,
+        including the headroom `Preparation` reserves.
     spill_gib : float
-        Spill budget per worker, in GiB. At least zero. The spill pool is
-        pinned host memory for values the Plan moves off the device; a worker
-        allocates its Plan's requirement plus a small margin, up to this
-        budget.
+        Spill budget per worker, in GiB. At least zero; zero is automatic.
+        The spill pool is pinned host memory for values the Plan moves off
+        the device; a worker allocates its Plan's requirement plus a small
+        margin, up to this budget.
+
+    Raises
+    ------
+    ValueError
+        If a budget is negative or not a finite number.
     """
 
     device_gib: float
     spill_gib: float
 
     def __post_init__(self) -> None:
-        if number(self.device_gib, "device_gib") <= 0:
-            raise ValueError("device_gib must be positive")
+        number(self.device_gib, "device_gib", minimum=0)
         number(self.spill_gib, "spill_gib", minimum=0)

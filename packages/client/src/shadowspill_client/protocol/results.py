@@ -227,7 +227,7 @@ class ExecutionReceipt(Record):
     identity: RequestIdentity
     operation: Operation
     history_id: str
-    outcome: Literal["completed", "skipped"]
+    outcome: Literal["completed"]
     completed_updates: int
     accumulation: Accumulation = field(default_factory=Accumulation)
     state_valid: bool = True
@@ -237,10 +237,7 @@ class ExecutionReceipt(Record):
             self, "identity", record(RequestIdentity, self.identity, "identity")
         )
         identifier(self.history_id, "history ID")
-        if self.operation not in OPERATIONS or self.outcome not in (
-            "completed",
-            "skipped",
-        ):
+        if self.operation not in OPERATIONS or self.outcome != "completed":
             raise ValueError("unknown execution operation or outcome")
         integer(self.completed_updates, "completed_updates")
         if type(self.state_valid) is not bool:
@@ -290,8 +287,7 @@ class OperationResult(Record):
         The training history the request belongs to. Loading a checkpoint
         starts a new one.
     outcome : str
-        ``"completed"``, or ``"skipped"`` for an update none of whose
-        accumulated contributions took part in the loss; nothing then ran.
+        Always ``"completed"``.
     completed_updates : int
         Optimizer updates the run has completed, this request included; after
         a checkpoint load, the saved count.
@@ -339,7 +335,7 @@ class OperationResult(Record):
     identity: RequestIdentity
     operation: Operation
     history_id: str
-    outcome: Literal["completed", "skipped"]
+    outcome: Literal["completed"]
     completed_updates: int
     accumulation: Accumulation = field(default_factory=Accumulation)
     metrics: Mapping[str, float | int] = field(default_factory=dict)
@@ -360,10 +356,7 @@ class OperationResult(Record):
         object.__setattr__(
             self, "identity", record(RequestIdentity, self.identity, "identity")
         )
-        if self.operation not in OPERATIONS or self.outcome not in (
-            "completed",
-            "skipped",
-        ):
+        if self.operation not in OPERATIONS or self.outcome != "completed":
             raise ValueError("unknown result operation or outcome")
         if self.execution_seconds is not None:
             number(self.execution_seconds, "execution seconds", minimum=0)
@@ -482,21 +475,20 @@ class RequestStatus(Record):
         The request's identity.
     state : str
         ``"uploading"`` (registered, waiting for its input), ``"accepted"``
-        (queued in order), ``"running"``, ``"completed"``, ``"skipped"`` or
-        ``"failed"``.
+        (queued in order), ``"running"``, ``"completed"`` or ``"failed"``.
     acceptance : Acceptance, optional
         The service's acceptance; set once the request is accepted, in
         every later state.
     result : OperationResult, optional
         The outcome record, as `TrainingResult` presents it; set when
-        ``state`` is ``"completed"`` or ``"skipped"``.
+        ``state`` is ``"completed"``.
     failure : Failure, optional
         The failure record, as in `TrainingRequestError`; set when ``state``
         is ``"failed"``.
     """
 
     identity: RequestIdentity
-    state: Literal["uploading", "accepted", "running", "completed", "skipped", "failed"]
+    state: Literal["uploading", "accepted", "running", "completed", "failed"]
     acceptance: Acceptance | None = None
     result: OperationResult | None = None
     failure: Failure | None = None
@@ -510,7 +502,6 @@ class RequestStatus(Record):
             "accepted",
             "running",
             "completed",
-            "skipped",
             "failed",
         ):
             raise ValueError("unknown request state")
@@ -523,7 +514,7 @@ class RequestStatus(Record):
             if value is not None:
                 object.__setattr__(self, name, record(kind, value, name))
         if (
-            self.state in ("accepted", "running", "completed", "skipped")
+            self.state in ("accepted", "running", "completed")
             and self.acceptance is None
         ):
             raise ValueError("accepted work requires its original durable acceptance")
@@ -537,7 +528,7 @@ class RequestStatus(Record):
             and self.acceptance is None
         ):
             raise ValueError("executed work requires its original durable acceptance")
-        if (self.state in ("completed", "skipped")) != (self.result is not None):
+        if (self.state == "completed") != (self.result is not None):
             raise ValueError(
                 "terminal successful requests require their original result"
             )

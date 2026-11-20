@@ -95,15 +95,13 @@ class TraceHandle(ArtifactHandle):
 
         The report compares the measured execution with the Plan's
         prediction. The archive is downloaded and verified into a temporary
-        local file, then only its ``report.html`` is copied to ``path``; the
-        client needs no engine or plotting library. An existing file is never
-        overwritten.
+        local file, then only its ``report.html`` is copied to ``path``.
 
         Parameters
         ----------
         path : str or pathlib.Path
             The local file to create.
-        max_bytes : int, default 67108864
+        max_bytes : int, default 64 << 20
             Largest report to copy, in bytes (64 MiB by default).
 
         Returns
@@ -117,7 +115,8 @@ class TraceHandle(ArtifactHandle):
         Raises
         ------
         ValueError
-            ``max_bytes`` is below one, or the handle is not a trace archive.
+            If ``max_bytes`` is below one, or the handle is not a trace
+            archive.
         """
         integer(max_bytes, "runtime report bytes", minimum=1)
         if self.reference.media_type != "application/zip":

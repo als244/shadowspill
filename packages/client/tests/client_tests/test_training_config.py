@@ -18,12 +18,12 @@ from shadowspill_client import (
     Weights,
 )
 from shadowspill_client.protocol.codec import decode, encode
-from shadowspill_client.protocol.controls import ControlSchema
-from shadowspill_client.protocol.definitions import (
-    DefinitionSource,
+from shadowspill_client.protocol.components import (
+    ComponentSource,
     OutputSet,
     Participation,
 )
+from shadowspill_client.protocol.controls import ControlSchema
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.operations import OperationKey
 from shadowspill_client.protocol.preparation import ResolvedPreparation
@@ -31,7 +31,7 @@ from shadowspill_client.protocol.training import ResolvedTraining
 
 
 def resolved():
-    source = DefinitionSource("external", "1", "a" * 64)
+    source = ComponentSource("external", "1", "a" * 64)
     return ResolvedTraining(
         model=Model("external/model@1", initialize=Weights.random(seed=4)),
         objective=Objective("external/objective@1"),
@@ -58,7 +58,7 @@ def resolved():
             PlanningOptions(microbatch_counts=[1], search={}, workers=0),
             {},
         ),
-        definition_sources={"model": source, "objective": source},
+        component_sources={"model": source, "objective": source},
         policy_sources={"external/whole@1": source},
         engine_source=source,
         client_source=source,
@@ -79,7 +79,7 @@ def test_full_setup_roundtrip_owns_nested_config_and_source_records():
     assert decode(encode(config)) == config
     assert ResolvedTraining.from_dict(config.to_dict()) == config
     with pytest.raises(TypeError):
-        config.definition_sources["model"] = config.engine_source
+        config.component_sources["model"] = config.engine_source
     with pytest.raises(TypeError):
         config.parallelism["portable_core_record"] = False
 
@@ -94,7 +94,7 @@ def test_full_setup_roundtrip_owns_nested_config_and_source_records():
         lambda c: {"operations": [OperationKey("step", "prediction")]},
         lambda c: {"outputs": {}},
         lambda c: {"optimizer_controls": ControlSchema({})},
-        lambda c: {"definition_sources": {"model": c.engine_source}},
+        lambda c: {"component_sources": {"model": c.engine_source}},
         lambda c: {"batches": [*c.batches, *c.batches]},
         lambda c: {"origins": {"model": "guessed"}},
     ],

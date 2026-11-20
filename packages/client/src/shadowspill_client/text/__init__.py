@@ -44,10 +44,10 @@ def text_datum(tokens: Any, *, loss_mask: Any = None, weights: Any = None) -> Da
     Raises
     ------
     ValueError
-        ``tokens`` is not on the CPU, is not a one-dimensional integer
+        If ``tokens`` is not on the CPU, is not a one-dimensional integer
         sequence of at least two IDs, or holds an ID outside the nonnegative
-        int64 range; ``loss_mask`` differs in shape from ``tokens`` or holds
-        a value other than true or false; or ``weights`` is not finite or is
+        int64 range; ``loss_mask`` differs in shape from ``tokens`` or holds a
+        value other than true or false; or ``weights`` is not finite or is
         neither a scalar nor shaped like ``tokens``.
     """
     device = getattr(tokens, "device", None)
@@ -110,8 +110,8 @@ def text_batch(
     Raises
     ------
     ValueError
-        A sequence or mask is invalid as in `text_datum`, the number of masks
-        differs from the number of sequences, or the batch has no trained
+        If a sequence or mask is invalid as in `text_datum`, the number of
+        masks differs from the number of sequences, or the batch has no trained
         target, as when it is empty.
     """
     batch = (

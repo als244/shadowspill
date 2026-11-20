@@ -12,7 +12,7 @@ from ._progress import ProgressDisplay
 from ._records import record
 from .artifacts import ArtifactHandle
 from .checkpoints import CheckpointHandle
-from .config import Resources
+from .config import Memory, Resources
 from .protocol.codec import MAX_METADATA_BYTES, decode, digest, encode
 from .protocol.creation import TrainingCreation
 from .protocol.plans import PlanSummaryPage, summary_id
@@ -157,6 +157,11 @@ def get_training_client(
     return future
 
 
+def _automatic(memory: Memory) -> bool:
+    """Whether a budget is automatic (zero), sized only when the run is described."""
+    return memory.device_gib == 0 or memory.spill_gib == 0
+
+
 def _resume_config(
     service: ServiceClient, plans: ArtifactRef, checkpoint: ArtifactRef
 ) -> ResolvedTraining:
@@ -229,7 +234,8 @@ def create_training_client(
         if settings is None:
             assert plan_ref is not None and checkpoint_ref is not None
             resolved = _resume_config(service, plan_ref, checkpoint_ref)
-        elif isinstance(settings, TrainingSetup):
+        elif isinstance(settings, TrainingSetup) or _automatic(settings.memory):
+            # Describing sizes automatic memory budgets on the selected workers.
             preview = service._describe(TrainingDescription.request(settings, selected))
             resolved, selected = preview.config, preview.resources
         else:

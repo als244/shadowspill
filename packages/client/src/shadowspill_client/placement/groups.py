@@ -5,11 +5,27 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class GroupRef:
-    """A model-facing reference obtained from ``parallelism.group(name)``.
+    """Named groups of logical ranks, such as `Parallelism.group` returns.
 
-    Membership is expressed in logical ranks. Providers can inspect ``size``
-    during construction; execution binds the reference to a live communicator.
-    This object never creates one.
+    Every group has the same number of ranks, and no rank is in two. It names
+    ranks only and creates no communicator: a worker binds it to its own
+    group's communicator when it runs, so code that builds a model can read
+    `size` beforehand.
+
+    Parameters
+    ----------
+    name : str
+        The groups' name. Nonempty.
+    groups : sequence of sequence of int
+        The groups, each of nonnegative logical ranks in order: a rank's
+        position is its rank in its group's communicator. Stored as tuples.
+
+    Raises
+    ------
+    ValueError
+        If ``name`` or a group is empty, there are no groups, groups differ
+        in size, a rank is not a nonnegative integer, or a rank is in two
+        groups.
     """
 
     name: str
@@ -32,13 +48,48 @@ class GroupRef:
 
     @property
     def size(self) -> int:
+        """Ranks in each group."""
         return len(self.groups[0])
 
     def members(self, logical_rank: int) -> tuple[int, ...]:
+        """Return the group that holds a rank.
+
+        Parameters
+        ----------
+        logical_rank : int
+            The rank.
+
+        Returns
+        -------
+        tuple of int
+            The group's ranks, in order.
+
+        Raises
+        ------
+        ValueError
+            If no group holds the rank.
+        """
         for group in self.groups:
             if logical_rank in group:
                 return group
         raise ValueError(f"logical rank {logical_rank} is outside {self.name}")
 
     def index(self, logical_rank: int) -> int:
+        """Return a rank's position in its group.
+
+        Parameters
+        ----------
+        logical_rank : int
+            The rank.
+
+        Returns
+        -------
+        int
+            The position, from zero.
+
+        Raises
+        ------
+        ValueError
+            If no group holds the rank.
+        """
         return self.members(logical_rank).index(logical_rank)

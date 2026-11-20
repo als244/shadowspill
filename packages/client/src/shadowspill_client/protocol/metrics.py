@@ -56,8 +56,7 @@ class MetricRecord(Record):
     operation : str
         The request's operation, such as ``"step"`` or ``"save"``.
     outcome : str
-        ``"completed"``, ``"skipped"`` (an ``optim_step`` whose accumulation
-        has no participating contribution) or ``"failed"``.
+        ``"completed"`` or ``"failed"``.
     history_id : str or None
         Training history the request ran in; a restore starts a new one. None
         for a failure without a confirmed history.
@@ -88,7 +87,7 @@ class MetricRecord(Record):
     position: int
     identity: RequestIdentity
     operation: Operation
-    outcome: Literal["completed", "skipped", "failed"]
+    outcome: Literal["completed", "failed"]
     history_id: str | None
     completed_updates: int | None
     state_valid: bool
@@ -107,7 +106,6 @@ class MetricRecord(Record):
         )
         if self.operation not in OPERATIONS or self.outcome not in (
             "completed",
-            "skipped",
             "failed",
         ):
             raise ValueError("unknown metric operation or outcome")
@@ -166,8 +164,7 @@ class MetricSnapshot(Record):
     """A fixed range of a run's metric journal.
 
     The range holds the journal positions after ``after`` up to and including
-    ``through``. A `MetricQueries.export_jsonl` file starts with one, and
-    `ReportDocument.snapshot` is one.
+    ``through``. `ReportDocument.snapshot` is one.
 
     Parameters
     ----------

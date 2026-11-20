@@ -27,7 +27,7 @@ def text_batch_statistics(batch: Sequence[Datum]) -> BatchStatistics:
     supervised length is the number of true entries in
     ``loss_inputs["loss_mask"]``, or of ``loss_inputs["target_tokens"]``
     without a mask, whatever the weights; an example without targets has
-    none. No array is retained, and nothing is packed or sent to the service.
+    none.
 
     Parameters
     ----------
@@ -42,11 +42,12 @@ def text_batch_statistics(batch: Sequence[Datum]) -> BatchStatistics:
     Raises
     ------
     KeyError
-        An example has no ``inputs["tokens"]``.
+        If an example has no ``inputs["tokens"]``.
     ValueError
-        The batch is empty; a field is not on the CPU or not one-dimensional;
-        a mask comes without targets; the targets or mask differ in length
-        from the tokens; or a mask holds a value other than true or false.
+        If the batch is empty; a field is not on the CPU or not
+        one-dimensional; a mask comes without targets; the targets or mask
+        differ in length from the tokens; or a mask holds a value other than
+        true or false.
     """
     lengths, supervised = [], []
     has_targets = False

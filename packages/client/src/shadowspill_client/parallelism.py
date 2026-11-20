@@ -29,7 +29,7 @@ def data_parallel(
     fields : sequence of sequence of str, optional
         Input fields each worker receives, each as a path of keys such as
         ``("inputs", "tokens")``. By default they come from the model and
-        objective during setup; custom definitions may list them.
+        objective during setup; custom components may list them.
     outputs : mapping of str to mapping, optional
         How each named output is assembled across workers, for example
         ``{"prediction": {"mode": "leader", "axis": None}}``. None by default.
@@ -46,7 +46,7 @@ def data_parallel(
         "ranks_per_replica": ranks,
         "num_replicas": 1,
         "groups": {"all_ranks": [list(range(ranks))]},
-        "default_parameter_placement": {"kind": "Replicated", "group": "all_ranks"},
+        "default_parameter_placement": {"kind": "Replicated"},
         "parameter_placements": {},
         "default_parameter_storage": {
             "group": "all_ranks",
@@ -100,7 +100,7 @@ def expert_parallel(
     min_shard_bytes : int, default MIN_SHARD_BYTES
         Weight storage size, in bytes, below which a non-expert parameter
         keeps its optimizer state whole on every worker. Zero shards every
-        one. Different experts are never merged.
+        one. Expert parameters stay split whatever their size.
 
     Returns
     -------

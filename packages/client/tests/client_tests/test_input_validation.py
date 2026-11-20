@@ -10,7 +10,7 @@ import pytest
 from shadowspill_client import BatchConfig, Datum
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.inputs.validation import combined_schema, validate_batch
-from shadowspill_client.protocol.definitions import Participation
+from shadowspill_client.protocol.components import Participation
 from shadowspill_client.protocol.inputs import Capacity, InputSchema, TensorField
 from shadowspill_client.protocol.payload import snapshot_batch
 

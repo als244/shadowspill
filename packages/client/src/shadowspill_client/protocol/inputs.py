@@ -87,15 +87,14 @@ class TensorField(Record):
     Raises
     ------
     ValueError
-        The declaration is inconsistent: an empty path, an unknown dtype or
-        batching, a ``pack_axis`` missing for ``"pack"`` or given otherwise,
-        a default given for a required field or missing for an optional one,
-        a default or padding that is not a scalar of the dtype, ``minimum``
-        above ``maximum``, or ``padding`` outside the bounds of a masked
-        field.
+        If the declaration is inconsistent: an empty path, an unknown dtype or
+        batching, a ``pack_axis`` missing for ``"pack"`` or given otherwise, a
+        default given for a required field or missing for an optional one, a
+        default or padding that is not a scalar of the dtype, ``minimum`` above
+        ``maximum``, or ``padding`` outside the bounds of a masked field.
     TypeError
-        ``shape`` is not a list or tuple, or ``required`` or ``finite`` is not
-        a bool.
+        If ``shape`` is not a list or tuple, or ``required`` or ``finite`` is
+        not a bool.
     """
 
     path: Sequence[str]
@@ -214,10 +213,10 @@ class Capacity(Record):
     Raises
     ------
     ValueError
-        ``name`` or ``unit`` is empty, ``reduction`` is unknown, or ``path``
+        If ``name`` or ``unit`` is empty, ``reduction`` is unknown, or ``path``
         and ``axis`` are given for ``"count"`` or missing otherwise.
     TypeError
-        ``path`` is not a list or tuple, or ``scheduled`` is not a bool.
+        If ``path`` is not a list or tuple, or ``scheduled`` is not a bool.
     """
 
     name: str
@@ -264,10 +263,10 @@ class InputSchema(Record):
     Raises
     ------
     ValueError
-        Two fields share a path, one field's path extends another's, two
-        capacities share a name, a ``validity`` path does not name an
-        unmasked boolean field with the same shape and batching, or a
-        capacity measures an undeclared field or axis.
+        If two fields share a path, one field's path extends another's, two
+        capacities share a name, a ``validity`` path does not name an unmasked
+        boolean field with the same shape and batching, or a capacity measures
+        an undeclared field or axis.
     """
 
     fields: Sequence[TensorField]

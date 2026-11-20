@@ -21,9 +21,9 @@ from ..config import (
 )
 from .captures import NsightManifest
 from .checkpoints import CheckpointManifest, WeightsManifest
+from .components import ComponentSource, OutputSet
 from .controls import ControlSchema
 from .creation import TrainingCreation
-from .definitions import DefinitionSource, OutputSet
 from .frozen import FrozenBase
 from .hardware import HardwareInventory
 from .inputs import InputSchema
@@ -64,7 +64,7 @@ _KINDS: Mapping[str, type[Record]] = {
     "schema.inputs": InputSchema,
     "schema.controls": ControlSchema,
     "schema.outputs": OutputSet,
-    "definition.source": DefinitionSource,
+    "component.source": ComponentSource,
     "compute.request": OperationRequest,
     "writer.lease": WriterLease,
     "request.acceptance": Acceptance,

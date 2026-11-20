@@ -13,8 +13,7 @@ class GenerationHandle[Manifest: CheckpointManifest | WeightsManifest](ArtifactH
     """Saved per-worker state in service storage: a manifest and one file per worker.
 
     Calls return one of its two kinds, `CheckpointHandle` and
-    `WeightsHandle`. Nothing is downloaded until `manifest` or `download` is
-    called.
+    `WeightsHandle`.
 
     Attributes
     ----------

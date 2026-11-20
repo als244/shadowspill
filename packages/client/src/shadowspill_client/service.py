@@ -51,10 +51,8 @@ class ServiceClient:
 
     Construction blocks until the service answers. After that, each call that
     contacts the service, on the connection or on a handle from it, returns a
-    future at once and does its work on a background thread; while
-    ``max_pending_requests`` such calls are outstanding, the next one blocks.
-    No exchange is retried automatically. Closing the connection ends its
-    local work only; runs and other accepted work continue on the service.
+    future at once and does its work on a background thread. No exchange is
+    retried automatically.
     The connection is a context manager that closes on exit.
 
     Parameters
@@ -93,14 +91,14 @@ class ServiceClient:
     Raises
     ------
     ValueError
-        Both or neither of ``base_url`` and ``ssh`` are given, or an argument,
-        such as the token, is invalid.
+        If both or neither of ``base_url`` and ``ssh`` are given, or an
+        argument, such as the token, is invalid.
     RemoteError
-        The service refuses the connection, for example for a wrong token.
+        If the service refuses the connection, for example for a wrong token.
     TransportError
-        The service cannot be reached.
+        If the service cannot be reached.
     RuntimeError
-        OpenSSH cannot start the forward.
+        If OpenSSH cannot start the forward.
     """
 
     def __init__(
@@ -202,7 +200,7 @@ class ServiceClient:
     ) -> CallFuture[TrainingPreview]:
         """Resolve a run's settings and propose its workers, without starting work.
 
-        The service fills defaults from its installed definitions and selects
+        The service fills defaults from its installed components and selects
         devices. It builds nothing and reserves no hardware; busy devices can
         appear among the proposed workers.
 
@@ -227,10 +225,10 @@ class ServiceClient:
         Raises
         ------
         TypeError
-            A required setting is missing, a keyword is unknown, or a value has
-            the wrong type.
+            If a required setting is missing, a keyword is unknown, or a value
+            has the wrong type.
         ValueError
-            ``config`` is combined with ``setup``, or a value is invalid.
+            If ``config`` is combined with ``setup``, or a value is invalid.
         """
         request = TrainingDescription.request(self._setup(config, setup), resources)
         encode(request)
@@ -255,7 +253,7 @@ class ServiceClient:
         Raises
         ------
         TypeError
-            ``reference`` is not an `ArtifactRef`.
+            If ``reference`` is not an `ArtifactRef`.
         """
         if not isinstance(reference, ArtifactRef):
             raise TypeError("artifact requires an immutable server reference")
@@ -290,7 +288,7 @@ class ServiceClient:
             parallelism : dict, optional
                 A declaration such as
                 `~shadowspill_client.parallelism.data_parallel` returns. By
-                default, the model definition's, or a single worker.
+                default, the model's, or a single worker.
             execution : `Execution`, optional
                 Run-time settings. By default, ``Execution()``.
             operations : mapping of str to sequence, optional
@@ -338,10 +336,11 @@ class ServiceClient:
         Raises
         ------
         TypeError
-            A required setting is missing, a keyword is unknown, or a value has
-            the wrong type.
+            If a required setting is missing, a keyword is unknown, or a value
+            has the wrong type.
         ValueError
-            ``config`` is combined with other settings, or a value is invalid.
+            If ``config`` is combined with other settings, or a value is
+            invalid.
         """
         return create_training_client(self, **setup)
 
@@ -367,10 +366,11 @@ class ServiceClient:
         Raises
         ------
         TypeError
-            A required setting is missing, a keyword is unknown, or a value has
-            the wrong type.
+            If a required setting is missing, a keyword is unknown, or a value
+            has the wrong type.
         ValueError
-            ``config`` is combined with other settings, or a value is invalid.
+            If ``config`` is combined with other settings, or a value is
+            invalid.
         """
         return prepare_training(self, **setup)
 
@@ -397,10 +397,11 @@ class ServiceClient:
         Raises
         ------
         TypeError
-            A required setting is missing, a keyword is unknown, or a value has
-            the wrong type.
+            If a required setting is missing, a keyword is unknown, or a value
+            has the wrong type.
         ValueError
-            ``config`` is combined with other settings, or a value is invalid.
+            If ``config`` is combined with other settings, or a value is
+            invalid.
         """
         return plan_training(self, **setup)
 
@@ -423,7 +424,7 @@ class ServiceClient:
         Raises
         ------
         ValueError
-            ``run_id`` is not a valid run ID.
+            If ``run_id`` is not a valid run ID.
         """
         return get_planning(self, run_id, progress=progress)
 
@@ -448,7 +449,7 @@ class ServiceClient:
         Raises
         ------
         ValueError
-            ``run_id`` is not a valid run ID.
+            If ``run_id`` is not a valid run ID.
         """
         return get_preparation(self, run_id, progress=progress)
 
@@ -463,7 +464,7 @@ class ServiceClient:
         """Read one page of a run's recorded metrics.
 
         This works without a training client, including after the run's
-        workers or the service have stopped.
+        workers have closed or the service has restarted.
 
         Parameters
         ----------
@@ -486,7 +487,7 @@ class ServiceClient:
         Raises
         ------
         ValueError
-            ``run_id`` is invalid, ``limit`` is out of range, or ``through``
+            If ``run_id`` is invalid, ``limit`` is out of range, or ``through``
             is before ``after``.
         """
         return MetricQueries(self, self.session_id, run_id).query(
@@ -521,7 +522,7 @@ class ServiceClient:
         Raises
         ------
         ValueError
-            ``run_id`` is not a valid run ID.
+            If ``run_id`` is not a valid run ID.
         """
         return get_training_client(self, run_id, read_only=read_only, progress=progress)
 
@@ -546,7 +547,7 @@ class ServiceClient:
         Raises
         ------
         ValueError
-            ``run_id`` or ``name`` is invalid.
+            If ``run_id`` or ``name`` is invalid.
         """
         return get_plans(self, run_id, name=name)
 
@@ -570,7 +571,7 @@ class ServiceClient:
         Raises
         ------
         ValueError
-            ``run_id`` or ``rank`` is invalid.
+            If ``run_id`` or ``rank`` is invalid.
         """
         return get_nsys(self, run_id, rank=rank)
 
@@ -591,7 +592,8 @@ class ServiceClient:
         Raises
         ------
         RuntimeError
-            OpenSSH cannot cancel the forward on a shared control connection.
+            If OpenSSH cannot cancel the forward on a shared control
+            connection.
         """
         self._work.stop()
         with self._handle_lock:

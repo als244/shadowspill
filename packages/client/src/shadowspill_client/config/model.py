@@ -133,7 +133,7 @@ class Weights(Record):
 class LoRA(Record):
     """Low-rank adapters added to a model.
 
-    The model definition adds them during setup. The supplied text models
+    The model adds them during setup. The supplied text models
     then train the adapters and freeze the base parameters, unless
     `Model` ``trainable`` selects otherwise.
 
@@ -150,7 +150,7 @@ class LoRA(Record):
     targets : sequence of str, optional
         Module-name patterns to adapt, such as ``"blocks.*.attn.wq"``.
         Nonempty and without duplicates when given. None uses the
-        definition's default targets.
+        model's default targets.
     """
 
     rank: int
@@ -175,47 +175,47 @@ class LoRA(Record):
 
 @dataclass(frozen=True)
 class Model(Record):
-    """An installed model definition and its training settings.
+    """A model from the catalog and its training settings.
 
     The server constructs the model; the client only names it.
 
     Parameters
     ----------
-    definition : str, optional
-        Name of an installed model definition, such as ``"llama3"``, or its
-        exact versioned ID. May be omitted only with pretrained
-        ``initialize``, whose resolver then selects the definition.
+    name : str, optional
+        Name of an installed model, such as ``"llama3"``, or its exact
+        versioned ID. May be omitted only with pretrained ``initialize``,
+        whose resolver then selects the model.
     config : mapping, default {}
-        Settings the definition accepts, such as ``{"preset": "tiny"}``, as
+        Settings the model accepts, such as ``{"preset": "tiny"}``, as
         JSON values.
     initialize : Weights, optional
         Initial weights. A preview or preparation may omit them; creating a
         run needs them unless it restores a checkpoint.
     lora : LoRA, optional
-        Low-rank adapters to add, for a definition that supports them.
+        Low-rank adapters to add, for a model that supports them.
     implementation : str, optional
-        One of the implementations the definition offers, such as
-        ``"mlops_ep"``. None uses the definition's default.
+        One of the implementations the model offers, such as
+        ``"mlops_ep"``. None uses the model's default.
     precision : mapping, default {}
         Dtype settings. ``"parameter_dtypes"`` maps parameter and buffer name
         patterns to ``"float16"``, ``"bfloat16"``, ``"float32"`` or
         ``"float64"``, overriding the stored dtype of each floating match;
-        each pattern must match. Other keys belong to the definition, such as
+        each pattern must match. Other keys belong to the model, such as
         ``{"compute_dtype": "bfloat16"}``.
     trainable : sequence of str, optional
         Parameter names or glob patterns to train; every other parameter is
         frozen. Selection follows adapter construction, so include adapter
         patterns such as ``"*.lora_*"`` to keep training them. Each pattern
         must match, and an empty sequence freezes every parameter. None keeps
-        the definition's selection.
+        the model's selection.
 
     Raises
     ------
     ValueError
-        If neither ``definition`` nor pretrained ``initialize`` is given.
+        If neither ``name`` nor pretrained ``initialize`` is given.
     """
 
-    definition: str | None = None
+    name: str | None = None
     config: Mapping[str, Value] = field(default_factory=dict)
     initialize: Weights | None = None
     lora: LoRA | None = None
@@ -224,16 +224,16 @@ class Model(Record):
     trainable: Sequence[str] | None = None
 
     def __post_init__(self) -> None:
-        if self.definition is not None:
-            text(self.definition, "definition")
+        if self.name is not None:
+            text(self.name, "name")
         if self.initialize is not None:
             object.__setattr__(
                 self, "initialize", record(Weights, self.initialize, "initialize")
             )
-        if self.definition is None and (
+        if self.name is None and (
             self.initialize is None or self.initialize.kind != "pretrained"
         ):
-            raise ValueError("select an installed definition or a pretrained model")
+            raise ValueError("select an installed model or a pretrained model")
         if self.lora is not None:
             object.__setattr__(self, "lora", record(LoRA, self.lora, "lora"))
         if self.implementation is not None:
@@ -258,7 +258,7 @@ class Model(Record):
         """Select a model by a pretrained reference.
 
         During setup, the installed resolver that accepts ``reference``
-        selects the model definition and pins the revision and metadata.
+        selects the model and pins the revision and metadata.
 
         Parameters
         ----------
@@ -271,9 +271,9 @@ class Model(Record):
         lora : LoRA, optional
             Low-rank adapters to add.
         implementation : str, optional
-            Implementation the definition offers, as in `Model`.
+            Implementation the model offers, as in `Model`.
         config : mapping, optional
-            Definition settings, as in `Model`. The resolver fills settings
+            Model settings, as in `Model`. The resolver fills settings
             left out from the source's metadata and refuses to change any
             given.
         precision : mapping, optional
@@ -298,15 +298,15 @@ class Model(Record):
 
 @dataclass(frozen=True)
 class Objective(Record):
-    """An installed objective definition and its settings.
+    """An objective from the catalog and its settings.
 
     Parameters
     ----------
-    definition : str
-        Name of an installed objective definition, such as
-        ``"cross_entropy"``, or its exact versioned ID.
+    name : str
+        Name of an installed objective, such as ``"cross_entropy"``, or its
+        exact versioned ID.
     config : mapping, default {}
-        Structural settings the definition accepts, such as
+        Structural settings the objective accepts, such as
         ``{"reference_penalty": "k3"}``. They are fixed for the run.
     defaults : mapping, default {}
         Default values of the objective's per-call controls, such as
@@ -314,12 +314,12 @@ class Objective(Record):
         that call only.
     """
 
-    definition: str
+    name: str
     config: Mapping[str, Value] = field(default_factory=dict)
     defaults: Mapping[str, Value] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        text(self.definition, "definition")
+        text(self.name, "name")
         object.__setattr__(self, "config", mapping(self.config, "config"))
         object.__setattr__(self, "defaults", mapping(self.defaults, "defaults"))
 
@@ -351,7 +351,7 @@ class Objective(Record):
         Returns
         -------
         Objective
-            The sum, as the definition ``"shadowspill/sum@1"``.
+            The sum, as the objective ``"shadowspill/sum@1"``.
 
         Raises
         ------
@@ -369,7 +369,7 @@ class Objective(Record):
                 raise ValueError("objective term names must be identifiers")
             if not isinstance(term, Objective):
                 raise TypeError("objective terms must be Objective settings")
-            if term.definition == "shadowspill/sum@1":
+            if term.name == "shadowspill/sum@1":
                 raise ValueError("flatten nested objective sums into named terms")
         weights = {} if weights is None else weights
         if set(weights) - terms.keys():
@@ -386,38 +386,38 @@ class Objective(Record):
 
 @dataclass(frozen=True)
 class Optimizer(Record):
-    """An installed optimizer definition and its settings.
+    """An optimizer from the catalog and its settings.
 
     Per-update controls, such as the learning rate, are passed on each update
     as ``optim``.
 
     Parameters
     ----------
-    definition : str
-        Name of an installed optimizer definition, such as ``"adamw"``, or its
-        exact versioned ID.
+    name : str
+        Name of an installed optimizer, such as ``"adamw"``, or its exact
+        versioned ID.
     defaults : mapping, default {}
         Default values of the per-update controls, such as ``{"lr": 0.001}``.
         A call's ``optim`` values override them for that call only.
     config : mapping, default {}
-        Structural settings the definition accepts, such as
+        Structural settings the optimizer accepts, such as
         ``{"maximize": True}``.
     groups : mapping, default {}
-        Parameter-group settings, for a definition that supports several
+        Parameter-group settings, for an optimizer that supports several
         groups.
     precision : mapping, default {}
         Dtypes and rounding of gradients, optimizer state and master weights,
-        as the definition accepts them, such as
+        as the optimizer accepts them, such as
         ``{"gradient_dtype": "float32", "opt_state_dtype": "float32"}``.
     """
 
-    definition: str
+    name: str
     defaults: Mapping[str, Value] = field(default_factory=dict)
     config: Mapping[str, Value] = field(default_factory=dict)
     groups: Mapping[str, Value] = field(default_factory=dict)
     precision: Mapping[str, Value] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        text(self.definition, "definition")
+        text(self.name, "name")
         for name in ("defaults", "config", "groups", "precision"):
             object.__setattr__(self, name, mapping(getattr(self, name), name))

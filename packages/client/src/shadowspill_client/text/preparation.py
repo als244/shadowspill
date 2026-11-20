@@ -20,10 +20,8 @@ def build_candidates(
     Every combination of ``microbatch_tokens``, ``projection_chunks``,
     ``moe_chunks`` and ``retention`` becomes one `BuildCase`, for
     ``Preparation(candidates=...)``. Chunking never splits attention across
-    sequence boundaries, and a chunked case regenerates chunk-local scratch
-    inside each chunk. Attention kernels are bounded by the batch's
-    ``max_sequence_length`` limit, not by these sizes. Building the candidates
-    needs no service or PyTorch.
+    sequence boundaries. Attention kernels are bounded by the batch's
+    ``max_sequence_length`` limit, not by these sizes.
 
     Parameters
     ----------
@@ -31,7 +29,7 @@ def build_candidates(
         Token capacities to try for one microbatch of each input partition,
         which under `data_parallel` is one worker.
     max_sequences_per_microbatch : int, optional
-        Most sequences packed into one microbatch; padding does not count
+        Maximum number of sequences packed into one microbatch; padding does not count
         against it. By default the text preset uses eight times the number of
         maximum-length sequences that fill the microbatch, capped by the
         batch's ``max_sequences`` limit.
@@ -51,15 +49,15 @@ def build_candidates(
     Returns
     -------
     BuildCandidates
-        One case per combination, with portable policies.
+        One case per combination.
 
     Raises
     ------
     ValueError
-        ``microbatch_tokens`` is empty or holds a size below one or a repeated
-        size, ``max_sequences_per_microbatch`` is below one, a chunk list is empty
-        or holds a negative or repeated size, or ``retention`` is empty or
-        holds an unknown or repeated name.
+        If ``microbatch_tokens`` is empty or holds a size below one or a
+        repeated size, ``max_sequences_per_microbatch`` is below one, a chunk
+        list is empty or holds a negative or repeated size, or ``retention`` is
+        empty or holds an unknown or repeated name.
     """
     sizes = BuildCandidates(microbatch_sizes=microbatch_tokens).microbatch_sizes
     assert sizes is not None

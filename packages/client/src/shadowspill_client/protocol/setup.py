@@ -1,4 +1,4 @@
-"""Portable setup keywords, resolved by installed server definitions."""
+"""Portable setup keywords, resolved by installed server components."""
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass

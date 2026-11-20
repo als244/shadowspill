@@ -64,7 +64,7 @@ class LengthStatistics:
         Raises
         ------
         ValueError
-            ``lengths`` is empty or holds a value that is not a nonnegative
+            If ``lengths`` is empty or holds a value that is not a nonnegative
             Python int.
         """
         values = tuple(integer(value, "sequence length") for value in lengths)
@@ -138,8 +138,8 @@ class BatchStatistics:
         Raises
         ------
         ValueError
-            ``lengths`` or ``supervised`` is empty or holds a value that is not
-            a nonnegative Python int, or ``supervised`` differs from
+            If ``lengths`` or ``supervised`` is empty or holds a value that is
+            not a nonnegative Python int, or ``supervised`` differs from
             ``lengths`` in count or exceeds a length.
         """
         total = LengthStatistics.from_lengths(lengths)
@@ -170,7 +170,7 @@ class CommandTable:
     """A live table of compute calls, one row per tracked call.
 
     `track` adds a row when a call is submitted and fills it in when the call
-    completes. The table never waits, submits, validates or changes training.
+    completes. The table only observes the calls.
     On a terminal it repaints its recent rows in place; on any other stream
     each submission and each completion appends a line, with the same call
     number. Submission and completion times use the client's local clock;
@@ -193,7 +193,7 @@ class CommandTable:
     Raises
     ------
     ValueError
-        ``max_rows`` is below one.
+        If ``max_rows`` is below one.
     """
 
     def __init__(self, *, stream: TextIO | None = None, max_rows: int = 20) -> None:
@@ -235,7 +235,7 @@ class CommandTable:
         """Add a row for a submitted compute call and fill it in on completion.
 
         The row shows ``pending`` at once. When ``future`` completes, it shows
-        ``done``, ``skipped`` or ``failed``, the loss, and the result's
+        ``done`` or ``failed``, the loss, and the result's
         `TrainingResult.execution_seconds`; tokens per second divides
         ``batch.lengths.total`` by that time. A value that is absent shows as
         a dash.
@@ -262,11 +262,11 @@ class CommandTable:
         Raises
         ------
         ValueError
-            ``operation`` is not a compute call, ``batch`` is given for
+            If ``operation`` is not a compute call, ``batch`` is given for
             ``"optim_step"``, or ``planned_seconds`` is negative or not a
             finite number.
         TypeError
-            ``batch`` is not a `BatchStatistics`.
+            If ``batch`` is not a `BatchStatistics`.
         """
         if operation not in ("step", "forward_backward", "optim_step", "forward"):
             raise ValueError("the command table accepts compute operations only")
@@ -296,7 +296,7 @@ class CommandTable:
                     row.status = "failed"
                 else:
                     result = source.result(0)
-                    row.status = "done" if result.outcome == "completed" else "skipped"
+                    row.status = "done"
                     row.loss, row.seconds = result.loss, result.execution_seconds
                 self._render(row)
 

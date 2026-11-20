@@ -17,7 +17,7 @@ class Policy(Record):
 
     Parameters
     ----------
-    definition : str
+    name : str
         Exact versioned ID of an installed policy, such as
         ``"shadowspill/text_chunks@1"``. Its kind must match the build option
         it is given for.
@@ -26,11 +26,11 @@ class Policy(Record):
         with the policy's defaults.
     """
 
-    definition: str
+    name: str
     config: Mapping[str, Value] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        text(self.definition, "policy definition")
+        text(self.name, "policy name")
         object.__setattr__(self, "config", mapping(self.config, "policy config"))
 
 
@@ -147,12 +147,12 @@ class BuildCase(Record):
     ----------
     microbatch_size : int
         Physical microbatch size, at least one, in the preset's units: tokens
-        for packed text, records for stacked inputs.
+        for packed text, examples for stacked inputs.
     build : BuildOptions, default BuildOptions()
         Policy choices for this case. Options left out inherit the fixed
         choices; none may repeat a choice `Preparation` ``build`` fixes.
     max_datums : int, optional
-        Maximum number of records in one physical buffer, at least one. None
+        Maximum number of examples in one physical buffer, at least one. None
         uses the preset's choice; the stacked preset accepts only
         ``microbatch_size``.
     """
@@ -182,7 +182,7 @@ class BuildCandidates(Record):
     ----------
     microbatch_sizes : sequence of int, optional
         Candidate physical microbatch sizes, each at least one, in the
-        preset's units: tokens for packed text, records for stacked inputs.
+        preset's units: tokens for packed text, examples for stacked inputs.
     chunking : sequence of Policy or None, optional
         Candidate chunking policies. None among them leaves every
         computation unchunked.
@@ -309,8 +309,7 @@ class PlanningOptions(Record):
     search : mapping, optional
         Complete search settings, with ``"generic"`` and ``"algorithm"``
         entries in the engine's ``SearchOptions`` record form; a partial or
-        extended record is refused. The engine default is its standard
-        search. A preview's ``config.preparation`` shows the resolved record.
+        extended record is refused.
     workers : int, optional
         Threads the search uses, at least zero. Zero uses every available
         logical CPU and one searches serially. It changes how long planning
@@ -350,14 +349,13 @@ class Preparation(Record):
     candidates : BuildCandidates, default BuildCandidates()
         Build cases to prepare and compare.
     profiling : ProfilingOptions, optional
-        Task timing bounds. None inherits the preset, then the
-        `ProfilingOptions` defaults.
+        Task timing bounds.
     planning : PlanningOptions, default PlanningOptions()
         Plan search settings.
     preset : str, optional
         Exact ID of the installed preparation preset, such as
         ``"shadowspill/stacked@1"``. None uses the preset the model
-        definition names, or ``"shadowspill/stacked@1"`` if it names none.
+        names, or ``"shadowspill/stacked@1"`` if it names none.
     reuse : mapping, default {}
         Earlier measurements to reuse, as
         `PreparationHandle.reuse

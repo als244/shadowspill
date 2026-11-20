@@ -264,8 +264,7 @@ class TrainingClient:
             One to 128 finite numbers, by name; each name has at most 256
             characters.
         request_id : str
-            ID of a request in this run that has completed, been skipped or
-            failed.
+            ID of a request in this run that has completed or failed.
         metric_id : str, optional
             ID for this record within the request; reusing it with different
             values is refused. By default it is derived from ``values``, so
@@ -335,8 +334,8 @@ class TrainingClient:
             Last journal position included; by default the latest one when the
             service makes the report.
         max_records : int, default 10000
-            Most records the report may hold, up to 100000.
-        max_bytes : int, default 67108864
+            Maximum number of records the report may hold, up to 100000.
+        max_bytes : int, default 64 << 20
             Largest report size, in bytes (64 MiB by default), up to 1 GiB.
 
         Returns
@@ -624,8 +623,7 @@ class TrainingClient:
         Parameters
         ----------
         global_batch : sequence of Datum
-            The whole batch for all workers, as a list or tuple. It is copied
-            before the call returns, so the caller may change it afterwards.
+            The whole batch for all workers, as a list or tuple.
         optim : mapping of str to scalar, optional
             Optimizer controls for this update, such as ``{"lr": 3e-4}``.
             Controls left out take the run's defaults; no value carries over
@@ -634,7 +632,7 @@ class TrainingClient:
             Objective controls for this call, resolved the same way.
         grad_scale : float, default 1
             Factor applied to every gradient before the update, such as
-            ``1 / len(global_batch)`` to average a loss summed over records.
+            ``1 / len(global_batch)`` to average a loss summed over examples.
         outputs : str, optional
             Output set to produce; by default the first one prepared for
             ``"step"``.
@@ -697,7 +695,7 @@ class TrainingClient:
         ----------
         global_batch : sequence of Datum
             The part of the update's batch to add, for all workers, as a list
-            or tuple. It is copied before the call returns.
+            or tuple.
         loss_params : mapping of str to scalar, optional
             Objective controls for this call, as in `step`.
         outputs : str, optional
@@ -756,7 +754,7 @@ class TrainingClient:
             Optimizer controls for this update, as in `step`.
         grad_scale : float, default 1
             Factor applied to every accumulated gradient before the update,
-            such as ``1 / n`` to average a loss summed over ``n`` records in
+            such as ``1 / n`` to average a loss summed over ``n`` examples in
             all the parts.
         runtime_trace : bool, default False
             Record a runtime trace of this call, as in `step`.
@@ -804,8 +802,7 @@ class TrainingClient:
         Parameters
         ----------
         global_batch : sequence of Datum
-            The whole batch for all workers, as a list or tuple. It is copied
-            before the call returns.
+            The whole batch for all workers, as a list or tuple.
         outputs : str, optional
             Output set to produce, such as ``"predictions"``; by default the
             first one prepared for ``"forward"`` in ``mode``.
@@ -852,7 +849,7 @@ class TrainingClient:
         )
 
     def discard_gradients(self) -> OperationFuture[TrainingResult]:
-        """Submit dropping the open gradient accumulation, if any, without an update.
+        """Drop the open gradient accumulation, if any, without an update.
 
         Returns
         -------
@@ -878,12 +875,10 @@ class TrainingClient:
         metadata: Mapping[str, Value] | None = None,
         weights: Literal["master", "compute"] = "master",
     ) -> OperationFuture[CheckpointHandle]:
-        """Submit saving a checkpoint of the training state in service storage.
+        """Save a checkpoint of the training state in service storage.
 
-        The save runs in the training order, after the operations submitted
-        before it, and does not count as an update. No gradient accumulation
-        may be open. Nothing is downloaded until the checkpoint's ``download``
-        is called.
+        The save runs in the training order and does not count as an update.
+        No gradient accumulation may be open.
 
         Parameters
         ----------
@@ -929,7 +924,7 @@ class TrainingClient:
         return self._submit("save", save=settings)._mapped(checkpoint)
 
     def load_checkpoint(self, checkpoint_id: str) -> OperationFuture[TrainingResult]:
-        """Submit loading a checkpoint into the run's training state.
+        """Load a checkpoint into the run's training state.
 
         The load runs in the training order. No gradient accumulation may be
         open. A name is pinned to one checkpoint when the service accepts the
@@ -973,12 +968,11 @@ class TrainingClient:
         weights: Literal["master", "compute"] = "master",
         metadata: Mapping[str, Value] | None = None,
     ) -> OperationFuture[WeightsHandle]:
-        """Submit exporting the model weights to service storage.
+        """Export the model weights to service storage.
 
         The export runs in the training order, like `save_checkpoint`, and
         holds the model weights and persistent buffers only: no optimizer
-        state or gradients. No gradient accumulation may be open. Nothing is
-        downloaded until the export's ``download`` is called.
+        state or gradients. No gradient accumulation may be open.
 
         Parameters
         ----------
@@ -1024,18 +1018,17 @@ class TrainingClient:
         return self._submit("save", save=settings)._mapped(exported)
 
     def close(self) -> OperationFuture[TrainingResult]:
-        """Submit closing the run, which releases its workers and resources.
+        """Close the run, releasing its workers and resources.
 
-        The close runs in the training order, after the operations submitted
-        before it; operations submitted after it fail. No gradient
-        accumulation may be open, and pending gradients are never applied.
+        The close runs in the training order; operations submitted after it
+        fail. No gradient accumulation may be open.
         Results, metrics, reports and saved artifacts stay readable afterwards.
 
         Returns
         -------
         OperationFuture of TrainingResult
             The outcome, once the run's resources are released and a new run
-            can use them. The request's status can show it completed earlier.
+            can use them.
             It fails with `TrainingRequestError` if the service rejects the
             close, and with `RemoteError` if releasing the resources fails.
 

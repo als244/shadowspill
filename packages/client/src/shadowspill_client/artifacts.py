@@ -37,8 +37,7 @@ class ArtifactHandle:
     def download(self, path: str | Path, *, resume: bool = False) -> CallFuture[Path]:
         """Download the artifact into a new local file.
 
-        The bytes are checked against the reference's size and SHA-256. An
-        existing file is never overwritten.
+        The bytes are checked against the reference's size and SHA-256.
 
         Parameters
         ----------
@@ -59,7 +58,7 @@ class ArtifactHandle:
         Raises
         ------
         TypeError
-            ``resume`` is not a bool.
+            If ``resume`` is not a bool.
         """
         if type(resume) is not bool:
             raise TypeError("download resume must be boolean")
@@ -122,7 +121,7 @@ class ArtifactTransfers:
         Raises
         ------
         TypeError
-            ``reference`` is not an `ArtifactRef`.
+            If ``reference`` is not an `ArtifactRef`.
         """
         from .uploads import upload
 

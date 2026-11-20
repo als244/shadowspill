@@ -5,7 +5,7 @@ from typing import Literal
 
 from .._records import Record, record
 from ..config.model import Model
-from .definitions import DefinitionSource
+from .components import ComponentSource
 from .requests import ArtifactRef
 
 
@@ -19,10 +19,10 @@ class FrozenBase(Record):
     Parameters
     ----------
     model : Model
-        The model with its resolved definition and initialization; pretrained
+        The model with its resolved name and initialization; pretrained
         weights carry a pinned revision.
-    source : DefinitionSource
-        The installed definition that resolved the model.
+    source : ComponentSource
+        Source of the installed model.
     artifact : ArtifactRef, optional
         The weights artifact, when the model initializes from one. Required in
         exactly that case.
@@ -31,19 +31,19 @@ class FrozenBase(Record):
     """
 
     model: Model
-    source: DefinitionSource
+    source: ComponentSource
     artifact: ArtifactRef | None = None
     version: Literal[1] = 1
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model", record(Model, self.model, "base model"))
         object.__setattr__(
-            self, "source", record(DefinitionSource, self.source, "base source")
+            self, "source", record(ComponentSource, self.source, "base source")
         )
         if type(self.version) is not int or self.version != 1:
             raise ValueError("unsupported frozen-base version")
         weights = self.model.initialize
-        if self.model.definition is None or weights is None:
+        if self.model.name is None or weights is None:
             raise ValueError("frozen base requires a resolved installed initializer")
         if weights.kind == "pretrained" and weights.revision is None:
             raise ValueError("frozen base requires a pinned pretrained revision")

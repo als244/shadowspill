@@ -14,7 +14,7 @@ TASK_BYTES = 32 << 20
 class ConnectionClosed(ConnectionError):
     """The client connection closed before a call finished.
 
-    It says nothing about work the service accepted, which continues.
+    Work the service accepted continues.
     """
 
 
@@ -51,7 +51,7 @@ class CallFuture[T]:
         TimeoutError
             If the call has not finished within ``timeout``. The call goes on.
         Exception
-            The call's own error, if it failed.
+            If the call failed: its own error.
         """
         return self._future.result(timeout)
 

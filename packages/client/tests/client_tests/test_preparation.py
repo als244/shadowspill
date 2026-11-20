@@ -14,7 +14,7 @@ from shadowspill_client import (
     ProfilingOptions,
 )
 from shadowspill_client.protocol.codec import decode, encode
-from shadowspill_client.protocol.definitions import DefinitionSource
+from shadowspill_client.protocol.components import ComponentSource
 from shadowspill_client.protocol.preparation import ResolvedPreparation
 
 
@@ -94,7 +94,7 @@ def test_invalid_or_conflicting_choices_fail_before_any_preparation(factory):
 def test_resolved_preparation_is_portable_immutable_and_complete():
     value = ResolvedPreparation(
         "external/preset@1",
-        DefinitionSource("external", "1", "a" * 64),
+        ComponentSource("external", "1", "a" * 64),
         [
             BuildCase(
                 2,

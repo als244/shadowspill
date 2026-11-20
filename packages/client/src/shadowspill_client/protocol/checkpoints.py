@@ -109,7 +109,7 @@ class SaveInfo(Record):
         where it came from; None otherwise.
     frozen_base : FrozenBase, optional
         How a run re-creates the frozen parameters the files leave out: the
-        model settings with their initialization, the model definition's
+        model settings with their initialization, the model's
         source and, for weights initialized from an artifact, that artifact.
         None when the files leave none out.
     kind : str, default "checkpoint"

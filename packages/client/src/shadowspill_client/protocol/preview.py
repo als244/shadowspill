@@ -151,8 +151,8 @@ class TrainingPreview(Record):
             the proposed workers and their memory budgets.
         """
         rows = [
-            f"Model: {self.config.model.definition}",
-            f"Objective: {self.config.objective.definition}",
+            f"Model: {self.config.model.name}",
+            f"Objective: {self.config.objective.name}",
             "Global batch limits: "
             f"{[dict(batch.limits) for batch in self.config.batches]}",
             "Scheduled padding counts toward input capacities.",

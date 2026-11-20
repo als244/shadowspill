@@ -11,7 +11,7 @@ import numpy as np
 
 from shadowspill_client import BatchConfig
 from shadowspill_client._records import number
-from shadowspill_client.protocol.definitions import Participation
+from shadowspill_client.protocol.components import Participation
 from shadowspill_client.protocol.inputs import InputSchema
 from shadowspill_client.protocol.payload import BatchSnapshot
 from shadowspill_client.protocol.tensors import TensorPayload

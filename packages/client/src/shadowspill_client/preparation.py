@@ -12,7 +12,7 @@ from ._progress import ProgressDisplay
 from ._records import Value, mapping, record
 from .artifacts import ArtifactHandle
 from .config import Resources
-from .creation import CreationError, _info
+from .creation import CreationError, _automatic, _info
 from .plans import PlansHandle
 from .protocol.creation import TrainingCreation
 from .protocol.preview import TrainingDescription
@@ -72,7 +72,7 @@ class PreparationHandle:
         Raises
         ------
         ValueError
-            The job has no completed export.
+            If the job has no completed export.
         """
         reference = self.info.preparation_export
         if self.info.state != "prepared" or reference is None:
@@ -171,7 +171,8 @@ def _submit[T](
 
     def create() -> T:
         selected = resource_request
-        if isinstance(settings, TrainingSetup):
+        if isinstance(settings, TrainingSetup) or _automatic(settings.memory):
+            # Describing sizes automatic memory budgets on the selected workers.
             preview = service._describe(TrainingDescription.request(settings, selected))
             resolved, selected = preview.config, preview.resources
         else:
