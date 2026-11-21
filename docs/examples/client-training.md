@@ -55,6 +55,23 @@ The server loads the selected checkpoint and trains its text decoder or adapters
 The client owns the dataset and never loads model weights. There is no server
 dataset directory to configure.
 
+## Prepare FineWeb-Edu for Qwen3.5
+
+The long-context demos and the [Qwen3.5 LoRA application](../../examples/training/README.md)
+read plain text tokenized with the Qwen3.5 tokenizer:
+
+```bash
+python -m tools.datasets.prepare_text \
+    --tokenizer Qwen/Qwen3.5-35B-A3B \
+    --dataset HuggingFaceFW/fineweb-edu \
+    --files 'sample/10BT/{:03d}_00000.parquet' \
+    --max-train-tokens 100000000 \
+    --out data/fineweb-qwen35
+```
+
+The first 5,000,000 tokens go to `val.bin` for evaluation (`--val-tokens`
+changes that). Copy the directory to the client as above.
+
 ## Eight-GPU data-parallel pretraining
 
 Prepare a separate corpus with the **Qwen3** tokenizer; its token IDs are not
