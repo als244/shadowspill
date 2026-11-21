@@ -179,7 +179,8 @@ def select_family(
                 diagnostics=(*rejected, last_error),
             )
         raise PlanInfeasibleError(
-            "no complete coverage witness family fits joint runtime admission",
+            "no complete coverage witness family fits joint runtime admission "
+            f"({attempts} tried; the last: {last_error})",
             kind="prepared_shared_memory",
             diagnostics=(*rejected, last_error),
         )

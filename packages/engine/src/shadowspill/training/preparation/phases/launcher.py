@@ -35,6 +35,11 @@ def _tail(path: Path) -> str:
         )
 
 
+def _last_line(path: Path) -> str:
+    lines = [line.strip() for line in _tail(path).splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
 def run_phases(
     package: str,
     root: Path,
@@ -109,10 +114,14 @@ def run_phases(
             )
         if result.returncode:
             # The phase ran in a worker whose output is its log; name the
-            # failure where the caller is looking.
-            tail = "\n".join(f"{path}:\n{_tail(path)}" for path in result.logs)
+            # failure where the caller is looking. Its error leads, because a
+            # caller may keep only the start of this message.
+            logs = sorted(result.logs, key=lambda path: path.name != "stderr.log")
+            cause = next((line for path in logs if (line := _last_line(path))), "")
+            tail = "\n".join(f"{path}:\n{_tail(path)}" for path in logs)
             raise RuntimeError(
-                f"{phase} failed with status {result.returncode}; "
-                f"the last log lines:\n{tail}"
+                f"{phase} failed with status {result.returncode}"
+                + (f": {cause}" if cause else "")
+                + f"; the last log lines:\n{tail}"
             )
         print(f"{phase}: complete; logs {', '.join(map(str, result.logs))}", flush=True)

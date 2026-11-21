@@ -134,7 +134,10 @@ class LocalCreation:
         factory = self._factory
         if factory.base_host_bytes + size > factory.node.capacity.host_bytes:
             raise ValueError(
-                "combined service and creation host demand cannot fit this node"
+                "combined service and creation host demand cannot fit this node: "
+                f"this run needs {_gib(size)} beside the service's "
+                f"{_gib(factory.base_host_bytes)}; the node allows "
+                f"{_gib(factory.node.capacity.host_bytes)}"
             )
         self._active()
         self._arena = HostArena(
@@ -745,3 +748,7 @@ class LocalCreation:
                 self._pin.__exit__(None, None, None)
                 self._pin, self._artifacts = None, None
             self.closed = True
+
+
+def _gib(size: int) -> str:
+    return f"{size / (1 << 30):.1f} GiB"

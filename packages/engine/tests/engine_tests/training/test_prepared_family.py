@@ -146,7 +146,12 @@ def test_family_search_limits_and_unknown_candidate_results_are_not_infeasibilit
     monkeypatch.setattr(family_selection, "shared_memory", bounded_shared)
     with pytest.raises(PlanSearchExhaustedError, match="1 complete families"):
         select_family(prepared, rows, plans, [], max_family_attempts=1)
-    with pytest.raises(PlanInfeasibleError, match="no complete coverage witness"):
+    # The refusal names the last joint check that failed, with its numbers.
+    with pytest.raises(
+        PlanInfeasibleError,
+        match=r"no complete coverage witness .* tried; "
+        r"the last: joint retained bytes exceed 10",
+    ):
         select_family(prepared, [rows[0], rows[2]], plans, [], max_family_attempts=10)
     unknown = PlanRejection(
         "small", rows[1].operation, 0, 2, 1, None, "planning", "bounded stop", True

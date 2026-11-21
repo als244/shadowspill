@@ -120,3 +120,24 @@ def test_explicit_launch_environment_is_snapshotted_once_without_global_mutation
         {"CUDA_VISIBLE_DEVICES": "", "PHASE_VALUE": "original"},
     ]
     assert phases.os.environ["CUDA_VISIBLE_DEVICES"] == "outside"
+
+
+def test_a_failed_phase_leads_with_its_error(tmp_path, monkeypatch):
+    # The service keeps only the start of a failure, so the error comes first.
+    monkeypatch.setattr(
+        phases, "worker_command", lambda module, args, *, ranks: [module]
+    )
+    error = "shadowspill.errors.PlanInfeasibleError: no family fits"
+
+    def launch(invocation):
+        out = invocation.log_path.parent / "stdout.log"
+        err = invocation.log_path.parent / "stderr.log"
+        out.write_text("".join(f"progress {i} {'x' * 80}\n" for i in range(40)))
+        err.write_text(
+            f"Traceback (most recent call last):\n  File 'plan.py'\n{error}\n"
+        )
+        return PhaseResult(1, (out, err))
+
+    with pytest.raises(RuntimeError) as failure:
+        phases.run_phases("failing", tmp_path, "plan", phases=("plan",), launch=launch)
+    assert str(failure.value).startswith(f"plan failed with status 1: {error};")

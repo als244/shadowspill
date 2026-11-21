@@ -395,7 +395,10 @@ def test_impossible_combined_phase_host_demand_never_waits_or_launches(
         )
         submit(ctx, wait_for_resources=True)
         until(lambda: ctx.jobs.used == (0, 0))
-        assert "cannot fit" in ctx.service.catalog.get(IDENTITY).error.message
+        message = ctx.service.catalog.get(IDENTITY).error.message
+        assert "cannot fit" in message
+        # The refusal states the demand and the node's allowance.
+        assert "this run needs" in message and "the node allows" in message
         assert not ctx.phases
 
 
