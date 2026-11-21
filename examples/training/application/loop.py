@@ -80,7 +80,6 @@ def train(training, settings, source, validation, directory, *, cursor=0, logger
                 source[index],
                 pieces=settings.backward_pieces,
                 optim={"lr": schedule(index)},
-                grad_scale=1 / source.positions,
                 table=table,
                 statistics=text_batch_statistics,
             )
@@ -111,7 +110,8 @@ def train(training, settings, source, validation, directory, *, cursor=0, logger
                     ).loss
                     for n in range(settings.eval_updates)
                 )
-                value = total / (settings.eval_updates * validation.positions)
+                # Each batch's weights already average its trained tokens.
+                value = total / settings.eval_updates
                 row = {"step": step, "validation_loss": value}
                 evaluations.write(json.dumps(row) + "\n")
                 scalars["eval/loss"] = value

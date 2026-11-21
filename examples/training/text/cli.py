@@ -56,7 +56,6 @@ def run(args, settings, *, resume=None, describe):
         settings.data,
         settings.sequence_length,
         settings.sequences_per_step,
-        normalize=False,
     )
     validation = (
         TokenBatches(
@@ -64,7 +63,6 @@ def run(args, settings, *, resume=None, describe):
             settings.sequence_length,
             settings.sequences_per_step,
             split="val",
-            normalize=False,
         )
         if settings.eval_every
         else None

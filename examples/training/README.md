@@ -54,8 +54,9 @@ Each application prepares only the operations its loop submits.
 Each submitted `step()`, `forward_backward()`, `optim_step()` or `forward()`
 appears in the [command table](../../docs/python/advanced/command-table.md).
 Its time column uses server execution time. Text rows include token counts,
-sequence statistics and the selected Plan's prediction. Per-command losses keep
-the objective's reduction; `metrics.jsonl` records the normalized update loss.
+sequence statistics and the selected Plan's prediction. Each batch's weights
+average its trained tokens, so per-command losses and `metrics.jsonl` show the
+per-token mean.
 `execution_seconds` sums server compute durations across a split update;
 `client_elapsed_seconds` separately includes data preparation, uploads and waits.
 
