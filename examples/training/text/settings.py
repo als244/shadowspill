@@ -142,6 +142,9 @@ class TextSettings:
                     retention=self.graph_pair_policies,
                 )
                 cases.extend(case for case in choices.cases if case not in cases)
+        # One update is a step(), or forward_backward() pieces and optim_step();
+        # prepare only the mode the loop uses.
+        update = "step" if self.backward_pieces == 1 else "forward_backward"
         return dict(
             model=model,
             objective=objective,
@@ -166,11 +169,7 @@ class TextSettings:
             execution=Execution(
                 seed=self.seed, reject_overbudget=self.reject_overbudget
             ),
-            operations={
-                "step": ["metrics"],
-                "forward_backward": ["metrics"],
-                "forward": ["metrics"],
-            },
+            operations={update: ["metrics"], "forward": ["metrics"]},
             prepare=Preparation(
                 external_headroom_bytes=None
                 if self.external_headroom_mib is None

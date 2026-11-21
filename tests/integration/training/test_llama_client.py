@@ -83,11 +83,19 @@ def test_setup_uses_installed_components_and_caps_scheduled_padding(tmp_path):
     )
     assert resolved.config.optimizer.precision["master_dtype"] == "float32"
     layouts = prepare_layouts(resolved)
+    # The setup prepares the mode the loop uses: split updates here.
     assert {key.operation for key in layouts.families} == {
-        "step",
         "forward_backward",
         "forward",
     }
+    whole = Settings(
+        str(tmp_path),
+        model="llama3-tiny",
+        sequence_length=4,
+        sequences_per_step=3,
+        sequences_per_example=1,
+    )
+    assert whole.request()["operations"].keys() == {"step", "forward"}
     for family in layouts.families.values():
         assert all(
             sum(

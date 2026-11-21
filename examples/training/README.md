@@ -49,6 +49,7 @@ the fine-tuning demos' BF16 optimizer settings.
 The default loop submits `step()`. `--backward-pieces 2` instead submits two
 `forward_backward()` contributions and one `optim_step()`, preserving global
 loss normalization. MoE balancing still depends on each physical microbatch.
+Each application prepares only the operations its loop submits.
 
 Each submitted `step()`, `forward_backward()`, `optim_step()` or `forward()`
 appears in the [command table](../../docs/python/advanced/command-table.md).

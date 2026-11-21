@@ -67,6 +67,9 @@ class Settings:
     def request(self):
         capacity = self.sequence_length * self.sequences_per_step
         size = self.sequence_length * self.sequences_per_example
+        # One update is a step(), or forward_backward() pieces and optim_step();
+        # prepare only the mode the loop uses.
+        update = "step" if self.backward_pieces == 1 else "forward_backward"
         return dict(
             model=Model(
                 "shadowspill/llama3@1",
@@ -95,11 +98,7 @@ class Settings:
                 }
             ),
             memory=Memory(self.execution_gib, self.spill_gib),
-            operations={
-                "step": ["metrics"],
-                "forward_backward": ["metrics"],
-                "forward": ["metrics"],
-            },
+            operations={update: ["metrics"], "forward": ["metrics"]},
             prepare=Preparation(
                 candidates=BuildCandidates(microbatch_sizes=sorted({size, capacity})),
                 planning=PlanningOptions(

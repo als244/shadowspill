@@ -62,6 +62,9 @@ class Settings:
         return APPLICATION
 
     def request(self):
+        # One update is a step(), or forward_backward() pieces and optim_step();
+        # prepare only the mode the loop uses.
+        update = "step" if self.backward_pieces == 1 else "forward_backward"
         return dict(
             model=Model("shadowspill/regression@1", initialize=Weights.random(seed=0)),
             objective=Objective("shadowspill/weighted_squared_error@1"),
@@ -75,11 +78,7 @@ class Settings:
                 limits={"max_examples": self.ranks * self.samples_per_rank}
             ),
             memory=Memory(self.execution_gib, self.spill_gib),
-            operations={
-                "step": ["metrics"],
-                "forward_backward": ["metrics"],
-                "forward": ["predictions"],
-            },
+            operations={update: ["metrics"], "forward": ["predictions"]},
             prepare=Preparation(
                 candidates=BuildCandidates(microbatch_sizes=[self.samples_per_rank]),
                 planning=PlanningOptions(microbatch_counts=[1]),

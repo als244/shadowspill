@@ -48,7 +48,8 @@ def test_settings_use_generic_dp_and_cover_the_global_scheduled_cap(ranks):
         TrainingSetup(**settings.request()),
     )
     layouts = prepare_layouts(setup)
-    assert len(layouts.families) == 3
+    # Whole updates (the default) prepare step, plus forward for predictions.
+    assert {key.operation for key in layouts.families} == {"step", "forward"}
     assert setup.context.parallelism == generic
     for rows in layouts.families.values():
         for row in rows:
