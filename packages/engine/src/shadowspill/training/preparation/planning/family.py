@@ -119,9 +119,37 @@ def plan_family(
         f"spill {setup.config.memory.spill_gib:g} GiB"
     )
     cached: dict[
-        tuple[TemplateUse, str | None],
+        tuple[TemplateUse, str | None, int],
         Plan | PlanInfeasibleError | PlanSearchExhaustedError,
     ] = {}
+    reservations: dict[str, int] = {}
+    if search_results is None:
+        from shadowspill.training.preparation.planning.requests import (
+            PlanningRequest,
+            planning_requests,
+        )
+        from shadowspill.training.preparation.planning.reservations import (
+            spill_reservations,
+        )
+
+        planning = planning_requests(inventory)
+        requests = {
+            key: PlanningRequest.from_dict(row)
+            for key, row in planning["requests"].items()
+        }
+        reservations = spill_reservations(
+            requests,
+            planning["candidates"],
+            planning["descriptions"],
+            {
+                key: instantiate_template(
+                    inventory.templates[request.use.template],
+                    request.use,
+                    profiled[request.use.template].program,
+                )
+                for key, request in requests.items()
+            },
+        )
 
     def materialize(
         use: TemplateUse, rank: int, ordering: StepDataOrdering | None
@@ -131,9 +159,10 @@ def plan_family(
         if rank != template.binding.logical_rank:
             raise ValueError("template use belongs to another logical worker")
         name = plan_identity(use, order)
+        reserved = reservations.get(name, 0)
         use = representative_use(use, representatives)
         template = inventory.templates[use.template]
-        key = (use, None if order is None else order.label)
+        key = (use, None if order is None else order.label, reserved)
         if key in cached:
             found = cached[key]
             if isinstance(found, Exception):
@@ -151,6 +180,14 @@ def plan_family(
                     raise searched
                 result = searched
             else:
+                if reserved > budgets.spill_bytes:
+                    raise PlanInfeasibleError(
+                        f"the run's other operations keep {reserved} bytes of "
+                        f"persistent spill; the budget is {budgets.spill_bytes}",
+                        kind="spill_reservation",
+                        required_bytes=reserved,
+                        capacity_bytes=budgets.spill_bytes,
+                    )
                 source = profiled[use.template]
                 program = instantiate_template(template, use, source.program)
                 with phase(f"Worker {rank} · {use.kind} · {use.count} microbatches"):
@@ -163,6 +200,7 @@ def plan_family(
                         else pool_memory[template.binding.logical_rank],
                         search_options=search,
                         ordering=order,
+                        reserved_spill_bytes=reserved,
                     )
         except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
             cached[key] = error

@@ -89,7 +89,8 @@ typedef struct ShadowSpillSimulationWork {
     uint8_t *alias_final_required;
     /* Whether an alias's spill lease outlives the schedule: the initial or
      * final residency places it in spill, or it retains its spill copy.
-     * Every other spill lease is transient. */
+     * Such a lease is held from the schedule's start to its end; every
+     * other spill lease is transient. */
     uint8_t *alias_spill_persistent;
     int32_t *active_fetch;
     int32_t *active_evict;

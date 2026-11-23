@@ -58,6 +58,9 @@ class Plan(Artifact):
         schedule; None when the memory evidence does not allow one.
     pool_memory : PoolMemoryProfile or None
         The spill pool memory measurement it was planned with.
+    reserved_spill_bytes : int
+        Spill held for persistent state the other operations of its run keep
+        while it runs; it was planned within the spill budget less this.
     """
 
     artifact_kind: ClassVar[str] = "plan"
@@ -73,8 +76,16 @@ class Plan(Artifact):
     _admission_facts: AdmissionFacts | None = None
     _accumulation_plan: Plan | None = None
     pool_memory: PoolMemoryProfile | None = None
+    reserved_spill_bytes: int = 0
 
     def __post_init__(self) -> None:
+        if (
+            type(self.reserved_spill_bytes) is not int
+            or not 0 <= self.reserved_spill_bytes <= self.memory_budgets.spill_bytes
+        ):
+            raise ValueError(
+                "reserved_spill_bytes must be an int from 0 to the spill budget"
+            )
         if self.pool_memory is not None:
             self.pool_memory.validate_program(
                 self.memory_budgets.spill_bytes,
@@ -114,6 +125,7 @@ class Plan(Artifact):
                 or self.program.setup != other.program.setup
                 or self.memory_budgets != other.memory_budgets
                 or self.pool_memory != other.pool_memory
+                or self.reserved_spill_bytes != other.reserved_spill_bytes
             ):
                 raise ValueError("incompatible gradient-accumulation execution path")
 
@@ -289,6 +301,7 @@ class Plan(Artifact):
             if self.pool_memory is None
             else self.pool_memory.to_dict(),
             "memory_budgets": self.memory_budgets.to_dict(),
+            "reserved_spill_bytes": self.reserved_spill_bytes,
             "communication_info": self.communication_info.to_dict(),
             "schedule": self.schedule.to_dict(),
             "selections": [item.to_dict() for item in self.selections],
@@ -376,4 +389,5 @@ class Plan(Artifact):
             None
             if value.get("pool_memory") is None
             else PoolMemoryProfile.from_dict(value["pool_memory"]),
+            value["reserved_spill_bytes"],
         )

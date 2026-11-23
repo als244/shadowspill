@@ -307,10 +307,14 @@ static int submit_release(
     work->device_object_bytes[of->device] -= program->alias_size_bytes[of->alias];
     if (of->state->spill_allocated != 0U &&
         program->alias_retain_spill_copy[of->alias] == 0U) {
-        of->state->spill_allocated = 0U;
+        /* The copy is dropped; a persistent lease stays held for the whole
+         * schedule. */
         of->state->spill_ready = 0U;
-        work->spill_bytes -= shadowspill_alias_spill_bytes(program, of->alias);
-        shadowspill_count_transient_spill(program, work, of->alias, -1);
+        if (work->alias_spill_persistent[of->alias] == 0U) {
+            of->state->spill_allocated = 0U;
+            work->spill_bytes -= shadowspill_alias_spill_bytes(program, of->alias);
+            shadowspill_count_transient_spill(program, work, of->alias, -1);
+        }
     }
     if (program->use_admission_accounting != 0U &&
         !shadowspill_apply_physical_delta(
@@ -729,10 +733,17 @@ int shadowspill_complete_transfer(
         state->device_version = state->spill_version;
         state->fetch_pending = 0U;
         if (program->alias_retain_spill_copy[transfer->alias] == 0U) {
-            state->spill_allocated = 0U;
+            /* The copy is dropped; a persistent lease stays held for the
+             * whole schedule. */
             state->spill_ready = 0U;
-            work->spill_bytes -= shadowspill_alias_spill_bytes(program, transfer->alias);
-            shadowspill_count_transient_spill(program, work, transfer->alias, -1);
+            if (work->alias_spill_persistent[transfer->alias] == 0U) {
+                state->spill_allocated = 0U;
+                work->spill_bytes -=
+                    shadowspill_alias_spill_bytes(program, transfer->alias);
+                shadowspill_count_transient_spill(
+                    program, work, transfer->alias, -1
+                );
+            }
         }
     } else {
         /* The copy carries the version it started from. A write that

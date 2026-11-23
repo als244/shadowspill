@@ -22,6 +22,9 @@ from shadowspill.training.preparation.artifacts.cost_evidence import (
 from shadowspill.training.preparation.capture.templates import instantiate_program
 from shadowspill.training.preparation.identity import without_initialization
 from shadowspill.training.preparation.offline.plans import LocalPlans
+from shadowspill.training.preparation.planning.reservations import (
+    spill_reservations,
+)
 from shadowspill.training.preparation.planning.sharing import (
     plan_sources,
     representative_sources,
@@ -125,14 +128,43 @@ def search(
     )
     plans: dict[str, Plan] = {}
     rejected = {}
-    cached: dict[str, Plan | str] = {}
+    cached: dict[tuple[str, int], Plan | str] = {}
+    # An export without candidate descriptions names no operation and batch to
+    # reserve for; the joint check after planning still decides.
+    reservations = (
+        spill_reservations(
+            {key: inputs.requests[key] for key in required},
+            {candidate: inputs.candidates[candidate] for candidate in selected},
+            inputs.descriptions,
+            {
+                key: instantiate_program(
+                    inputs.requests[key].use,
+                    inputs.sources[inputs.requests[key].use.template].program,
+                )
+                for key in required
+            },
+        )
+        if all(candidate in inputs.descriptions for candidate in selected)
+        else dict.fromkeys(required, 0)
+    )
+    budgets = MemoryBudgets(
+        int(config.memory.device_gib * (1 << 30)),
+        int(config.memory.spill_gib * (1 << 30)),
+    )
     for key in sorted(required):
         request = replace(
             inputs.requests[key],
             use=representative_use(inputs.requests[key].use, representatives),
         )
-        if request.id in cached:
-            found = cached[request.id]
+        reserved = reservations[key]
+        if reserved > budgets.spill_bytes:
+            rejected[key] = (
+                f"the run's other operations keep {reserved} bytes of persistent "
+                f"spill; the budget is {budgets.spill_bytes}"
+            )
+            continue
+        if (request.id, reserved) in cached:
+            found = cached[request.id, reserved]
             if isinstance(found, str):
                 rejected[key] = found
             else:
@@ -143,21 +175,19 @@ def search(
         try:
             plan = plan_program(
                 apply_profiles(program, costs[template]),
-                memory_budgets=MemoryBudgets(
-                    int(config.memory.device_gib * (1 << 30)),
-                    int(config.memory.spill_gib * (1 << 30)),
-                ),
+                memory_budgets=budgets,
                 communication_info=communication[template],
                 search_options=search,
                 ordering=request.ordering,
+                reserved_spill_bytes=reserved,
             )
             if plan.simulation_only_reasons:
                 raise ValueError("local Plan lacks physical memory admission")
             plans[key] = plan
-            cached[request.id] = plan
+            cached[request.id, reserved] = plan
         except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
             rejected[key] = str(error)
-            cached[request.id] = str(error)
+            cached[request.id, reserved] = str(error)
     selected = tuple(
         key for key in selected if set(inputs.candidates[key]) <= plans.keys()
     )

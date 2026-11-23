@@ -31,6 +31,7 @@ def plan_program(
     search_options: SearchOptions | None = None,
     ordering: StepDataOrdering | None = None,
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
+    reserved_spill_bytes: int = 0,
 ) -> Plan:
     """Choose a Plan for a profiled Program within memory budgets.
 
@@ -61,6 +62,10 @@ def plan_program(
         When each optimizer update runs: ``"stage_interleaved"``, once the
         gradients it needs are written and the old weights it changes are
         read; or ``"tail"``, after the whole backward.
+    reserved_spill_bytes : int, default 0
+        Spill held for persistent state the other operations of its run keep
+        while this Plan runs, which it does not hold itself: the search plans
+        within the spill budget less this.
 
     Returns
     -------
@@ -80,9 +85,10 @@ def plan_program(
         If ``program`` is not a `ProfiledProgram`, or ``search_options`` or
         ``ordering`` has another type.
     ValueError
-        If ``ordering`` is given for a Program without training examples, or
+        If ``ordering`` is given for a Program without training examples,
         ``pool_memory`` differs from the budgets, ranks, device or spill
-        backend.
+        backend, or ``reserved_spill_bytes`` is not an int from 0 to the spill
+        budget.
     """
     from shadowspill.planning.memory_search.algorithm import SearchOptions
 
@@ -104,6 +110,7 @@ def plan_program(
         communication_info=communication_info,
         pool_memory=pool_memory,
         options=options,
+        reserved_spill_bytes=reserved_spill_bytes,
     )
     if program.program.bindings.get("kind") != "forward_backward":
         return fresh
@@ -121,6 +128,7 @@ def plan_program(
         communication_info=communication_info,
         pool_memory=pool_memory,
         options=options,
+        reserved_spill_bytes=reserved_spill_bytes,
     )
     from .modes import bundle_gradient_modes
 
@@ -134,9 +142,10 @@ def _plan_bound(
     communication_info: CommunicationInfo,
     options: SearchOptions,
     pool_memory: PoolMemoryProfile | None = None,
+    reserved_spill_bytes: int = 0,
 ) -> Plan:
     costed, config = simulation_inputs(
-        program, memory_budgets, communication_info, pool_memory
+        program, memory_budgets, communication_info, pool_memory, reserved_spill_bytes
     )
     facts = program_admission(
         program,
@@ -202,4 +211,5 @@ def _plan_bound(
         layout,
         facts,
         pool_memory=pool_memory,
+        reserved_spill_bytes=reserved_spill_bytes,
     )

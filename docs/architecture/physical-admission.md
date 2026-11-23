@@ -507,7 +507,11 @@ charged as persistent. An accumulation's gradients are persistent only while
 it is open: the backward that opens it takes their storage, and the
 optimizer-only update or a discard releases it. A complete step does not run
 while they are held, so they are charged beside every transient peak but a
-step's. The C runtime validates every layout against that slice through
+step's. Each Plan of a set is searched within the spill budget less its
+`reserved_spill_bytes`: the persistent state the set's other operations keep,
+which it does not hold itself. The simulator holds a Plan's own persistent
+leases for its whole schedule, so Plans admitted one by one fit together. The
+C runtime validates every layout against that slice through
 `shadowspill_plan_admit_fixed_layout_in()`.
 
 Plans execute sequentially. Each invocation waits for the previous invocation

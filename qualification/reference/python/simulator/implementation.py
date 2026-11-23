@@ -339,6 +339,16 @@ class _Simulator:
                     state.spill_allocated = True
                     self.spill_bytes += state.size_bytes
                 state.spill_ready = True
+        # A persistent lease is held for the whole schedule, so one the
+        # schedule fills only on the way to its final residency is taken now.
+        for state in self.alias_state.values():
+            if (
+                state.spill_persistent
+                and state.size_bytes
+                and not state.spill_allocated
+            ):
+                state.spill_allocated = True
+                self.spill_bytes += state.size_bytes
         if self.admission is None:
             self.device_physical_bytes.update(self.device_object_bytes)
         else:
@@ -674,10 +684,11 @@ class _Simulator:
         state.device_ready = False
         self.device_object_bytes[state.device_id] -= state.size_bytes
         if state.spill_allocated and not state.retain_spill_copy:
-            state.spill_allocated = False
+            # The copy is dropped; a persistent lease stays held.
             state.spill_ready = False
-            self.spill_bytes -= state.size_bytes
             if not state.spill_persistent:
+                state.spill_allocated = False
+                self.spill_bytes -= state.size_bytes
                 self.spill_transient_bytes -= state.size_bytes
         self._snapshot()
         return True
@@ -930,10 +941,11 @@ class _Simulator:
             state.device_version = state.spill_version
             state.fetch_pending = False
             if not state.retain_spill_copy:
-                state.spill_allocated = False
+                # The copy is dropped; a persistent lease stays held.
                 state.spill_ready = False
-                self.spill_bytes -= state.size_bytes
                 if not state.spill_persistent:
+                    state.spill_allocated = False
+                    self.spill_bytes -= state.size_bytes
                     self.spill_transient_bytes -= state.size_bytes
         else:
             # The copy carries the version it started from. A write that

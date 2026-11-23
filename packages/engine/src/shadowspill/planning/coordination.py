@@ -149,6 +149,7 @@ def _replay(target: Plan, source: Plan, rank: int) -> Plan:
         target.memory_budgets,
         target.communication_info,
         target.pool_memory,
+        target.reserved_spill_bytes,
     )
     source.schedule.validate(ours, source.selections)
     simulation = simulate(

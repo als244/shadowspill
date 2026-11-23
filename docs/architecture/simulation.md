@@ -38,7 +38,8 @@ peaks, and every capacity shortfall the plan waited on.
 
 The spill peak has a transient part. A spill lease is persistent when the
 initial or final residency places its alias in spill or the alias retains its
-spill copy; any other lease is transient. The result reports the peak of
+spill copy, and is held from the schedule's start to its end; any other lease
+is transient. The result reports the peak of
 transient spill and the transient spill still held when the schedule ends.
 Shared residency is persistent. Admission of [Plans run in
 sequence](physical-admission.md) charges persistent spill once and the largest

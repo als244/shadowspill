@@ -66,7 +66,11 @@ def validate_plan(
                 "saved gradient paths disagree on pool or communication evidence"
             )
         costed, config = simulation_inputs(
-            expected, budgets, path.communication_info, path.pool_memory
+            expected,
+            budgets,
+            path.communication_info,
+            path.pool_memory,
+            path.reserved_spill_bytes,
         )
         if costed.digest != path._costed_program.digest:
             raise ValueError("saved Plan costed program differs from its profiles")

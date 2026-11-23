@@ -78,7 +78,8 @@ intervals, transfer intervals, one
 peak, and capacity shortfalls. Caller-provided
 interval, peak, and violation buffers remain caller-owned. A spill lease is
 transient unless the initial or final residency places its alias in spill or
-the alias retains its spill copy.
+the alias retains its spill copy; a persistent lease is held from the
+schedule's start to its end.
 
 A `ShadowSpillTaskInterval` and a `ShadowSpillTransferInterval` both carry
 readiness, start, end and a stall mask; a transfer interval also carries its

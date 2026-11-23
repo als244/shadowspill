@@ -17,7 +17,10 @@ def write(
     plan: Plan, diagnostics: StepDiagnostics, directory: Path, summary: dict[str, Any]
 ) -> None:
     _, config = simulation_inputs(
-        plan.profiled_program, plan.memory_budgets, plan.communication_info
+        plan.profiled_program,
+        plan.memory_budgets,
+        plan.communication_info,
+        reserved_spill_bytes=plan.reserved_spill_bytes,
     )
     assert plan.memory_layout is not None
     selection = {

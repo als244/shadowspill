@@ -17,7 +17,15 @@ def simulation_inputs(
     budgets: MemoryBudgets,
     communication: CommunicationInfo,
     pool_memory: PoolMemoryProfile | None = None,
+    reserved_spill_bytes: int = 0,
 ) -> tuple[ShadowSpillProgram, SimulationConfig]:
+    if (
+        type(reserved_spill_bytes) is not int
+        or not 0 <= reserved_spill_bytes <= budgets.spill_bytes
+    ):
+        raise ValueError(
+            "reserved_spill_bytes must be an int from 0 to the spill budget"
+        )
     program = profiled._costed_ir(communication)
     spec = profiled.program.parallelism
     world_size = 1 if spec is None else spec.world_size
@@ -92,6 +100,6 @@ def simulation_inputs(
     return program, SimulationConfig.single_device(
         program.devices[0].device_id,
         device_capacity_bytes=usable,
-        spill_capacity_bytes=budgets.spill_bytes,
+        spill_capacity_bytes=budgets.spill_bytes - reserved_spill_bytes,
         **rates,
     )

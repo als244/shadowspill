@@ -112,3 +112,40 @@ def test_a_retained_spill_copy_is_persistent():
     assert result.spill_peak_bytes == 400
     assert result.spill_transient_peak_bytes == 300
     assert result.spill_transient_end_bytes == 0
+
+
+def test_a_lease_filled_only_for_the_final_residency_is_held_from_the_start():
+    # The scratch value is back on the device before "gradient" is evicted;
+    # the gradient's lease still counts beside it.
+    result = run(
+        [("gradient", 500, {}), ("scratch", 300, {})],
+        [("gradient", DEVICE), ("scratch", DEVICE)],
+        [
+            ("entry", "scratch", EVICT),
+            ("middle", "scratch", FETCH),
+            ("consumer", "gradient", EVICT),
+        ],
+        [("gradient", SPILL), ("scratch", DEVICE)],
+        reads=("scratch",),
+    )
+    assert result.spill_peak_bytes == 800
+    assert result.spill_transient_peak_bytes == 300
+    assert result.spill_transient_end_bytes == 0
+
+
+def test_a_fetched_persistent_lease_stays_held():
+    # "state" leaves spill before the scratch value arrives; its lease
+    # stays reserved, so the two add up.
+    result = run(
+        [("state", 400, {}), ("scratch", 300, {})],
+        [("state", SPILL), ("scratch", DEVICE)],
+        [
+            ("entry", "state", FETCH),
+            ("middle", "scratch", EVICT),
+            ("consumer", "scratch", FETCH),
+        ],
+        [("state", DEVICE), ("scratch", DEVICE)],
+        reads=("state",),
+    )
+    assert result.spill_peak_bytes == 700
+    assert result.spill_transient_peak_bytes == 300

@@ -28,6 +28,7 @@ from shadowspill.training.preparation.planning.requests import (
     PlanningRequest,
     planning_requests,
 )
+from shadowspill.training.preparation.planning.reservations import spill_reservations
 from shadowspill.training.preparation.planning.sharing import (
     representative_sources,
     representative_use,
@@ -49,7 +50,9 @@ def _measurements(root: str, key: str) -> tuple[ProfiledProgram, CommunicationIn
     )
 
 
-def _search(root: str, settings: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+def _search(
+    root: str, settings: dict[str, Any], row: dict[str, Any], reserved: int = 0
+) -> dict[str, Any]:
     request = PlanningRequest.from_dict(row)
     source, communication = _measurements(root, request.use.template)
     search = replace(
@@ -67,13 +70,23 @@ def _search(root: str, settings: dict[str, Any], row: dict[str, Any]) -> dict[st
         phase(title) as outcome,
     ):
         try:
+            budgets = MemoryBudgets.from_value(settings["budgets"])
+            if reserved > budgets.spill_bytes:
+                raise PlanInfeasibleError(
+                    f"the run's other operations keep {reserved} bytes of "
+                    f"persistent spill; the budget is {budgets.spill_bytes}",
+                    kind="spill_reservation",
+                    required_bytes=reserved,
+                    capacity_bytes=budgets.spill_bytes,
+                )
             program = instantiate_program(request.use, source.program)
             plan = plan_program(
                 apply_profiles(program, source.profiles),
-                memory_budgets=MemoryBudgets.from_value(settings["budgets"]),
+                memory_budgets=budgets,
                 communication_info=communication,
                 search_options=search,
                 ordering=ordering,
+                reserved_spill_bytes=reserved,
             )
         except (PlanInfeasibleError, PlanSearchExhaustedError) as error:
             outcome.rejected = True
@@ -106,15 +119,24 @@ def parallel_search(
     GPU. Caller performs source checks and joint family admission. Workers use
     CPU APIs only; archives bound IPC size and preserve results after failures.
     """
+    planning = planning_requests(inventory)
     requests = {
-        key: PlanningRequest.from_dict(row)
-        for key, row in planning_requests(inventory)["requests"].items()
+        key: PlanningRequest.from_dict(row) for key, row in planning["requests"].items()
     }
     if sources is None:
         sources = {
             key: ProfiledProgram.load(root / "calibrated" / f"{key}.ssp")
             for key in inventory.templates
         }
+    reservations = spill_reservations(
+        requests,
+        planning["candidates"],
+        planning["descriptions"],
+        {
+            key: instantiate_program(request.use, sources[request.use.template].program)
+            for key, request in requests.items()
+        },
+    )
     if communication is None:
         communication = {
             key: CommunicationInfo.load(root / "communication" / f"{key}.ssp")
@@ -128,6 +150,7 @@ def parallel_search(
         communication,
         max_processes=max_processes,
         max_plan_attempts=max_plan_attempts,
+        reservations=reservations,
     )
 
 
@@ -140,10 +163,17 @@ def search_requests(
     *,
     max_processes: int = 8,
     max_plan_attempts: int = 16384,
+    reservations: Mapping[str, int] | None = None,
 ) -> dict[str, SearchResult]:
-    """Run already described requests; no installed workload imports are needed."""
+    """Run already described requests; no installed workload imports are needed.
+
+    ``reservations`` gives each request's spill reservation (see
+    `spill_reservations`); a search shared by several requests takes the
+    largest.
+    """
     representatives = representative_sources(sources, communication=communication)
     aliases, unique = {}, {}
+    reserved: dict[str, int] = {}
     for key, request in requests.items():
         use = representative_use(request.use, representatives)
         canonical = replace(
@@ -155,6 +185,9 @@ def search_requests(
         )
         aliases[key] = canonical.id
         unique[canonical.id] = canonical
+        reserved[canonical.id] = max(
+            reserved.get(canonical.id, 0), (reservations or {}).get(key, 0)
+        )
     if len(unique) > max_plan_attempts:
         raise ValueError(
             f"planning expansion exceeds configured limit {max_plan_attempts}"
@@ -193,7 +226,7 @@ def search_requests(
         max_workers=processes, mp_context=multiprocessing.get_context("spawn")
     ) as pool:
         futures = {
-            pool.submit(_search, str(root), settings, row.to_dict()): key
+            pool.submit(_search, str(root), settings, row.to_dict(), reserved[key]): key
             for key, row in unique.items()
         }
         for completed, future in enumerate(as_completed(futures), 1):

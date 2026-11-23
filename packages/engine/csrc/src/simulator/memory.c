@@ -346,6 +346,32 @@ int shadowspill_initialize_memory(
             state->spill_ready = 1U;
         }
     }
+    /* A persistent lease is held for the whole schedule, so one the schedule
+     * fills only on the way to its final residency is taken now. */
+    for (uint32_t alias = 0; alias < program->alias_count; ++alias) {
+        ShadowSpillAliasState *state = &work->aliases[alias];
+        if (work->alias_spill_persistent[alias] == 0U ||
+            state->spill_allocated != 0U ||
+            program->alias_size_bytes[alias] == 0U) {
+            continue;
+        }
+        state->spill_allocated = 1U;
+        if (shadowspill_add_overflow_u64(
+                work->spill_bytes,
+                shadowspill_alias_spill_bytes(program, alias),
+                &work->spill_bytes
+            )) {
+            shadowspill_set_error(
+                result,
+                SHADOWSPILL_STATUS_INVALID_ARGUMENT,
+                work,
+                SHADOWSPILL_SIMULATOR_NO_INDEX,
+                alias,
+                SHADOWSPILL_SIMULATOR_NO_INDEX
+            );
+            return 0;
+        }
+    }
     if (program->use_admission_accounting != 0U) {
         for (uint32_t device = 0; device < program->device_count; ++device) {
             work->device_physical_bytes[device] =
