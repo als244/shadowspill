@@ -566,8 +566,11 @@ back everything a layout overran overshoots the capacity that would have fit,
 and the plan built below that capacity is materially worse than the one just
 under the line. Stepping costs rounds and buys quality; handing back the whole
 shortfall converges in the fewest rounds, which is what a caller wants when
-planning time matters more than the last of a plan's quality. How much to give
-back is the search's own setting.
+planning time matters more than the last of a plan's quality. Nor does the
+extent always fall at all: one set by a lease that no cut reaches stays where
+it is while capacity goes, so a plan whose round changed nothing gives back
+twice as much the next time, within the same bound. How much to give back is
+the search's own setting.
 
 The shared best-placed record is what keeps this affordable. Placing a plan
 costs far more than simulating one, so a plan whose makespan is already no

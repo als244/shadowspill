@@ -280,6 +280,12 @@ typedef struct CandidateSearch {
      * did not make the extent fall is the last one at this capacity. */
     int layout_moved;
     uint64_t layout_required_before_move;
+    /* The last capacity round: the extent that asked for it, what it gave
+     * back, and whether a fetch move has lowered the extent since. A round
+     * that changed nothing asks for twice as much. */
+    uint64_t refined_required_bytes;
+    uint64_t refined_bytes;
+    int round_progressed;
 
     /* The round in hand: what the last simulation produced. */
     ShadowSpillSimulationResult simulation;

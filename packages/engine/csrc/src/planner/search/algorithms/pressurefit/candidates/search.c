@@ -459,6 +459,13 @@ static StageOutcome search_keep_placed(CandidateSearch *search) {
  * point a 1 GiB reduction moved it 2.2 GB -- so handing back the whole
  * overage can overshoot the capacity that would have fit, which a bounded
  * step avoids at the cost of more rounds.
+ *
+ * Nor does it always fall at all. An extent set by a lease the cuts do not
+ * reach stays where it is while capacity goes, and a plan that gives back
+ * only its overrun then walks down a few MiB a round for thousands of
+ * rounds. A round that changed nothing -- the extent is no lower than the
+ * last round's and no fetch move lowered it since -- therefore gives back
+ * twice what the last round did, within the same bound.
  */
 static StageOutcome search_refine_capacity(
     CandidateSearch *search, uint64_t required_bytes, uint64_t pool_bytes
@@ -466,7 +473,23 @@ static StageOutcome search_refine_capacity(
     CandidateWorkspace *workspace = search->workspace;
     const uint64_t shortfall = required_bytes - pool_bytes;
     const uint64_t step = search->options->capacity_refinement_bytes;
-    const uint64_t overage = (step == 0U || shortfall < step) ? shortfall : step;
+    uint64_t overage = (step == 0U || shortfall < step) ? shortfall : step;
+    if (search->refined_bytes != 0U &&
+        required_bytes >= search->refined_required_bytes &&
+        !search->round_progressed) {
+        uint64_t doubled = search->refined_bytes > UINT64_MAX / 2U
+            ? UINT64_MAX
+            : 2U * search->refined_bytes;
+        if (step != 0U && doubled > step) {
+            doubled = step;
+        }
+        if (doubled > overage) {
+            overage = doubled;
+        }
+    }
+    search->refined_required_bytes = required_bytes;
+    search->refined_bytes = overage;
+    search->round_progressed = 0;
     ++search->diagnostic->capacity_refinements;
     search->plan_capacity_bytes = search->plan_capacity_bytes > overage
         ? search->plan_capacity_bytes - overage
@@ -627,6 +650,9 @@ static StageOutcome search_place(CandidateSearch *search) {
      * other reasons. */
     const int progressed = !search->layout_moved ||
         required_bytes < search->layout_required_before_move;
+    if (search->layout_moved && progressed) {
+        search->round_progressed = 1;
+    }
     search->layout_moved = 0;
     if (progressed &&
         shadowspill_candidate_may_repair_again(search->options, search->diagnostic)) {

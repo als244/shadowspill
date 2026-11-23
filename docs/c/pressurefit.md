@@ -27,9 +27,11 @@ define both overlap windows and the unclamped signed slack; neither the score
 nor the ranking is a configurable search axis.
 
 `ShadowSpillPressureFitOptions` selects residency strategies, fetch rules,
-repair limit, how much capacity a plan
+repair limit, the most capacity a plan
 gives back at a time when its layout does not fit
-(`capacity_refinement_bytes`, zero for the whole shortfall), whether each
+(`capacity_refinement_bytes`, zero to give back the whole shortfall; a round
+that changed nothing gives back twice what the last did, within that bound),
+whether each
 candidate records its reduction trajectory (`record_reduction_steps`), how many
 threads the call searches on (`workers`, zero for one per logical CPU and one
 for the calling thread), whether the placement gate consults the shared record

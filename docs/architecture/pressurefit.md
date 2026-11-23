@@ -560,6 +560,13 @@ o,& q=0.
 \end{cases}
 $$
 
+A round that changed nothing gives back more. When the extent is no lower
+than at the previous round and no fetch delay has lowered it since, the
+give-back is $\max(\delta,\min(2\delta',q))$ for the previous round's
+give-back $\delta'$, or $\max(\delta,2\delta')$ when $q=0$. An extent set by a
+lease that cuts do not reach stays put while capacity falls; giving back only
+the overrun would then walk the capacity down a few MiB per round.
+
 The candidate reduces its recorded planning capacity by $\delta$, adds
 $\delta$ to every boundary's extra pressure, clears the fetch constraints,
 and reduces again. This is a

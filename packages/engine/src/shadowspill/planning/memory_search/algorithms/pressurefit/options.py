@@ -64,9 +64,12 @@ class PressureFitOptions(OptionRecord):
         Repairs one candidate may make before it answers with the best plan
         it reached. At least zero and below 2**32.
     capacity_refinement_bytes : int, default 268435456
-        Capacity a candidate gives back per round when its layout does not
-        fit the pool, in bytes (256 MiB by default). Zero gives back the
-        whole shortfall at once. At least zero and below 2**64.
+        The most capacity a candidate gives back per round when its layout
+        does not fit the pool, in bytes (256 MiB by default). A round gives
+        back its overrun, or twice what the last round gave back when that
+        round changed nothing, up to this bound. Zero removes the bound, so
+        a round gives back at least the whole shortfall. At least zero and
+        below 2**64.
     record_reduction_steps : bool, default False
         Record every plan each candidate held, as `CandidateDiagnostic.steps`.
 
@@ -116,7 +119,9 @@ class PressureFitOptions(OptionRecord):
     #: fit and plans against a worse one. Stepping instead costs rounds and
     #: buys quality; zero hands back the whole shortfall, which converges in
     #: the fewest rounds and is the setting to reach for when planning time
-    #: matters more than plan quality.
+    #: matters more than plan quality. A round that changed nothing hands
+    #: back twice what the last did, within this bound, so an extent the cuts
+    #: do not reach costs a few rounds rather than one per overrun.
     capacity_refinement_bytes: int = 256 * 1024 * 1024
     #: Record what each candidate's search actually did: one step per plan it
     #: held, with the objects the reducer cut to reach it and what became of
