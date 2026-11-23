@@ -149,6 +149,17 @@ def test_job_saved_record_rejects_unknown_fields_and_versions(prepared):
             job.PreparationJob.from_dict({**value, **change})
 
 
+def test_job_keeps_its_host_limit_and_refuses_a_negative_one(prepared):
+    bundle, _, _ = prepared
+    packages = ("external-classifier-fixture",)
+    limited = job.PreparationJob(packages, bundle.config, 5 << 30)
+    assert job.PreparationJob.from_dict(limited.to_dict()) == limited
+    assert job.PreparationJob(packages, bundle.config).host_limit_bytes is None
+    for bad in (-1, 1.5):
+        with pytest.raises(ValueError, match="host_limit_bytes"):
+            job.PreparationJob(packages, bundle.config, bad)
+
+
 def test_job_and_cpu_planning_entry_import_without_frameworks():
     code = """
 import sys

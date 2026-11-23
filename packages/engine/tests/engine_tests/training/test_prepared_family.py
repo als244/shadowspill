@@ -139,6 +139,28 @@ def test_joint_selection_keeps_every_capability_and_rejects_only_optional_altern
         actual.plans[0]["unadmitted"] = plans[0]["fast"]
 
 
+def test_selection_refuses_a_plan_set_the_node_cannot_host(monkeypatch):
+    prepared, rows, plans = choices()
+    for name, plan in plans[0].items():
+        plans[0][name] = SimpleNamespace(
+            retained=plan.retained,
+            memory_budgets=SimpleNamespace(spill_bytes=100),
+            _accumulation_plan=None,
+        )
+    monkeypatch.setattr(family_selection, "shared_memory", bounded_shared)
+    monkeypatch.setattr(family_selection._HostDemand, "_trace", lambda self, plan: 4)
+    # The chosen set's pool is 6 bytes x 1.05, rounded up, beside a 4-byte trace.
+    admitted = select_family(
+        prepared, rows, plans, [], max_family_attempts=10, host_limit_bytes=11
+    )
+    assert admitted.memory[0].spill_bytes == 6
+    with pytest.raises(PlanInfeasibleError, match="host memory") as caught:
+        select_family(
+            prepared, rows, plans, [], max_family_attempts=10, host_limit_bytes=10
+        )
+    assert "the node leaves" in str(caught.value)
+
+
 def test_family_search_limits_and_unknown_candidate_results_are_not_infeasibility(
     monkeypatch,
 ):

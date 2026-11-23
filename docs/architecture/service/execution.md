@@ -10,7 +10,10 @@ state machine and [durable result semantics](../service-records.md).
    against the service's own node. Automatic selection uses equivalent devices;
    a selection that mixes GPU types is refused.
 2. Unless the client supplied saved Plans, run the preparation phases on the
-   selected devices.
+   selected devices. Plan-set selection refuses a set whose spill pools and
+   trace budgets need more host memory than the node leaves beside the
+   service, the run's arena and the workers' fixed allowances; supplied Plans
+   are checked the same way.
 3. Reserve every worker's device and host capacity, and its startup files and
    logs, before launching any child. Resources without confirmed cleanup stay
    unavailable.

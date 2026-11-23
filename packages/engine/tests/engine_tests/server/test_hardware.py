@@ -167,8 +167,8 @@ def test_automatic_budgets_are_sized_on_the_selected_workers_and_recorded(
     tmp_path, monkeypatch
 ):
     # 90% of a 4 GiB GPU, and of the 16 GiB node's share for each of its two
-    # GPUs, in whole MiB.
-    sized = Memory(device_gib=3686 / 1024, spill_gib=7372 / 1024)
+    # GPUs after what the run holds there beside its spill pools, in whole MiB.
+    sized = Memory(device_gib=3686 / 1024, spill_gib=6148 / 1024)
     requested = {}
 
     def change(config):
@@ -202,7 +202,7 @@ def test_automatic_budgets_are_sized_on_the_selected_workers_and_recorded(
         automatic = replace(requested["config"], memory=Memory(0, 0))
         preview = client.describe_training(config=automatic).result(5)
         assert preview.config == ctx.config
-        assert "3.59961 GiB device, 7.19922 GiB spill" in preview.summary()
+        assert "3.59961 GiB device, 6.00391 GiB spill" in preview.summary()
         # A set budget is kept.
         partial = client.describe_training(
             config=replace(requested["config"], memory=Memory(2, 0))
@@ -240,6 +240,12 @@ def test_an_automatic_budget_takes_the_smallest_workers_share():
     resolved = resolve_memory(Memory(device_gib=1, spill_gib=0), workers, inventory)
     # The small node's 2 GiB per GPU, not the large node's 32 GiB.
     assert resolved == Memory(device_gib=1, spill_gib=1843 / 1024)
+    # What the run holds on the small node beside its spill pools comes out
+    # first: (8 - 4) GiB over 4 GPUs, 90% of it.
+    reserved = resolve_memory(
+        Memory(device_gib=1, spill_gib=0), workers, inventory, {"small": 4 << 30}
+    )
+    assert reserved == Memory(device_gib=1, spill_gib=921 / 1024)
     with pytest.raises(ValueError, match="no memory for a spill budget"):
         resolve_memory(
             Memory(device_gib=1, spill_gib=0),

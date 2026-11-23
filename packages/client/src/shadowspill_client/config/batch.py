@@ -45,8 +45,9 @@ class Memory(Record):
     A budget of zero is automatic: the service sizes it when it describes the
     run, and the resolved settings hold the size. An automatic budget is 90%
     of the worker's share of the memory: its GPU's memory for ``device_gib``,
-    and its node's host memory divided evenly among the node's GPUs for
-    ``spill_gib``.
+    and for ``spill_gib`` its node's host memory, less what the service and
+    the run's workers hold there besides their spill pools, divided evenly
+    among the node's GPUs.
 
     Parameters
     ----------

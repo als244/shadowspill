@@ -24,11 +24,11 @@ from shadowspill.server.startup.memory import (
 from shadowspill.server.startup.model_sources import local_model_source
 from shadowspill.server.storage import ServiceStorage
 from shadowspill.training.components import load_registry
-from shadowspill.training.preparation.setup import resolve_training
+from shadowspill.training.preparation.setup import ResolvedSetup, resolve_training
 from shadowspill.training.worker.resources import WorkerHost
 from shadowspill_client._records import integer, names, number, text
 from shadowspill_client.buffers import BufferBudget
-from shadowspill_client.protocol.hardware import HardwareInventory
+from shadowspill_client.protocol.hardware import HardwareInventory, WorkerPlacement
 from shadowspill_client.protocol.preview import TrainingDescription, TrainingPreview
 from shadowspill_client.protocol.runs import RunInfo
 from shadowspill_client.protocol.training import Origin
@@ -174,6 +174,25 @@ class LocalCreationFactory:
             )
         return HardwareInventory((local, *remote) if local.devices else remote)
 
+    def _reserved_host(
+        self, setup: ResolvedSetup, workers: Sequence[WorkerPlacement]
+    ) -> dict[str, int]:
+        """Host memory the run holds on each node beside its spill pools."""
+        from .creation import reserved_host_bytes
+
+        ranks: dict[str, int] = {}
+        for worker in workers:
+            ranks[worker.node] = ranks.get(worker.node, 0) + 1
+        return {
+            node: reserved_host_bytes(
+                self.limits,
+                self.base_host_bytes,
+                setup.config.execution.max_staging_bytes,
+                count,
+            )
+            for node, count in ranks.items()
+        }
+
     def startable(self) -> HardwareInventory:
         """The hardware a run can start on: this service's own node.
 
@@ -217,7 +236,12 @@ class LocalCreationFactory:
                 preview,
                 config=replace(
                     preview.config,
-                    memory=resolve_memory(memory, selection.workers, inventory),
+                    memory=resolve_memory(
+                        memory,
+                        selection.workers,
+                        inventory,
+                        self._reserved_host(setup, selection.workers),
+                    ),
                     origins={**preview.config.origins, **sized},
                 ),
             )

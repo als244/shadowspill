@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from shadowspill_client.config import Memory
 from shadowspill_client.protocol.hardware import HardwareInventory, WorkerPlacement
@@ -25,12 +25,15 @@ def resolve_memory(
     memory: Memory,
     workers: Sequence[WorkerPlacement],
     inventory: HardwareInventory,
+    reserved_host_bytes: Mapping[str, int] | None = None,
 ) -> Memory:
     """Replace each automatic budget with its size on the selected workers.
 
     A worker's device share is its GPU's memory; its spill share is its node's
-    host memory divided evenly among the node's GPUs. One budget applies to
-    every worker, so each automatic budget takes the smallest worker's share.
+    host memory, less what ``reserved_host_bytes`` holds there for the run
+    beside the spill pools (by node ID), divided evenly among the node's GPUs.
+    One budget applies to every worker, so each automatic budget takes the
+    smallest worker's share.
     """
     if not automatic(memory):
         return memory
@@ -42,7 +45,12 @@ def resolve_memory(
     )
     spill = memory.spill_gib or _share(
         min(
-            nodes[worker.node].host_capacity_bytes // len(nodes[worker.node].devices)
+            max(
+                0,
+                nodes[worker.node].host_capacity_bytes
+                - (reserved_host_bytes or {}).get(worker.node, 0),
+            )
+            // len(nodes[worker.node].devices)
             for worker in workers
         ),
         "spill",

@@ -28,7 +28,12 @@ from shadowspill.training.preparation.phases.artifacts import (
     program_at,
     reused,
 )
-from shadowspill.training.preparation.phases.job import BUNDLE_NAME, load_job
+from shadowspill.training.preparation.phases.job import (
+    BUNDLE_NAME,
+    JOB_NAME,
+    PreparationJob,
+    load_job,
+)
 from shadowspill.training.preparation.phases.progress import (
     candidate_title,
     describe_candidate,
@@ -219,6 +224,7 @@ def plan(directory: str | Path) -> None:
             communication,
             prior_rejections=rejected,
             search_results=searched,
+            host_limit_bytes=PreparationJob.load(root / JOB_NAME).host_limit_bytes,
         )
     with phase("Assemble prepared Plan family"):
         bundle = TrainingBundle.from_prepared(family, measured)

@@ -53,6 +53,7 @@ from shadowspill.training.preparation.phases.job import (
     prepare_job,
 )
 from shadowspill.training.preparation.planning.records import PreparedPlans
+from shadowspill.training.preparation.planning.selection import require_host_memory
 from shadowspill.training.preparation.setup import ResolvedSetup, resolve_training
 from shadowspill.training.session.checkpoint import ResolvedCheckpoint
 from shadowspill.training.worker.node import WorkerNode
@@ -70,7 +71,7 @@ from .publication import preparation_files, publish_file, publish_metadata
 from .workers import resolve_workers, select_devices
 
 if TYPE_CHECKING:
-    from .configuration import LocalCreationFactory
+    from .configuration import LocalCreationFactory, LocalCreationLimits
 
 
 class LocalCreation:
@@ -211,7 +212,7 @@ class LocalCreation:
             root = Path(self._directory.name)
             rebound = False
             if creation.plans is None:
-                prepared = self._prepare(creation, devices, root)
+                prepared = self._prepare(creation, devices, root, capture)
                 if prepared is None:
                     return
                 bundle, plans = prepared
@@ -223,6 +224,13 @@ class LocalCreation:
             self._active()
             with phase("Validate Plan sources, layouts and memory"):
                 family = bundle.recheck(registry)
+                if creation.plans is not None:
+                    # Prepared here, selection already held the set to this.
+                    require_host_memory(
+                        family.plans,
+                        family.memory,
+                        self._plan_host_limit(creation, len(devices), capture),
+                    )
             if rebound:
                 # Replace only this run's downloaded copy. Publish a new immutable
                 # bundle so worker preflight and later resume see the new source.
@@ -273,8 +281,31 @@ class LocalCreation:
             self._startup_log.finish()
             self._starting.release()
 
+    def _plan_host_limit(
+        self, creation: TrainingCreation, ranks: int, capture: NsysCapture | None
+    ) -> int:
+        """The host memory a run's Plans may decide on this node.
+
+        That is the node's capacity less the service, the run's arena, and each
+        worker's fixed allowances: what is left for the workers' spill pools
+        and trace budgets, and their staging, which only worker start knows and
+        checks.
+        """
+        factory, limits = self._factory, self._factory.limits
+        fixed = reserved_host_bytes(
+            limits,
+            factory.base_host_bytes,
+            creation.config.execution.max_staging_bytes,
+            ranks,
+        ) + (0 if capture is None else ranks * limits.nsys.host_bytes)
+        return max(0, factory.node.capacity.host_bytes - fixed)
+
     def _prepare(
-        self, creation: TrainingCreation, devices: tuple[str, ...], root: Path
+        self,
+        creation: TrainingCreation,
+        devices: tuple[str, ...],
+        root: Path,
+        capture: NsysCapture | None,
     ) -> tuple[TrainingBundle, ArtifactRef] | None:
         """Run the existing phases and retire their owners before worker startup.
 
@@ -344,6 +375,7 @@ class LocalCreation:
             config=creation.config,
             environment=factory.environment,
             launch=self._phases,
+            host_limit_bytes=self._plan_host_limit(creation, ranks, capture),
         )
         with phase("Publish prepared Plans and measurements"):
             self._check_files()
@@ -468,15 +500,8 @@ class LocalCreation:
         factory, limits = self._factory, self._factory.limits
         execution = creation.config.execution
         ranks = len(devices)
-        command_bytes = 16 * (1 << 20) * ranks
-        # Launch descriptors remain owned until worker exit. Keep their bound
-        # separate from the configured streaming scratch, especially at DP8+.
-        transfer_bytes = limits.transfer_bytes + startup_metadata_bytes(ranks)
-        arena_bytes = (
-            transfer_bytes
-            + limits.publication_bytes
-            + command_bytes
-            + execution.max_staging_bytes
+        command_bytes, transfer_bytes, arena_bytes = _arena(
+            limits, execution.max_staging_bytes, ranks
         )
         workers = resolve_workers(
             family,
@@ -748,6 +773,37 @@ class LocalCreation:
                 self._pin.__exit__(None, None, None)
                 self._pin, self._artifacts = None, None
             self.closed = True
+
+
+def reserved_host_bytes(
+    limits: LocalCreationLimits, base_host_bytes: int, staging_bytes: int, ranks: int
+) -> int:
+    """Host memory a run holds on its node that no Plan decides, in bytes.
+
+    The service's own memory, the run's arena, and each worker's fixed
+    allowances; each worker's spill pool, staging and trace budget come on
+    top.
+    """
+    return (
+        base_host_bytes
+        + _arena(limits, staging_bytes, ranks)[2]
+        + ranks * limits.worker.fixed_bytes()
+    )
+
+
+def _arena(
+    limits: LocalCreationLimits, staging_bytes: int, ranks: int
+) -> tuple[int, int, int]:
+    """A run's command buffers, transfer scratch and whole arena, in bytes."""
+    command = 16 * (1 << 20) * ranks
+    # Launch descriptors remain owned until worker exit. Keep their bound
+    # separate from the configured streaming scratch, especially at DP8+.
+    transfer = limits.transfer_bytes + startup_metadata_bytes(ranks)
+    return (
+        command,
+        transfer,
+        transfer + limits.publication_bytes + command + staging_bytes,
+    )
 
 
 def _gib(size: int) -> str:

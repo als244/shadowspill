@@ -58,6 +58,7 @@ def plan_family(
     prior_rejections: Sequence[PlanRejection] = (),
     search_results: Mapping[str, Plan | PlanInfeasibleError | PlanSearchExhaustedError]
     | None = None,
+    host_limit_bytes: int | None = None,
 ) -> PreparedPlans:
     """Admit all requested capabilities, preserving coverage after known failures.
 
@@ -291,6 +292,7 @@ def plan_family(
             plans,
             rejected,
             max_family_attempts=max_family_attempts,
+            host_limit_bytes=host_limit_bytes,
         )
         event(
             f"Retained {sum(map(len, prepared.families.values()))} layout/orderings, "

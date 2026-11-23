@@ -44,18 +44,28 @@ def _job_lock(root: Path) -> Iterator[None]:
 
 @dataclass(frozen=True)
 class PreparationJob(Artifact):
-    """Server-owned configuration; package names never come from compute requests."""
+    """Server-owned configuration; package names never come from compute requests.
+
+    ``host_limit_bytes``, when given, is the host memory the run's workers may
+    spend on what their Plans decide (each rank's spill pool and trace
+    budget); Plan-set selection refuses a set that needs more.
+    """
 
     artifact_kind: ClassVar[str] = "preparation_job"
     metadata_limit_bytes: ClassVar[int | None] = 16 << 20
     payload_limit_bytes: ClassVar[int | None] = 0
     packages: tuple[str, ...]
     config: ResolvedTraining
+    host_limit_bytes: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "packages", names(self.packages, "component packages"))
         if not isinstance(self.config, ResolvedTraining):
             raise TypeError("preparation job requires a resolved training setup")
+        if self.host_limit_bytes is not None and (
+            type(self.host_limit_bytes) is not int or self.host_limit_bytes < 0
+        ):
+            raise ValueError("host_limit_bytes must be a nonnegative int or None")
 
     def resolve(self) -> tuple[Registry, TemplateInventory]:
         registry = load_registry(self.packages)
@@ -67,6 +77,7 @@ class PreparationJob(Artifact):
             "version": 1,
             "packages": list(self.packages),
             "config": self.config.to_dict(),
+            "host_limit_bytes": self.host_limit_bytes,
         }
 
     @classmethod
@@ -75,12 +86,16 @@ class PreparationJob(Artifact):
     ) -> PreparationJob:
         if (
             payloads
-            or set(value) != {"version", "packages", "config"}
+            or set(value) != {"version", "packages", "config", "host_limit_bytes"}
             or type(value["version"]) is not int
             or value["version"] != 1
         ):
             raise ValueError("unsupported preparation job")
-        return cls(value["packages"], ResolvedTraining.from_dict(value["config"]))
+        return cls(
+            value["packages"],
+            ResolvedTraining.from_dict(value["config"]),
+            value["host_limit_bytes"],
+        )
 
 
 def prepare_job(
@@ -90,10 +105,13 @@ def prepare_job(
     config: ResolvedTraining,
     environment: Mapping[str, str] | None = None,
     launch: Callable[[PhaseInvocation], PhaseResult] | None = None,
+    host_limit_bytes: int | None = None,
 ) -> TrainingBundle:
     """Prepare on assigned workers, or load this job's completed bundle.
 
     The caller owns allocation admission, launch environment and the directory.
+    ``host_limit_bytes`` bounds the host memory the selected Plans decide (see
+    `PreparationJob`).
     This launches no training loop or persistent Executor and initializes no weights.
     Loading verifies archive integrity and the exact job configuration. The service
     calls ``bundle.recheck`` once at execution admission, for fresh and saved Plans.
@@ -105,6 +123,7 @@ def prepare_job(
         environment=environment,
         launch=launch,
         phases=("build", "profile", "communicate", "plan"),
+        host_limit_bytes=host_limit_bytes,
     ) as (root, _):
         bundle = TrainingBundle.load(root / BUNDLE_NAME)
         if bundle.config != config:
@@ -146,6 +165,7 @@ def _run_job(
     environment: Mapping[str, str] | None,
     launch: Callable[[PhaseInvocation], PhaseResult] | None,
     phases: tuple[str, ...],
+    host_limit_bytes: int | None = None,
 ) -> Iterator[tuple[Path, Registry]]:
     from shadowspill.training.preparation.artifacts.measurement_reuse import (
         require_staged_reuse,
@@ -153,7 +173,7 @@ def _run_job(
 
     root = Path(directory).resolve()
     require_staged_reuse(root, config)
-    requested = PreparationJob(tuple(packages), config)
+    requested = PreparationJob(tuple(packages), config, host_limit_bytes)
     registry, inventory = requested.resolve()
     created = False
     try:

@@ -12,6 +12,7 @@ from typing import Literal, cast
 from shadowspill.artifacts.plan import Plan
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.planning.shared import SharedMemory, shared_memory
+from shadowspill.planning.spill import spill_configuration
 from shadowspill.training.preparation.capture.templates import TemplateInventory
 from shadowspill.training.preparation.planning.identity import execution_names
 from shadowspill.training.preparation.planning.records import (
@@ -39,6 +40,67 @@ def certificate(
             Literal["independent", "grouped"], setup.model.component.batching
         ),
     )
+
+
+class _HostDemand:
+    """The host memory a Plan set decides, as its workers reserve it.
+
+    Each rank reserves its spill pool, sized from its joint spill, and the
+    largest trace budget among its Plans; a Plan's trace budget is computed
+    once.
+    """
+
+    def __init__(self, limit: int | None) -> None:
+        self.limit = limit
+        self._traces: dict[int, int] = {}
+
+    def _trace(self, plan: Plan) -> int:
+        from shadowspill.training.worker.trace_files import plan_trace_budget
+
+        key = id(plan)
+        if key not in self._traces:
+            self._traces[key] = plan_trace_budget(plan).host_bytes
+        return self._traces[key]
+
+    def require(
+        self,
+        plans: Mapping[int, Mapping[str, Plan]],
+        memory: Mapping[int, SharedMemory],
+    ) -> None:
+        if self.limit is None:
+            return
+        pools = traces = 0
+        for rank, members in plans.items():
+            first = next(iter(members.values()))
+            pools += spill_configuration(
+                memory[rank].spill_bytes, first.memory_budgets.spill_bytes, None
+            ).capacity
+            traces += max(
+                self._trace(path)
+                for plan in members.values()
+                for path in (plan, plan._accumulation_plan)
+                if path is not None
+            )
+        if pools + traces > self.limit:
+            gib = 1 << 30
+            raise PlanInfeasibleError(
+                f"the Plans need {(pools + traces) / gib:.2f} GiB of host memory "
+                f"across {len(plans)} workers ({pools / gib:.2f} GiB of spill "
+                f"pools, {traces / gib:.2f} GiB of trace budgets); the node "
+                f"leaves {self.limit / gib:.2f} GiB for them",
+                kind="prepared_host_memory",
+                required_bytes=pools + traces,
+                capacity_bytes=self.limit,
+            )
+
+
+def require_host_memory(
+    plans: Mapping[int, Mapping[str, Plan]],
+    memory: Mapping[int, SharedMemory],
+    limit: int | None,
+) -> None:
+    """Refuse a Plan set whose spill pools and trace budgets exceed ``limit``."""
+    _HostDemand(limit).require(plans, memory)
 
 
 def joint_memory(
@@ -112,6 +174,7 @@ def select_family(
     rejected: Sequence[PlanRejection],
     *,
     max_family_attempts: int,
+    host_limit_bytes: int | None = None,
 ) -> PreparedPlans:
     """No partial result: every operation/explicit batch retains a candidate.
 
@@ -120,6 +183,7 @@ def select_family(
     Unexpected shared-state/schema failures propagate rather than pruning work.
     """
     candidates, plans = _execution_family(candidates, plans)
+    host = _HostDemand(host_limit_bytes)
     setup = inventory.layouts.setup
     ordered = sorted(candidates, key=lambda c: (c.duration_seconds, c.id))
     requirements = [
@@ -166,6 +230,7 @@ def select_family(
         attempts += 1
         try:
             selected_plans, memory = joint_memory(combination, plans)
+            host.require(selected_plans, memory)
         except PlanInfeasibleError as error:
             last_error = error
             continue
@@ -202,6 +267,7 @@ def select_family(
             continue
         try:
             additional, admitted = joint_memory([*selected, candidate], plans)
+            host.require(additional, admitted)
         except PlanInfeasibleError as error:
             decisions.append(rejection(candidate, error, stage="joint_memory"))
             continue

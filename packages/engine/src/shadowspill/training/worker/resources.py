@@ -70,13 +70,26 @@ class WorkerHost:
         if not isinstance(startup, WorkerStartup):
             raise TypeError("worker accounting requires validated startup evidence")
         # Input, initialization and output copies execute serially and share the
-        # admitted staging maximum. Command decoding can coexist with it. Log
-        # drains belong to the parent, but still consume node memory per child.
+        # admitted staging maximum.
         return (
             startup.spill_bytes
             + startup.staging_bytes
             + startup.diagnostics_bytes
-            + self.process_bytes
+            + self.fixed_bytes()
+        )
+
+    def fixed_bytes(self) -> int:
+        """Return the part of a worker's host peak that no Plan decides.
+
+        Returns
+        -------
+        int
+            In bytes: this allowance, and fixed command and log buffers.
+        """
+        # Command decoding can coexist with staging. Log drains belong to the
+        # parent, but still consume node memory per child.
+        return (
+            self.process_bytes
             + self.artifact_bytes
             + 8 * MAX_METADATA_BYTES
             + 2 * (64 << 10)

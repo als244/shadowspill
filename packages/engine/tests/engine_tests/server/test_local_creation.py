@@ -151,10 +151,10 @@ def configured(
         },
     )
 
-    def prepare(root, *, packages, config, environment, launch):
+    def prepare(root, *, packages, config, environment, launch, host_limit_bytes):
         assert not saved
         root.mkdir()
-        PreparationJob(tuple(packages), config).save(root / JOB_NAME)
+        PreparationJob(tuple(packages), config, host_limit_bytes).save(root / JOB_NAME)
         for phase in ("build", "profile", "communicate", "plan"):
             assert not node.used.devices
             phases.append(phase)
