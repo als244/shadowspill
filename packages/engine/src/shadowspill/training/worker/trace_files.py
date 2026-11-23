@@ -52,8 +52,8 @@ def plan_trace_budget(plan: Plan) -> TraceBudget:
     The service sizes the existing bounded rings from the actual selected tasks,
     with a floor of 1,024 records. Overflow remains explicit in the existing trace
     format. Direct Executor callers retain their ordinary default capacity.
-    Python/backend overhead is a conservative deployment allowance, qualified
-    alongside WorkerHost; it is not a universal allocator peak proof.
+    The host and file budgets follow what a trace holds: its rows, its task and
+    transfer records and its report, each with a margin over measured use.
     """
     tasks = tuple(plan._costed_program.selected_tasks(plan.selections))
     keys = {task.task_id: task.profile_id for task in plan.program.tasks}
@@ -83,25 +83,37 @@ def plan_trace_budget(plan: Plan) -> TraceBudget:
     world = (
         1 if plan.program.parallelism is None else plan.program.parallelism.world_size
     )
-    # Covers structured task/transfer dictionaries, collective and host-copy
-    # rows, string escaping, and bounded invocation association metadata.
-    metadata = (
-        (64 << 10)
-        + (len(tasks) + len(plan.schedule.actions)) * (16 << 10)
-        + 32 * labels
-        + capacities.events * (4096 + 32 * world)
-    )
     raw = capacities.events * ctypes.sizeof(
         TraceEvent
     ) + capacities.allocation_events * ctypes.sizeof(AllocationEvent)
-    # The uncompressed column archive is smaller than the ABI rows; include
-    # ZIP/NPY headers. Runtime rings, copied rows, NumPy column scratch, Python
-    # projections and encoder chunks can coexist before publication completes.
-    # Two occupancy views retain sampled memory rows, labels and one bounded HTML
-    # buffer. A rendering failure preserves the original diagnostic archive.
-    report_bytes = 2 * metadata + (4 << 20)
-    file_bytes = metadata + raw + report_bytes + (1 << 20)
-    host_bytes = 16 * metadata + 4 * raw + (64 << 20)
+    # Each term is about 2.5 times what it pays for, measured on saved Plans.
+    # The task and transfer records grow with tasks and actions, not events.
+    records = (len(tasks) + len(plan.schedule.actions)) * (4 << 10) + labels
+    # The report renders the program, its objects, alias groups and schedule.
+    report_items = (
+        len(plan.program.tasks)
+        + len(plan._costed_program.objects)
+        + len(plan.program.alias_groups)
+        + len(plan.schedule.actions)
+    )
+    report_bytes = report_items * (4 << 10) + (4 << 20)
+    file_bytes = (
+        raw
+        + (len(tasks) + len(plan.schedule.actions)) * (2 << 10)
+        + report_bytes
+        + (1 << 20)
+    )
+    # The rows exist up to three times while read out (the runtime's rings,
+    # their copy and the packed bytes); read-out validation takes 16 bytes an
+    # event; a multi-worker trace keeps 8 more per event for its collectives;
+    # 64 MiB covers the archive's buffered column writes and the encoders.
+    host_bytes = (
+        3 * raw
+        + capacities.events * (16 + (8 if world > 1 else 0))
+        + records
+        + report_bytes
+        + (64 << 20)
+    )
     return TraceBudget(capacities, host_bytes, file_bytes, report_bytes)
 
 
