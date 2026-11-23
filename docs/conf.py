@@ -202,7 +202,7 @@ html_theme_options = {
 def _skip_dataclass_fields(app, what, name, obj, skip, options):
     """Hide a dataclass field's own entry: its Parameters entry documents it."""
     owner = getattr(app.env, "temp_data", {}).get("autodoc:class")
-    return True if name in _fields.get(owner, ()) else None
+    return True if name in _field_names(app.env, owner) else None
 
 
 def _is_enum(obj):
@@ -324,7 +324,8 @@ def _record(app, what, name, obj, options, lines):
     value's type; an enum has no constructor arguments to document.
     """
     if what in ("class", "exception") and dataclasses.is_dataclass(obj):
-        _fields[name.rsplit(".", 1)[-1]] = {f.name for f in dataclasses.fields(obj)}
+        found = _fields(app.env).setdefault(app.env.docname, {})
+        found[name.rsplit(".", 1)[-1]] = {f.name for f in dataclasses.fields(obj)}
     if what in ("data", "type", "attribute") or _is_enum(obj):
         names = app.config.numpydoc_validation_excluder
         exact = rf"^{re.escape(name)}$"
@@ -333,7 +334,27 @@ def _record(app, what, name, obj, options, lines):
         )
 
 
-_fields: dict[str, set[str]] = {}
+def _fields(env):
+    """Each documented dataclass's field names, by document and class name.
+
+    The build environment holds them, so a parallel build merges each reading
+    process's names back before references are resolved.
+    """
+    if not hasattr(env, "dataclass_fields"):
+        env.dataclass_fields = {}
+    return env.dataclass_fields
+
+
+def _field_names(env, owner):
+    return set().union(*(found.get(owner, ()) for found in _fields(env).values()))
+
+
+def _purge_fields(app, env, docname):
+    _fields(env).pop(docname, None)
+
+
+def _merge_fields(app, env, docnames, other):
+    _fields(env).update({d: f for d, f in _fields(other).items() if d in docnames})
 
 
 def _unique(objects, target, package=None):
@@ -366,7 +387,7 @@ def _resolve_short_name(app, env, node, contnode):
     found = None
     # A field is tried first: its bare name may be another object's member.
     owner = parts[-2] if len(parts) > 1 else node.get("py:class")
-    if owner and parts[-1] in _fields.get(owner.split(".")[-1], ()):
+    if owner and parts[-1] in _field_names(env, owner.split(".")[-1]):
         found = _unique(
             objects, ".".join(parts[:-1]) if len(parts) > 1 else owner, package
         )
@@ -387,6 +408,8 @@ def _resolve_short_name(app, env, node, contnode):
 
 def setup(app):
     app.connect("missing-reference", _resolve_short_name)
+    app.connect("env-purge-doc", _purge_fields)
+    app.connect("env-merge-info", _merge_fields)
     # Before numpydoc validates a docstring or reads a signature.
     app.connect("autodoc-process-docstring", _record, priority=400)
     app.connect("autodoc-process-signature", _no_data_signature, priority=400)
