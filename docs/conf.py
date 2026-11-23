@@ -7,6 +7,7 @@ Build it with ``sphinx-build -W -b html docs docs/_build/html``.
 import ast
 import dataclasses
 import enum
+import importlib
 import inspect
 import re
 import sys
@@ -406,8 +407,31 @@ def _resolve_short_name(app, env, node, contnode):
     )
 
 
+def _source_module(app, modname, attribute):
+    """Find an object's source in the package module that defines it.
+
+    The source viewer follows an object to its ``__module__``. A property's,
+    constant's or type alias's is its value's type's (``builtins``,
+    ``functools``, ``typing``), which holds no source for it, so it stays with
+    the module that documents it, where a property's source is found.
+    """
+    try:
+        value = importlib.import_module(modname)
+        for part in attribute.split("."):
+            value = getattr(value, part)
+    except Exception:
+        return None
+    found = getattr(value, "__module__", None)
+    ours = isinstance(found, str) and found.split(".")[0] in (
+        "shadowspill",
+        "shadowspill_client",
+    )
+    return found if ours else modname
+
+
 def setup(app):
     app.connect("missing-reference", _resolve_short_name)
+    app.connect("viewcode-follow-imported", _source_module)
     app.connect("env-purge-doc", _purge_fields)
     app.connect("env-merge-info", _merge_fields)
     # Before numpydoc validates a docstring or reads a signature.
