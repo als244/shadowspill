@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 3U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 1U
 
 /* Independent calibration session using real pool kinds/lanes. Does not install
  * the allocator or bind the process-global Runtime. The session owns bounded
@@ -57,11 +57,9 @@ SHADOWSPILL_PYTORCH_API ShadowSpillStatus shadowspill_pytorch_spill_probe_measur
 );
 SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_spill_probe_destroy(void *handle);
 
-/* Two id ranges for work that is not a planned task: allocation scope ids
-   at or above the profiling scope base, and action-batch task ids at or
-   above the initial-actions id. The failure report decodes both. */
+/* The id range for work that is not a planned task: allocation scope ids at
+   or above the profiling scope base, which the failure report decodes. */
 #define SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE (UINT64_C(1) << 62)
-#define SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID (UINT64_C(1) << 60)
 
 /* ------------------------------------------------------------------------
  * Vocabulary and descriptions
@@ -108,8 +106,6 @@ typedef struct ShadowSpillPytorchAdapterConfig {
     const ShadowSpillPytorchRouteConfig *routes;
     uint32_t route_count;
     uint64_t worker_poll_nanoseconds;
-    /* Passed through to the runtime; see ShadowSpillRuntimeConfig. */
-    uint64_t background_transfer_window_bytes;
     /* Path of the backend shared object to load: the library exporting
        shadowspill_backend_create() and shadowspill_backend_destroy(). */
     const char *backend_library;
