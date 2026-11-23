@@ -11,7 +11,7 @@ from shadowspill.ir import ResidencySpec, ShadowSpillProgram
 from shadowspill.planning.memory_search.admission import AdmissionFacts
 from shadowspill.planning.memory_search.algorithm import SearchOptions
 from shadowspill.planning.memory_search.result import ProgramPlanResult
-from shadowspill.planning.plan_store.records import SCHEMA
+from shadowspill.planning.plan_store.records import SCHEMA, SELECTION_LAYOUT
 from shadowspill.simulator import SimulationConfig
 
 
@@ -50,6 +50,9 @@ class PlanRequest:
             else None,
             # Placement-search semantics are part of the cache identity.
             **({"placement_search_revision": 2} if self.placement is not None else {}),
+            # So is what an answer records: an entry written in another
+            # layout is never read.
+            "record_layout": SELECTION_LAYOUT,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode()).hexdigest()
