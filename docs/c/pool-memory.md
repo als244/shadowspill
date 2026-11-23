@@ -61,7 +61,8 @@ pinned-host kind does that. A kind whose region is not in this address space
 implements both, and must, because the alternative is a fault on the first
 byte. The built-in device kind is the exception: it leaves both NULL although
 its region is device memory, so `shadowspill_write_object()` and
-`shadowspill_read_object()` must name a pool this process can address.
+`shadowspill_read_object()` on a device pool refuse with
+`SHADOWSPILL_STATUS_UNSUPPORTED`.
 
 `source` and `destination` are pointers **in the runtime process**. That is the
 honest statement of it: not "host memory", which would promise something about

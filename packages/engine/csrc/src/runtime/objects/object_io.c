@@ -1,4 +1,5 @@
-/* Bounded import/export of idle spill payloads, independent of pool kind. */
+/* Bounded import/export of idle spill payloads, through whichever way in and
+   out a pool's kind provides; a device pool without them refuses. */
 #include "../internal.h"
 
 #include <stdint.h>
@@ -18,6 +19,15 @@ static uint64_t lease_offset(
     );
 }
 
+/* A kind that provides no way in or out is one whose region this process
+   addresses itself, with one exception: the built-in device kind leaves both
+   entries NULL although its region is device memory, where an ordinary copy
+   would fault at the first byte. Object I/O there is refused, not tried. */
+static int pool_refuses_object_io(const ShadowSpillMemoryPool *pool) {
+    return pool->kind == SHADOWSPILL_POOL_DEVICE &&
+        (pool->memory.read == NULL || pool->memory.write == NULL);
+}
+
 static ShadowSpillStatus write_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
@@ -30,6 +40,9 @@ static ShadowSpillStatus write_object(
     if (shadowspill_runtime_pool(runtime, pool_id) == NULL || bytes > SIZE_MAX ||
         (bytes != 0U && source == NULL)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    if (pool_refuses_object_io(shadowspill_runtime_pool(runtime, pool_id))) {
+        return SHADOWSPILL_STATUS_UNSUPPORTED;
     }
     pthread_mutex_lock(&runtime->mutex);
     ShadowSpillStatus status = shadowspill_current_status_locked(runtime);
@@ -93,6 +106,9 @@ static ShadowSpillStatus read_object(
     if (shadowspill_runtime_pool(runtime, pool_id) == NULL || bytes > SIZE_MAX ||
         (bytes != 0U && destination == NULL)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    if (pool_refuses_object_io(shadowspill_runtime_pool(runtime, pool_id))) {
+        return SHADOWSPILL_STATUS_UNSUPPORTED;
     }
     pthread_mutex_lock(&runtime->mutex);
     ShadowSpillStatus status = shadowspill_current_status_locked(runtime);

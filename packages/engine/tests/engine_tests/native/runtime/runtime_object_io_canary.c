@@ -53,6 +53,19 @@ int main(void) {
           SHADOWSPILL_STATUS_OK);
     CHECK(shadowspill_read_object_range(runtime, 2U, 1U, output, 0U, 1U) !=
           SHADOWSPILL_STATUS_OK);
+    /* The device pool provides no way in or out, so object I/O there is
+       refused rather than copied through a device pointer. */
+    const ShadowSpillObjectDescription device_object = {
+        .object_id = 3U, .size_bytes = 32U, .initial_version = 1U,
+        .initial_pool_id = 0U, .initially_resident = 1U,
+    };
+    CHECK(shadowspill_register_object(runtime, &device_object) == SHADOWSPILL_STATUS_OK);
+    CHECK(shadowspill_write_object(runtime, 3U, 0U, original, sizeof(original)) ==
+          SHADOWSPILL_STATUS_UNSUPPORTED);
+    CHECK(shadowspill_read_object(runtime, 3U, 0U, output, sizeof(output)) ==
+          SHADOWSPILL_STATUS_UNSUPPORTED);
+    CHECK(shadowspill_read_object_range(runtime, 3U, 0U, output, 0U, 1U) ==
+          SHADOWSPILL_STATUS_UNSUPPORTED);
     shadowspill_runtime_destroy(runtime);
     shadowspill_backend_destroy(&backend);
     return 0;

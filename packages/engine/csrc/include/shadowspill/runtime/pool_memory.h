@@ -68,7 +68,8 @@ typedef struct ShadowSpillPoolMemoryDescription {
      * implements both -- and must, because the alternative is a fault at the
      * first byte. The built-in device kind leaves both NULL although its
      * region is device memory, so `shadowspill_write_object` and
-     * `shadowspill_read_object` must name a pool this process can address.
+     * `shadowspill_read_object` on a device pool refuse with
+     * SHADOWSPILL_STATUS_UNSUPPORTED rather than copy.
      *
      * `source` and `destination` are pointers **in the runtime process**, and
      * that is the honest statement of the contract: not "host memory", which
