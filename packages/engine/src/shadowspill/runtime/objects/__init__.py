@@ -12,7 +12,6 @@ from .registration import (
     register_object,
     release_object_generation,
     release_object_reference,
-    reserve_pool_range,
     reserve_runtime_object_ids,
 )
 
@@ -22,6 +21,5 @@ __all__ = [
     "register_object",
     "release_object_generation",
     "release_object_reference",
-    "reserve_pool_range",
     "reserve_runtime_object_ids",
 ]

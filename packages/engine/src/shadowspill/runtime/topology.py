@@ -39,11 +39,6 @@ class MemoryPool:
         Whether this process can address a lease in the pool directly. When
         it cannot, the framework keeps its own storage and the runtime copies
         bytes in and out.
-    image_bytes : int
-        Bytes at the start of the pool that are a read-only image of state it
-        was opened on: reserved for the runtime's life, bound by placed
-        objects, never allocated or written. Zero for a pool opened without
-        one.
     """
 
     name: str
@@ -53,7 +48,6 @@ class MemoryPool:
     physical_capacity: int | None
     device_ordinal: int | None
     addressable: bool = True
-    image_bytes: int = 0
 
 
 @dataclass(frozen=True, slots=True)

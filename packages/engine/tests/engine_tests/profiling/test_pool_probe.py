@@ -84,14 +84,6 @@ def test_failed_acquisition_can_be_observed_and_closed():
             probe.warmup()
 
 
-def test_disposable_probe_rejects_persistent_image_before_native_work(tmp_path):
-    image = tmp_path / "untouched.image"
-    spill = SSDPool(32 << 20, directory=tmp_path, image=image, create_image=True)
-    with pytest.raises(ValueError, match="persistent"):
-        PoolProbe(spill, 0)
-    assert not image.exists()
-
-
 @pytest.mark.parametrize("value", [0, -1, True, 1 << 64])
 def test_capacity_must_not_wrap_at_the_native_boundary(value):
     with pytest.raises(ValueError, match="uint64"):

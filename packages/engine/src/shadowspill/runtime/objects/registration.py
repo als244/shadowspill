@@ -81,18 +81,6 @@ def register_object(
     )
 
 
-def reserve_pool_range(
-    runtime: Runtime, *, pool_id: int, offset: int, size_bytes: int
-) -> int:
-    """Reserve one range of a pool for the runtime's lifetime."""
-
-    return int(
-        runtime_library().shadowspill_memory_pool_reserve_range(
-            runtime._runtime_handle, pool_id, offset, size_bytes
-        )
-    )
-
-
 def acquire_object_reference(
     runtime: Runtime,
     *,

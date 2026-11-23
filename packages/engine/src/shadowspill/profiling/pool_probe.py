@@ -42,8 +42,6 @@ class PoolProbe:
         disable_numa_binding: bool = False,
         backend_library: Path | None = None,
     ) -> None:
-        if getattr(spill, "image", None) is not None:
-            raise ValueError("probe a scratch spill pool, not a persistent SSD image")
         _positive_u64(spill.capacity, "spill.capacity")
         _positive_u64(execution_bytes, "execution_bytes")
         if type(device) is not int or not 0 <= device < 1 << 31:

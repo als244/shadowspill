@@ -16,10 +16,6 @@ def _require(status: int, operation: str) -> None:
 
 class SpillProbe:
     def __init__(self, spill: SpillPool, device: int, maximum: int):
-        if getattr(spill, "image", None) is not None:
-            raise ValueError(
-                "calibrate a scratch spill pool, not a persistent SSD image"
-            )
         if maximum > spill.capacity:
             raise ValueError("calibration size exceeds the selected spill capacity")
         adapter = resolve_library("libshadowspill_pytorch.so")

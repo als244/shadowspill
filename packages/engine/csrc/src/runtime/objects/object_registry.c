@@ -12,17 +12,14 @@ ShadowSpillObject *shadowspill_find_object(
     return shadowspill_object_table_find(&runtime->objects, object_id);
 }
 
-static ShadowSpillStatus register_object(
+ShadowSpillStatus shadowspill_register_object(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillObjectDescription *description,
-    int placed,
-    uint64_t offset
+    const ShadowSpillObjectDescription *description
 ) {
     if (runtime == NULL || description == NULL ||
         description->object_id == SHADOWSPILL_RUNTIME_NO_ID ||
         description->retain_spill_copy > 1U ||
         description->initially_resident > 1U ||
-        (placed && !description->initially_resident) ||
         (description->transfer != NULL &&
          (description->transfer->retain == NULL || description->transfer->release == NULL ||
           description->transfer->enqueue == NULL))) {
@@ -94,17 +91,7 @@ static ShadowSpillStatus register_object(
                 SHADOWSPILL_ALLOCATION_ORIGIN_RUNTIME_OBJECT
             );
         int reserve_status = -1;
-        if (initial_lease != NULL && placed) {
-            /* The range was reserved for the pool's lifetime; the lease
-               borrows it and its release gives nothing back. */
-            reserve_status = shadowspill_memory_pool_adopt_borrowed_lease_locked(
-                initial_pool,
-                initial_lease,
-                shadowspill_object_pool_bytes(created, initial_pool),
-                initial_pool->minimum_alignment,
-                offset
-            );
-        } else if (initial_lease != NULL) {
+        if (initial_lease != NULL) {
             reserve_status = shadowspill_memory_pool_reserve_lease_locked(
                 initial_pool,
                 initial_lease,
@@ -123,8 +110,7 @@ static ShadowSpillStatus register_object(
             pthread_mutex_destroy(&created->lock);
             free(created->locations);
             free(created);
-            status = placed ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
-                            : SHADOWSPILL_STATUS_OUT_OF_MEMORY;
+            status = SHADOWSPILL_STATUS_OUT_OF_MEMORY;
             goto done;
         }
         ShadowSpillObjectLocation *initial = shadowspill_object_location(
@@ -167,21 +153,6 @@ static ShadowSpillStatus register_object(
 done:
     pthread_mutex_unlock(&runtime->mutex);
     return status;
-}
-
-ShadowSpillStatus shadowspill_register_object(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillObjectDescription *description
-) {
-    return register_object(runtime, description, 0, 0U);
-}
-
-ShadowSpillStatus shadowspill_register_placed_object(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillObjectDescription *description,
-    uint64_t offset
-) {
-    return register_object(runtime, description, 1, offset);
 }
 
 ShadowSpillStatus shadowspill_unregister_object(

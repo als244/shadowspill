@@ -47,8 +47,6 @@ def open_worker(
             "Plan communication was measured for a different spill backend; "
             "replan with its CommunicationInfo"
         )
-    if getattr(spill, "image", None) is not None:
-        raise ValueError("Executor does not adopt SSD pool images; use a tensor loader")
     physical_limit = None
     global_reservation = 0
     if plan.pool_memory is not None:

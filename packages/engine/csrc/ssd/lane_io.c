@@ -55,11 +55,8 @@ void ssd_io_destroy(SSDLane *lane) {
 static int write_edge(SSDLane *lane, const SSDPiece *piece) {
     SSDRegion *region = lane->region;
     const uint64_t alignment = region->alignment;
-    int fd = -1;
-    uint64_t file_offset = 0U;
-    if (ssd_locate(region, piece->file_offset, piece->disk_bytes, 1, &fd,
-                   &file_offset) != 0)
-        return -1;
+    const int fd = region->fd;
+    const uint64_t file_offset = piece->file_offset;
     int status = 0;
     pthread_mutex_lock(&region->state_lock);
     if (piece->prefix != 0U) {
@@ -95,14 +92,8 @@ static int post(SSDLane *lane, SSDWork *work, uint64_t index) {
         if (write_edge(lane, &piece) != 0) return -1;
         lane->landed[slot] = 1U;
     } else {
-        int fd = -1;
-        uint64_t file_offset = 0U;
-        if (ssd_locate(lane->region, piece.file_offset, piece.disk_bytes,
-                       lane->writing, &fd, &file_offset) != 0) {
-            fprintf(stderr, "shadowspill SSD: a transfer %s the pool image\n",
-                    lane->writing ? "writes into" : "crosses the end of");
-            return -1;
-        }
+        const int fd = lane->region->fd;
+        const uint64_t file_offset = piece.file_offset;
         struct iocb *request = &lane->requests[slot];
         *request = (struct iocb){
             .aio_data = number,

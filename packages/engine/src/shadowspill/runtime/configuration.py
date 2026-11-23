@@ -195,11 +195,6 @@ class Topology:
                     addressable=(
                         True if isinstance(config, DevicePool) else config.addressable
                     ),
-                    image_bytes=(
-                        0
-                        if isinstance(config, DevicePool)
-                        else int(getattr(config, "image_bytes", 0) or 0)
-                    ),
                 )
                 for index, (name, config) in enumerate(self.pool_configs.items())
             }

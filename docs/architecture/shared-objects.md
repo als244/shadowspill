@@ -43,16 +43,12 @@ created, no bytes are charged, and the plan does not gain storage by binding.
 Two plans binding the same object therefore name one set of locations under two
 plan-local ids, which is exactly the point.
 
-Leases arrive by one of four routes:
+Leases arrive by one of three routes:
 
 - **Resident registration.** `shadowspill_register_object` with
   `initially_resident` reserves storage in the pool `initial_pool_id` names, and
   the object owns that lease. One that is not resident holds no lease until a
   task publishes into it.
-- **Placed registration.** `shadowspill_register_placed_object` registers a
-  resident object at an offset inside a range the caller reserved with
-  `shadowspill_memory_pool_reserve_range()`. Its lease borrows that range, so
-  unregistering the object leaves the range reserved.
 - **A fetch.** A plan's fetch action reserves the destination lease in the
   execution pool at the task boundary, so that lease records the plan whose
   action moved the bytes.

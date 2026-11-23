@@ -74,19 +74,6 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_register_object(
 );
 
 /*
- * Registers one initially resident object whose lease lies at `offset` in
- * its initial pool, inside a range the caller reserved for the runtime's
- * lifetime with shadowspill_memory_pool_reserve_range(). Nothing is written:
- * the bytes already there are the object. The lease borrows the range, so
- * unregistering the object leaves the range reserved.
- */
-SHADOWSPILL_API ShadowSpillStatus shadowspill_register_placed_object(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillObjectDescription *description,
-    uint64_t offset
-);
-
-/*
  * Removes a SPILL_ONLY or RELEASED object with no live allocation or queued
  * action, reclaiming retained spill storage. Intended for deterministic plan
  * teardown after final writeback.
@@ -112,7 +99,8 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_rekey_object(
 /*
  * Copies one exact object payload into its existing lease in pool_id. The
  * location must be the object's current authoritative generation. Source is
- * borrowed for the call and may be NULL only for a zero-size object.
+ * borrowed for the call and may be NULL only for a zero-size object. A device
+ * pool refuses with SHADOWSPILL_STATUS_UNSUPPORTED (see pool_memory.h).
  */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_write_object(
     ShadowSpillRuntime *runtime,
@@ -126,7 +114,7 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_write_object(
  * Copies one exact, current object payload from pool_id into caller-owned
  * memory. This function does not wait for transfers; callers first use
  * wait_idle or an equivalent lifecycle boundary. Destination may be NULL only
- * for zero size.
+ * for zero size. A device pool refuses with SHADOWSPILL_STATUS_UNSUPPORTED.
  */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_read_object(
     ShadowSpillRuntime *runtime,
