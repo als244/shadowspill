@@ -261,6 +261,12 @@ typedef struct ShadowSpillSimulationResult {
     uint64_t error_requested_bytes;
     uint64_t makespan_ns;
     uint64_t spill_peak_bytes;
+    /* A lease is persistent when the initial or final residency places its
+     * alias in spill or the alias retains its spill copy; every other lease
+     * is transient. The peak of transient spill, and the transient spill
+     * still held when the schedule ends. */
+    uint64_t spill_transient_peak_bytes;
+    uint64_t spill_transient_end_bytes;
 
     ShadowSpillTaskInterval *task_intervals;
     uint32_t task_interval_capacity;

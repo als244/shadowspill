@@ -93,6 +93,8 @@ ShadowSpillStatus shadowspill_simulate(
     }
     result->makespan_ns = work.now_ns;
     result->spill_peak_bytes = work.spill_peak_bytes;
+    result->spill_transient_peak_bytes = work.spill_transient_peak_bytes;
+    result->spill_transient_end_bytes = work.spill_transient_bytes;
     for (uint32_t device = 0; device < program->device_count; ++device) {
         result->device_peaks[device] = (ShadowSpillDevicePeak){
             .object_bytes = work.device_object_peaks[device],

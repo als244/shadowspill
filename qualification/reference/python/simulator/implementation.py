@@ -39,6 +39,9 @@ class _AliasState:
     device_id: str
     initial_version: int
     retain_spill_copy: bool
+    # The lease outlives the schedule: a residency places the alias in spill
+    # or it retains its spill copy. Any other spill lease is transient.
+    spill_persistent: bool = False
     device_allocated: bool = False
     device_ready: bool = False
     device_version: int = 0
@@ -185,6 +188,12 @@ class _Simulator:
             )
             for item in program.alias_groups
         }
+        for residency in (*schedule.initial_residency, *schedule.final_residency):
+            if residency.location is MemoryLocation.SPILL:
+                self.alias_state[residency.alias_group_id].spill_persistent = True
+        for state in self.alias_state.values():
+            if state.retain_spill_copy:
+                state.spill_persistent = True
         self.next_action_index = 0
         # An action that could not be admitted yet, and the moment it
         # first tried: it becomes ready then, not when room appears.
@@ -213,6 +222,8 @@ class _Simulator:
         self.device_total_peaks = {device.device_id: 0 for device in config.devices}
         self.spill_bytes = 0
         self.spill_peak_bytes = 0
+        self.spill_transient_bytes = 0
+        self.spill_transient_peak_bytes = 0
         self.task_intervals: list[TaskInterval] = []
         self.transfer_intervals: list[TransferInterval] = []
         self.memory_timeline: list[MemorySnapshot] = []
@@ -291,6 +302,9 @@ class _Simulator:
                 self.device_physical_bytes[device_id],
             )
         self.spill_peak_bytes = max(self.spill_peak_bytes, self.spill_bytes)
+        self.spill_transient_peak_bytes = max(
+            self.spill_transient_peak_bytes, self.spill_transient_bytes
+        )
         if self.record_timeline:
             self.memory_timeline.append(
                 MemorySnapshot(
@@ -663,6 +677,8 @@ class _Simulator:
             state.spill_allocated = False
             state.spill_ready = False
             self.spill_bytes -= state.size_bytes
+            if not state.spill_persistent:
+                self.spill_transient_bytes -= state.size_bytes
         self._snapshot()
         return True
 
@@ -764,6 +780,8 @@ class _Simulator:
                     state.spill_allocated = True
                     state.spill_ready = False
                     self.spill_bytes += state.size_bytes
+                    if not state.spill_persistent:
+                        self.spill_transient_bytes += state.size_bytes
                 self._enqueue_transfer(
                     action_index,
                     action,
@@ -915,6 +933,8 @@ class _Simulator:
                 state.spill_allocated = False
                 state.spill_ready = False
                 self.spill_bytes -= state.size_bytes
+                if not state.spill_persistent:
+                    self.spill_transient_bytes -= state.size_bytes
         else:
             # The copy carries the version it started from. A write that
             # landed meanwhile leaves the spill copy stale, never current by
@@ -1186,6 +1206,8 @@ class _Simulator:
             ),
             device_peaks=peaks,
             spill_peak_bytes=self.spill_peak_bytes,
+            spill_transient_peak_bytes=self.spill_transient_peak_bytes,
+            spill_transient_end_bytes=self.spill_transient_bytes,
             memory_timeline=tuple(self.memory_timeline),
             capacity_violations=tuple(self.capacity_violations),
             capacity_violation_count=len(self.capacity_violations),

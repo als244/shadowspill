@@ -107,6 +107,10 @@ def validate_plan(
         if (
             replay.makespan_ns != path.timeline.makespan_ns
             or replay.spill_peak_bytes != path.timeline.spill_peak_bytes
+            or replay.spill_transient_peak_bytes
+            != path.timeline.spill_transient_peak_bytes
+            or replay.spill_transient_end_bytes
+            != path.timeline.spill_transient_end_bytes
         ):
             raise ValueError(
                 "saved Plan timing/spill evidence differs from schedule replay"

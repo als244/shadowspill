@@ -310,6 +310,7 @@ static int submit_release(
         of->state->spill_allocated = 0U;
         of->state->spill_ready = 0U;
         work->spill_bytes -= shadowspill_alias_spill_bytes(program, of->alias);
+        shadowspill_count_transient_spill(program, work, of->alias, -1);
     }
     if (program->use_admission_accounting != 0U &&
         !shadowspill_apply_physical_delta(
@@ -438,6 +439,7 @@ static int submit_departure(
         of->state->spill_allocated = 1U;
         of->state->spill_ready = 0U;
         work->spill_bytes = total;
+        shadowspill_count_transient_spill(program, work, of->alias, 1);
     }
     if (of->kind == SHADOWSPILL_MEMORY_EVICT) {
         of->state->evict_pending = 1U;
@@ -730,6 +732,7 @@ int shadowspill_complete_transfer(
             state->spill_allocated = 0U;
             state->spill_ready = 0U;
             work->spill_bytes -= shadowspill_alias_spill_bytes(program, transfer->alias);
+            shadowspill_count_transient_spill(program, work, transfer->alias, -1);
         }
     } else {
         /* The copy carries the version it started from. A write that

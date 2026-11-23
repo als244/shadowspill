@@ -24,8 +24,10 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
     """Validate layouts and conservative joint capacity before opening pools.
 
     Persistent model/optimizer/gradient state has one canonical owner. Other
-    tensors remain private. Host counters share the same logical inventory.
-    Plans execute sequentially, so fixed GPU workspace takes the largest slice.
+    objects remain private. Host counters share the same logical inventory.
+    Plans execute sequentially, so fixed GPU workspace takes the largest slice,
+    and spill holds persistent state once beside the largest transient spill
+    peak, plus whatever transient spill the Plans leave at their ends.
     Fixed overhead follows the worker's external/headroom/retained components;
     their maxima can come from different Plans. Measured communicator startup
     shares a reservation when one compatible calibration covers the worker's
@@ -116,31 +118,23 @@ def _spill_bytes(
     paths: Sequence[tuple[str, Plan]],
     mappings: Mapping[str, Mapping[str, StateLocation]],
 ) -> int:
-    # At a call boundary, all other plans keep their persistent spill storage.
-    # Subtract only initial retained leases guaranteed to be in the active
-    # plan's peak already. This may overestimate; it never discounts a lease
-    # merely because it exists only at the other end of the invocation.
+    # Plans run one at a time. A persistent lease (an alias the initial or
+    # final residency places in spill, or one that retains its spill copy) is
+    # held for the whole run, once per object, however many Plans name it. A
+    # transient lease is held only while its Plan runs, except what a Plan
+    # still holds when it ends, which stays held from then on. The simulator
+    # classifies leases the same way for each Plan's transient peak.
     persistent = {}
-    active = []
+    left = 0
     for name, plan in paths:
         groups = {a.alias_group_id: a for a in plan.program.alias_groups}
         mapping = mappings[name]
         keys = {alias: mapping.get(alias, (name, alias)) for alias in groups}
         entries = (*plan.schedule.initial_residency, *plan.program.final_residency)
-        for entry in entries:
-            if entry.location is MemoryLocation.SPILL:
-                persistent[keys[entry.alias_group_id]] = groups[
-                    entry.alias_group_id
-                ].spill_size_bytes
-        guaranteed = {
-            keys[r.alias_group_id]
-            for r in plan.schedule.initial_residency
-            if r.location is MemoryLocation.SPILL
-            and groups[r.alias_group_id].retain_spill_copy
-        }
-        active.append((plan, guaranteed))
-    total = sum(persistent.values())
-    return max(
-        plan.timeline.spill_peak_bytes + total - sum(persistent[k] for k in included)
-        for plan, included in active
-    )
+        held = {e.alias_group_id for e in entries if e.location is MemoryLocation.SPILL}
+        held |= {alias for alias, group in groups.items() if group.retain_spill_copy}
+        for alias in held:
+            persistent[keys[alias]] = groups[alias].spill_size_bytes
+        left += plan.timeline.spill_transient_end_bytes
+    transient = max(plan.timeline.spill_transient_peak_bytes for _, plan in paths)
+    return sum(persistent.values()) + left + transient

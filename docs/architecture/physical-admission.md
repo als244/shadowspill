@@ -497,9 +497,14 @@ calibration covers the union, or its memory evidence is incomplete, distinct
 records remain additive. Startup is excluded from the per-path communication
 remainder so it is not counted twice. Profile overhead
 without a component breakdown stays undivided; admission does not
-invent a measured split. Spill is charged with shared model state once and
-every Plan's own persistent spill storage beside the active Plan's peak. The C
-runtime validates every layout against that slice through
+invent a measured split. Spill is charged with persistent state once, beside
+the largest transient spill peak among the Plans. A spill lease is persistent
+when an initial or final residency places its alias in spill or the alias
+retains its spill copy; the runtime holds it for the whole run. A transient
+lease is held only while its Plan runs, so the Plans' transient peaks never
+coexist. Transient spill a Plan still holds when it ends stays held, so it is
+charged as persistent. The C runtime validates every layout against that slice
+through
 `shadowspill_plan_admit_fixed_layout_in()`.
 
 Plans execute sequentially. Each invocation waits for the previous invocation

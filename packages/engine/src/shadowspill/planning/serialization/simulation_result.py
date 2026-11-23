@@ -172,6 +172,14 @@ def _simulation_result_from_value(value: object, path: str) -> SimulationResult:
         spill_peak_bytes=_integer(
             data.get("spill_peak_bytes"), f"{path}.spill_peak_bytes"
         ),
+        spill_transient_peak_bytes=_integer(
+            data.get("spill_transient_peak_bytes"),
+            f"{path}.spill_transient_peak_bytes",
+        ),
+        spill_transient_end_bytes=_integer(
+            data.get("spill_transient_end_bytes"),
+            f"{path}.spill_transient_end_bytes",
+        ),
         memory_timeline=tuple(
             MemorySnapshot(
                 time_ns=_integer(

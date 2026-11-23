@@ -513,6 +513,8 @@ def _simulate_projection(
         transfer_intervals=transfer_intervals,
         device_peaks=device_peaks,
         spill_peak_bytes=int(result.spill_peak_bytes) + projection.shared_spill_bytes,
+        spill_transient_peak_bytes=int(result.spill_transient_peak_bytes),
+        spill_transient_end_bytes=int(result.spill_transient_end_bytes),
         capacity_violations=violations,
         capacity_violation_count=reported,
     )

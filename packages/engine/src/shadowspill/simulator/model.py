@@ -751,6 +751,14 @@ class SimulationResult:
         One per device, in the program's device order.
     spill_peak_bytes : int
         Peak spill use, in bytes, shared residency included.
+    spill_transient_peak_bytes : int
+        Peak spill held by transient leases, in bytes. A lease is persistent
+        when the initial or final residency places its alias in spill or the
+        alias retains its spill copy; every other lease is transient. Shared
+        residency is persistent.
+    spill_transient_end_bytes : int
+        Spill still held by transient leases when the schedule ends, in
+        bytes.
     memory_timeline : tuple of MemorySnapshot
         Memory use over time; empty from `simulate`.
     capacity_violations : tuple of CapacityViolation
@@ -765,6 +773,8 @@ class SimulationResult:
     transfer_intervals: tuple[TransferInterval, ...]
     device_peaks: tuple[DeviceMemoryPeak, ...]
     spill_peak_bytes: int
+    spill_transient_peak_bytes: int
+    spill_transient_end_bytes: int
     memory_timeline: tuple[MemorySnapshot, ...] = ()
     #: Where the plan came up short and waited. Truncation is visible as
     #: `capacity_violation_count` exceeding the length of this tuple.

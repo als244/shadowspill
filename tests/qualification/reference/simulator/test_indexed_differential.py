@@ -277,6 +277,8 @@ def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out() 
         transfer_intervals=(),
         device_peaks=(),
         spill_peak_bytes=0,
+        spill_transient_peak_bytes=0,
+        spill_transient_end_bytes=0,
     )
     result.attach_interval_arrays(
         IntervalArrays(

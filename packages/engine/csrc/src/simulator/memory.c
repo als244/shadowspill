@@ -67,6 +67,10 @@ int shadowspill_allocate_work(
         program->alias_count == 0U ? 1U : program->alias_count,
         sizeof(*work->alias_final_required)
     );
+    work->alias_spill_persistent = calloc(
+        program->alias_count == 0U ? 1U : program->alias_count,
+        sizeof(*work->alias_spill_persistent)
+    );
     work->transfers = calloc(
         program->action_count == 0U ? 1U : program->action_count,
         sizeof(*work->transfers)
@@ -117,6 +121,7 @@ int shadowspill_allocate_work(
     if (work->aliases == NULL || work->tasks == NULL ||
         work->alias_last_reader == NULL ||
         work->alias_final_required == NULL ||
+        work->alias_spill_persistent == NULL ||
         work->lane_successors == NULL || work->lane_heads == NULL ||
         work->active_tasks == NULL ||
         work->transfers == NULL || work->transfer_resource_free_ns == NULL ||
@@ -180,6 +185,7 @@ void shadowspill_free_work(ShadowSpillSimulationWork *work) {
     free(work->active_tasks);
     free(work->alias_last_reader);
     free(work->alias_final_required);
+    free(work->alias_spill_persistent);
     free(work->transfers);
     free(work->transfer_resource_free_ns);
     free(work->transfer_resource_completed);
@@ -225,6 +231,9 @@ void shadowspill_update_peaks(
     if (work->spill_bytes > work->spill_peak_bytes) {
         work->spill_peak_bytes = work->spill_bytes;
     }
+    if (work->spill_transient_bytes > work->spill_transient_peak_bytes) {
+        work->spill_transient_peak_bytes = work->spill_transient_bytes;
+    }
 }
 
 int shadowspill_initialize_memory(
@@ -249,6 +258,19 @@ int shadowspill_initialize_memory(
     }
     for (uint32_t index = 0; index < program->final_count; ++index) {
         work->alias_final_required[program->final_aliases[index]] = 1U;
+        if (program->final_locations[index] == SHADOWSPILL_MEMORY_SPILL) {
+            work->alias_spill_persistent[program->final_aliases[index]] = 1U;
+        }
+    }
+    for (uint32_t index = 0; index < program->initial_count; ++index) {
+        if (program->initial_locations[index] == SHADOWSPILL_MEMORY_SPILL) {
+            work->alias_spill_persistent[program->initial_aliases[index]] = 1U;
+        }
+    }
+    for (uint32_t alias = 0; alias < program->alias_count; ++alias) {
+        if (program->alias_retain_spill_copy[alias] != 0U) {
+            work->alias_spill_persistent[alias] = 1U;
+        }
     }
     for (uint32_t alias = 0; alias < program->alias_count; ++alias) {
         ShadowSpillAliasState *state = &work->aliases[alias];

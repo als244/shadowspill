@@ -92,28 +92,42 @@ def test_rejects_missing_tensor_and_missing_geometry():
         shared_model_aliases(registered(), replace(other, bindings=bindings))
 
 
-def test_joint_spill_keeps_private_inputs_and_deduplicates_shared_model():
-    def plan(model, private, size, peak, *, retained):
+def test_joint_spill_counts_persistent_state_once_beside_the_largest_transient_peak():
+    def plan(model, private, size, peak, *, retained=True, end=0, extra=()):
         aliases = (
             AliasGroupSpec(model, "rank0", 64, retain_spill_copy=retained),
             AliasGroupSpec(private, "rank0", size, retain_spill_copy=True),
+            *extra,
         )
         entries = tuple(
-            ResidencySpec(a.alias_group_id, MemoryLocation.SPILL) for a in aliases
+            ResidencySpec(a.alias_group_id, MemoryLocation.SPILL) for a in aliases[:2]
         )
         return SimpleNamespace(
             program=SimpleNamespace(alias_groups=aliases, final_residency=entries),
             schedule=SimpleNamespace(initial_residency=entries),
-            timeline=SimpleNamespace(spill_peak_bytes=peak),
+            timeline=SimpleNamespace(
+                spill_transient_peak_bytes=peak, spill_transient_end_bytes=end
+            ),
         )
 
-    training = plan("weights", "inputs", 32, 128, retained=True)
-    evaluation = plan("eval-weights", "inputs", 128, 224, retained=True)
-    paths = [("", training), ("evaluation", evaluation)]
     maps = {"": {}, "evaluation": {"eval-weights": ("", "weights")}}
-    # 64 shared weights + both private input sets + 32 bytes active scratch.
-    assert _spill_bytes(paths, maps) == 256
-    # Unretained initial leases may disappear during the peak: don't subtract
-    # them just because they are initial. Conservative extra capacity is needed.
-    unretained = plan("weights", "inputs", 32, 128, retained=False)
-    assert _spill_bytes([("", unretained), paths[1]], maps) == 320
+    evaluation = plan("eval-weights", "inputs", 128, 16)
+    # 64 shared weights once + both private input sets + the larger
+    # transient peak, 32 bytes of training scratch.
+    training = plan("weights", "inputs", 32, 32)
+    assert _spill_bytes([("", training), ("evaluation", evaluation)], maps) == 256
+    # Residency alone makes the weights persistent, retained or not.
+    unretained = plan("weights", "inputs", 32, 32, retained=False)
+    assert _spill_bytes([("", unretained), ("evaluation", evaluation)], maps) == 256
+    # A retained copy outside the residency is persistent too.
+    staged = plan(
+        "weights",
+        "inputs",
+        32,
+        32,
+        extra=(AliasGroupSpec("staging", "rank0", 8, retain_spill_copy=True),),
+    )
+    assert _spill_bytes([("", staged), ("evaluation", evaluation)], maps) == 264
+    # Transient spill a Plan leaves at its end stays held from then on.
+    leaving = plan("weights", "inputs", 32, 32, end=16)
+    assert _spill_bytes([("", leaving), ("evaluation", evaluation)], maps) == 272

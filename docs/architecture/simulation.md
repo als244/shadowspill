@@ -36,6 +36,14 @@ it, its direction, queue and wire timing, and bytes. `SimulationResult`
 carries the makespan, the task and transfer intervals, per-device and spill
 peaks, and every capacity shortfall the plan waited on.
 
+The spill peak has a transient part. A spill lease is persistent when the
+initial or final residency places its alias in spill or the alias retains its
+spill copy; any other lease is transient. The result reports the peak of
+transient spill and the transient spill still held when the schedule ends.
+Shared residency is persistent. Admission of [Plans run in
+sequence](physical-admission.md) charges persistent spill once and the largest
+transient peak.
+
 ## Memory actions
 
 The four action kinds of the [IR](ir.md#memory-schedule) have one simulated

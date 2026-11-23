@@ -72,10 +72,13 @@ plan identity, so a cached artifact made without it is not reused.
 ## Output
 
 `ShadowSpillSimulationResult` reports status, structured infeasibility fields,
-makespan, spill peak, task intervals, transfer intervals, one
+makespan, spill peak, transient spill peak and transient spill at the end, task
+intervals, transfer intervals, one
 `ShadowSpillDevicePeak` per device holding its object, workspace and total
 peak, and capacity shortfalls. Caller-provided
-interval, peak, and violation buffers remain caller-owned.
+interval, peak, and violation buffers remain caller-owned. A spill lease is
+transient unless the initial or final residency places its alias in spill or
+the alias retains its spill copy.
 
 A `ShadowSpillTaskInterval` and a `ShadowSpillTransferInterval` both carry
 readiness, start, end and a stall mask; a transfer interval also carries its

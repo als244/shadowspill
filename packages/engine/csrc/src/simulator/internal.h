@@ -87,6 +87,10 @@ typedef struct ShadowSpillSimulationWork {
      * names it. */
     uint32_t *alias_last_reader;
     uint8_t *alias_final_required;
+    /* Whether an alias's spill lease outlives the schedule: the initial or
+     * final residency places it in spill, or it retains its spill copy.
+     * Every other spill lease is transient. */
+    uint8_t *alias_spill_persistent;
     int32_t *active_fetch;
     int32_t *active_evict;
     uint32_t *fetch_cursor;
@@ -101,6 +105,9 @@ typedef struct ShadowSpillSimulationWork {
     uint64_t *device_total_peaks;
     uint64_t spill_bytes;
     uint64_t spill_peak_bytes;
+    /* The part of spill_bytes held by transient leases. */
+    uint64_t spill_transient_bytes;
+    uint64_t spill_transient_peak_bytes;
     uint64_t now_ns;
     uint32_t completed_tasks;
     uint32_t submitted_actions;
@@ -119,6 +126,26 @@ static inline uint64_t shadowspill_alias_spill_bytes(
 ) {
     return program->alias_spill_size_bytes == NULL
         ? program->alias_size_bytes[alias] : program->alias_spill_size_bytes[alias];
+}
+
+/* A spill lease an alias took (+1) or freed (-1): the transient count
+ * follows when the lease is transient. It never exceeds spill_bytes, whose
+ * own update is checked, so neither direction can wrap. */
+static inline void shadowspill_count_transient_spill(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    uint32_t alias,
+    int direction
+) {
+    if (work->alias_spill_persistent[alias] != 0U) {
+        return;
+    }
+    uint64_t bytes = shadowspill_alias_spill_bytes(program, alias);
+    if (direction > 0) {
+        work->spill_transient_bytes += bytes;
+    } else {
+        work->spill_transient_bytes -= bytes;
+    }
 }
 
 int shadowspill_order_resource_phases(const ShadowSpillSimulationProgram *, ShadowSpillSimulationWork *);

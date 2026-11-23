@@ -23,7 +23,7 @@ from shadowspill.planning.memory_search.algorithms.pressurefit.capi import (
 from shadowspill.planning.memory_search.capi import CScheduleAdmissionResult
 from shadowspill.runtime import abi
 from shadowspill.schema import ARTIFACT_VERSION
-from shadowspill.simulator.capi import CDevice, CProgram
+from shadowspill.simulator.capi import CDevice, CProgram, CResult
 from shadowspill.status import ABI_VERSION, Status
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +43,7 @@ _MIRRORS = {
     "ShadowSpillTraceConfig": abi.TraceConfig,
     "ShadowSpillSimulationDevice": CDevice,
     "ShadowSpillSimulationProgram": CProgram,
+    "ShadowSpillSimulationResult": CResult,
     "ShadowSpillScheduleAdmissionResult": CScheduleAdmissionResult,
     "ShadowSpillTransferRouteKey": abi.TransferRouteKey,
     "ShadowSpillTransferCalibrationConfig": abi.TransferCalibrationConfig,

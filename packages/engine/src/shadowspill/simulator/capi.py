@@ -171,6 +171,8 @@ class CResult(ctypes.Structure):
         ("error_requested_bytes", ctypes.c_uint64),
         ("makespan_ns", ctypes.c_uint64),
         ("spill_peak_bytes", ctypes.c_uint64),
+        ("spill_transient_peak_bytes", ctypes.c_uint64),
+        ("spill_transient_end_bytes", ctypes.c_uint64),
         ("task_intervals", ctypes.POINTER(CTaskInterval)),
         ("task_interval_capacity", ctypes.c_uint32),
         ("task_interval_count", ctypes.c_uint32),
