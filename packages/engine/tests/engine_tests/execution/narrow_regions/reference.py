@@ -75,7 +75,9 @@ def run(directory, case, *, device="cuda", compiled=True):
                     name: local_gradients[0][name] + local_gradients[1][name]
                     for name in masters
                 }
-                accumulating = case["kind"] == "forward_backward" and step == 1
+                # Step 2 accumulates onto step 1, so the resume from the step-0
+                # checkpoint, which holds no gradients, starts a fresh one.
+                accumulating = case["kind"] == "forward_backward" and step == 2
                 gradients = {
                     name: value + previous[name] if accumulating else value
                     for name, value in fresh.items()

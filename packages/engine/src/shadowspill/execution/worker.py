@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.artifacts.state_inventory import gradient_aliases
 from shadowspill.diagnostics.progress import phase
 from shadowspill.memory import SpillPool
 from shadowspill.planning.shared import shared_memory
@@ -162,7 +163,12 @@ def create_paths(
                     for variant in (candidate, candidate._accumulation_plan):
                         if variant is None:
                             continue
+                        # An accumulation's gradients take storage when the
+                        # first backward produces them, not at startup.
+                        gradients = gradient_aliases(variant.program)
                         for entry in variant.schedule.initial_residency:
+                            if entry.alias_group_id in gradients:
+                                continue
                             owner_name, alias = joint.aliases[name].get(
                                 entry.alias_group_id, (name, entry.alias_group_id)
                             )
@@ -173,6 +179,7 @@ def create_paths(
                 set()
                 if other is None
                 else {r.alias_group_id for r in other.schedule.initial_residency}
+                - gradient_aliases(other.program)
             )
             extra.update(initial.get("", ()))
             paths.append(
@@ -221,7 +228,11 @@ def create_paths(
                 extra = set(initial.get(name, ()))
                 if accumulated is not None:
                     extra.update(
-                        r.alias_group_id for r in accumulated.schedule.initial_residency
+                        {
+                            r.alias_group_id
+                            for r in accumulated.schedule.initial_residency
+                        }
+                        - gradient_aliases(accumulated.program)
                     )
                 memory, bridge = open_path(
                     runtime, additional, device, slab_owner=owner

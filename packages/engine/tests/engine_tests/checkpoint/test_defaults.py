@@ -26,7 +26,7 @@ def defaults(chunk, initial):
     )
 
 
-def test_saved_target_defaults_preserve_checkpoint_state_and_clear_gradients():
+def test_saved_target_defaults_preserve_checkpoint_state_and_leave_out_gradients():
     source = training()
     source = replace(
         source,
@@ -42,10 +42,9 @@ def test_saved_target_defaults_preserve_checkpoint_state_and_clear_gradients():
     state = PlanState(plan(source, kind="forward_backward"), {}, logical_rank=0)
     prepared = TemporaryDefaults([state])
     chunks = {chunk.name: chunk for chunk in state.tensor_chunks()}
-    for name, expected in (
-        ("gradient.linear.weight", 0),
-        ("optimizer_group.0.lr", 0.25),
-    ):
+    # Gradients exist only while an accumulation is open: no part of a target.
+    assert not any(name.startswith("gradient.") for name in chunks)
+    for name, expected in (("optimizer_group.0.lr", 0.25),):
         value = torch.full((chunks[name].storage_elements,), -1.0)
         prepared(0, chunks[name], value)
         assert (value == expected).all()

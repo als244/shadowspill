@@ -20,6 +20,7 @@ class HostExecutor(OwnedExecutor):
     # Exercise the real initialization/coordinated reconstruction method with
     # host spill storage; no CUDA runtime is needed for these transfer tests.
     initialize = Executor.initialize
+    _gradients_held = Executor._gradients_held
 
     def __init__(self, program, worker):
         super().__init__(program, worker.groups.logical_rank)

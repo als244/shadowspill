@@ -49,7 +49,7 @@ def fill(request, chunk):
     chunk.copy_(value[request.offset : request.offset + chunk.numel()])
 
 
-def snapshot(executor):
+def snapshot(executor, *, gradients=False):
     values = {}
 
     def collect(request, chunk):
@@ -58,7 +58,11 @@ def snapshot(executor):
         )
         value[request.offset : request.offset + chunk.numel()].copy_(chunk)
 
-    executor.export_tensors(collect, chunk_bytes=32)
+    # Gradients exist only while an accumulation is open, apart from the state.
+    if gradients:
+        executor.export_gradients(collect, chunk_bytes=32)
+    else:
+        executor.export_tensors(collect, chunk_bytes=32)
     return values
 
 
@@ -79,9 +83,10 @@ with Executor(primary, plans=plans) as executor:
             plan=f"backward{index}", args=[args], accumulate_gradients=bool(index)
         ).result()
         before = snapshot(executor)
+        stored = snapshot(executor, gradients=True)
         for name, gradient in oracle["gradients"][index].items():
             torch.testing.assert_close(
-                before[f"gradient.{name}"].reshape(gradient.shape), gradient
+                stored[f"gradient.{name}"].reshape(gradient.shape), gradient
             )
         output = executor.run(args=[(oracle["examples"][0][0],)]).result()
         expected = (
@@ -90,6 +95,9 @@ with Executor(primary, plans=plans) as executor:
         )
         torch.testing.assert_close(output.cpu(), expected)
         torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
+        torch.testing.assert_close(
+            snapshot(executor, gradients=True), stored, rtol=0, atol=0
+        )
         del output
     result = executor.run(
         plan="optim",

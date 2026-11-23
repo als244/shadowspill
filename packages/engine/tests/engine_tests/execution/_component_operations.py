@@ -77,7 +77,7 @@ fail_worker_publication = False
 oracle = torch.load(root / "oracle.pt", weights_only=True)
 
 
-def snapshot(executor):
+def snapshot(executor, *, gradients=False):
     values = {}
 
     def collect(request, chunk):
@@ -86,7 +86,11 @@ def snapshot(executor):
         )
         value[request.offset : request.offset + chunk.numel()].copy_(chunk)
 
-    executor.export_tensors(collect, chunk_bytes=32)
+    # Gradients exist only while an accumulation is open, apart from the state.
+    if gradients:
+        executor.export_gradients(collect, chunk_bytes=32)
+    else:
+        executor.export_tensors(collect, chunk_bytes=32)
     return values
 
 
@@ -371,6 +375,7 @@ with (
             assert inputs.staging.used == (0, 0)
         invoke(f"part{index}", "forward_backward", loss_params=overrides)
         before = snapshot(executor)
+        stored = snapshot(executor, gradients=True)
         invoke(
             f"eval{index}",
             "forward",
@@ -379,9 +384,12 @@ with (
             observe=check_predictions,
         )
         torch.testing.assert_close(snapshot(executor), before, rtol=0, atol=0)
+        torch.testing.assert_close(
+            snapshot(executor, gradients=True), stored, rtol=0, atol=0
+        )
     for name, target in oracle["gradients"].items():
         torch.testing.assert_close(
-            before[f"gradient.{name}"].reshape(target.shape), target
+            stored[f"gradient.{name}"].reshape(target.shape), target
         )
     boundary = state.boundary
     output_count = len(worker_outputs)

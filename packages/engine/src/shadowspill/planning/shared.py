@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from shadowspill.artifacts.plan import Plan
+from shadowspill.artifacts.state_inventory import gradient_aliases
 from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import MemoryLocation
 
@@ -27,7 +28,10 @@ def shared_memory(primary: Plan, plans: Mapping[str, Plan]) -> SharedMemory:
     objects remain private. Host counters share the same logical inventory.
     Plans execute sequentially, so fixed GPU workspace takes the largest slice,
     and spill holds persistent state once beside the largest transient spill
-    peak, plus whatever transient spill the Plans leave at their ends.
+    peak, plus whatever transient spill the Plans leave at their ends. An
+    accumulation's gradients are held only while it is open, when a complete
+    step cannot run, so they coexist with every Plan's transient peak but a
+    step's.
     Fixed overhead follows the worker's external/headroom/retained components;
     their maxima can come from different Plans. Measured communicator startup
     shares a reservation when one compatible calibration covers the worker's
@@ -120,12 +124,15 @@ def _spill_bytes(
 ) -> int:
     # Plans run one at a time. A persistent lease (an alias the initial or
     # final residency places in spill, or one that retains its spill copy) is
-    # held for the whole run, once per object, however many Plans name it. A
-    # transient lease is held only while its Plan runs, except what a Plan
-    # still holds when it ends, which stays held from then on. The simulator
-    # classifies leases the same way for each Plan's transient peak.
-    persistent = {}
+    # held, once per object however many Plans name it, for the whole run;
+    # an accumulation's gradients only while it is open. A transient lease is
+    # held only while its Plan runs, except what a Plan still holds when it
+    # ends, which stays held from then on. The simulator classifies leases
+    # the same way for each Plan's transient peak.
+    persistent: dict[StateLocation, int] = {}
+    gradient_keys: set[StateLocation] = set()
     left = 0
+    open_peak = closed_peak = 0
     for name, plan in paths:
         groups = {a.alias_group_id: a for a in plan.program.alias_groups}
         mapping = mappings[name]
@@ -135,6 +142,17 @@ def _spill_bytes(
         held |= {alias for alias, group in groups.items() if group.retain_spill_copy}
         for alias in held:
             persistent[keys[alias]] = groups[alias].spill_size_bytes
+        gradients = gradient_aliases(plan.program)
+        gradient_keys.update(keys[alias] for alias in gradients)
         left += plan.timeline.spill_transient_end_bytes
-    transient = max(plan.timeline.spill_transient_peak_bytes for _, plan in paths)
-    return sum(persistent.values()) + left + transient
+        peak = plan.timeline.spill_transient_peak_bytes
+        # A complete step never runs while gradients are held; a forward Plan
+        # may run either way; backward and update Plans run only then.
+        kind = plan.program.bindings.get("kind")
+        if gradients or kind != "step":
+            open_peak = max(open_peak, peak)
+        if not gradients:
+            closed_peak = max(closed_peak, peak)
+    held_gradients = sum(persistent.get(key, 0) for key in gradient_keys)
+    state = sum(persistent.values()) - held_gradients
+    return state + left + max(closed_peak, held_gradients + open_peak)

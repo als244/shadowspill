@@ -101,6 +101,10 @@ class Executor:
         ``spill`` is not a `SpillPool`.
     """
 
+    # Whether an accumulation is open: a backward has stored gradients that no
+    # update or discard has consumed yet.
+    _gradients_held = False
+
     def __init__(
         self,
         plan: Plan,
@@ -183,10 +187,11 @@ class Executor:
         Each persistent tensor this worker owns is filled in chunks:
         ``fill_tensor`` fills those without captured initial values, such as
         the model's parameters and buffers, and the rest take their captured
-        values: gradients start at zero, masters copy their compute weights,
-        and optimizer state, controls and constants take the values captured
-        at build. Calling it again fills everything again; a failure leaves the
-        executor uninitialized.
+        values: masters copy their compute weights, and optimizer state,
+        controls and constants take the values captured at build. Gradients
+        are no part of it: they exist only while an accumulation is open, and
+        initializing releases any still held. Calling it again fills everything
+        again; a failure leaves the executor uninitialized.
 
         Parameters
         ----------
@@ -219,6 +224,9 @@ class Executor:
         """
         self.synchronize()
         self._initialized = False
+        if self._gradients_held:
+            coordinated(self._distributed, self._release_gradients)
+            self._gradients_held = False
 
         def fill() -> None:
             if not isinstance(restore, bool | Collection):
@@ -366,6 +374,87 @@ class Executor:
                 skip_shared=True, prefix=f"plans.{name}."
             )
 
+    def gradient_chunks(self) -> Iterator[TensorChunk]:
+        """Describe each gradient an accumulation keeps on this worker.
+
+        Gradients are no part of `tensor_chunks`: a backward Plan stores them,
+        and the optimizer-only update or `discard_gradients` that ends the
+        accumulation releases them.
+
+        Yields
+        ------
+        TensorChunk
+            One chunk spanning each gradient's owned region.
+        """
+        yield from tensor_descriptors(self._paths[0].storage, gradients=True)
+        for name, path in self._named_paths.items():
+            yield from tensor_descriptors(
+                path.storage,
+                skip_shared=True,
+                prefix=f"plans.{name}.",
+                gradients=True,
+            )
+
+    def export_gradients(
+        self,
+        write_chunk: Callable[[TensorChunk, torch.Tensor], None],
+        *,
+        chunk_bytes: int = 64 << 20,
+        names: Collection[str] | None = None,
+    ) -> None:
+        """Read the gradients the open accumulation holds out in bounded chunks.
+
+        An outstanding run is waited for first.
+
+        Parameters
+        ----------
+        write_chunk : callable
+            Called as ``write_chunk(chunk, buffer)`` with a `TensorChunk` and
+            a one-dimensional buffer of its elements, which it consumes before
+            returning and keeps no reference to.
+        chunk_bytes : int, default 64 << 20
+            Largest chunk, in bytes.
+        names : collection of str, optional
+            Canonical names of the gradients to export; the others are not
+            read. By default every gradient.
+
+        Raises
+        ------
+        RuntimeError
+            If the executor is closed, an earlier run failed, it is not
+            initialized, or no accumulation is open.
+        TypeError
+            If ``names`` is a string or holds something else.
+        ValueError
+            If ``names`` holds a name `gradient_chunks` does not list, or
+            ``chunk_bytes`` is not positive.
+        """
+        self.synchronize()
+        if not self._initialized:
+            raise RuntimeError("initialize persistent tensors before exporting them")
+        if not self._gradients_held:
+            raise RuntimeError("no accumulation holds gradients to export")
+        selected = export_selection(self.gradient_chunks(), names)
+        visit_tensors(
+            self._paths[0].storage,
+            write_chunk,
+            chunk_bytes,
+            initialize=False,
+            names=selected,
+            gradients=True,
+        )
+        for name, path in self._named_paths.items():
+            visit_tensors(
+                path.storage,
+                write_chunk,
+                chunk_bytes,
+                initialize=False,
+                skip_shared=True,
+                prefix=f"plans.{name}.",
+                names=selected,
+                gradients=True,
+            )
+
     def run(
         self,
         *,
@@ -408,7 +497,9 @@ class Executor:
             their captured defaults.
         accumulate_gradients : bool, default False
             Add this run's gradients to the stored ones instead of replacing
-            them. Only for Plans of forward/backward Programs.
+            them. Only for Plans of forward/backward Programs. A backward run
+            opens an accumulation; the optimizer-only update or
+            `discard_gradients` ends it.
         collect_parameter_norms : bool, optional
             Whether this run collects parameter norms. By default it does for
             the default Plan when the executor collects them.
@@ -431,7 +522,9 @@ class Executor:
         ------
         RuntimeError
             If the executor is closed, an earlier run failed, or it is not
-            initialized.
+            initialized; if a complete step comes while an accumulation holds
+            gradients, or an accumulating run or the optimizer-only update
+            while none does.
         ValueError
             If ``plan`` names no admitted Plan, the examples differ in number
             or signature from the build, a control is unknown or misshapen,
@@ -486,12 +579,32 @@ class Executor:
                     )
                 path = path.accumulation
             validate_numerical_settings(path.numerical_contracts)
+            kind = path.plan.program.bindings.get("kind")
+            if kind == "step" and self._gradients_held:
+                raise RuntimeError(
+                    "a complete step cannot run while an accumulation holds "
+                    "gradients; apply them with the optimizer-only Plan or "
+                    "discard them first"
+                )
+            if (accumulate_gradients or kind == "optim_step") and (
+                not self._gradients_held
+            ):
+                raise RuntimeError(
+                    "no accumulation holds gradients: run a backward Plan "
+                    "without accumulate_gradients first"
+                )
             path.bridge.require_initial_residency(path.plan.schedule.initial_residency)
             path.controls.apply(hyperparams or {})
             stage_inputs(path.storage, args, kwargs, input_loader)
             return path
 
         path = coordinated(distributed, prepare)
+        kind = path.plan.program.bindings.get("kind")
+        if kind == "forward_backward":
+            self._gradients_held = True
+        elif kind == "optim_step":
+            # The update reads the gradients last and their storage ends with it.
+            self._gradients_held = False
         observations = self._observations if observe else None
         annotations = (
             TaskBoundaryAnnotations(path.bridge) if profiler_annotations else None
@@ -559,10 +672,10 @@ class Executor:
     def discard_gradients(self) -> None:
         """Release the stored gradients without applying them.
 
-        Each persistent gradient is released once; the Plans and the other
-        state remain. The next backward must then start fresh gradients
-        (``accumulate_gradients=False``); the caller keeps track of that. An
-        outstanding run is waited for first.
+        Each gradient the open accumulation holds is released once; the Plans
+        and the other state remain, and the next backward starts fresh
+        gradients (``accumulate_gradients=False``). With no accumulation open
+        there is nothing to release. An outstanding run is waited for first.
 
         Raises
         ------
@@ -575,33 +688,33 @@ class Executor:
         self.synchronize()
         if not self._initialized:
             raise RuntimeError("initialize persistent tensors before discarding")
-
-        def release() -> None:
-            gradients: dict[int, tuple[PlanObjects, str]] = {}
-            other_state = set()
-            for path in (*self._paths, *self._named_paths.values()):
-                objects = path.bridge.objects
-                for binding in program_state(
-                    path.plan.program, self.logical_rank
-                ).bindings:
-                    alias = binding.alias_group_id
-                    if alias is None or not objects.requires_storage(alias):
-                        continue
-                    identity = objects.runtime_object_id(alias)
-                    if binding.identity.role == "gradient":
-                        gradients.setdefault(identity, (objects, alias))
-                    else:
-                        other_state.add(identity)
-            if gradients.keys() & other_state:
-                raise ValueError("gradient storage overlaps other persistent state")
-            for objects, alias in gradients.values():
-                objects.release_value(alias)
-
+        if not self._gradients_held:
+            return
         try:
-            coordinated(self._distributed, release)
+            coordinated(self._distributed, self._release_gradients)
         except BaseException as error:
             self._failed(error)
             raise
+        self._gradients_held = False
+
+    def _release_gradients(self) -> None:
+        gradients: dict[int, tuple[PlanObjects, str]] = {}
+        other_state = set()
+        for path in (*self._paths, *self._named_paths.values()):
+            objects = path.bridge.objects
+            for binding in program_state(path.plan.program, self.logical_rank).bindings:
+                alias = binding.alias_group_id
+                if alias is None or not objects.requires_storage(alias):
+                    continue
+                identity = objects.runtime_object_id(alias)
+                if binding.identity.role == "gradient":
+                    gradients.setdefault(identity, (objects, alias))
+                else:
+                    other_state.add(identity)
+        if gradients.keys() & other_state:
+            raise ValueError("gradient storage overlaps other persistent state")
+        for objects, alias in gradients.values():
+            objects.release_value(alias)
 
     def synchronize(self) -> None:
         """Wait for the outstanding run, if any.

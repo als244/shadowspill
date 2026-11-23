@@ -59,6 +59,7 @@ class HostExecutor:
 
     initialize = Executor.initialize
     export_tensors = Executor.export_tensors
+    _gradients_held = Executor._gradients_held
     tensor_chunks = Executor.tensor_chunks
 
     def __init__(self, state, worker=None):
@@ -321,10 +322,11 @@ def test_selected_host_state_uses_canonical_names_and_other_controls_reset():
 
 @pytest.mark.parametrize("rank", range(4))
 @pytest.mark.parametrize("elements", [1, 15])
-def test_model_only_selection_clears_accumulated_gradients_and_shard_padding(
+def test_model_only_selection_fills_the_model_and_never_visits_gradients(
     rank, elements
 ):
     storage, values = host_storage(fixture(elements, kind="forward_backward"), rank)
+    before = values["reduced"].clone()
     calls = []
 
     def fill(request, destination):
@@ -333,7 +335,9 @@ def test_model_only_selection_clears_accumulated_gradients_and_shard_padding(
 
     visit_tensors(storage, fill, 12, initialize=True, restore={"layer.weight"})
     assert set(calls) <= {"layer.weight"}
-    assert not values["reduced"].count_nonzero()
+    # Gradients exist only while an accumulation is open; the Executor
+    # releases held ones before initializing.
+    torch.testing.assert_close(values["reduced"], before)
 
 
 def test_private_plan_control_selection_uses_its_exported_prefix():

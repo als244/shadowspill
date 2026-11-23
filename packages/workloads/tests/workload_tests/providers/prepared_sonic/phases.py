@@ -29,7 +29,9 @@ def prepare(directory, case):
     initial = copy.deepcopy(model.state_dict())
     references = []
     for step in range(3):
-        if kind == "step" or step != 1:
+        # Step 2 accumulates onto step 1, so the resume from the step-0
+        # checkpoint, which holds no gradients, starts a fresh accumulation.
+        if kind == "step" or step != 2:
             optimizer.zero_grad(set_to_none=True)
         losses = []
         for args, kwargs in examples(step, batch=batch):
@@ -243,12 +245,12 @@ def execute(directory, case, *, resume=False):
             pending = executor.run(
                 input_loader=lambda i, calls=calls: calls[i],
                 runtime_trace=True,
-                accumulate_gradients=kind == "forward_backward" and step == 1,
+                accumulate_gradients=kind == "forward_backward" and step == 2,
             )
             result = pending.result()
             selected_plan = (
                 plan._accumulation_plan
-                if kind == "forward_backward" and step == 1
+                if kind == "forward_backward" and step == 2
                 else plan
             )
             assert selected_plan is not None
@@ -274,6 +276,10 @@ def execute(directory, case, *, resume=False):
                 ].copy_(chunk)
 
             executor.export_tensors(collect, chunk_bytes=4096)
+            state = dict(actual)
+            if kind == "forward_backward":
+                # The open accumulation's gradients, apart from the state.
+                executor.export_gradients(collect, chunk_bytes=4096)
             torch.save(
                 dict(
                     losses=[loss.detach().cpu().clone() for loss in result.losses],
@@ -304,14 +310,15 @@ def execute(directory, case, *, resume=False):
                     ].copy_(chunk)
 
                 executor.export_tensors(collect_restored, chunk_bytes=4096)
-                assert restored.keys() == actual.keys()
+                # A checkpoint holds the state, never an accumulation's gradients.
+                assert restored.keys() == state.keys()
                 assert all(
-                    torch.equal(restored[name], value) for name, value in actual.items()
+                    torch.equal(restored[name], value) for name, value in state.items()
                 )
                 write(
                     directory,
                     "checkpoint-inspection.json",
-                    dict(status="BITWISE_ALL_EXPORTED_STATE", tensors=len(actual)),
+                    dict(status="BITWISE_ALL_EXPORTED_STATE", tensors=len(state)),
                 )
             del result, pending
     finally:
@@ -326,7 +333,7 @@ def execute(directory, case, *, resume=False):
             spill="pinned_host",
             checkpoint_restored_after=1,
             kind=kind,
-            accumulate=[kind == "forward_backward" and step == 1 for step in steps],
+            accumulate=[kind == "forward_backward" and step == 2 for step in steps],
             physical=physical,
         ),
     )

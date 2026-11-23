@@ -103,13 +103,45 @@ def test_derive_reuses_update_and_reduction_dependencies_without_forward(
         assert "reduced" not in {r.alias_group_id for r in result.initial_residency}
         assert "reduced" not in {r.alias_group_id for r in result.final_residency}
     assert "gradient" in {r.alias_group_id for r in result.initial_residency}
-    assert "gradient" in {r.alias_group_id for r in result.final_residency}
+    # The update consumes the gradients: none outlives it.
+    assert "gradient" not in {r.alias_group_id for r in result.final_residency}
     assert any(t.identity.role == "gradient" for t in program_state(result).tensors)
     assert list(stage_jobs(result, None)) == [
         {"optimizer": result.bindings["optimizer_templates"][0]}
     ]
     result.save(tmp_path / "optimizer.ssp")
     assert Program.load(tmp_path / "optimizer.ssp") == result
+
+
+def test_an_update_that_never_reads_a_gradient_is_refused():
+    source = step_program()
+    component = source.bindings["optimizer_templates"][0]
+    unread = {
+        **component,
+        "inputs": [
+            item for item in component["inputs"] if item["object_id"] != "gradient"
+        ],
+    }
+    task_inputs = {
+        **source.bindings["task_inputs"],
+        "optimizer": {
+            "tensor_positions": [0, 1],
+            "tensor_geometry": [
+                {"shape": [4, 4], "stride": [4, 1], "dtype": "torch.float32"}
+            ]
+            * 2,
+        },
+    }
+    source = replace(
+        source,
+        bindings={
+            **source.bindings,
+            "optimizer_templates": [unread],
+            "task_inputs": task_inputs,
+        },
+    )
+    with pytest.raises(ValueError, match="reads no task's value of gradients"):
+        optimizer_program(source)
 
 
 def test_forward_or_missing_optimizer_cannot_be_mislabeled_as_an_update():

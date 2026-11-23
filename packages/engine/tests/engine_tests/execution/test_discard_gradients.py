@@ -39,6 +39,7 @@ def executor(monkeypatch, *, overlap=False, fail=False):
     instance._closed = instance._plan_released = False
     instance._failure = instance._distributed = None
     instance._initialized = True
+    instance._gradients_held = True
     instance._pending = SimpleNamespace(result=lambda: events.append("waited"))
     instance._paths = (path("owner-", 11), path("accum-", 11))
     instance._named_paths = {"different-shape": path("shared-", 10 if overlap else 11)}
@@ -51,6 +52,15 @@ def test_discard_synchronizes_and_releases_shared_gradient_once(monkeypatch):
     assert events == ["waited"] and instance._pending is None
     assert released == ["owner-grad"]
     assert instance._initialized and instance._failure is None
+    assert not instance._gradients_held
+
+
+def test_discard_without_an_open_accumulation_releases_nothing(monkeypatch):
+    instance, released, events = executor(monkeypatch)
+    instance._gradients_held = False
+    instance.discard_gradients()
+    assert events == ["waited"] and not released
+    assert instance._failure is None
 
 
 def test_discard_refuses_weight_alias_before_releasing_any_value(monkeypatch):

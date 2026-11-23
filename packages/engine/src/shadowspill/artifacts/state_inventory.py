@@ -11,6 +11,31 @@ from .state import StateBinding, StateId, StateInventory, StateTensor
 from .tensors import tensor_geometry
 
 
+def stored_gradients(program: Program) -> tuple[Mapping[str, Any], ...]:
+    """The gradient bindings a Program keeps between calls.
+
+    An accumulation's gradients: a backward Program's, and an optimizer-only
+    Program's inputs. A complete step keeps none.
+    """
+    saved = program.bindings
+    return tuple(
+        saved.get(
+            "persistent_gradients",
+            saved.get("gradients", ())
+            if saved.get("kind") == "forward_backward"
+            else (),
+        )
+    )
+
+
+def gradient_aliases(program: Program) -> frozenset[str]:
+    """The alias groups holding the gradients ``program`` keeps between calls."""
+    groups = {item.object_id: item.alias_group_id for item in program.objects}
+    return frozenset(
+        groups[item["gradient_object_id"]] for item in stored_gradients(program)
+    )
+
+
 def program_state(program: Program, logical_rank: int = 0) -> StateInventory:
     """Describe model state, masters, persistent gradients, moments and counters.
 
@@ -138,11 +163,7 @@ def program_state(program: Program, logical_rank: int = 0) -> StateInventory:
             host_binding=item["name"] if item["object_id"] is None else None,
             layout=item if item["object_id"] is None else None,
         )
-    gradients = saved.get(
-        "persistent_gradients",
-        saved.get("gradients", ()) if saved.get("kind") == "forward_backward" else (),
-    )
-    for item in gradients:
+    for item in stored_gradients(program):
         identity = StateId(
             "gradient", item["parameter_name"], tuple(item.get("component_path", ()))
         )

@@ -203,7 +203,15 @@ def execute(directory, case, *, resume=False):
             before = torch.load(
                 directory / f"execute-rank-{logical}-state-0.pt", weights_only=True
             )
-            count = same_pieces(export(executor), before["tensors"])
+            # A checkpoint holds the state; the saved pieces also hold gradients.
+            count = same_pieces(
+                export(executor),
+                {
+                    name: piece
+                    for name, piece in before["tensors"].items()
+                    if not name.startswith("gradient.")
+                },
+            )
             write(
                 directory,
                 f"resume-checkpoint-rank-{logical}.json",
@@ -223,7 +231,8 @@ def execute(directory, case, *, resume=False):
             assert pending.diagnostics is not None
             trace = pending.diagnostics.as_dict()
             write(directory, f"{phase}-rank-{logical}-trace-{step}.json", trace)
-            actual = export(executor)
+            backward = case["kind"] == "forward_backward"
+            actual = export(executor, gradients=backward)
             torch.save(
                 dict(
                     tensors=actual,
@@ -241,7 +250,14 @@ def execute(directory, case, *, resume=False):
                 assert load_checkpoint(executor, checkpoint, chunk_bytes=4096) == {
                     "completed": 1
                 }
-                count = same_pieces(export(executor), actual)
+                count = same_pieces(
+                    export(executor),
+                    {
+                        name: piece
+                        for name, piece in actual.items()
+                        if not name.startswith("gradient.")
+                    },
+                )
                 write(
                     directory,
                     f"checkpoint-rank-{logical}.json",

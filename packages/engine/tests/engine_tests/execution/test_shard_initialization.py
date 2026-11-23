@@ -319,15 +319,28 @@ def test_original_offsets_bounded_masters_and_padding(rank, elements):
     )
 
 
-def test_backward_initializes_and_exports_reduced_shard_not_local_contribution():
+def test_backward_gradients_are_never_initialized_and_export_apart_from_state():
     state, values = host_storage(fixture(kind="forward_backward"), 0)
+    before = values["reduced"].clone()
     visit_tensors(state, lambda request, chunk: chunk.fill_(2), 12, initialize=True)
-    assert not values["reduced"].count_nonzero()
+    torch.testing.assert_close(values["reduced"], before)
+    with pytest.raises(ValueError, match="never initialized"):
+        visit_tensors(state, lambda *_: None, 12, initialize=True, gradients=True)
     names = []
     visit_tensors(
         state, lambda request, _: names.append(request.name), 12, initialize=False
     )
-    assert set(names) == {"layer.weight", "gradient.layer.weight"}
+    assert set(names) == {"layer.weight"}
+    names.clear()
+    visit_tensors(
+        state,
+        lambda request, _: names.append(request.name),
+        12,
+        initialize=False,
+        gradients=True,
+    )
+    # The reduced shard, not the local contribution.
+    assert set(names) == {"gradient.layer.weight"}
 
 
 def test_wrong_host_capacity_rejected_before_loading():

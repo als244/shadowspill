@@ -43,8 +43,9 @@ def optimizer_program(step: Program) -> Program:
     gradient layout, and takes no examples. Nothing is captured or compiled
     and every task keeps its profile key, so
     ``apply_profiles(result, step_profiles)`` reuses the step's measurements.
-    Admit its Plan in one `Executor` with the backward Plans that produce the
-    gradients; whether gradients are ready to apply is the caller's to track.
+    The update consumes the gradients: they are not kept after it. Admit its
+    Plan in one `Executor` with the backward Plans that produce the gradients;
+    the Executor runs it only while their gradients are held.
 
     Parameters
     ----------
@@ -60,7 +61,7 @@ def optimizer_program(step: Program) -> Program:
     ------
     ValueError
         If ``step`` is not a complete-step Program with captured optimizer
-        tasks.
+        tasks, or its update reads none of some gradient's value.
     """
     if step.bindings.get("kind") != "step" or not step.bindings.get(
         "optimizer_templates"
@@ -152,10 +153,20 @@ def optimizer_program(step: Program) -> Program:
     kept_aliases = {aliases[value] for value in used}
     produced = {aliases[value] for task in sequence.tasks for value in task.outputs}
     initial = {aliases[value] for value in state} - produced
-    final = {aliases[value] for value in state}
-    # Reduction scratch belongs to the invocation. Source gradient destinations
-    # survive in spill so another operation can inspect/export the same inventory.
+    # The update consumes the gradients: they end with it, so the runtime frees
+    # their storage at their last read instead of writing them back.
     gradient_ids = {item["gradient_object_id"] for item in gradients}
+    final = {aliases[value] for value in state - gradient_ids}
+    read = {
+        aliases[value]
+        for task in sequence.tasks
+        for value in (*task.inputs, *(m.object_id for m in task.mutations))
+    }
+    unread = {aliases[value] for value in gradient_ids} - read - final
+    if unread:
+        raise ValueError(
+            f"the update reads no task's value of gradients {sorted(unread)}"
+        )
     bindings["weight_shards"] = {
         key: value
         for key, value in bindings.get("weight_shards", {}).items()

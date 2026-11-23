@@ -104,14 +104,7 @@ class PlanState:
             for tensor in owned_tensors(layout, skip_shared=bool(name)):
                 chunk = tensor.chunk(0, prefix)
                 if chunk.name not in protected:
-                    yield (
-                        chunk,
-                        (
-                            {"kind": "constant", "value": 0}
-                            if tensor.name.startswith("gradient.")
-                            else tensor.initializer
-                        ),
-                    )
+                    yield chunk, tensor.initializer
             for binding in layout.plan.program.bindings.get("optimizer_bindings", ()):
                 for chunk in control_descriptors(
                     (binding,), shared_host=self._shared.host[name], prefix=prefix

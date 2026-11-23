@@ -156,6 +156,10 @@ updates. Frozen wrappers, as used by LoRA, require no logical master.
 using the same names and storage offsets. Consume each view before the callback
 returns; stream it to files without retaining a full-model snapshot.
 
+Gradients are no part of this state. They exist only while an accumulation is
+open, and `Executor.export_gradients` reads them then. A checkpoint never holds
+them.
+
 `save_checkpoint` and `load_checkpoint` use this interface for atomic archives.
 Each checkpoint is an uncompressed TAR archive containing a JSON manifest and
 packed tensor payloads, including layout metadata and BLAKE3 content hashes.

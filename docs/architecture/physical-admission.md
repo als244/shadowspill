@@ -503,8 +503,11 @@ when an initial or final residency places its alias in spill or the alias
 retains its spill copy; the runtime holds it for the whole run. A transient
 lease is held only while its Plan runs, so the Plans' transient peaks never
 coexist. Transient spill a Plan still holds when it ends stays held, so it is
-charged as persistent. The C runtime validates every layout against that slice
-through
+charged as persistent. An accumulation's gradients are persistent only while
+it is open: the backward that opens it takes their storage, and the
+optimizer-only update or a discard releases it. A complete step does not run
+while they are held, so they are charged beside every transient peak but a
+step's. The C runtime validates every layout against that slice through
 `shadowspill_plan_admit_fixed_layout_in()`.
 
 Plans execute sequentially. Each invocation waits for the previous invocation

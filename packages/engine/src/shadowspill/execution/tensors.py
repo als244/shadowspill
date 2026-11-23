@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import torch
 
 from shadowspill.artifacts.examples import input_groups, single_forward
+from shadowspill.artifacts.state_inventory import stored_gradients
 from shadowspill.artifacts.tensors import TensorChunk as TensorChunk
 from shadowspill.artifacts.tensors import registration_name
 
@@ -43,9 +44,8 @@ def tensor_entries(
             and item["object_id"] is not None
         ):
             yield item["name"], item["object_id"], item.get("initialization")
-    if bindings["kind"] in {"forward_backward", "optim_step"}:
-        for item in bindings.get("persistent_gradients", bindings["gradients"]):
-            yield "gradient." + item["parameter_name"], item["gradient_object_id"], None
+    for item in stored_gradients(state.plan.program):
+        yield "gradient." + item["parameter_name"], item["gradient_object_id"], None
     for item in bindings.get("fixed_inputs", ()):
         yield (
             "fixed." + item["object_id"],
@@ -130,12 +130,21 @@ class OwnedTensor(NamedTuple):
 
 
 def owned_tensors(
-    state: TensorLayout, *, skip_shared: bool = False
+    state: TensorLayout, *, skip_shared: bool = False, gradients: bool = False
 ) -> Iterator[OwnedTensor]:
     """Each persistent tensor of ``state`` once, by its first name, with the
-    region this rank owns; a shared alias is left out when asked."""
+    region this rank owns; a shared alias is left out when asked.
+
+    The gradients an accumulation keeps exist only while it is open, so they
+    are no part of the persistent state: ``gradients`` selects them instead.
+    """
     visited = set()
+    stored = {
+        item["gradient_object_id"] for item in stored_gradients(state.plan.program)
+    }
     for name, object_id, initializer in tensor_entries(state):
+        if (object_id in stored) != gradients:
+            continue
         alias = state.aliases[object_id]
         if skip_shared and alias in state.shared_aliases:
             continue
@@ -166,12 +175,17 @@ def owned_tensors(
 
 
 def tensor_descriptors(
-    state: TensorLayout, *, prefix: str = "", skip_shared: bool = False
+    state: TensorLayout,
+    *,
+    prefix: str = "",
+    skip_shared: bool = False,
+    gradients: bool = False,
 ) -> Iterator[TensorChunk]:
     """One chunk spanning each persistent tensor's owned region, named as
     ``visit_tensors`` names it: how a checkpoint describes a tensor, read
-    without touching any data."""
-    for tensor in owned_tensors(state, skip_shared=skip_shared):
+    without touching any data. ``gradients`` describes the accumulation's
+    gradients instead."""
+    for tensor in owned_tensors(state, skip_shared=skip_shared, gradients=gradients):
         yield tensor.chunk(0, prefix)
 
 
@@ -185,13 +199,16 @@ def visit_tensors(
     prefix: str = "",
     skip_shared: bool = False,
     names: Collection[str] | None = None,
+    gradients: bool = False,
 ) -> None:
     if chunk_bytes <= 0:
         raise ValueError("chunk_bytes must be positive")
     if initialize and names is not None:
         raise ValueError("tensor selection applies only to export, not initialization")
+    if initialize and gradients:
+        raise ValueError("gradients are produced by a backward, never initialized")
     named = {name: object_id for name, object_id, _ in tensor_entries(state)}
-    for tensor in owned_tensors(state, skip_shared=skip_shared):
+    for tensor in owned_tensors(state, skip_shared=skip_shared, gradients=gradients):
         if names is not None and tensor.chunk(0, prefix).name not in names:
             continue
         if initialize and tensor.alias not in state.initial:
@@ -218,9 +235,7 @@ def visit_tensors(
             restoring = (
                 restore if isinstance(restore, bool) else request.name in restore
             )
-            if initialize and not restoring and tensor.name.startswith("gradient."):
-                destination.zero_()
-            elif (
+            if (
                 initialize
                 and not restoring
                 and tensor.initializer

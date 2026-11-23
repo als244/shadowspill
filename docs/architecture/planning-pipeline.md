@@ -73,7 +73,9 @@ placement also happens during planning: stage-interleaved updates follow all
 required gradient writes and old-weight reads; tail updates follow backward.
 `build_forward_backward` Plans include both fresh-gradient and accumulate-into-
 existing-gradient paths, admitted together. Fresh gradients remain the runtime
-default.
+default. An accumulation's gradients exist from the backward that opens it
+until the optimizer-only update or a discard ends it; a complete step does not
+run while they are held.
 
 ## Search and physical admission
 

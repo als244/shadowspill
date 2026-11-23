@@ -103,7 +103,9 @@ def test_joint_spill_counts_persistent_state_once_beside_the_largest_transient_p
             ResidencySpec(a.alias_group_id, MemoryLocation.SPILL) for a in aliases[:2]
         )
         return SimpleNamespace(
-            program=SimpleNamespace(alias_groups=aliases, final_residency=entries),
+            program=SimpleNamespace(
+                alias_groups=aliases, final_residency=entries, bindings={}, objects=()
+            ),
             schedule=SimpleNamespace(initial_residency=entries),
             timeline=SimpleNamespace(
                 spill_transient_peak_bytes=peak, spill_transient_end_bytes=end
@@ -131,3 +133,50 @@ def test_joint_spill_counts_persistent_state_once_beside_the_largest_transient_p
     # Transient spill a Plan leaves at its end stays held from then on.
     leaving = plan("weights", "inputs", 32, 32, end=16)
     assert _spill_bytes([("", leaving), ("evaluation", evaluation)], maps) == 272
+
+
+def test_gradients_coexist_with_every_transient_peak_but_a_complete_steps():
+    def plan(kind, peak, *, gradients=None):
+        aliases = (AliasGroupSpec("weights", "rank0", 64, retain_spill_copy=True),)
+        bindings = {"kind": kind}
+        if gradients is not None:
+            aliases += (AliasGroupSpec("gradient", "rank0", 32),)
+            bindings[gradients] = [{"gradient_object_id": "gradient"}]
+        entries = tuple(
+            ResidencySpec(a.alias_group_id, MemoryLocation.SPILL) for a in aliases
+        )
+        objects = tuple(
+            SimpleNamespace(object_id=a.alias_group_id, alias_group_id=a.alias_group_id)
+            for a in aliases
+        )
+        return SimpleNamespace(
+            program=SimpleNamespace(
+                alias_groups=aliases,
+                final_residency=entries,
+                bindings=bindings,
+                objects=objects,
+            ),
+            schedule=SimpleNamespace(initial_residency=entries),
+            timeline=SimpleNamespace(
+                spill_transient_peak_bytes=peak, spill_transient_end_bytes=0
+            ),
+        )
+
+    maps = {
+        "": {},
+        "backward": {"weights": ("", "weights")},
+        "update": {"weights": ("", "weights"), "gradient": ("backward", "gradient")},
+    }
+    backward = plan("forward_backward", 40, gradients="gradients")
+    update = plan("optim_step", 10, gradients="persistent_gradients")
+
+    def joint(step_peak):
+        step = plan("step", step_peak)
+        return _spill_bytes(
+            [("", step), ("backward", backward), ("update", update)], maps
+        )
+
+    # 64 weights + the larger of the step's peak alone and the 32 bytes of
+    # gradients beside the backward's 40.
+    assert joint(100) == 64 + 100
+    assert joint(50) == 64 + 32 + 40

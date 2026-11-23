@@ -1,7 +1,9 @@
 """Bounded shard exports, full-tensor reconstruction and exact resume checks."""
 
 
-def export(executor):
+def export(executor, *, gradients=False):
+    """The persistent state's pieces, and with ``gradients`` the open
+    accumulation's gradients beside them."""
     import torch
 
     pieces = {}
@@ -22,6 +24,8 @@ def export(executor):
         record["chunks"].append((request.offset, chunk.clone()))
 
     executor.export_tensors(collect, chunk_bytes=4096)
+    if gradients:
+        executor.export_gradients(collect, chunk_bytes=4096)
     return pieces
 
 

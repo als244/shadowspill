@@ -6,7 +6,7 @@ selective retention, lifetime policies and two-rank DP. The model has tied
 projections, nonzero LoRA factors, odd shard sizes, two unequal rank-local
 microbatches and a globally normalized objective. Cases cover full SAVE training,
 sharded LoRA with retained sequence operations and custom checkpoint cuts, and
-sharded batch-axis LoRA with fresh/continuing/fresh gradient accumulation.
+sharded batch-axis LoRA with fresh/fresh/continuing gradient accumulation.
 
 Run the CPU readiness checks without a GPU:
 
