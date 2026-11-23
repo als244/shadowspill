@@ -573,7 +573,9 @@ static int remote_copy(
     }
     const Work plan = *work;
     publish_slot(self, work, claimed);
-    *handle = claimed;
+    /* The runtime asks `transfer` about a nonzero handle only, so an
+       untraced copy answers 0 and is never asked about. */
+    *handle = plan.traced ? claimed : 0U;
 
     const ShadowSpillBackend *const backend = lane->backend;
     int enqueued;

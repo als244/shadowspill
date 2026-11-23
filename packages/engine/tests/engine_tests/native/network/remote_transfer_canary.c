@@ -373,13 +373,14 @@ int main(void) {
     /* Evict: device -> remote. Timed on its own, because a rate that includes
        filling and checking the pattern is not the lane's rate. */
     ShadowSpillRouteState *const evict = &runtime->routes[EVICT_ROUTE];
-    /* No trace is running here, so every lane answers 0 and this is unread. */
+    /* No trace is running here, so every lane answers 0 and keeps nothing. */
     uint64_t lane_handle = 0U;
     const double evict_started = seconds_now();
     for (uint64_t pass = 0U; pass < repeats && !failed; ++pass) {
         failed = failed || evict->operations->copy(
             evict->lane, stored.pointer, device.pointer, payload_bytes, &lane_handle
         ) != 0;
+        failed = failed || lane_handle != 0U;
         failed = failed || evict->operations->synchronize(evict->lane) != 0;
     }
     const double evict_seconds = (seconds_now() - evict_started) / (double)repeats;
@@ -397,6 +398,7 @@ int main(void) {
         failed = failed || fetch->operations->copy(
             fetch->lane, device.pointer, stored.pointer, payload_bytes, &lane_handle
         ) != 0;
+        failed = failed || lane_handle != 0U;
         failed = failed || fetch->operations->synchronize(fetch->lane) != 0;
     }
     const double fetch_seconds = (seconds_now() - fetch_started) / (double)repeats;
