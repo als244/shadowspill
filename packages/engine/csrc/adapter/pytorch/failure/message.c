@@ -40,8 +40,6 @@ static void append_failure_task(
     uint64_t task_id
 ) {
     const uint64_t profiling_base = SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE;
-    const uint64_t initial_actions_base =
-        SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID;
     if (task_id >= profiling_base) {
         append_failure_message(
             destination,
@@ -49,16 +47,6 @@ static void append_failure_task(
             offset,
             "planning_task: structural_profile_%06llu\n",
             (unsigned long long)(task_id - profiling_base)
-        );
-        return;
-    }
-    if (task_id >= initial_actions_base) {
-        append_failure_message(
-            destination,
-            destination_bytes,
-            offset,
-            "runtime_scope: initial_actions.invocation_%06llu\n",
-            (unsigned long long)(task_id - initial_actions_base)
         );
         return;
     }

@@ -17,7 +17,7 @@ import ctypes
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 from shadowspill.frontend import RuntimeFrontend
 from shadowspill.libraries import (
@@ -113,12 +113,6 @@ def _function_pointer(library: Any, name: str) -> int:
     return pointer
 
 
-#: How far a lane may run ahead with transfers the plan did not schedule (the
-#: materialization, reconciliation): a plan transfer never waits behind more
-#: than this many background bytes. Zero removes the bound.
-DEFAULT_BACKGROUND_WINDOW_BYTES: Final = 64 << 20
-
-
 def install_runtime(
     library_path: str | Path,
     *,
@@ -130,7 +124,6 @@ def install_runtime(
     pools: tuple[PoolBootstrap, ...],
     routes: tuple[RouteBootstrap, ...],
     worker_poll_nanoseconds: int = 1_000,
-    background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
     backend: str | None = None,
     reject_overbudget: bool = False,
     numa_binding: bool = True,
@@ -163,7 +156,6 @@ def install_runtime(
         pools,
         routes,
         worker_poll_nanoseconds,
-        background_transfer_window_bytes,
         reject_overbudget,
         external_baseline_bytes,
         physical_limit_bytes,
@@ -234,7 +226,6 @@ def install_runtime(
         routes=route_values,
         route_count=len(routes),
         worker_poll_nanoseconds=worker_poll_nanoseconds,
-        background_transfer_window_bytes=background_transfer_window_bytes,
         backend_library=str(backend_library).encode("utf-8"),
         libraries=library_values,
         library_count=len(library_paths),
@@ -351,7 +342,6 @@ def _validate_install_request(
     pools: tuple[PoolBootstrap, ...],
     routes: tuple[RouteBootstrap, ...],
     worker_poll_nanoseconds: int,
-    background_transfer_window_bytes: int,
     reject_overbudget: bool = False,
     external_baseline_bytes: int = 0,
     physical_limit_bytes: int = 0,
@@ -406,8 +396,6 @@ def _validate_install_request(
         raise RuntimeInstallError("route endpoints must name distinct known pools")
     if worker_poll_nanoseconds < 0:
         raise RuntimeInstallError("worker poll interval must be non-negative")
-    if background_transfer_window_bytes < 0:
-        raise RuntimeInstallError("background transfer window must be non-negative")
     if _installed is not None:
         raise RuntimeInstallError("ShadowSpill's allocator is already installed")
 

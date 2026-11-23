@@ -170,28 +170,12 @@ def _submit_actions(
     stream: int,
     actions: tuple[RuntimeAction, ...],
 ) -> None:
-    for object_id in dict.fromkeys(action.object_id for action in actions):
-        _bind_plan_object(library, plan, object_id)
-    action_array = (RuntimeAction * len(actions))(*actions)
-    handle = ctypes.c_size_t()
+    # Transfers and releases alone: a task with no kernel between its two
+    # boundaries.
+    handle = _admit_task(library, plan, batch_id, (), actions)
+    begin_task(library, handle, batch_id, stream, expected_bindings=0)
     _require_ok(
-        int(
-            runtime_library().shadowspill_plan_admit_action_batch(
-                plan,
-                batch_id,
-                action_array,
-                len(actions),
-                ctypes.byref(handle),
-            )
-        ),
-        "action admission",
-    )
-    _require_ok(
-        int(
-            runtime_library().shadowspill_submit_action_batch_handle(
-                _runtime_handle(library), handle.value, stream
-            )
-        ),
+        int(library.shadowspill_pytorch_after_task_handle(handle, stream)),
         "action submission",
     )
 
@@ -253,10 +237,6 @@ def main() -> int:
         device_budget_bytes=2 << 30,
         external_headroom_bytes=512 << 20,
         **two_pool_topology(256 << 20),
-        # Two copies must be in flight at once for the overlap this canary
-        # measures, so the background window that serialises an unscheduled
-        # batch behind the plan's transfers is off here.
-        background_transfer_window_bytes=0,
         worker_poll_nanoseconds=10_000,
     )
     library = installed.library

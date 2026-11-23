@@ -9,14 +9,13 @@
 
 int shadowspill_task_same_description(
     const ShadowSpillTaskRecord *record,
-    const ShadowSpillTaskDescription *description,
-    uint8_t boundary_kind
+    const ShadowSpillTaskDescription *description
 ) {
     const int same_trace_label =
         (record->trace_label == NULL && description->trace_label == NULL) ||
         (record->trace_label != NULL && description->trace_label != NULL &&
          strcmp(record->trace_label, description->trace_label) == 0);
-    if (!same_trace_label || record->boundary_kind != boundary_kind ||
+    if (!same_trace_label ||
         record->input_count != description->input_count ||
         record->update_count != description->update_count ||
         record->publication_count != description->publication_count ||
@@ -101,8 +100,7 @@ int shadowspill_task_same_description(
 
 static int copy_task_scalars(
     ShadowSpillTaskRecord *record,
-    const ShadowSpillTaskDescription *description,
-    uint8_t boundary_kind
+    const ShadowSpillTaskDescription *description
 ) {
     if (description->trace_label != NULL) {
         const size_t label_bytes = strnlen(
@@ -117,7 +115,6 @@ static int copy_task_scalars(
             return -1;
         }
     }
-    record->boundary_kind = boundary_kind;
     atomic_init(&record->invocation_count, 0U);
     atomic_init(&record->submission_sequence, 0U);
     atomic_init(&record->submission_invocation, 0U);
@@ -388,10 +385,6 @@ static int bind_task_actions(
                     : plan->evict_route,
             .trace_label = trace_label,
             .admitted = 1U,
-            .background = record->boundary_kind ==
-                    SHADOWSPILL_BOUNDARY_ACTION_BATCH
-                ? 1U
-                : 0U,
         };
         if (description->actions[index].kind ==
             SHADOWSPILL_RUNTIME_RELEASE) {
@@ -407,8 +400,7 @@ static int bind_task_actions(
 
 ShadowSpillTaskRecord *shadowspill_task_create_record(
     ShadowSpillPlan *plan,
-    const ShadowSpillTaskDescription *description,
-    uint8_t boundary_kind
+    const ShadowSpillTaskDescription *description
 ) {
     ShadowSpillTaskRecord *record = calloc(1U, sizeof(*record));
     if (record == NULL) {
@@ -421,7 +413,7 @@ ShadowSpillTaskRecord *shadowspill_task_create_record(
         return NULL;
     }
     record->completion_lock_initialized = 1U;
-    if (copy_task_scalars(record, description, boundary_kind) != 0 ||
+    if (copy_task_scalars(record, description) != 0 ||
         allocate_task_arrays(record) != 0 ||
         copy_allocation_contract(record, description) != 0 ||
         bind_task_inputs(record, plan, description) != 0 ||

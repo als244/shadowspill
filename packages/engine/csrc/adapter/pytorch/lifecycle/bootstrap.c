@@ -174,8 +174,6 @@ static ShadowSpillStatus build_runtime_topology(
             .pool_memory_count = pool_memory_count,
             .worker_poll_nanoseconds = config->worker_poll_nanoseconds,
             .disable_numa_binding = config->disable_numa_binding,
-            .background_transfer_window_bytes =
-                config->background_transfer_window_bytes,
         };
         status = shadowspill_runtime_create(&runtime_config, runtime);
     }

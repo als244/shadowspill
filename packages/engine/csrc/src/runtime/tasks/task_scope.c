@@ -311,20 +311,6 @@ int shadowspill_enter_claimed_task_scope(
     return 0;
 }
 
-int shadowspill_enter_task_scope(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillTaskRecord *record
-) {
-    if (shadowspill_claim_task_invocation(record) != 0) {
-        return -1;
-    }
-    if (shadowspill_enter_claimed_task_scope(runtime, record) != 0) {
-        shadowspill_release_task_invocation(record);
-        return -1;
-    }
-    return 0;
-}
-
 static int allocation_geometry_matches(
     const ShadowSpillTaskAllocationContractStep *step,
     uint64_t requested_bytes,
@@ -730,8 +716,7 @@ ShadowSpillStatus shadowspill_abort_task_handle(
 ) {
     const ShadowSpillTaskRecord *record = handle;
     if (runtime == NULL || record == NULL || record->plan_owner == NULL ||
-        record->plan_owner->runtime != runtime ||
-        record->boundary_kind != SHADOWSPILL_BOUNDARY_TASK) {
+        record->plan_owner->runtime != runtime) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     if (shadowspill_current_plan(runtime) != record->plan_owner ||

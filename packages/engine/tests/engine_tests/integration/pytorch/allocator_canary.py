@@ -147,22 +147,11 @@ def _submit_actions(
     stream: int,
     actions: tuple[RuntimeAction, ...],
 ) -> None:
-    for object_id in dict.fromkeys(action.object_id for action in actions):
-        _bind_plan_object(library, plan, object_id)
-    encoded = (RuntimeAction * len(actions))(*actions)
-    handle = ctypes.c_size_t()
-    status = int(
-        runtime_library().shadowspill_plan_admit_action_batch(
-            plan, batch_id, encoded, len(actions), ctypes.byref(handle)
-        )
-    )
-    if status != 0 or handle.value == 0:
-        raise AssertionError(f"action admission failed with status {status}")
-    status = int(
-        runtime_library().shadowspill_submit_action_batch_handle(
-            _runtime_handle(library), handle.value, stream
-        )
-    )
+    # Transfers and releases alone: a task with no kernel between its two
+    # boundaries.
+    handle = _admit_task(library, plan, batch_id, (), actions)
+    begin_task(library, handle, batch_id, stream, expected_bindings=0)
+    status = int(library.shadowspill_pytorch_after_task_handle(handle, stream))
     if status != 0:
         raise AssertionError(f"action submission failed with status {status}")
 

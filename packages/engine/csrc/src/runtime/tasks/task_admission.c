@@ -1,4 +1,4 @@
-/* Admitting a task, or a batch of actions, into a plan. */
+/* Admitting a task into a plan. */
 #include "../internal.h"
 
 #include <stddef.h>
@@ -10,7 +10,6 @@
 static ShadowSpillStatus admit_record(
     ShadowSpillPlan *plan,
     const ShadowSpillTaskDescription *description,
-    uint8_t boundary_kind,
     const ShadowSpillTaskRecord **result
 ) {
     if (plan == NULL || description == NULL ||
@@ -56,7 +55,7 @@ static ShadowSpillStatus admit_record(
         }
     }
     ShadowSpillTaskRecord *created = shadowspill_task_create_record(
-        plan, description, boundary_kind
+        plan, description
     );
     if (created == NULL) {
         return SHADOWSPILL_STATUS_INVALID_STATE;
@@ -68,7 +67,7 @@ static ShadowSpillStatus admit_record(
     );
     if (existing != NULL) {
         const int matches = shadowspill_task_same_description(
-            existing, description, boundary_kind
+            existing, description
         );
         pthread_rwlock_unlock(&table->lock);
         shadowspill_task_destroy_record(created);
@@ -101,12 +100,7 @@ ShadowSpillStatus shadowspill_plan_admit_task(
     }
     *handle = NULL;
     const ShadowSpillTaskRecord *record = NULL;
-    const ShadowSpillStatus status = admit_record(
-        plan,
-        description,
-        SHADOWSPILL_BOUNDARY_TASK,
-        &record
-    );
+    const ShadowSpillStatus status = admit_record(plan, description, &record);
     if (status == SHADOWSPILL_STATUS_OK) {
         *handle = record;
     }
@@ -121,35 +115,6 @@ uint64_t shadowspill_task_id(const ShadowSpillTaskHandle *handle) {
 const char *shadowspill_task_trace_label(const ShadowSpillTaskHandle *handle) {
     const ShadowSpillTaskRecord *record = handle;
     return record == NULL ? NULL : record->trace_label;
-}
-
-ShadowSpillStatus shadowspill_plan_admit_action_batch(
-    ShadowSpillPlan *plan,
-    uint64_t batch_id,
-    const ShadowSpillRuntimeAction *actions,
-    uint32_t action_count,
-    const ShadowSpillActionBatchHandle **handle
-) {
-    if (handle == NULL || (action_count != 0U && actions == NULL)) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    *handle = NULL;
-    const ShadowSpillTaskDescription description = {
-        .task_id = batch_id,
-        .actions = actions,
-        .action_count = action_count,
-    };
-    const ShadowSpillTaskRecord *record = NULL;
-    const ShadowSpillStatus status = admit_record(
-        plan,
-        &description,
-        SHADOWSPILL_BOUNDARY_ACTION_BATCH,
-        &record
-    );
-    if (status == SHADOWSPILL_STATUS_OK) {
-        *handle = record;
-    }
-    return status;
 }
 
 ShadowSpillStatus shadowspill_plan_clear_tasks(

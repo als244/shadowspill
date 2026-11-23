@@ -22,7 +22,6 @@ from .configuration import (
 )
 from .constants import (
     ADAPTER_ABI_VERSION,
-    INITIAL_ACTIONS_TASK_ID,
     PROFILING_SCOPE_BASE,
     RUNTIME_OBJECT_SCOPE_ID,
 )
@@ -61,7 +60,6 @@ from .trace import AllocationEvent, TraceEvent, TraceSummary
 
 __all__ = [
     "ADAPTER_ABI_VERSION",
-    "INITIAL_ACTIONS_TASK_ID",
     "PROFILING_SCOPE_BASE",
     "RUNTIME_OBJECT_SCOPE_ID",
     "AdapterCapabilities",

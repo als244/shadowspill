@@ -57,6 +57,5 @@ int main(void) {
     REPORT(ShadowSpillPytorchAdapterCapabilities);
     REPORT(ShadowSpillPytorchPhysicalAdmission);
     REPORT_VALUE(SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE);
-    REPORT_VALUE(SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID);
     return EXIT_SUCCESS;
 }

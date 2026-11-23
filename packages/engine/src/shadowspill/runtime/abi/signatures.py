@@ -26,7 +26,6 @@ from .plans import (
     ObjectLocationSnapshot,
     ObjectSnapshot,
     PlanDescription,
-    RuntimeAction,
     TaskDescription,
 )
 from .statistics import (
@@ -111,11 +110,6 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, Sequence[object], object], ...] = (
         ],
         ctypes.c_uint32,
     ),
-    (
-        "shadowspill_submit_action_batch_handle",
-        [ctypes.c_size_t, ctypes.c_size_t, ctypes.c_uint64],
-        ctypes.c_uint32,
-    ),
     ("shadowspill_timing_marker_wait", [ctypes.c_void_p], ctypes.c_uint32),
     (
         "shadowspill_timing_stream_wait",
@@ -164,17 +158,6 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, Sequence[object], object], ...] = (
         [
             ctypes.c_size_t,
             ctypes.POINTER(ctypes.c_uint64),
-            ctypes.c_uint32,
-            ctypes.POINTER(ctypes.c_size_t),
-        ],
-        ctypes.c_uint32,
-    ),
-    (
-        "shadowspill_plan_admit_action_batch",
-        [
-            ctypes.c_size_t,
-            ctypes.c_uint64,
-            ctypes.POINTER(RuntimeAction),
             ctypes.c_uint32,
             ctypes.POINTER(ctypes.c_size_t),
         ],
@@ -298,16 +281,6 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, Sequence[object], object], ...] = (
     (
         "shadowspill_register_object",
         [ctypes.c_size_t, ctypes.POINTER(ObjectDescription)],
-        ctypes.c_uint32,
-    ),
-    (
-        "shadowspill_register_placed_object",
-        [ctypes.c_size_t, ctypes.POINTER(ObjectDescription), ctypes.c_uint64],
-        ctypes.c_uint32,
-    ),
-    (
-        "shadowspill_memory_pool_reserve_range",
-        [ctypes.c_size_t, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64],
         ctypes.c_uint32,
     ),
     (

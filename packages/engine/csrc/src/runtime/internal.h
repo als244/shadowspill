@@ -64,7 +64,6 @@ struct ShadowSpillRuntime {
     _Atomic uint8_t worker_stop;
     _Atomic uint32_t failure_status;
     uint64_t worker_poll_nanoseconds;
-    uint64_t background_transfer_window_bytes;
 
     ShadowSpillBackend backend;
     int host_numa_node; /* Preferred pool node; -1 disables placement/audit. */

@@ -79,17 +79,9 @@ behind a blocked head therefore adds no device waits and cannot put that
 fetch's dependencies ahead of earlier transfers. Event lookup releases the
 object lock because a predecessor can be an eviction of that same object.
 
-Each queue serves two orders. Transfers the plan scheduled are dispatched in
-the order their boundaries triggered them. Transfers the plan did not
-schedule — model materialization or state reconciliation —
-are background transfers: they are dispatched in their own order, and only
-while the queue holds fewer than the configured window of their bytes in
-flight, so a scheduled transfer never waits behind more than that window
-however large the background batch is. A single background copy larger than
-the window runs alone. Once dispatched, a queue is one FIFO in dispatch
-order, which is the stream's order and what completion follows. The window
-is `ShadowSpillRuntimeConfig.background_transfer_window_bytes`; zero removes
-the bound.
+A queue dispatches transfers in the order their boundaries triggered them.
+Once dispatched, it is one FIFO in dispatch order, which is the stream's order
+and what completion follows.
 
 ## Diagnostic labels
 

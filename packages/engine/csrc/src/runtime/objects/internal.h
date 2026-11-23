@@ -152,10 +152,6 @@ struct ShadowSpillQueuedAction {
     struct ShadowSpillQueuedAction *queue_previous;
     struct ShadowSpillQueuedAction *queue_next;
     uint8_t queue_state;
-    /* Set when the action came from an action-batch boundary rather than a
-       task boundary: a transfer the plan did not schedule, which the queue
-       serves in the background. */
-    uint8_t background;
     /* A write-back scheduled while the spill copy was already current:
        nothing to copy, so it never enters the queue. */
     uint8_t skips_copy;

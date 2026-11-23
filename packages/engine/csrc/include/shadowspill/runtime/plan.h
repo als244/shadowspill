@@ -180,16 +180,6 @@ shadowspill_transfer_acquired_object_to_caller(
     ShadowSpillAllocation *allocation
 );
 
-/* Admit an immutable action-only trigger batch without creating a task. */
-SHADOWSPILL_API ShadowSpillStatus
-shadowspill_plan_admit_action_batch(
-    ShadowSpillPlan *plan,
-    uint64_t batch_id,
-    const ShadowSpillRuntimeAction *actions,
-    uint32_t action_count,
-    const ShadowSpillActionBatchHandle **handle
-);
-
 #ifdef __cplusplus
 }
 #endif

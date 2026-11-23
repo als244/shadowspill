@@ -100,12 +100,6 @@ leases awaiting a completion event that will never arrive. Abort fixes that
 incomplete lifecycle; it does not clear a latched runtime failure or make the
 failed task's outputs valid.
 
-### `shadowspill_submit_action_batch_handle`
-
-An action-only batch uses a task scope and the same closing path, with no kernel
-call between the boundaries. It submits transfers and releases without inventing
-compute work.
-
 ## Asynchronous work and blocking points
 
 At return from `after_task`:

@@ -110,7 +110,15 @@ int main(void) {
         .evict_route_id = 1U,
     };
     ShadowSpillObjectHandle *object_handle = NULL;
-    const ShadowSpillActionBatchHandle *initial_actions = NULL;
+    /* The initial fetch, as a task with no kernel between its boundaries. */
+    const ShadowSpillTaskDescription initial_fetch = {
+        .task_id = 0U,
+        .actions = &fetch,
+        .action_count = 1U,
+    };
+    const ShadowSpillTaskHandle *initial_actions = NULL;
+    const ShadowSpillObjectBinding *initial_bindings = NULL;
+    uint32_t initial_binding_count = 0U;
     if (shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_write_object(
@@ -123,9 +131,12 @@ int main(void) {
             plan, object.object_id, object_handle, SHADOWSPILL_OBJECT_CAUSAL
         ) != SHADOWSPILL_STATUS_OK || shadowspill_object_handle_release(
             object_handle
-        ) != SHADOWSPILL_STATUS_OK || shadowspill_plan_admit_action_batch(
-            plan, 0U, &fetch, 1U, &initial_actions
-        ) != SHADOWSPILL_STATUS_OK || shadowspill_submit_action_batch_handle(
+        ) != SHADOWSPILL_STATUS_OK || shadowspill_plan_admit_task(
+            plan, &initial_fetch, &initial_actions
+        ) != SHADOWSPILL_STATUS_OK || shadowspill_before_task_handle(
+            runtime, initial_actions, compute, &initial_bindings,
+            &initial_binding_count
+        ) != SHADOWSPILL_STATUS_OK || shadowspill_after_task_handle(
             runtime, initial_actions, compute
         ) != SHADOWSPILL_STATUS_OK) {
         FAIL("initial object registration or fetch submission");

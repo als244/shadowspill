@@ -54,8 +54,8 @@ shadowspill_memory_pool_allocation_for_pointer(
 /*
  * Performs logical free immediately. A later allocation on the sole recorded
  * stream may reuse the whole pending block by adding its retirement event as a
- * stream dependency. Global and background-transfer reuse waits for every
- * recorded stream to retire. Plan-owned allocations ignore framework logical
+ * stream dependency. Reuse from any other stream waits for every recorded
+ * stream to retire. Plan-owned allocations ignore framework logical
  * free until a plan action releases or evicts the owning object.
  */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_free(
@@ -63,19 +63,6 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_free(
     uint32_t pool_id,
     uint64_t allocation_id,
     ShadowSpillBackendStream stream
-);
-
-/*
- * Reserves [offset, offset + bytes) of a pool for the runtime's lifetime,
- * for state that already lies there: placed objects borrow leases inside
- * it and releasing them does not free it. Fails when any of the range is
- * already in use.
- */
-SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_reserve_range(
-    ShadowSpillRuntime *runtime,
-    uint32_t pool_id,
-    uint64_t offset,
-    uint64_t bytes
 );
 
 /*

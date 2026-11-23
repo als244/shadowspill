@@ -40,9 +40,7 @@ uses the same task/action identities. Each consumer waits only for its own
 inputs and allocation reuse dependencies. Later-input fetches may overlap
 computation normally.
 
-There is no separately reconstructed entry transfer batch. Background action
-batches remain available for lifecycle operations such as materializing or
-reconciling model state; they do not implement a planned invocation's fetches.
+There is no separately reconstructed entry transfer batch.
 
 ## Repeated execution
 

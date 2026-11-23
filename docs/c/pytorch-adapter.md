@@ -66,8 +66,7 @@ or which device it wants without this header learning any such word.
 directed routes as `ShadowSpillPytorchPoolConfig` and
 `ShadowSpillPytorchRouteConfig` arrays, which id and name what the runtime
 will build, the device budget and the external headroom, the worker's
-poll interval, the background transfer window and the NUMA-binding switch it
-passes through to the runtime, and the backend library by path. The adapter
+poll interval and the NUMA-binding switch it passes through to the runtime, and the backend library by path. The adapter
 hands back `ShadowSpillPytorchPhysicalAdmission` (the ledger as bootstrap
 admitted it), `ShadowSpillPytorchAdapterCapabilities` (the three contract
 versions and whether the storage operators were built),
@@ -91,11 +90,9 @@ not out-of-memory reports. Bootstrap refuses a configuration whose
 `abi_version` is not `SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION`, so the adapter
 and the Python bindings are rebuilt together.
 
-Two id ranges for work that is not a planned task are defined here so the
-failure report can decode them: allocation scope ids at or above
-`SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE`, and action-batch task ids at or
-above `SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID`. The Python bindings
-mirror both.
+The id range for work that is not a planned task is defined here so the
+failure report can decode it: allocation scope ids at or above
+`SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE`. The Python bindings mirror it.
 
 ## Bootstrap, physical admission and close
 

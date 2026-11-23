@@ -15,11 +15,8 @@ void shadowspill_transfer_queue_destroy(ShadowSpillTransferQueue *queue) {
     }
     queue->pending_head = NULL;
     queue->pending_tail = NULL;
-    queue->background_head = NULL;
-    queue->background_tail = NULL;
     queue->inflight_head = NULL;
     queue->inflight_tail = NULL;
-    queue->background_inflight_bytes = 0U;
     atomic_store_explicit(&queue->inflight_count, 0U, memory_order_relaxed);
     pthread_mutex_destroy(&queue->lock);
     queue->lock_initialized = 0U;
@@ -47,30 +44,16 @@ void shadowspill_transfer_queue_enqueue(
         return;
     }
     pthread_mutex_lock(&queue->lock);
-    ShadowSpillQueuedAction **head = action->background
-        ? &queue->background_head : &queue->pending_head;
-    ShadowSpillQueuedAction **tail = action->background
-        ? &queue->background_tail : &queue->pending_tail;
-    action->queue_previous = *tail;
+    action->queue_previous = queue->pending_tail;
     action->queue_next = NULL;
     action->queue_state = SHADOWSPILL_QUEUE_PENDING;
-    if (*tail == NULL) {
-        *head = action;
+    if (queue->pending_tail == NULL) {
+        queue->pending_head = action;
     } else {
-        (*tail)->queue_next = action;
+        queue->pending_tail->queue_next = action;
     }
-    *tail = action;
+    queue->pending_tail = action;
     pthread_mutex_unlock(&queue->lock);
-}
-
-/* Whether the window admits one more background copy of this size: always
-   when the queue holds none, so a copy larger than the window runs alone. */
-static int background_window_admits(
-    const ShadowSpillTransferQueue *queue, uint64_t bytes
-) {
-    return queue->background_window_bytes == 0U ||
-        queue->background_inflight_bytes == 0U ||
-        queue->background_inflight_bytes + bytes <= queue->background_window_bytes;
 }
 
 int shadowspill_transfer_queue_claim(
@@ -81,23 +64,16 @@ int shadowspill_transfer_queue_claim(
         return 0;
     }
     pthread_mutex_lock(&queue->lock);
-    ShadowSpillQueuedAction **head = action->background
-        ? &queue->background_head : &queue->pending_head;
-    ShadowSpillQueuedAction **tail = action->background
-        ? &queue->background_tail : &queue->pending_tail;
-    if (*head != action || action->queue_state != SHADOWSPILL_QUEUE_PENDING ||
-        (action->background &&
-         !background_window_admits(
-             queue, action->object == NULL ? 0U : action->object->size_bytes
-         ))) {
+    if (queue->pending_head != action ||
+        action->queue_state != SHADOWSPILL_QUEUE_PENDING) {
         pthread_mutex_unlock(&queue->lock);
         return 0;
     }
-    *head = action->queue_next;
-    if (*head == NULL) {
-        *tail = NULL;
+    queue->pending_head = action->queue_next;
+    if (queue->pending_head == NULL) {
+        queue->pending_tail = NULL;
     } else {
-        (*head)->queue_previous = NULL;
+        queue->pending_head->queue_previous = NULL;
     }
     action->queue_previous = NULL;
     action->queue_next = NULL;
@@ -120,18 +96,14 @@ void shadowspill_transfer_queue_return(
         return;
     }
     pthread_mutex_lock(&queue->lock);
-    ShadowSpillQueuedAction **head = action->background
-        ? &queue->background_head : &queue->pending_head;
-    ShadowSpillQueuedAction **tail = action->background
-        ? &queue->background_tail : &queue->pending_tail;
     action->queue_previous = NULL;
-    action->queue_next = *head;
-    if (*head != NULL) {
-        (*head)->queue_previous = action;
+    action->queue_next = queue->pending_head;
+    if (queue->pending_head != NULL) {
+        queue->pending_head->queue_previous = action;
     } else {
-        *tail = action;
+        queue->pending_tail = action;
     }
-    *head = action;
+    queue->pending_head = action;
     action->queue_state = SHADOWSPILL_QUEUE_PENDING;
     pthread_mutex_unlock(&queue->lock);
 }
@@ -154,10 +126,6 @@ void shadowspill_transfer_queue_publish_inflight(
     }
     queue->inflight_tail = action;
     atomic_fetch_add_explicit(&queue->inflight_count, 1U, memory_order_relaxed);
-    if (action->background) {
-        queue->background_inflight_bytes +=
-            action->object == NULL ? 0U : action->object->size_bytes;
-    }
     pthread_mutex_unlock(&queue->lock);
 }
 
@@ -198,12 +166,6 @@ int shadowspill_transfer_queue_complete(
     action->queue_next = NULL;
     action->queue_state = SHADOWSPILL_QUEUE_NONE;
     atomic_fetch_sub_explicit(&queue->inflight_count, 1U, memory_order_relaxed);
-    if (action->background) {
-        const uint64_t bytes = action->object == NULL
-            ? 0U : action->object->size_bytes;
-        queue->background_inflight_bytes = bytes > queue->background_inflight_bytes
-            ? 0U : queue->background_inflight_bytes - bytes;
-    }
     pthread_mutex_unlock(&queue->lock);
     return 0;
 }

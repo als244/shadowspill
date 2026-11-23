@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .abi import (
-    INITIAL_ACTIONS_TASK_ID,
     PROFILING_SCOPE_BASE,
     RUNTIME_OBJECT_SCOPE_ID,
     Allocation,
@@ -33,11 +32,10 @@ _NO_SCOPE = (1 << 64) - 1
 
 #: Scope ids above an execution task's range name a synthetic scope rather than
 #: a task of the program. Highest base first, so the search stops at the right
-#: one. `INITIAL_ACTIONS_TASK_ID` is a single id, not a base.
+#: one.
 _SYNTHETIC_SCOPES: tuple[tuple[int, str], ...] = (
     (RUNTIME_OBJECT_SCOPE_ID, "runtime object"),
     (PROFILING_SCOPE_BASE, "profiling scope"),
-    (INITIAL_ACTIONS_TASK_ID, "initial actions"),
 )
 
 

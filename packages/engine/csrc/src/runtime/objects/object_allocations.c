@@ -268,7 +268,6 @@ ShadowSpillStatus shadowspill_task_publish_allocation(
     const ShadowSpillTaskRecord *record = handle;
     if (runtime == NULL || record == NULL || pointer == NULL || binding == NULL ||
         record->plan_owner == NULL || record->plan_owner->runtime != runtime ||
-        record->boundary_kind != SHADOWSPILL_BOUNDARY_TASK ||
         publication_ordinal >= record->publication_count) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
@@ -308,7 +307,6 @@ ShadowSpillStatus shadowspill_task_validate_replacement_binding(
     if (runtime == NULL || record == NULL || retired_pointer == NULL ||
         successor_pointer == NULL ||
         record->plan_owner == NULL || record->plan_owner->runtime != runtime ||
-        record->boundary_kind != SHADOWSPILL_BOUNDARY_TASK ||
         publication_ordinal >= record->publication_count ||
         record->publications[publication_ordinal].kind !=
             SHADOWSPILL_TASK_PUBLICATION_REPLACE) {

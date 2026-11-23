@@ -86,55 +86,21 @@ int main(void) {
 
     shadowspill_transfer_queue_destroy(&queue);
 
-    /* Background transfers fill the queue only up to the window, and a plan
-       transfer queued behind them is claimable at once. */
-    ShadowSpillTransferQueue bounded = {0};
-    ShadowSpillObject big = {.size_bytes = 48U};
-    ShadowSpillObject small = {.size_bytes = 8U};
-    ShadowSpillQueuedAction restore_a = {.object = &big, .background = 1U};
-    ShadowSpillQueuedAction restore_b = {.object = &big, .background = 1U};
-    ShadowSpillQueuedAction restore_c = {.object = &small, .background = 1U};
-    ShadowSpillQueuedAction planned = {.object = &small};
-    if (shadowspill_transfer_queue_initialize(&bounded) != 0) {
+    /* Pending transfers are claimed in the order their boundaries queued
+       them: one behind the head waits for it. */
+    ShadowSpillTransferQueue ordered = {0};
+    ShadowSpillQueuedAction earlier = {0};
+    ShadowSpillQueuedAction later = {0};
+    if (shadowspill_transfer_queue_initialize(&ordered) != 0) {
         return EXIT_FAILURE;
     }
-    bounded.background_window_bytes = 64U;
-    shadowspill_transfer_queue_enqueue(&bounded, &restore_a);
-    shadowspill_transfer_queue_enqueue(&bounded, &restore_b);
-    shadowspill_transfer_queue_enqueue(&bounded, &restore_c);
-    shadowspill_transfer_queue_enqueue(&bounded, &planned);
-    /* The first background copy runs; the second would exceed the window. */
-    if (!shadowspill_transfer_queue_claim(&bounded, &restore_a)) {
+    shadowspill_transfer_queue_enqueue(&ordered, &earlier);
+    shadowspill_transfer_queue_enqueue(&ordered, &later);
+    if (shadowspill_transfer_queue_claim(&ordered, &later) ||
+        !shadowspill_transfer_queue_claim(&ordered, &earlier) ||
+        !shadowspill_transfer_queue_claim(&ordered, &later)) {
         return EXIT_FAILURE;
     }
-    shadowspill_transfer_queue_publish_inflight(&bounded, &restore_a);
-    if (shadowspill_transfer_queue_claim(&bounded, &restore_b)) {
-        return EXIT_FAILURE;
-    }
-    /* The plan's transfer does not wait behind the background queue. */
-    if (!shadowspill_transfer_queue_claim(&bounded, &planned)) {
-        return EXIT_FAILURE;
-    }
-    shadowspill_transfer_queue_publish_inflight(&bounded, &planned);
-    /* Completing the background copy reopens the window in FIFO order. */
-    if (shadowspill_transfer_queue_complete(&bounded, &restore_a) != 0 ||
-        bounded.background_inflight_bytes != 0U ||
-        !shadowspill_transfer_queue_claim(&bounded, &restore_b)) {
-        return EXIT_FAILURE;
-    }
-    shadowspill_transfer_queue_publish_inflight(&bounded, &restore_b);
-    /* A small background copy still fits beside a large one within the window. */
-    if (!shadowspill_transfer_queue_claim(&bounded, &restore_c)) {
-        return EXIT_FAILURE;
-    }
-    shadowspill_transfer_queue_publish_inflight(&bounded, &restore_c);
-    if (bounded.background_inflight_bytes != 56U ||
-        shadowspill_transfer_queue_complete(&bounded, &planned) != 0 ||
-        shadowspill_transfer_queue_complete(&bounded, &restore_b) != 0 ||
-        shadowspill_transfer_queue_complete(&bounded, &restore_c) != 0 ||
-        bounded.background_inflight_bytes != 0U) {
-        return EXIT_FAILURE;
-    }
-    shadowspill_transfer_queue_destroy(&bounded);
+    shadowspill_transfer_queue_destroy(&ordered);
     return EXIT_SUCCESS;
 }

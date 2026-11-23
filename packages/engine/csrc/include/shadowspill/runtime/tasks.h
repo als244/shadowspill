@@ -22,14 +22,6 @@ extern "C" {
  * docs/architecture/task-boundaries.md.
  */
 
-/* Publish an admitted batch and wait only for worker submission acknowledgement. */
-SHADOWSPILL_API ShadowSpillStatus
-shadowspill_submit_action_batch_handle(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillActionBatchHandle *handle,
-    uint64_t trigger_stream_handle
-);
-
 /*
  * Snapshot an admitted object set and insert any published readiness-event
  * waits on consumer_stream. This does not open an allocation or task scope.

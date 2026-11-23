@@ -15,7 +15,6 @@ from shadowspill.memory import (
     TransferRoute,
 )
 from shadowspill.pytorch.frontend import PyTorchFrontend
-from shadowspill.runtime.bootstrap import DEFAULT_BACKGROUND_WINDOW_BYTES
 from shadowspill.runtime.core import Runtime as NeutralRuntime
 
 
@@ -46,9 +45,6 @@ class Runtime(NeutralRuntime):
     worker_poll_nanoseconds : int, default 1000
         How long the transfer worker waits before asking again whether a
         pending completion has finished, in nanoseconds. At least zero.
-    background_transfer_window_bytes : int, default DEFAULT_BACKGROUND_WINDOW_BYTES
-        Bytes of transfers the plan did not schedule that a route may have in
-        flight at once (64 MiB by default). Zero removes the bound.
     backend : str, optional
         The backend library the adapter loads, by name or path. By default,
         the one accelerator backend installed beside the libraries.
@@ -75,7 +71,6 @@ class Runtime(NeutralRuntime):
         calibrate: bool = True,
         numa_binding: bool = True,
         worker_poll_nanoseconds: int = 1_000,
-        background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
         backend: str | None = None,
     ) -> None:
         super().__init__(
@@ -86,7 +81,6 @@ class Runtime(NeutralRuntime):
             calibrate=calibrate,
             numa_binding=numa_binding,
             worker_poll_nanoseconds=worker_poll_nanoseconds,
-            background_transfer_window_bytes=background_transfer_window_bytes,
             backend=backend,
         )
 

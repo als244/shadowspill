@@ -80,13 +80,6 @@ typedef struct ShadowSpillRuntimeConfig {
     const ShadowSpillPoolMemoryDescription *pool_memory;
     uint32_t pool_memory_count;
     uint64_t worker_poll_nanoseconds;
-    /* How far a route's queue may run ahead with background transfers: copies
-       the plan did not schedule (materialization, reconciliation) are
-       dispatched only while the queue holds fewer than this many of their
-       bytes in flight, so a transfer the plan did schedule never waits
-       behind more than this. Zero removes the bound. A single background
-       copy larger than the window runs alone. */
-    uint64_t background_transfer_window_bytes;
     /* Zero enables device-local CPU/preferred-memory placement at startup.
        Nonzero preserves the caller's placement. Fallback always warns. */
     uint8_t disable_numa_binding;

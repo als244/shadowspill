@@ -24,13 +24,9 @@ typedef struct ShadowSpillQueuedAction ShadowSpillQueuedAction;
 typedef struct ShadowSpillRouteState ShadowSpillRouteState;
 
 /*
- * One queue serves two orders. The plan's transfers are dispatched in the
- * order their boundaries triggered them; background transfers (those the
- * plan did not schedule: materialization, reconciliation) are dispatched
- * in their own order and only while the queue holds fewer than
- * `background_window_bytes` of them in flight, so a plan transfer never
- * waits behind more than the window. In flight, it is one FIFO in
- * dispatch order, which is the stream's order and what completion follows.
+ * A route's transfers are dispatched in the order their boundaries triggered
+ * them. In flight they are one FIFO in dispatch order, which is the stream's
+ * order and what completion follows.
  */
 /* Where an action sits in its queue. On the action as `queue_state`, declared
    here because the queue owns the vocabulary and its canary asserts on it. */
@@ -44,12 +40,8 @@ typedef struct ShadowSpillTransferQueue {
     pthread_mutex_t lock;
     ShadowSpillQueuedAction *pending_head;
     ShadowSpillQueuedAction *pending_tail;
-    ShadowSpillQueuedAction *background_head;
-    ShadowSpillQueuedAction *background_tail;
     ShadowSpillQueuedAction *inflight_head;
     ShadowSpillQueuedAction *inflight_tail;
-    uint64_t background_window_bytes;
-    uint64_t background_inflight_bytes;
     /* How many actions are in flight, read without the lock so the worker can
        skip polling a lane that has nothing to report. The list above is the
        truth; this is the same fact in a form a hot loop can afford. */

@@ -19,9 +19,7 @@ worker, trace buffers, and first-failure state.
   [`pool_memory`](pool-memory.md) with `pool_memory_count`, saying where each
   kind's memory comes from, and [`lanes`](lanes.md) with `lane_count`, saying
   which lane serves each directional kind pair; the worker's poll interval;
-  `background_transfer_window_bytes`, how far a route's queue may run ahead
-  with transfers the plan did not schedule (zero removes the bound); and
-  `disable_numa_binding`, which at zero has create narrow the process's
+  and `disable_numa_binding`, which at zero has create narrow the process's
   threads to the CPUs of the host node nearest the device (see
   [host NUMA locality](backends.md#host-numa-locality)) and prefer that node
   for pinned-host pools, warning and keeping the operating system's placement
@@ -122,10 +120,6 @@ semantics](../architecture/simulation.md#solo-and-concurrent-bandwidth).
   address rather than an id needs.
 - `shadowspill_memory_pool_free()` performs logical release and records causal
   retirement in that pool.
-- `shadowspill_memory_pool_reserve_range()` reserves one range of a pool for
-  the runtime's lifetime, for state that already lies there, such as a pool
-  image; placed objects borrow leases inside it and releasing them does not
-  free it. It fails when any of the range is in use.
 - `shadowspill_memory_pool_base()` writes the address a pool's offset 0
   presents, which every lease pointer in the pool is an offset from; for a
   pool this process cannot dereference it is the same token the pointers are
@@ -160,16 +154,13 @@ can satisfy it; otherwise it returns a structured no-progress status.
   evictions before fetches. Task admission refuses a write-back of an object
   whose eviction is collective, because the conversion may reduce into its
   source allocation.
-- `shadowspill_register_placed_object()` admits an initially resident object
-  whose lease lies at a given offset of its initial pool, inside a range
-  reserved with `shadowspill_memory_pool_reserve_range()`: nothing is written,
-  the bytes already there are the object, and the lease borrows the range.
 - `shadowspill_rekey_object()` changes the public identity without changing
   the retained object record.
 - `shadowspill_write_object()` and `shadowspill_read_object()` move bytes
   between a caller's memory and one pool copy of an object: through the kind's
   `write` or `read` when it supplies them, and otherwise by an ordinary copy,
-  which needs a pool this process can address -- not a device pool (see
+  which needs a pool this process can address. A device pool supplies neither
+  and refuses with `SHADOWSPILL_STATUS_UNSUPPORTED` (see
   [pool memory](pool-memory.md#crossing-the-pools-edge)). They are how state
   enters and leaves a pool outside a plan, and no route is involved -- a route
   carries a *planned* transfer between two pools, which is a different
@@ -309,10 +300,6 @@ runtime's pool, route, event, and object owners:
   keeps it; one scheduled while the spill copy is already current completes
   without a copy; a release scheduled behind a pending write-back of its
   object frees the execution copy once that copy has landed.
-- `shadowspill_plan_admit_action_batch()` creates a
-  `ShadowSpillActionBatchHandle`, an action-only trigger with no task;
-  `shadowspill_submit_action_batch_handle()` publishes it without
-  opening a task boundary.
 - `shadowspill_plan_admit_object_acquisition()` creates a
   `ShadowSpillObjectAcquisitionHandle` over an immutable ordered object set;
   `shadowspill_acquire_objects_handle()` snapshots its current

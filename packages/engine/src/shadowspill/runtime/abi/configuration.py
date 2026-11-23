@@ -37,7 +37,6 @@ class AdapterConfig(ctypes.Structure):
         ("routes", ctypes.POINTER(RouteConfig)),
         ("route_count", ctypes.c_uint32),
         ("worker_poll_nanoseconds", ctypes.c_uint64),
-        ("background_transfer_window_bytes", ctypes.c_uint64),
         ("backend_library", ctypes.c_char_p),
         # Extension libraries supplying pool kinds and lanes, loaded in order
         # and kept open for the runtime's life.

@@ -120,9 +120,10 @@ class _Library:
 
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     # Two pointers and two counts past the original 88: the extension library
-    # list, and a per-pool configuration forwarded to its kind.
-    assert ctypes.sizeof(AdapterConfig) == 128
-    assert AdapterConfig.external_baseline_bytes.offset == 104
+    # list, and a per-pool configuration forwarded to its kind. Less the
+    # background transfer window's uint64, which went with action batches.
+    assert ctypes.sizeof(AdapterConfig) == 120
+    assert AdapterConfig.external_baseline_bytes.offset == 96
     assert ctypes.sizeof(PoolConfig) == 24
     assert ctypes.sizeof(AdapterCapabilities) == 16
     # A uint32 pool count, padded, then the runtime-wide counters. A pool's own

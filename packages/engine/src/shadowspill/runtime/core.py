@@ -23,10 +23,7 @@ from .abi import (
     MemoryPoolStatistics,
     runtime_library,
 )
-from .bootstrap import (
-    DEFAULT_BACKGROUND_WINDOW_BYTES,
-    install_runtime,
-)
+from .bootstrap import install_runtime
 from .calibration import (
     INITIALIZATION_PROVENANCE,
     RECALIBRATION_PROVENANCE,
@@ -35,7 +32,7 @@ from .calibration import (
 )
 from .configuration import RuntimeConfigurationError, adapter_path, configure_topology
 from .failures import RuntimeExecutionError
-from .objects import ObjectRef, release_object_reference, reserve_pool_range
+from .objects import ObjectRef, release_object_reference
 from .topology import (
     MemoryPool,
     RuntimeRoute,
@@ -129,11 +126,6 @@ class Runtime:
     worker_poll_nanoseconds : int, default 1000
         How long the transfer worker waits before asking again whether a
         pending completion has finished, in nanoseconds. At least zero.
-    background_transfer_window_bytes : int, default DEFAULT_BACKGROUND_WINDOW_BYTES
-        Bytes of transfers the plan did not schedule, such as materializing
-        or reconciling state, that a route may have in flight at once (64 MiB
-        by default): a scheduled transfer never waits behind more. Zero
-        removes the bound. At least zero.
     backend : str, optional
         The backend library the adapter loads. By default, the one
         accelerator backend installed beside the libraries; a name selects
@@ -165,7 +157,6 @@ class Runtime:
         calibrate: bool = True,
         numa_binding: bool = True,
         worker_poll_nanoseconds: int = 1_000,
-        background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
         backend: str | None = None,
     ) -> None:
         topology = configure_topology(pools, routes)
@@ -192,7 +183,6 @@ class Runtime:
                 pools=topology.pool_bootstrap,
                 routes=topology.route_bootstrap,
                 worker_poll_nanoseconds=worker_poll_nanoseconds,
-                background_transfer_window_bytes=background_transfer_window_bytes,
                 backend=backend,
             )
             self._frontend = frontend
@@ -220,20 +210,6 @@ class Runtime:
             self._pool_names = topology.pool_names
             self._route_names = topology.route_names
             _active_runtime = self
-        # A pool opened on an image keeps the image's bytes out of the
-        # allocator's hands for its whole life; placed objects borrow them.
-        for name, pool in self._pools.items():
-            if not pool.image_bytes:
-                continue
-            status = reserve_pool_range(
-                self, pool_id=pool.pool_id, offset=0, size_bytes=pool.image_bytes
-            )
-            if status != 0:
-                self.close()
-                raise RuntimeConfigurationError(
-                    f"pool {name!r} could not reserve the {pool.image_bytes} bytes "
-                    f"of its image: status={status}"
-                )
         if calibrate:
             # Low-level callers may calibrate here; Executor uses saved evidence.
             _announce("calibrating transfer routes")

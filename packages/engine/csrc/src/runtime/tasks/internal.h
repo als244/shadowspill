@@ -85,14 +85,8 @@ struct ShadowSpillTaskRecord {
     uint64_t completion_invocation;
     uint8_t completion_lock_initialized;
     uint8_t completion_required;
-    uint8_t boundary_kind;
     struct ShadowSpillTaskRecord *hash_next;
     struct ShadowSpillTaskRecord *ownership_next;
-};
-
-enum {
-    SHADOWSPILL_BOUNDARY_TASK = 0U,
-    SHADOWSPILL_BOUNDARY_ACTION_BATCH = 1U,
 };
 
 typedef struct ShadowSpillTaskTable {
@@ -143,11 +137,6 @@ int shadowspill_enter_allocation_scope(
     ShadowSpillMemoryPool *pool,
     uint64_t plan_id,
     uint64_t task_id
-);
-
-int shadowspill_enter_task_scope(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillTaskRecord *record
 );
 
 int shadowspill_claim_task_invocation(
@@ -253,14 +242,12 @@ int shadowspill_task_compare_release_bindings(const void *left, const void *righ
 
 int shadowspill_task_same_description(
     const ShadowSpillTaskRecord *record,
-    const ShadowSpillTaskDescription *description,
-    uint8_t boundary_kind
+    const ShadowSpillTaskDescription *description
 );
 
 ShadowSpillTaskRecord *shadowspill_task_create_record(
     ShadowSpillPlan *plan,
-    const ShadowSpillTaskDescription *description,
-    uint8_t boundary_kind
+    const ShadowSpillTaskDescription *description
 );
 
 int shadowspill_task_valid_allocation_contract(

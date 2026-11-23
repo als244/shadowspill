@@ -471,7 +471,7 @@ static int plan_idle_wait_ignores_other_plan_actions(void) {
         .object_id = 1U,
         .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
-    const ShadowSpillActionBatchHandle *batch = NULL;
+    const ShadowSpillTaskHandle *batch = NULL;
     ShadowSpillTestStatistics statistics = {0};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
@@ -487,12 +487,12 @@ static int plan_idle_wait_ignores_other_plan_actions(void) {
         shadowspill_plan_bind_object(
             busy_plan, 1U, object_handle, SHADOWSPILL_OBJECT_CAUSAL
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_admit_action_batch(
+        shadowspill_test_admit_actions(
             busy_plan, 0U, &fetch, 1U, &batch
         ) != SHADOWSPILL_STATUS_OK ||
         mock.create_stream(mock.state, &compute) != 0;
     if (!failed) {
-        failed = shadowspill_submit_action_batch_handle(
+        failed = shadowspill_test_run_actions(
                 runtime, batch, compute
             ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_plan_wait_idle(idle_plan) != SHADOWSPILL_STATUS_OK ||
@@ -620,7 +620,7 @@ static int plan_selects_nondefault_pool_pair(void) {
         .object_id = 9U,
         .kind = SHADOWSPILL_RUNTIME_EVICT,
     };
-    const ShadowSpillActionBatchHandle *initial_actions = NULL;
+    const ShadowSpillTaskHandle *initial_actions = NULL;
     const uint64_t input = 9U;
     const ShadowSpillTaskDescription task = {
         .task_id = 1U,
@@ -650,14 +650,14 @@ static int plan_selects_nondefault_pool_pair(void) {
         shadowspill_plan_bind_object(
             plan, 9U, object_handle, SHADOWSPILL_OBJECT_CAUSAL
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_admit_action_batch(
+        shadowspill_test_admit_actions(
             plan, 0U, &fetch, 1U, &initial_actions
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_task(plan, &task, &task_handle) !=
             SHADOWSPILL_STATUS_OK ||
         mock.create_stream(mock.state, &compute) != 0;
     if (!failed) {
-        failed = shadowspill_submit_action_batch_handle(
+        failed = shadowspill_test_run_actions(
                 runtime, initial_actions, compute
             ) != SHADOWSPILL_STATUS_OK ||
             /* Fetched, so the object is on the device -- and a fetch leaves the
@@ -1022,7 +1022,10 @@ static int runtime_objects_survive_until_their_final_owner_closes(void) {
     return failed ? -1 : 0;
 }
 
-static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
+/* An acquisition is not a task: it binds already-fetched objects, once per
+   distinct object however often it is named, and hands one to the caller only
+   at the generation it saw. */
+static int acquisitions_bind_objects_outside_a_task(void) {
     ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
@@ -1051,7 +1054,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
         .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const uint64_t requested_objects[2] = {9U, 9U};
-    const ShadowSpillActionBatchHandle *batch = NULL;
+    const ShadowSpillTaskHandle *batch = NULL;
     const ShadowSpillObjectAcquisitionHandle *acquisition = NULL;
     ShadowSpillObjectBinding bindings[2] = {{0}};
     ShadowSpillAllocation caller_allocation = {0};
@@ -1067,7 +1070,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
         shadowspill_plan_bind_object(
             plan, 9U, object_handle, SHADOWSPILL_OBJECT_CAUSAL
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_admit_action_batch(
+        shadowspill_test_admit_actions(
             plan, 77U, &fetch, 1U, &batch
         ) != SHADOWSPILL_STATUS_OK ||
         batch == NULL ||
@@ -1077,7 +1080,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
         acquisition == NULL ||
         mock.create_stream(mock.state, &compute) != 0;
     if (!failed) {
-        failed = shadowspill_submit_action_batch_handle(
+        failed = shadowspill_test_run_actions(
                 runtime, batch, compute
             ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_acquire_objects_handle(
@@ -1087,13 +1090,6 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
             bindings[0].pointer == NULL ||
             bindings[0].pointer != bindings[1].pointer ||
             bindings[0].generation != bindings[1].generation ||
-            canary_before_task(
-                runtime,
-                (const ShadowSpillTaskHandle *)batch,
-                compute,
-                NULL,
-                0U
-            ) != SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
             shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
             shadowspill_transfer_acquired_object_to_caller(
                 runtime,
@@ -1172,8 +1168,8 @@ int main(void) {
         fprintf(stderr, "runtime plan canary failed: object ownership\n");
         return EXIT_FAILURE;
     }
-    if (dedicated_action_and_acquisition_handles_are_not_tasks() != 0) {
-        fprintf(stderr, "runtime plan canary failed: dedicated boundaries\n");
+    if (acquisitions_bind_objects_outside_a_task() != 0) {
+        fprintf(stderr, "runtime plan canary failed: acquisitions\n");
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

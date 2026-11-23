@@ -30,7 +30,6 @@ extern "C" {
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
 typedef struct ShadowSpillPlan ShadowSpillPlan;
 typedef struct ShadowSpillTaskRecord ShadowSpillTaskHandle;
-typedef struct ShadowSpillTaskRecord ShadowSpillActionBatchHandle;
 typedef struct ShadowSpillObjectAcquisitionRecord
     ShadowSpillObjectAcquisitionHandle;
 typedef struct ShadowSpillObjectHandle ShadowSpillObjectHandle;

@@ -99,8 +99,6 @@ static void describe_runtime(
         runtime->routes[route_id].destination_pool_id = route->destination_pool_id;
     }
     runtime->worker_poll_nanoseconds = config->worker_poll_nanoseconds;
-    runtime->background_transfer_window_bytes =
-        config->background_transfer_window_bytes;
     atomic_init(&runtime->next_plan_id, 1U);
     atomic_init(&runtime->next_allocation_id, 1U);
     atomic_init(&runtime->next_generation, 1U);
@@ -174,8 +172,6 @@ static ShadowSpillStatus open_pools_and_routes(
             status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
             return status;
         }
-        route->queue.background_window_bytes =
-            runtime->background_transfer_window_bytes;
         if (runtime->backend.create_stream(
                 runtime->backend.state, &route->stream
             ) != 0) {

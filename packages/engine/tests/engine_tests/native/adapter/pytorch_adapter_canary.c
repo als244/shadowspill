@@ -560,7 +560,7 @@ static int tasks(ShadowSpillRuntime *runtime) {
     return 0;
 }
 
-/* The pre-task placement batch, then an acquisition handed to the caller. */
+/* A placement fetch with no kernel, then an acquisition handed to the caller. */
 static int placement_and_acquisition(ShadowSpillRuntime *runtime) {
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 1);
     REQUIRE(record != NULL, "no test plan");
@@ -572,31 +572,28 @@ static int placement_and_acquisition(ShadowSpillRuntime *runtime) {
         .object_id = OBJECT_ID,
         .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
-    const ShadowSpillActionBatchHandle *batch = NULL;
+    const ShadowSpillTaskHandle *placement = NULL;
     REQUIRE(
-        shadowspill_plan_admit_action_batch(
-            record->plan,
-            SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID,
-            &fetch,
-            1U,
-            &batch
+        shadowspill_test_admit_actions(record->plan, 2U, &fetch, 1U, &placement) ==
+                SHADOWSPILL_STATUS_OK &&
+            placement != NULL,
+        "admitting the placement fetch failed"
+    );
+    /* The adapter's boundaries take the caller's name for the stream. */
+    const ShadowSpillObjectBinding *placement_bindings = NULL;
+    uint32_t placement_binding_count = 0U;
+    REQUIRE(
+        shadowspill_pytorch_before_task_handle(
+            (uintptr_t)placement, 0U, &placement_bindings, &placement_binding_count
         ) == SHADOWSPILL_STATUS_OK &&
-            batch != NULL,
-        "admitting the placement batch failed"
-    );
-    REQUIRE(
-        shadowspill_submit_action_batch_handle(runtime, NULL, 0U) ==
-            SHADOWSPILL_STATUS_INVALID_ARGUMENT,
-        "a null batch must be refused"
-    );
-    REQUIRE(
-        shadowspill_submit_action_batch_handle(runtime, batch, 0U) ==
-            SHADOWSPILL_STATUS_OK,
-        "submitting the placement batch failed"
+            placement_binding_count == 0U &&
+            shadowspill_pytorch_after_task_handle((uintptr_t)placement, 0U) ==
+                SHADOWSPILL_STATUS_OK,
+        "running the placement fetch failed"
     );
     REQUIRE(
         shadowspill_runtime_wait_idle(runtime) == SHADOWSPILL_STATUS_OK,
-        "wait_idle after the batch failed"
+        "wait_idle after the placement fetch failed"
     );
     const uint64_t object_id = OBJECT_ID;
     const ShadowSpillObjectAcquisitionHandle *acquisition = NULL;

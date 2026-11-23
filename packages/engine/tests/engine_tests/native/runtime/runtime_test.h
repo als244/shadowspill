@@ -336,6 +336,38 @@ static inline ShadowSpillStatus shadowspill_test_after_task(
         : shadowspill_after_task_handle(runtime, handle, stream);
 }
 
+/* Transfers and releases alone: a task with no kernel between its two
+   boundaries. `shadowspill_test_run_actions` crosses both. */
+static inline ShadowSpillStatus shadowspill_test_admit_actions(
+    ShadowSpillPlan *plan,
+    uint64_t task_id,
+    const ShadowSpillRuntimeAction *actions,
+    uint32_t action_count,
+    const ShadowSpillTaskHandle **handle
+) {
+    const ShadowSpillTaskDescription description = {
+        .task_id = task_id,
+        .actions = actions,
+        .action_count = action_count,
+    };
+    return shadowspill_plan_admit_task(plan, &description, handle);
+}
+
+static inline ShadowSpillStatus shadowspill_test_run_actions(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
+    ShadowSpillBackendStream stream
+) {
+    const ShadowSpillObjectBinding *bindings = NULL;
+    uint32_t binding_count = 0U;
+    const ShadowSpillStatus status = shadowspill_before_task_handle(
+        runtime, handle, stream, &bindings, &binding_count
+    );
+    return status == SHADOWSPILL_STATUS_OK
+        ? shadowspill_after_task_handle(runtime, handle, stream)
+        : status;
+}
+
 static inline ShadowSpillStatus shadowspill_test_submit_actions(
     ShadowSpillRuntime *runtime,
     uint64_t batch_id,
@@ -355,12 +387,12 @@ static inline ShadowSpillStatus shadowspill_test_submit_actions(
             return status;
         }
     }
-    const ShadowSpillActionBatchHandle *handle = NULL;
-    ShadowSpillStatus status = shadowspill_plan_admit_action_batch(
+    const ShadowSpillTaskHandle *handle = NULL;
+    const ShadowSpillStatus status = shadowspill_test_admit_actions(
         record->plan, batch_id, actions, action_count, &handle
     );
     return status == SHADOWSPILL_STATUS_OK
-        ? shadowspill_submit_action_batch_handle(runtime, handle, stream)
+        ? shadowspill_test_run_actions(runtime, handle, stream)
         : status;
 }
 
