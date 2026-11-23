@@ -46,7 +46,7 @@ static int apply_action(
     const int retained = (flags[alias] & SHADOWSPILL_ALIAS_RETAINED) != 0U;
     if (kind == SHADOWSPILL_MEMORY_FETCH) {
         if ((state[alias] & (ON_SPILL | SPILL_CURRENT)) != (ON_SPILL | SPILL_CURRENT)) {
-            refuse(result, SHADOWSPILL_SCHEDULE_REFUSAL_FETCH_WITHOUT_HOST_COPY, action, alias);
+            refuse(result, SHADOWSPILL_SCHEDULE_REFUSAL_FETCH_WITHOUT_SPILL_COPY, action, alias);
             return 0;
         }
         if ((state[alias] & ON_DEVICE) != 0U) {

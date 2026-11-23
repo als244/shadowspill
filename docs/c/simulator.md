@@ -151,7 +151,7 @@ runtime-owned group (`INITIAL_RUNTIME_OWNED`); every action moves a movable
 group that holds bytes, in trigger order (`ACTION_RUNTIME_OWNED`,
 `ACTION_ZERO_SIZE`, `ACTION_ORDER`); every input is on the device when its task
 reads it (`INPUT_NOT_RESIDENT`); a fetch needs a current spill copy and no
-device copy (`FETCH_WITHOUT_HOST_COPY`, `FETCH_ALREADY_RESIDENT`), and an
+device copy (`FETCH_WITHOUT_SPILL_COPY`, `FETCH_ALREADY_RESIDENT`), and an
 evict, release or write-back needs a device copy (`NOT_DEVICE_RESIDENT`); a
 release may not drop the only current copy of a value a later task reads or the
 final residency names (`RELEASE_ONLY_COPY`); and the final residency names no

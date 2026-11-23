@@ -324,7 +324,7 @@ enum ShadowSpillScheduleRefusal {
     /* index: a task reading `alias` while it is not on the device. */
     SHADOWSPILL_SCHEDULE_REFUSAL_INPUT_NOT_RESIDENT = 5,
     /* index: a fetch of a group with no current spill copy. */
-    SHADOWSPILL_SCHEDULE_REFUSAL_FETCH_WITHOUT_HOST_COPY = 6,
+    SHADOWSPILL_SCHEDULE_REFUSAL_FETCH_WITHOUT_SPILL_COPY = 6,
     /* index: a fetch of a group already on the device. */
     SHADOWSPILL_SCHEDULE_REFUSAL_FETCH_ALREADY_RESIDENT = 7,
     /* index: an evict, release or write-back of a group not on the device. */
