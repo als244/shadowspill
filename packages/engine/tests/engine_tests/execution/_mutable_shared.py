@@ -276,13 +276,17 @@ with Executor(primary, plans=plans) as executor:
             accumulate_gradients=accumulate,
         ).result()
         actual = snapshot(executor)
+        stored = snapshot(executor, gradients=True)
         for parameter, gradient in oracle["gradients"][0].items():
             torch.testing.assert_close(
-                actual[f"gradient.{parameter}"].reshape(gradient.shape),
+                stored[f"gradient.{parameter}"].reshape(gradient.shape),
                 gradient * (3 if accumulate else 1),
             )
         executor.run(args=[(oracle["examples"][0][0],)]).result()
         torch.testing.assert_close(snapshot(executor), actual, rtol=0, atol=0)
+        torch.testing.assert_close(
+            snapshot(executor, gradients=True), stored, rtol=0, atol=0
+        )
     expected = oracle["count_updates"][0]
     executor.run(
         plan="optim",

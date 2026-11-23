@@ -15,12 +15,9 @@ def oracle(model, examples, kind):
         lr=torch.tensor(0.001) if kind == "step_tensor_lr" else 0.001,
     )
     initial = copy.deepcopy(model.state_dict())
-    accumulate = [False, kind == "forward_backward", False]
-    if kind == "backward_resume":
-        accumulate = [True, False, True]
-        for name, p in model.named_parameters():
-            p.grad = torch.randn_like(p)
-            initial[f"gradient.{name}"] = p.grad.clone()
+    # The third call accumulates onto the second: the checkpoint round trip
+    # after the first holds no gradients, so no accumulation spans it.
+    accumulate = [False, False, kind == "forward_backward"]
     if kind == "step_resume":
         for args, kwargs in examples:
             objective(model, *args, **kwargs)[0].backward()

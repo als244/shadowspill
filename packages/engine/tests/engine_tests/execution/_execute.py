@@ -89,6 +89,12 @@ def assert_state(executor, state):
         )
 
     executor.export_tensors(collect, chunk_bytes=40)
+    # An accumulation's gradients exist only while it is open, apart from the
+    # persistent state.
+    if executor._gradients_held:
+        executor.export_gradients(collect, chunk_bytes=40)
+    else:
+        state = {k: v for k, v in state.items() if not k.startswith("gradient.")}
     assert actual.keys() == state.keys(), {
         "unexpected": actual.keys() - state.keys(),
         "missing": state.keys() - actual.keys(),
