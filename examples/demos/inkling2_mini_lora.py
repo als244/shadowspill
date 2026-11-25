@@ -15,7 +15,8 @@ from shadowspill_client import (
     Preparation,
     ServiceClient,
 )
-from shadowspill_client.text import build_candidates
+from shadowspill_client.display import CommandTable
+from shadowspill_client.text import build_candidates, text_batch_statistics
 
 from ._options import arguments
 
@@ -34,7 +35,7 @@ def main():
         else ServiceClient(ssh=SSH(options.host, options.port))
     )
     with service:
-        training = service.create_training_client(
+        creation = service.create_training_client(
             model=Model.from_pretrained(
                 options.checkpoint, lora=LoRA(rank=32, alpha=32)
             ),
@@ -60,7 +61,14 @@ def main():
             ),
             operations={"step": ["metrics"]},
             progress=True,
-        ).result()
+        )
+        (options.output / "run.json").write_text(
+            json.dumps(
+                {"session_id": creation.session_id, "run_id": creation.run_id}, indent=2
+            )
+            + "\n"
+        )
+        training = creation.result()
         try:
             training.plans.report().result().download(
                 options.output / "plan.html"
@@ -69,21 +77,29 @@ def main():
             (options.output / "training-config.json").write_text(
                 json.dumps(training.get_config().to_dict(), indent=2) + "\n"
             )
-            results = []
+            table = CommandTable()
+            results, pending = [], None
             for step in range(1, options.steps + 1):
-                result = training.step(
-                    next(batches),
-                    optim={"lr": 1e-4},
-                    runtime_trace=step == options.steps,
-                ).result()
-                print(
-                    f"Update {result.completed_updates}  loss {result.loss:.6f}",
-                    flush=True,
+                batch = next(batches)
+                validation = training.validate_batch(batch).result()
+                following = training.step(
+                    batch, optim={"lr": 1e-4}, runtime_trace=step == options.steps
                 )
-                results.append(result.record.to_dict())
-            result.traces[0].download_report(options.output / "runtime.html").result()
+                table.track(
+                    "step",
+                    following,
+                    batch=text_batch_statistics(batch),
+                    planned_seconds=validation.estimated_seconds,
+                )
+                if pending is not None:
+                    results.append(pending.result())
+                pending = following
+            results.append(pending.result())
+            results[-1].traces[0].download_report(
+                options.output / "runtime.html"
+            ).result()
             (options.output / "results.json").write_text(
-                json.dumps(results, indent=2) + "\n"
+                json.dumps([r.record.to_dict() for r in results], indent=2) + "\n"
             )
         finally:
             training.close().result()
