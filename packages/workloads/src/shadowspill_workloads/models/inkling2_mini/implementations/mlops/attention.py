@@ -1,13 +1,8 @@
 """Relative GQA and sequence-reset short convolutions for Inkling text training."""
 
-import math
-
 import torch
-from mlops.inkling_activation import (
-    PackedResidualConv,
-    ResidualTapMix,
-    sigmoid_gated_value,
-)
+from mlops.dynamic_residual_conv import DynamicResidualConv
+from mlops.inkling_activation import PackedResidualConv, sigmoid_gated_value
 from mlops.l2_norm import l2_clip_scale
 from mlops.projected_relative_attention import projected_relative_gqa
 from mlops.relative_attention import relative_gqa_fused, relative_gqa_query_blocks
@@ -44,26 +39,10 @@ class ShortConv(nn.Module):
     def forward(self, x, positions, source=None):
         if self.heads is None:
             return PackedResidualConv.apply(x, self.weight, positions)
-        taps = self.taps
-        values = x.float()
-        padded = F.pad(values, (0, 0, taps - 1, 0))
-        # Each tap has a separate slice. Its backward adds overlaps in a fixed
-        # order before the cotangent reaches the next microscaled expert.
-        windows = torch.stack(
-            [padded[:, tap : tap + x.shape[1]] for tap in range(taps)], dim=-1
+        coeff = F.linear(source, self.weight_proj).unflatten(
+            -1, (self.heads, self.taps)
         )
-        lag = torch.arange(taps - 1, -1, -1, device=x.device)
-        windows = windows * (lag <= positions[..., None]).unsqueeze(-2)
-        dynamic = (
-            F.linear(source, self.weight_proj).float().unflatten(-1, (self.heads, taps))
-        )
-        weight = self.static_w.T.unflatten(
-            0, (self.heads, -1)
-        ).float() + dynamic.unsqueeze(-2)
-        windows = windows.flip(-1).unflatten(-2, (self.heads, -1))
-        return ResidualTapMix.apply(
-            windows, weight, values, math.sqrt(2 * taps + 1), False
-        ).to(x.dtype)
+        return DynamicResidualConv.apply(x, self.static_w, coeff, positions)
 
 
 def clipped(x, threshold, gain=None, length_scale=None):

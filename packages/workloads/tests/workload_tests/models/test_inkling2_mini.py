@@ -268,7 +268,7 @@ def test_selected_head_preserves_softcap_and_chunked_parameter_gradients(
 
 
 @pytest.mark.parametrize("dynamic", [False, True])
-def test_convolution_cotangents_use_disjoint_tap_slices(dynamic):
+def test_convolution_cotangents_use_packed_gathers(dynamic):
     torch.manual_seed(172)
     width, taps = 12, 3
     options = {"dynamic_input": width, "heads": 3} if dynamic else {}
@@ -281,11 +281,15 @@ def test_convolution_cotangents_use_disjoint_tap_slices(dynamic):
 
     derivative = torch.func.grad(objective)
     graph = make_fx(derivative)(x)
+    graph.graph.eliminate_dead_code()
     # An overlapping unfold lowers to an atomic index add in the CUDA
     # backward. Its last-bit changes can change a subsequent MXFP8 cotangent.
     targets = {n.target for n in graph.graph.nodes}
     assert torch.ops.aten.unfold_backward.default not in targets
     assert torch.ops.aten._unsafe_index_put.default not in targets
+    if dynamic:
+        assert torch.ops.mlops.dynamic_residual_conv_backward.default in targets
+        assert torch.ops.aten.stack.default not in targets
     # Check that gradients at a packed boundary also agree with independent
     # sequences, including dynamically weighted taps.
     parts = []

@@ -52,6 +52,12 @@ def build(settings, context):
                 "shadowspill/fixed-sigmoid-gated-value@1"
             ),
             "torch.ops.mlops.residual_tap_mix.default": "shadowspill/fixed-tap-mix@1",
+            "torch.ops.mlops.dynamic_residual_conv.default": (
+                "shadowspill/fixed-dynamic-residual-conv@1"
+            ),
+            "torch.ops.mlops.dynamic_residual_conv_backward.default": (
+                "shadowspill/fixed-dynamic-residual-conv-backward@1"
+            ),
             "torch.ops.mlops.packed_residual_conv.default": (
                 "shadowspill/fixed-packed-residual-conv@1"
             ),

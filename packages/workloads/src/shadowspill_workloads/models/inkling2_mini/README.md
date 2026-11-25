@@ -71,6 +71,8 @@ This trains 835,584 elements in 192 adapter tensors. Frozen experts still propag
 
 ## Attention memory at long sequence lengths
 
+In global attention each K and V convolution consumes the packed positions, its static taps and a compact per-token tap projection. MLOps forms the four neighboring values and their weights inside the CUDA kernel, including during backward.
+
 The default partition follows the decoder layers. For long documents the
 workload also provides `shadowspill/inkling2_mini_split_global_experts@1`.
 It adds a boundary before the routed MLP at each global-attention visit in
