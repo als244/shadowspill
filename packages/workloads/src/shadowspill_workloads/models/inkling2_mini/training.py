@@ -55,8 +55,8 @@ def build(settings, context):
             "torch.ops.mlops.normalized_message_gate.default": (
                 "shadowspill/fixed-normalized-message-gate@1"
             ),
-            "torch.ops.mlops.message_gate_backward_projections.default": (
-                "shadowspill/fixed-message-gate-backward-projections@1"
+            "torch.ops.mlops.message_gate_backward_rows.default": (
+                "shadowspill/fixed-message-gate-backward-rows@1"
             ),
             "torch.ops.mlops.dynamic_residual_conv.default": (
                 "shadowspill/fixed-dynamic-residual-conv@1"
