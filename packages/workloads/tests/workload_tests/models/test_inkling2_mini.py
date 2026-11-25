@@ -16,6 +16,36 @@ from shadowspill_workloads.models.inkling2_mini.implementations.mlops.attention 
 from shadowspill_workloads.objectives.head.execution import loss as token_objective
 
 
+def test_expert_partition_splits_only_global_visits_in_the_repeated_core():
+    from shadowspill.pytorch.partition.policy import resolve_partition_assignments
+    from shadowspill_workloads.models.inkling2_mini.partition import SplitGlobalExperts
+
+    class Decoder(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = Model(PRESETS["tiny"]).bfloat16()
+
+        def forward(self, tokens):
+            return self.model(tokens)
+
+    module = Decoder()
+    tokens = torch.zeros((1, 8), dtype=torch.long)
+    graph = torch.export.export(module, (tokens,), strict=False).graph_module
+    base, _ = resolve_partition_assignments(graph, module, "auto")
+    split, _ = resolve_partition_assignments(graph, module, SplitGlobalExperts())
+    assert base.keys() == split.keys()
+    assert len(set(split.values())) == len(set(base.values())) + PRESETS["tiny"].passes
+    previous = None
+    for node in base:
+        if previous is not None:
+            if base[previous] != base[node]:
+                assert split[previous] != split[node]
+            elif split[previous] != split[node]:
+                paths = {path for path, _ in node.meta["nn_module_stack"].values()}
+                assert "model.layers.2.mlp" in paths
+        previous = node
+
+
 @pytest.mark.parametrize("fp32_projection", [True, False])
 def test_softcapped_training_head_consumes_each_chunk_and_preserves_reductions(
     fp32_projection,

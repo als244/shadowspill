@@ -86,6 +86,11 @@ budgets and orderings without rebuilding its partition.
 Model operators contain no partition API calls. Other architectures can supply
 their own policy in exactly the same way.
 
+Inkling's optional long-context policy adds expert boundaries on repeated
+global-attention layers. A client can offer the default partition and this
+named policy in separate `BuildCase` entries of one `Preparation`.
+[Inkling build cases](../../packages/workloads/src/shadowspill_workloads/models/inkling2_mini/README.md#attention-memory-at-long-sequence-lengths)
+
 ## Checkpoint boundaries and execution regions
 
 The builder's `partition=` controls checkpoint stages. Its independent

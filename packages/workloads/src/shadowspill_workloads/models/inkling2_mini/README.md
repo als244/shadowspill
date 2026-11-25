@@ -65,4 +65,28 @@ This trains 835,584 elements in 192 adapter tensors. Frozen experts still propag
 
 ## Attention memory at long sequence lengths
 
+The default partition follows the decoder layers. For long documents the
+workload also provides `shadowspill/inkling2_mini_split_global_experts@1`.
+It adds a boundary before the routed MLP at each global-attention visit in
+the repeated core. The published model has six such visits. Saved inputs,
+recomputation and placement are chosen by ShadowSpill for each partition.
+Both use whole AttnRes histories and the same model weights.
+
+To offer both partitions at 32,768 tokens per microbatch, use the existing
+client build cases in the preparation configuration.
+
+```python
+from shadowspill_client import BuildCandidates, BuildCase, BuildOptions, Policy, Preparation
+
+split = Policy("shadowspill/inkling2_mini_split_global_experts@1", {})
+prepare = Preparation(candidates=BuildCandidates(cases=[
+    BuildCase(32768, max_datums=1),
+    BuildCase(32768, BuildOptions(partition=split), max_datums=1),
+]))
+```
+
+The planner can select either admitted candidate for the submitted batch.
+The [fine-tuning example](../../../../../../examples/demos/inkling2_mini_lora.py)
+uses the default partition and compares microbatch sizes.
+
 Set `attention_kv_heads_per_chunk` in the architecture configuration to a positive number up to `n_kv_heads` to limit the number of relative-bias profiles materialized together. Each chunk contains complete grouped-query heads and spans every sequence position. Packed document boundaries, the global receptive field and the local window are preserved. Zero selects ordinary attention. This option combines the relative projection and the fused attention and can run alongside the independently chunked language head.

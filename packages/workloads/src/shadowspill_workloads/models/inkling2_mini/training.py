@@ -8,7 +8,7 @@ from shadowspill_workloads.components.decoder import configuration
 from shadowspill_workloads.components.decoder import register as register_decoder
 from shadowspill_workloads.components.moe_allocations import CONTRACTS
 
-from . import config
+from . import config, partition
 
 
 class Settings(configuration.Settings):
@@ -137,6 +137,7 @@ def capture(settings):
 
 
 def register(registry):
+    partition.register(registry)
     register_decoder(
         registry,
         Settings,
