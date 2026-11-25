@@ -27,6 +27,9 @@ class NsysCapture:
     gpu_metrics_frequency: int = 1000
     executable: str = "nsys"
     output_dir: str | Path | None = None
+    # Buffer CUDA activity across short update windows. On CUDA 11+, the
+    # collector's flush-on-fill mode can stall the worker inside a launch.
+    cuda_flush_interval_ms: int = 60_000
 
     def __post_init__(self) -> None:
         for name in ("start_step", "steps"):
@@ -34,6 +37,11 @@ class NsysCapture:
                 raise ValueError(f"{name} must be a positive integer")
         if type(self.gpu_metrics) is not bool:
             raise TypeError("gpu_metrics must be a bool")
+        if (
+            type(self.cuda_flush_interval_ms) is not int
+            or self.cuda_flush_interval_ms < 0
+        ):
+            raise ValueError("cuda_flush_interval_ms must be a nonnegative integer")
         if (
             type(self.gpu_metrics_frequency) is not int
             or not 10 <= self.gpu_metrics_frequency <= 200_000
@@ -56,6 +64,7 @@ class NsysCapture:
             "steps",
             "gpu_metrics",
             "gpu_metrics_frequency",
+            "cuda_flush_interval_ms",
         }:
             raise ValueError(
                 "service Nsight settings cannot select paths or executables"
@@ -66,6 +75,9 @@ class NsysCapture:
             gpu_metrics=cast(bool, settings.get("gpu_metrics", True)),
             gpu_metrics_frequency=cast(
                 int, settings.get("gpu_metrics_frequency", 1000)
+            ),
+            cuda_flush_interval_ms=cast(
+                int, settings.get("cuda_flush_interval_ms", cls.cuda_flush_interval_ms)
             ),
         )
 
@@ -88,6 +100,7 @@ class NsysCapture:
             executable,
             "profile",
             "--trace=cuda,nvtx,osrt",
+            f"--cuda-flush-interval={self.cuda_flush_interval_ms}",
             "--sample=none",
             "--cpuctxsw=none",
             "--osrt-threshold=10000",

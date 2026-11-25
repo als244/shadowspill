@@ -77,3 +77,8 @@ exclude those updates from steady timing. The caller launches the collector usin
 [`NsysCapture.rank_command`](../../packages/engine/src/shadowspill/orchestration/capture/nsys.py)
 and verifies native reports after workers exit. Runtime tracing and Nsight can
 be enabled together.
+
+The collector buffers CUDA activity with a 60,000 ms flush interval by default.
+Pass `NsysCapture(start_step=2, steps=2, cuda_flush_interval_ms=10000)` to use
+a 10-second interval for that run. On CUDA 11 and later a value of `0` saves
+buffers when they fill. Longer intervals can use more profiler memory.

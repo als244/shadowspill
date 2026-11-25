@@ -23,7 +23,11 @@ from shadowspill_client.transport.http import RemoteError
 
 def settings(config):
     return replace(
-        config, execution=replace(config.execution, nsys={"gpu_metrics": False})
+        config,
+        execution=replace(
+            config.execution,
+            nsys={"gpu_metrics": False, "cuda_flush_interval_ms": 1750},
+        ),
     )
 
 
@@ -70,6 +74,7 @@ def test_public_capture_pending_final_and_download_survive_close_and_restart(
             reader = client.get_training_client(run_id, read_only=True).result(5)
             assert reader.nsys().result(5).record == pending.record
             node = ctx.owners[0]._node
+            assert node._capture_settings.cuda_flush_interval_ms == 1750
             startup = node.prepared[0].startup
             assert node.lease.request.host_bytes == (
                 ctx.factory.limits.worker.peak_bytes(startup) + (1 << 20)

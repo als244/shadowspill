@@ -32,9 +32,11 @@ class Execution(Record):
     nsys : mapping, optional
         Nsight Systems capture on every worker, with keys ``start_step``
         (one-based optimizer update to start at, default 2), ``steps``
-        (updates to capture, default 2), ``gpu_metrics`` (default True) and
-        ``gpu_metrics_frequency`` (in Hz, 10 to 200000, default 1000). None
-        runs workers without a collector.
+        (updates to capture, default 2), ``gpu_metrics`` (default True),
+        ``gpu_metrics_frequency`` (in Hz, 10 to 200000, default 1000), and
+        ``cuda_flush_interval_ms`` (default 60000). On CUDA 11+, a positive
+        interval buffers CUDA activity between saves, and 0 saves on fill.
+        None runs workers without a collector.
     reject_overbudget : bool, default False
         Whether a worker fails when its process holds more device memory
         than the budget, or more outside its execution pool than the
