@@ -40,6 +40,7 @@ CONTRACTS = {
             "lora_dispatch",
             "lora_dispatch_bwd",
             "lora_combine",
+            "lora_sum_rows",
             "lora_combine_bwd",
             "lora_grouped_linear_fwd",
             "lora_grouped_linear_bwd",

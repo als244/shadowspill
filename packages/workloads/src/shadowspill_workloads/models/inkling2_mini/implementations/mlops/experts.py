@@ -9,7 +9,7 @@ from mlops.groupwise_experts import (
 from mlops.groupwise_experts import grouped_linear as packed_linear
 from mlops.inkling_activation import routed_softcapped_swiglu
 from mlops.lora.grouped import grouped_linear
-from mlops.lora.routing import combine_rows, dispatch_rows, layout, routing_logits
+from mlops.lora.routing import dispatch_rows, layout, routing_logits, sum_rows
 from mlops.routing import sigmoid_topk
 from torch import nn
 
@@ -121,6 +121,4 @@ class Experts(nn.Module):
         gamma = weights.reshape(-1).index_select(0, order.long()).unsqueeze(-1)
         active = routed_softcapped_swiglu(gu, gamma, c.gate_cap, c.up_cap)
         y = self.projection(active, "w2", "down", offsets)
-        return combine_rows(
-            y, order, slots, torch.ones_like(weights), torch.zeros_like(x)
-        ).reshape_as(hidden)
+        return sum_rows(y, order, slots).reshape_as(hidden)
