@@ -7,12 +7,83 @@ import torch
 from torch.nn import functional as F
 
 from shadowspill.pytorch.capture.objective import capture_training_objective
+from shadowspill.training.components import load_registry
+from shadowspill_client import LoRA, Model
+from shadowspill_workloads.models.families import families
 from shadowspill_workloads.models.llama3.config import Config
 from shadowspill_workloads.models.llama3.implementations.mlops import (
     Model as MlopsLlama,
 )
 from shadowspill_workloads.models.llama3.implementations.pytorch import Model as Llama
 from shadowspill_workloads.models.shared import token_head
+
+
+@pytest.mark.parametrize(
+    "family", [f.name for f in families() if f.presets and f.training]
+)
+@pytest.mark.parametrize("head_lora", [False, True])
+def test_registered_decoder_scalar_loss_has_bounded_saved_gradients(
+    family, head_lora, monkeypatch
+):
+    from shadowspill_workloads.objectives.head.execution import loss
+
+    registry = load_registry(["shadowspill-workloads"])
+    settings = Model(
+        family,
+        config={"preset": "tiny", "architecture": {"vocab_size": 47}},
+        lora=LoRA(3, targets=["lm_head"]) if head_lora else None,
+    )
+    resolved = registry.resolve_model(family, settings=settings)
+    if "target_logprobs" not in resolved.component.capabilities:
+        pytest.skip("component has no token head")
+    with torch.device("meta"):
+        head = resolved.create().lm_head
+    head.to_empty(device="cpu")
+    head.reset_parameters()
+    head.weight.requires_grad_(False)
+    # More than one vocabulary block, including a partial last block. Pick a
+    # tiny preset so this checks the real autograd tape in CPU-only CI.
+    rows = 11
+    assert head.in_features != head.out_features
+    monkeypatch.setattr(token_head, "TARGET_LOGIT_BYTES", 3 * 4 * head.out_features)
+    monkeypatch.setattr(
+        "mlops.providers.builtin.head_objective.default_head_chunk_size",
+        lambda _vocab: 3,
+    )
+    x = torch.randn(
+        1, rows, head.in_features, dtype=head.weight.dtype, requires_grad=True
+    )
+    ids = torch.arange(rows)[None, :] % head.out_features
+    fields = dict(
+        loss_mask=torch.ones_like(ids, dtype=torch.bool),
+        weights=torch.ones_like(ids, dtype=torch.float32),
+    )
+    saved = []
+    with torch.autograd.graph.saved_tensors_hooks(
+        lambda t: saved.append(t) or t, lambda t: t
+    ):
+        actual, _ = loss(
+            dict(head=head, head_hidden=x, head_targets=ids), fields, {}, policy=False
+        )
+    expected = F.cross_entropy(
+        head(x).flatten(0, -2).float(), ids.flatten(), reduction="sum"
+    )
+    torch.testing.assert_close(actual, expected, rtol=0.003, atol=1e-4)
+    parameter_storage = {p.untyped_storage() for p in head.parameters()}
+    for tensor in saved:
+        if tensor.untyped_storage() not in parameter_storage and tensor.ndim >= 2:
+            assert tensor.shape[-1] != head.out_features, (
+                f"{family} saved a vocabulary block {tuple(tensor.shape)} for backward"
+            )
+
+
+def test_packed_decoder_rejects_a_projection_only_head_at_construction(monkeypatch):
+    from mlops.modules import LanguageModelHead
+
+    monkeypatch.setattr(LanguageModelHead, "objective", None)
+    resolved = load_registry(["shadowspill-workloads"]).resolve_model("inkling2_mini")
+    with torch.device("meta"), pytest.raises(TypeError, match=r"lm_head\.objective"):
+        resolved.create()
 
 
 @pytest.mark.parametrize("policy", [False, True])

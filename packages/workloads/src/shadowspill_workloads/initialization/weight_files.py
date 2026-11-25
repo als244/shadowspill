@@ -19,6 +19,21 @@ MAX_TENSORS = 262144
 CHUNK_BYTES = 1 << 20
 
 INDEX = "model.safetensors.index.json"
+QUANT_CONFIG = "hf_quant_config.json"
+
+
+def quantization_file(metadata):
+    if metadata.get("quantization_config"):
+        from shadowspill_workloads.models.families import checkpoint_families
+
+        text = metadata.get("text_config", metadata)
+        if not isinstance(text, dict):
+            raise ValueError("pretrained text_config must be a JSON object")
+        kind = text.get("model_type", metadata.get("model_type"))
+        family = checkpoint_families().get(kind)
+        if family:
+            return family.quantization_file
+    return None
 
 
 def shard_name(value):
@@ -39,11 +54,17 @@ class WeightFile:
     checksum: str
 
     def __post_init__(self):
-        if self.name not in ("config.json", INDEX) and not shard_name(self.name):
+        if self.name not in ("config.json", QUANT_CONFIG, INDEX) and not shard_name(
+            self.name
+        ):
             raise ValueError("invalid pretrained file name")
         if type(self.size) is not int or self.size <= 0:
             raise ValueError("pretrained file size must be positive")
-        limit = {"config.json": CONFIG_BYTES, INDEX: INDEX_BYTES}.get(self.name)
+        limit = {
+            "config.json": CONFIG_BYTES,
+            QUANT_CONFIG: CONFIG_BYTES,
+            INDEX: INDEX_BYTES,
+        }.get(self.name)
         if limit is not None and self.size > limit:
             raise ValueError("pretrained JSON exceeds its metadata byte limit")
         if (
@@ -54,13 +75,16 @@ class WeightFile:
 
 
 def files(values):
-    if not isinstance(values, (list, tuple)) or not 2 <= len(values) <= MAX_SHARDS + 2:
+    if not isinstance(values, (list, tuple)) or not 2 <= len(values) <= MAX_SHARDS + 3:
         raise ValueError("pretrained initialization requires a bounded file manifest")
     result = tuple(WeightFile(**value) for value in values)
     names = {file.name for file in result}
     if len(names) != len(result) or "config.json" not in names:
         raise ValueError("pretrained files require unique names and config.json")
-    if INDEX not in names and names != {"config.json", "model.safetensors"}:
+    if INDEX not in names and names - {QUANT_CONFIG} != {
+        "config.json",
+        "model.safetensors",
+    }:
         raise ValueError("pretrained shards require their safetensors index")
     if not any(shard_name(name) for name in names):
         raise ValueError("pretrained manifest has no weight shards")

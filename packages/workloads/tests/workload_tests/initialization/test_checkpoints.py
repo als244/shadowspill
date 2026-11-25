@@ -34,6 +34,36 @@ def huggingface_state(family, model, config):
 
     state = {}
     parameters = dict(model.named_parameters())
+    if family == "inkling2_mini":
+        for name, value in parameters.items():
+            if name == "lm_head.weight":
+                name = "unembed.weight"
+                value = torch.nn.functional.pad(
+                    value, (0, 0, 0, config.embedding_vocab_size - config.vocab_size)
+                )
+            elif name == "embed.embed_norm.weight":
+                name = "embed_norm.weight"
+            elif name == "output_query":
+                name = "attn_res.output_query"
+            elif name.startswith("layers."):
+                _, i, leaf = name.split(".", 2)
+                if leaf in ("attn_query", "mlp_query"):
+                    name = (
+                        f"attn_res.attn_queries.{int(i) - 1}"
+                        if leaf == "attn_query"
+                        else f"attn_res.mlp_queries.{i}"
+                    )
+                else:
+                    leaf = {
+                        "mlp.w13": "mlp.experts.w13_weight",
+                        "mlp.w2": "mlp.experts.w2_weight",
+                        "attn.proj": "attn.rel_logits_proj.proj",
+                        "attn.q_scale": "attn.q_l2_clip.scale",
+                        "attn.rel_scale": "attn.rel_l2_clip.scale",
+                    }.get(leaf, leaf)
+                    name = f"layers.{i}.{leaf}"
+            state["model.llm." + name] = value.detach().contiguous()
+        return state
     prefix = "model.language_model." if family in ("qwen35", "qwen35moe") else "model."
     state[prefix + "embed_tokens.weight"] = parameters["embed.weight"]
     state[prefix + "norm.weight"] = parameters["final_norm.weight"]
@@ -131,6 +161,42 @@ def metadata(family, config):
         "vocab_size": config.vocab_size,
         "attention_bias": False,
     }
+    if family == "inkling2_mini":
+        return {
+            "model_type": "inkling2_loop",
+            "text_config": {
+                **common,
+                "model_type": "inkling2_loop_text",
+                "vocab_size": config.embedding_vocab_size,
+                "unpadded_vocab_size": config.vocab_size,
+                "head_dim": config.head_dim,
+                "d_rel": config.d_rel,
+                "rel_extent": config.rel_extent,
+                "sliding_window_size": config.window,
+                "local_layer_ids": list(config.local_layer_ids),
+                "sconv_kernel_size": config.conv_kernel,
+                "n_layers_per_attn_res_block": config.block_size,
+                "loop_config": {
+                    "core_start": config.core_start,
+                    "core_end": config.core_end,
+                    "num_passes": config.passes,
+                    "gate_rank": config.gate_rank,
+                },
+                "n_routed_experts": config.n_experts,
+                "num_experts_per_tok": config.top_k,
+                "intermediate_size": config.d_ff_expert,
+                "model_max_length": config.max_seq_len,
+                "rms_norm_eps": config.norm_epsilon,
+                "qk_l2_clip_threshold": config.qk_clip,
+                "rel_l2_clip_threshold": config.rel_clip,
+                "log_scaling_n_floor": config.log_floor,
+                "log_scaling_alpha": config.log_alpha,
+                "route_scale": config.route_scale,
+                "mlp_gate_softcap": config.gate_cap,
+                "mlp_up_softcap": config.up_cap,
+                "final_logit_softcapping": config.logit_cap,
+            },
+        }
     if family == "llama3":
         return {
             **common,
@@ -241,12 +307,15 @@ def materialized(name, **changes):
 
 #: What the tiny shapes leave at their defaults but every published
 #: checkpoint of the family has, which its reader therefore sets.
-PUBLISHED = {"qwen35": {"zero_centered_norm": True}}
+PUBLISHED = {
+    "qwen35": {"zero_centered_norm": True},
+    "inkling2_mini": {"expert_storage": "auto"},
+}
 
 
 @pytest.mark.parametrize("family", READERS)
 def test_a_family_reads_its_own_layout_back(tmp_path, family):
-    name = f"{family}-tiny"
+    name = f"{family.replace('_', '-')}-tiny"
     entry = catalog.entry(name)
     changes = PUBLISHED.get(family, {})
     source = materialized(name, **changes)
@@ -271,6 +340,42 @@ def test_a_family_reads_its_own_layout_back(tmp_path, family):
     assert set(report["written"]) <= set(expected)
 
 
+def test_preconverted_inkling_bf16_banks_load_directly_for_lora(tmp_path):
+    from shadowspill_client import LoRA, Model
+    from shadowspill_workloads.components.pretrained import resolve_local
+
+    family = "inkling2_mini"
+    source = materialized("inkling2-mini-tiny", expert_storage="bf16")
+    save_file(
+        huggingface_state(family, source, source.config), tmp_path / "model.safetensors"
+    )
+    (tmp_path / "config.json").write_text(json.dumps(metadata(family, source.config)))
+    request = Model.from_pretrained(
+        str(tmp_path), lora=LoRA(2), config={"architecture": {"expert_storage": "bf16"}}
+    )
+    architecture = resolve_local(request).config["architecture"]
+    assert architecture["expert_storage"] == "bf16"
+    assert set(architecture["expert_formats"]) == {"dense"}
+    target = catalog.build_from_checkpoint(
+        family,
+        tmp_path,
+        dtype="float32",
+        device="cpu",
+        lora={"rank": 2, "alpha": 2},
+        expert_storage="bf16",
+    )
+    with reader(family)(tmp_path, expert_storage="bf16") as checkpoint:
+        assert set(checkpoint.config.expert_formats) == {"dense"}
+        assert checkpoint.load_into(target)["unused"] == []
+        for i, layer in enumerate(target.layers):
+            for name in ("w13", "w2"):
+                bank = getattr(layer.mlp, name)
+                src = checkpoint.sources(f"layers.{i}.mlp.{name}", checkpoint.config)
+                assert len(src.keys) == 1 and src.assemble is None
+                assert bank.dtype == torch.bfloat16 and not bank.requires_grad
+                assert torch.equal(bank, getattr(source.layers[i].mlp, name))
+
+
 @pytest.mark.parametrize("family", READERS)
 def test_a_checkpoint_initializes_a_run_chunk_by_chunk(tmp_path, family):
     """A fine-tune's tensors come from the checkpoint in bounded chunks; the
@@ -278,7 +383,7 @@ def test_a_checkpoint_initializes_a_run_chunk_by_chunk(tmp_path, family):
     catalog generates them, the same whatever the chunking."""
     from shadowspill_workloads.initialization.decoder import from_checkpoint
 
-    name = f"{family}-tiny"
+    name = f"{family.replace('_', '-')}-tiny"
     changes = PUBLISHED.get(family, {})
     source = materialized(name, **changes)
     config = source.config

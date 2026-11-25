@@ -58,6 +58,10 @@ def describe(reference, known=None):
         raise ValueError("local checkpoint reference must be an absolute server path")
     directory = Path(reference).resolve(strict=True)
     names = ["config.json"]
+    config_path = directory / "config.json"
+    recipe = weight_files.quantization_file(read_config(config_path))
+    if recipe:
+        names.append(recipe)
     if (directory / weight_files.INDEX).exists():
         names.append(weight_files.INDEX)
         names.extend(weight_files.read_index(directory / weight_files.INDEX))
@@ -79,9 +83,15 @@ def describe(reference, known=None):
             (f.name, f.size) for f in inventory
         ]:
             raise ValueError("local checkpoint files differ from the pinned manifest")
-    metadata = read_config(directory / "config.json")
+    metadata = read_config(config_path)
+    if weight_files.quantization_file(metadata) != recipe:
+        raise ValueError(
+            "local checkpoint quantization recipe changed during resolution"
+        )
+    if recipe:
+        metadata[recipe] = read_config(directory / recipe)
     for file in manifest:
-        if file.name in ("config.json", weight_files.INDEX):
+        if file.name in ("config.json", recipe, weight_files.INDEX):
             weight_files.verify(directory / file.name, file)
     return str(directory), metadata, manifest
 

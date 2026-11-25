@@ -70,6 +70,10 @@ class Initialize:
     def constant(self, name):
         """Constant leaves need no RNG blocks or temporary full-precision copy."""
         leaf = name.rsplit(".", 1)[-1]
+        if leaf in self.distribution.zero_leaves:
+            return 0
+        if leaf in self.distribution.one_leaves:
+            return 1
         if name.endswith("norm.weight"):
             centered = getattr(
                 self.config, "zero_centered_norm", False

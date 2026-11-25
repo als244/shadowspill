@@ -82,9 +82,20 @@ def architecture(metadata, overrides):
 def resolve(requested):
     weights = requested.initialize
     revision, metadata = hub.config(weights.reference, weights.revision)
-    return _resolved(
-        requested, revision, metadata, hub_files.describe(weights.reference, revision)
-    )
+    manifest = hub_files.describe(weights.reference, revision)
+    from shadowspill_workloads.initialization.weight_files import quantization_file
+
+    if recipe := quantization_file(metadata):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        file = hub_files.metadata(weights.reference, revision, recipe)
+        with TemporaryDirectory(prefix="shadowspill-weight-recipe-") as root:
+            metadata[recipe] = hub.read_config(
+                hub_files.fetch(weights.reference, revision, file, Path(root))
+            )
+        manifest = [*manifest, asdict(file)]
+    return _resolved(requested, revision, metadata, manifest)
 
 
 def resolve_local(requested):

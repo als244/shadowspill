@@ -1,0 +1,64 @@
+# Inkling 2 Mini
+
+The `inkling2_mini` family accepts packed text tokens. Its ordinary causal language head predicts the next token over the 200,058 unpadded classes. Text prompts run the full language decoder. Multimodal prompts would also require the image encoder and image-token injection. The separate MTP checkpoint serves speculative decoding.
+
+Training uses the MLOps chunked head objective. It applies the checkpoint's logit softcap before cross entropy and consumes each token chunk's vocabulary values and gradients together. With a frozen head, backward saves the hidden-state gradient. The default base projection writes FP32 logits from the model's activation-precision operands. Set `config={"architecture": {"head_fp32_projection": False}}` to round the projection output to the activation dtype before applying the same FP32 softcap. The option also applies to ordinary logits returned by `forward`.
+
+Include `"lm_head"` in the explicit `LoRA.targets` list to train output-head adapters. Explicit targets replace the family defaults. The head adds the scaled adapter projection before the softcap and accumulates gradients for its two factors across chunks. To train the full output matrix alongside the family's default adapters, pass `lora=LoRA(32, alpha=32), trainable=["*.lora_*", "lm_head.weight"]` to `Model.from_pretrained`. In that mode the objective accumulates one vocabulary-by-hidden weight gradient. The hidden-state gradient is saved when earlier layers need it.
+
+## Shared layers and residual attention
+
+The published shape has 24 physical layers and 48 visits. Layers 0–5 form the prefix, layers 6–17 run three times, and layers 18–23 form the suffix. A later pass restarts from the prefix state and retrieves four learned messages from the preceding pass. Attention residuals mix normalized block states at each token. Full-attention layers have independent queries for their Q, K and V inputs. The model declares one set of parameters and adapters per physical layer. ShadowSpill captures the separate visits and plans their activations, shared state and optimizer work. The `tiny` preset exercises the same three-pass structure. [Configuration](config.py) · [Decoder](implementations/mlops/model.py)
+
+The default `attention_backend="auto"` selects the MLOps fused relative attention operator for at least 128 tokens and supported head widths. Its Triton kernels apply the learned per-query distance bias, sink and causal or sliding-window mask, including position resets at packed-document boundaries. CPU and unsupported device or dtype combinations use the bounded PyTorch implementation of that operator. Short sequences use the dense reference.
+
+Set `config={"architecture": {"attention_backend": "eager"}}` for the dense reference, or set `attention_query_chunk_size` to a positive value such as 256 to use the query-blocked reference. Each query sees all the allowed keys in its document. These settings are independent of token capacity and the projection and MoE chunk settings. [Attention implementation](implementations/mlops/attention.py)
+
+## Checkpoint and expert precision
+
+Residual attention, FP32 RMS normalization, L2 clipping scales and normalized router weights
+use the same arithmetic in eager, saved and recomputed stages. A change at
+a BF16 rounding boundary can change the block scale chosen by the next
+expert quantizer.
+
+Use the regular client API on a server with the checkpoint installed.
+
+```python
+from shadowspill_client import LoRA, Model
+
+model = Model.from_pretrained("/models/Inkling-2-Mini", lora=LoRA(2, alpha=2))
+```
+
+By default, LoRA keeps the released expert weights and scales in their original dtypes. The loader pins the checkpoint's `hf_quant_config.json` along with the weights. It checks the text tensor assignments, activation recipes, block shapes and physical scale tensors. Both the interleaved gate/up bank and the down bank use NVFP4 at physical layers 0–19 and MXFP8 at layers 20–23. NVFP4 weights have one E4M3 scale per 16 columns and an FP32 outer factor per expert. MXFP8 weights store E8M0 exponents for groups of 32 columns at each serialized row. [Checkpoint reader](checkpoint.py)
+
+With packed storage, `expert_compute="auto"` uses the checkpoint arithmetic where MLOps supports it and BF16 grouped GEMMs elsewhere. Both released formats use the checkpoint path on SM90 and SM120 and BF16 on SM86. On SM89 only MXFP8 has checkpoint support. An explicit `"checkpoint"` requests the checkpoint recipe for each packed bank and reports unsupported devices. Its NVFP4 activations use a per-token outer scale and choose an E4M3 scale for each 16-value block by the four-over-six error rule. MXFP8 activations use 32-column groups. The router coefficient multiplies the capped SwiGLU before rounding and quantizing the input to the down projection. The frozen-base input gradient uses MXFP8 cotangents and stochastically requantizes the transposed decoded weights to MXFP8. This backward convention adapts the published Small training method to Mini LoRA. The low-rank branches use floating-point projections. [Thinking Machines training recipe](https://thinkingmachines.ai/blog/end-to-end-4-bit-training/) · [vLLM Inkling experts](https://docs.vllm.ai/en/latest/api/vllm/models/inkling2/nvidia/moe/)
+
+Two configurations use BF16 expert weights, activations and cotangents during the matrix products. Both call the ordinary MLOps grouped GEMM and accumulate each dot product in FP32.
+
+| Architecture settings | Weight storage available to the planner | When conversion occurs |
+| --- | --- | --- |
+| `expert_storage="packed", expert_compute="bf16"` | Original checkpoint payloads and scales | Each forward or input-gradient projection decodes active experts in output-column tiles. The same scratch buffer serves every tile. |
+| `expert_storage="bf16"` | BF16 expert banks shared across loop visits | The training initializer decodes the checkpoint directly into the requested parameter ranges. An already-BF16 checkpoint copies directly. Training reads the stored BF16 values. |
+
+For example, this configuration converts the published checkpoint at load time. Both modes keep the base experts frozen under LoRA. ShadowSpill plans the weight objects, transfers, retention and task workspace using the selected representation.
+
+```python
+model = Model.from_pretrained(
+    "/models/Inkling-2-Mini",
+    lora=LoRA(2, alpha=2),
+    config={"architecture": {"expert_storage": "bf16"}},
+)
+```
+
+Full-parameter floating-point training uses dense expert banks. The bounded loader decodes directly into the requested destination ranges. On either path the ordinary public memory budgets and plan admission govern feasibility. The default LoRA targets train 50,380,800 parameters at rank two and 806,092,800 at rank 32, in 288 adapter tensors. They cover Q, K, V and output projections plus the routed expert gate/up and down projections of each of the 24 physical layers. Repeated visits accumulate into those same adapters. The router, language head, embeddings, AttnRes queries and other base parameters stay frozen under this target selection. [Adapter targets](lora.py) · [Model catalog](../../../../../../docs/python/catalog.md)
+
+To train just the four attention projections, pass these targets to the same client API.
+
+```python
+lora = LoRA(2, alpha=2, targets=[
+    "layers.*.attn.wq_du", "layers.*.attn.wk_dv",
+    "layers.*.attn.wv_dv", "layers.*.attn.wo_ud",
+])
+```
+
+This trains 835,584 elements in 192 adapter tensors. Frozen experts still propagate input gradients. With checkpoint computation on SM120 or SM90, their gate/up projection can gather and quantize in one kernel. An enabled expert adapter reads the original BF16 token rows by routing index for both its rank-wide projection and its weight gradient. With either target selection, the gate/up operation avoids the full-width BF16 assignment buffer.

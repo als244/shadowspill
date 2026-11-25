@@ -14,6 +14,8 @@ class ParameterInitialization:
     log_uniform_decay: bool = False
     time_bias: int = 0
     normal_leaves: tuple[str, ...] = ("w13_experts", "w2_experts")
+    zero_leaves: tuple[str, ...] = ()
+    one_leaves: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class Family:
     validate_pretrained: Callable[[dict, Any], None] | None = None
     pretrained_config: Callable[[dict, dict, dict], dict] | None = None
     parameter_dtypes: Mapping[str, str] = field(default_factory=dict)
+    quantization_file: str | None = None
 
     def __post_init__(self):
         from shadowspill_client.config.precision import parameter_dtypes

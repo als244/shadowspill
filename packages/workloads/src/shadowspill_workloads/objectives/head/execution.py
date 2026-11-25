@@ -36,8 +36,9 @@ def loss(evaluated, loss_inputs, loss_params, *, policy):
             inputs=inputs,
             controls=controls,
         )
-    # Models exposing logprobs directly and ordinary reference heads retain
-    # their own differentiable implementation. No head structure is assumed.
+    # Packed decoder registration checks its bounded head at construction.
+    # Standalone logprob components and ordinary reference heads can supply
+    # differentiable predictions to this same token formula.
     current = logprobs(evaluated)
     if policy:
         loss = clipped_policy(

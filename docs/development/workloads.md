@@ -95,6 +95,46 @@ client configuration and runtime commands stay in the shared guides.
    Then exercise public `step()`, split `forward_backward()`/`optim_step()` and
    checkpoint continuation. Test trainable selection and LoRA when supplied.
 
+### Output head for a packed training decoder
+
+Expose the final hidden states and the head through `token_features`. For a
+decoder with `hidden(tokens, sequence_lengths)` and `lm_head`, the shared
+`decoder_token_features` method already does this. Construct the head with
+`mlops.modules.LanguageModelHead(hidden_size, vocab_size)`. It supplies
+ordinary logits, the chunked scalar objective and the corresponding head LoRA
+conversion. Tied embeddings can assign the embedding parameter to the head's
+`weight`.
+
+A decoder with a softcap and FP32 projection uses the same module.
+
+```python
+from mlops.modules import LanguageModelHead
+
+self.lm_head = LanguageModelHead(
+    config.d_model, config.vocab_size,
+    fp32_projection=True, logit_softcap=config.logit_cap,
+)
+```
+
+The projection settings apply to prediction, scalar loss and head LoRA. A
+different output transformation needs a matching bounded `objective` method.
+Packed decoder construction checks this contract before capture. The scalar
+objective must consume each vocabulary block and its derivative before moving
+to the next block. Chunking a differentiable list of per-token logprobs alone
+can leave every block alive until backward.
+
+The catalog head regression compares the scalar loss with ordinary logits and
+inspects saved tensors on each small decoder, with and without head adapters.
+On a representative compiled step, inspect the terminal saved-forward outputs.
+A frozen head with upstream gradients ordinarily returns a hidden-width
+gradient plus the declared metrics. A trainable weight or adapter also adds its
+parameter-shaped gradients. Token-by-vocabulary blocks on that boundary merit
+investigation. For example, a 200,058-entry vocabulary at 16,384 tokens costs
+12.21 GiB if backward keeps one FP32 value per vocabulary entry and token.
+Dividing this into 198 output tensors leaves the total unchanged. A frozen
+2,304-wide BF16 head needs only 72 MiB for its hidden gradient at that shape.
+[Catalog head tests](../../packages/workloads/tests/workload_tests/objectives/test_token_head.py)
+
 ## Input modalities and initialization
 
 Input modality is a model/schema concern. The model handles its computation;

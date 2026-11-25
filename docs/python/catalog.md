@@ -19,7 +19,13 @@ These architectures are supplied by `shadowspill-workloads`:
 | `olmoe` | OLMoE mixture-of-experts decoder. | `tiny`, `7b-a1b` |
 | `glm53` | GLM-5.3 text decoder with sparse attention. | `tiny`, `published` |
 | `glm53_flash` | GLM-5.3-Flash text decoder with hybrid attention. | `tiny`, `published` |
+| `inkling2_mini` | Fixed-loop Inkling 2 Mini text decoder with block attention residuals and mixed NVFP4/MXFP8 experts. | `tiny`, `published` |
 | `regression` | Small feed-forward model used in the [split-update example](advanced/training-workflow.md). | — |
+
+For Inkling LoRA, set `config={"architecture": {"expert_storage": "bf16"}}`
+to load the routed weights as BF16. To keep the stored checkpoint compressed
+and use BF16 grouped GEMMs, choose `expert_storage="packed"` and
+`expert_compute="bf16"`. [Inkling expert precision](../../packages/workloads/src/shadowspill_workloads/models/inkling2_mini/README.md#checkpoint-and-expert-precision)
 
 For a text model, choose a preset and override architecture settings as needed:
 

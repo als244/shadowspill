@@ -17,6 +17,7 @@ registration and training APIs.
 | [Qwen 3.5 MoE](models/qwen35moe/README.md) | Hybrid attention, routed and gated shared experts | `mlops` |
 | [GLM-5.3](models/glm53/README.md) | Positional sparse MLA and routed/shared experts | `mlops` |
 | [GLM-5.3-Flash](models/glm53_flash/README.md) | KDA and NoPE sparse MLA, mHC streams and routed/shared experts | `mlops` |
+| [Inkling 2 Mini](models/inkling2_mini/README.md) | Fixed-loop text MoE with block attention residuals and native mixed-precision experts | `mlops` |
 
 A family owns its configuration, computation, checkpoint mapping, LoRA targets
 and registration. Shared layers live in `models/shared/`; reusable setup,
@@ -35,7 +36,8 @@ size without its multi-token prediction layer). For checkpoint-derived shapes, t
 
 Counts below include embeddings and the output head, count shared Parameter
 objects once, and exclude buffers and optimizer state. They describe the whole
-unsharded model, and equal its trainable count under default full training.
+unsharded model. Inkling's selection-only router bias participates in the forward
+pass and stays frozen under full training.
 They are **total parameters**, not the subset used by one routed token.
 
 | Catalog name | Layers | Model width | Q / KV heads | Head width | MLP or expert width | Experts / top-k | Vocabulary | Total parameters |
@@ -60,6 +62,13 @@ They are **total parameters**, not the subset used by one routed token.
 | `qwen3moe-30b-a3b` | 48 | 2,048 | 32 / 4 | 128 | 768 | 128 / 8 | 151,936 | 30,532,122,624 |
 | `qwen35moe-tiny` | 2 | 128 | 4 / 2 | 32 | 128 routed + 128 shared | 8 / 2 | 1,024 | 1,283,048 |
 | `qwen35moe-35b-a3b` | 40 | 2,048 | 16 / 2 | 256 | 512 routed + 512 shared | 256 / 8 | 248,320 | 34,660,610,688 |
+| `inkling2-mini-tiny` | 4 | 32 | 4 / 2 | 8 | 32 | 4 / 2 | 89 | 86,016 |
+| `inkling2-mini` | 24 | 2,304 | 24 / 8 | 128 | 1,152 | 128 / 8 | 200,058 | 26,068,159,488 |
+
+The Inkling rows count physical layers. Three passes over the middle core give
+8 visits in the tiny shape and 48 in the published shape. The two vocabularies
+in the table count output classes. Their input embeddings have 96 and 201,024
+rows respectively.
 
 Dense Qwen 3 has full attention in every block; in `qwen3-tiny` and
 `qwen3-32b` its query heads together are wider than the model. The dense

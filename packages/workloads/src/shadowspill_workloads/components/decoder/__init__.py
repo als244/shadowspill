@@ -12,6 +12,19 @@ from ..source import component_source
 from . import configuration
 
 
+def _create_training_decoder(factory, settings):
+    model = factory(settings)
+    if not callable(getattr(model, "token_features", None)) or not callable(
+        getattr(getattr(model, "lm_head", None), "objective", None)
+    ):
+        raise TypeError(
+            f"{settings.family} packed decoder training requires model.token_features "
+            "and lm_head.objective to consume vocabulary blocks inside the loss. "
+            "Use mlops.modules.LanguageModelHead or implement its bounded objective."
+        )
+    return model
+
+
 def register(
     registry,
     settings,
@@ -84,7 +97,7 @@ def register(
         ModelComponent(
             f"shadowspill/{family}@1",
             settings,
-            create,
+            partial(_create_training_decoder, create),
             inputs.schema,
             capabilities=capabilities
             if capabilities is not None

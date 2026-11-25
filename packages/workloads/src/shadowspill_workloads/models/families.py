@@ -13,6 +13,7 @@ BUILTINS = (
     "qwen35moe",
     "glm53",
     "glm53_flash",
+    "inkling2_mini",
     "regression",
 )
 
