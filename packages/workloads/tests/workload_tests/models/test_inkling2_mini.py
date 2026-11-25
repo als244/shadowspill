@@ -333,7 +333,10 @@ def test_checkpoint_decodes_unaligned_ranges_across_experts_without_scale_roundi
 
 @pytest.mark.parametrize("storage", ["packed", "bf16"])
 @pytest.mark.parametrize("layer", [0, 3])
-def test_bf16_storage_selects_grouped_projection_and_preserves_lora(storage, layer):
+@pytest.mark.parametrize("alpha", [2, 4])
+def test_bf16_storage_selects_grouped_projection_and_preserves_lora(
+    storage, layer, alpha
+):
     from shadowspill_workloads.lora import configure_lora
 
     c = replace(
@@ -342,7 +345,7 @@ def test_bf16_storage_selects_grouped_projection_and_preserves_lora(storage, lay
         expert_storage=storage,
     )
     # The outer model's FP32 dtype also exercises explicit BF16 bank storage.
-    model = configure_lora(Model(c), rank=2, alpha=2)
+    model = configure_lora(Model(c), rank=2, alpha=alpha)
     offsets = torch.tensor([0, 2, 2, 3, 4], dtype=torch.int32)
     x = torch.randn(4, c.d_model, requires_grad=True)
     expert = model.layers[layer].mlp
@@ -366,6 +369,13 @@ def test_bf16_storage_selects_grouped_projection_and_preserves_lora(storage, lay
         storage == "packed"
     )
     assert torch.ops.mlops.lora_grouped_linear_fwd.default in ops
+    output = next(node for node in graph.graph.nodes if node.op == "output")
+    update = output.args[0].args[1]
+    if alpha == 2:
+        assert update.target == torch.ops.mlops.lora_grouped_linear_fwd.default
+    else:
+        assert update.target == torch.ops.aten.mul.Tensor
+        assert update.args[1] == alpha / 2
     assert torch.ops.mlops.microscaled_expert_linear.default not in ops
     dx, db = torch.autograd.grad(project(x).sum(), (x, expert.lora_gate_up_b))
     assert dx.isfinite().all() and db.isfinite().all()

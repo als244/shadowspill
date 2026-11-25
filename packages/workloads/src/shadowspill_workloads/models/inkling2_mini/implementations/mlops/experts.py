@@ -103,7 +103,10 @@ class Experts(nn.Module):
             b = getattr(self, "lora_" + prefix + "_b")
             if low is None:
                 low = grouped_linear(x, a, offsets)
-            y = y + self.lora_config.scale * grouped_linear(low, b.to(x.dtype), offsets)
+            update = grouped_linear(low, b.to(x.dtype), offsets)
+            if self.lora_config.scale != 1.0:
+                update = self.lora_config.scale * update
+            y = y + update
         return y
 
     def forward(self, hidden):
