@@ -17,20 +17,29 @@ from shadowspill_workloads.objectives.head.execution import loss as token_object
 
 
 def test_expert_partition_splits_only_global_visits_in_the_repeated_core():
+    from torch.fx.passes.split_module import split_module
+
     from shadowspill.pytorch.partition.policy import resolve_partition_assignments
     from shadowspill_workloads.models.inkling2_mini.partition import SplitGlobalExperts
 
     class Decoder(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.model = Model(PRESETS["tiny"]).bfloat16()
+            self.model = configure_lora(
+                Model(PRESETS["tiny"]), rank=4, alpha=4, factor_dtype="float32"
+            )
 
         def forward(self, tokens):
             return self.model(tokens)
 
+    torch.manual_seed(532)
     module = Decoder()
-    tokens = torch.zeros((1, 8), dtype=torch.long)
-    graph = torch.export.export(module, (tokens,), strict=False).graph_module
+    adapters = [p for p in module.parameters() if p.requires_grad]
+    with torch.no_grad():
+        for p in adapters:
+            p.normal_(0, 0.025)
+    tokens = torch.tensor([[5, 9, 4, 17, 18, 1, 8, 9, 32, 11, 6, 7, 4]])
+    graph = torch.export.export(module, (tokens,), strict=False).module()
     base, _ = resolve_partition_assignments(graph, module, "auto")
     split, _ = resolve_partition_assignments(graph, module, SplitGlobalExperts())
     assert base.keys() == split.keys()
@@ -44,6 +53,19 @@ def test_expert_partition_splits_only_global_visits_in_the_repeated_core():
                 paths = {path for path, _ in node.meta["nn_module_stack"].values()}
                 assert "model.layers.2.mlp" in paths
         previous = node
+
+    logits = module(tokens)
+    seed = torch.randn_like(logits)
+    expected = torch.autograd.grad(logits, adapters, seed)
+    for assignments in (base, split):
+        staged = split_module(
+            graph, graph, assignments.__getitem__, keep_original_order=True
+        )
+        (actual,) = staged(tokens)
+        torch.testing.assert_close(actual, logits, rtol=0, atol=0)
+        gradients = torch.autograd.grad(actual, adapters, seed)
+        for gradient, reference in zip(gradients, expected, strict=True):
+            torch.testing.assert_close(gradient, reference, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("fp32_projection", [True, False])
