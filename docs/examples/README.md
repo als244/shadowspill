@@ -9,6 +9,7 @@ visible and saves predicted and measured HTML reports.
 | Task | Example |
 | --- | --- |
 | Prepare data and fine-tune | [Text training](client-training.md) |
+| Fine-tune the looped Inkling-2-Mini model with LoRA | [65,536-token text updates](client-training.md#fine-tune-inkling-2-mini-on-text) |
 | Run full-parameter tuning, LoRA or distributed pretraining | [Standalone demos](../../examples/demos/README.md) |
 | Use schedules, evaluation and checkpoint continuation from a CLI | [Training applications](../../examples/training/README.md) |
 | Accumulate gradients, evaluate and resume | [Complete workflow](../python/advanced/training-workflow.md) |

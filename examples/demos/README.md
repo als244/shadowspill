@@ -15,6 +15,7 @@ python -m examples.demos.qwen35_35b_lora --host training-host
 
 | File | Training | Client data | GPU / spill budget per worker |
 | --- | --- | --- | --- |
+| [inkling2_mini_lora.py](inkling2_mini_lora.py) | Text-only rank-32 LoRA, eight 8,192-token sequences per update, with 8K, 16K and 32K microbatch candidates | `data/fineweb-inkling` | 30 / 160 GiB |
 | [qwen35_9b_full.py](qwen35_9b_full.py) | Full-parameter fine-tuning; 64K tokens per step, conversations up to 8K | `data/ultrachat-qwen35` | 24 / 128 GiB |
 | [qwen35_35b_lora.py](qwen35_35b_lora.py) | LoRA fine-tuning; the same conversations and batch limits | `data/ultrachat-qwen35` | 24 / 128 GiB |
 | [qwen3_30b_dp8.py](qwen3_30b_dp8.py) | Pretraining on eight GPUs; 2M tokens per step, 4K sequences | `data/fineweb-qwen3` | 20 / 96 GiB |

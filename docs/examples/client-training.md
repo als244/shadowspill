@@ -8,6 +8,32 @@ resulting token files on the client. Training itself needs only NumPy and
 The [demo collection](../../examples/demos/README.md) contains complete scripts
 for fine-tuning, distributed pretraining, long-context training and saved Plans.
 
+## Fine-tune Inkling-2-Mini on text
+
+Prepare FineWeb-Edu with the Inkling tokenizer. The training client reads
+eight contiguous 8,192-token windows for each 65,536-token update.
+
+```bash
+python -m tools.datasets.prepare_text \
+    --tokenizer thinkingmachines/Inkling-2-Mini \
+    --dataset HuggingFaceFW/fineweb-edu --files sample/10BT/000_00000.parquet \
+    --val-tokens 0 --max-train-tokens 1200000 --out data/fineweb-inkling
+```
+
+Copy `data/fineweb-inkling` to the client. With the service running and
+`SHADOWSPILL_TOKEN` set on each machine, run the following from the client checkout.
+
+```bash
+python -m examples.demos.inkling2_mini_lora --host training-host
+```
+
+Use `--checkpoint /absolute/server/path/to/Inkling-2-Mini` for weights already
+installed on the training host, and the matching local tokenizer directory
+during data preparation. The demo uses rank and alpha 32, requests 30 GiB
+of device memory and 160 GiB of spill, and offers 8,192, 16,384 and 32,768
+tokens per microbatch. The client downloads the selected plan and the last
+update's runtime report. [Runnable example](../../examples/demos/inkling2_mini_lora.py)
+
 ## Prepare UltraChat
 
 Both fine-tuning examples use the same UltraChat conversations and assistant-token

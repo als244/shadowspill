@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 
-def arguments(name, dataset, *, saved_plan=False):
+def arguments(name, dataset, *, saved_plan=False, checkpoint=None):
     parser = argparse.ArgumentParser(description=name.replace("_", " "))
     connection = parser.add_mutually_exclusive_group()
     connection.add_argument(
@@ -19,6 +19,12 @@ def arguments(name, dataset, *, saved_plan=False):
     parser.add_argument("--data", type=Path, default=Path("data") / dataset)
     parser.add_argument("--output", type=Path, default=Path("runs/demos") / name)
     parser.add_argument("--steps", type=int, default=4)
+    if checkpoint is not None:
+        parser.add_argument(
+            "--checkpoint",
+            default=checkpoint,
+            help="Hub ID or absolute path on the training server",
+        )
     parser.add_argument(
         "--repeat-first-batch",
         action="store_true",
