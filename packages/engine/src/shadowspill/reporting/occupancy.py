@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from typing import Any
 
+from shadowspill.artifacts._values import plain
 from shadowspill.artifacts.plan import Plan
 from shadowspill.artifacts.task_names import profile_names, task_parts
 from shadowspill.diagnostics.occupancy import attribute
@@ -72,9 +73,35 @@ def occupancy_data(
         covers=task_parts(plan.program),
         measured_ns=_measured(diagnostics),
     )
+    data["configuration"] = execution_configuration(plan)
     data["allocation"] = plan.summary
     data["simulation_only_reasons"] = plan.simulation_only_reasons
     return data
+
+
+def execution_configuration(plan: Plan) -> dict[str, Any]:
+    """Describe the ordering and execution choices saved for this worker."""
+    bindings = plan.program.bindings
+    template = bindings.get("preparation_template", {})
+    build = template.get("build", {})
+    parallel = plan.program.parallelism
+    architecture = (
+        template.get("model_build", {}).get("config", {}).get("architecture", {})
+    )
+    return plain(
+        {
+            "ordering": bindings.get("ordering"),
+            "chunking": build.get("chunking"),
+            "model_chunks": {
+                name: value
+                for name, value in architecture.items()
+                if "chunk" in name and type(value) is int and value > 0
+            },
+            "retention": build.get("graph_pair_policy"),
+            "replicas": parallel.num_replicas if parallel else 1,
+            "ranks_per_replica": parallel.ranks_per_replica if parallel else 1,
+        }
+    )
 
 
 def _positions(plan: Plan) -> dict[str, tuple[int, int]] | None:

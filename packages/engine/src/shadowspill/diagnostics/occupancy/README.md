@@ -70,7 +70,7 @@ layout needs with every lease at its fixed offset). `at`, `peaks_by` and
 | `seconds` | The step's span on the view's clock: from the step's origin to its makespan or its last task or transfer end, whichever is later. |
 | `tokens_per_second` | `tokens_per_step` over `seconds`, when the tokens are given. |
 | `execution_peak_gib`, `spill_peak_gib` | Each pool's peak by the walk. |
-| `idle_percent` | The share of the span with no task computing: the span less the tasks' summed time. |
+| `idle_percent` | The share of the step outside scheduled or measured compute task intervals. Each measured interval includes kernel-launch gaps between its two device events. |
 | `recompute_percent` | The plan's regeneration overhead, what its recompute alternatives cost beyond their `save` options by the program's profiles, as a share of the span; `None` when a profile is missing. |
 | `fetch_utilization_percent`, `evict_utilization_percent` | The share of the span the lane is busy, over the union of its intervals. |
 | `fetch_gib`, `evict_gib` | Full execution-object bytes the lane served. |
@@ -173,3 +173,5 @@ from the same source, beside the profile key a row carries as `profile`.
   measured kernel boundary.
 - A slot with no executing occupant counts as `unattributed`, and a task's
   workspace lease as `task workspace`.
+
+The Plan and runtime HTML show the selected build’s sequence limit, microbatch size and count, scheduled tokens, ordering, parallelism, chunking and retention. The runtime also reports the tokens submitted on that invocation. The Tasks tab groups the selected stages by their retention choices and shows the range of profiled costs. Expand the individual stages for exact executable identities, memory and measured timings. Candidate tables and full records are expandable.

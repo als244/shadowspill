@@ -47,6 +47,7 @@ def traced_call():
     return SimpleNamespace(
         command=command,
         plan="main",
+        trace_batch={"microbatch_size": 512, "count": 2, "max_sequence_length": 256},
         hyperparams={},
         input_loader=lambda _: None,
         verify_inputs=lambda _: None,
@@ -173,6 +174,7 @@ def test_trace_publication_preserves_completed_effects_and_owned_file_lifetime(
                     )
                     assert manifest["completed_updates_before"] == 4
                     assert manifest["batch_tokens"] == 900
+                    assert manifest["batch_configuration"] == bound.trace_batch
                     assert manifest["scheduled_tokens"] == 1024
                     assert manifest["history_id"] == "history" and manifest["rank"] == 0
                     assert (

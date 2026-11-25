@@ -83,6 +83,7 @@ class BoundWorkerCall:
     frames: tuple[tuple[SpooledFrame, OperationBinding], ...]
     checkpoint: RankSave | None = None
     restore: Path | None = None
+    trace_batch: Mapping[str, int] | None = None
 
     @property
     def input_bytes(self) -> int:
@@ -196,6 +197,25 @@ class WorkerBindings:
             if not isinstance(scale_binding, str) or controls.grad_scale is None:
                 raise ValueError("saved optimizer form is missing its scale control")
             hyperparams[scale_binding] = controls.grad_scale
+        trace_batch = None
+        if command.request.runtime_trace:
+            source = candidate.source.layout.candidate
+            case = self.setup.config.preparation.cases[source.case]
+            limits = self.setup.config.batches[candidate.batch].limits
+            trace_batch = {
+                "microbatch_size": case.microbatch_size,
+                "count": source.count,
+                **(
+                    {"max_sequence_length": limits["max_sequence_length"]}
+                    if "max_sequence_length" in limits
+                    else {}
+                ),
+            }
         return BoundWorkerCall(
-            command, plan, controls, MappingProxyType(hyperparams), tuple(frames)
+            command,
+            plan,
+            controls,
+            MappingProxyType(hyperparams),
+            tuple(frames),
+            trace_batch=trace_batch,
         )

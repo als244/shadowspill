@@ -20,6 +20,9 @@
   button { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; font: inherit; }
   select { background: var(--bg); color: var(--ink); padding: 6px; max-width: 100%; }
   a { color: #547fe8; } .scroll { overflow-x: auto; } details { margin: 10px 0; }
+  .build-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 8px 0 16px; gap: 10px 20px; }
+  .build-facts dt { font-size: 12px; color: var(--muted); }
+  .build-facts dd { margin: 3px 0; font-weight: 600; }
   summary { cursor: pointer; } pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   canvas { display: block; width: 100%; touch-action: none; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding: 6px 4px 4px; }
@@ -75,7 +78,22 @@
   const DOCUMENT = JSON.parse(document.getElementById("data").textContent);
   const requested = /^#view-(\d+)(-tasks)?$/.exec(location.hash);
   let tab = requested && requested[2] ? "tasks" : "timeline";
-  const selected = requested && DOCUMENT.views && +requested[1] < DOCUMENT.views.length ? +requested[1] : 0;
+  const rows = DOCUMENT.rows || [];
+  const candidates = rows.filter(row => row.kind === "candidate").map(row => row.values);
+  function owns(candidate, view) {
+    return candidate.workers.some(w => w.rank === view.rank && [w.main, w.masked, w.optimizer].includes(view.id));
+  }
+  function defaultView() {
+    if (!DOCUMENT.views || DOCUMENT.kind === "runtime_trace") return 0;
+    const steps = candidates.filter(v => v.operation.operation === "step" && v.scheduled_capacities?.token_capacity > 0);
+    if (!steps.length || new Set(steps.map(v => v.batch + "/" + v.operation.outputs)).size !== 1) return 0;
+    const best = steps.reduce((a, b) => {
+      const difference = b.scheduled_capacities.token_capacity - a.scheduled_capacities.token_capacity;
+      return difference > 0 || (difference === 0 && b.simulated_seconds < a.simulated_seconds) ? b : a;
+    });
+    return Math.max(0, DOCUMENT.views.findIndex(view => owns(best, view)));
+  }
+  const selected = requested && DOCUMENT.views && +requested[1] < DOCUMENT.views.length ? +requested[1] : defaultView();
   const DATA = DOCUMENT.views ? DOCUMENT.views[selected].data : DOCUMENT;
   // Two families told apart by tone: objects (pools, and transfer bars) in
   // light and mid blues, purples, pinks, teals and greens; task phases
@@ -111,9 +129,9 @@
     function element(tag, text, parent = root) {
       const node = document.createElement(tag); node.textContent = text; parent.appendChild(node); return node;
     }
-    function table(title, headers, rows) {
-      element("h2", title);
-      const scroll = element("div", ""); scroll.className = "scroll";
+    function table(title, headers, rows, parent = root) {
+      if (title) element("h2", title, parent);
+      const scroll = element("div", "", parent); scroll.className = "scroll";
       const table = element("table", "", scroll), head = element("tr", "", table);
       headers.forEach(name => element("th", name, head));
       rows.forEach(cells => {
@@ -139,27 +157,76 @@
       option.value = index; option.selected = index === selected;
     });
     choice.addEventListener("change", () => openView(+choice.value));
-    const rows = DOCUMENT.rows || [];
-    if (!runtime) table("Prepared candidates", ["Operation", "Batch", "Build", "Microbatches", "Estimated step / call", "Reports"],
-      rows.filter(row => row.kind === "candidate").map(({values: v}) => [
-        v.operation.operation + "/" + (v.operation.outputs || "none") + " (" + v.operation.mode + ")",
-        v.batch, v.case, v.count, fmtDuration(v.simulated_seconds), cell => {
-          const keys = new Set(v.workers.flatMap(w => [w.main, w.masked, w.optimizer].filter(Boolean).map(id => w.rank + ":" + id)));
-          DOCUMENT.views.forEach((view, index) => {
-            if (!keys.has(view.rank + ":" + view.id)) return;
-            const link = element("a", "rank " + view.rank + " " + view.mode + " " + view.id.slice(0, 8), cell);
+    const view = DOCUMENT.views[selected];
+    const candidate = candidates.find(v => owns(v, view));
+    const byIndex = (kind, index) => rows.find(r => r.kind === kind && r.values.index === index)?.values;
+    const buildCase = candidate && byIndex("build_case", candidate.case);
+    const limits = candidate && byIndex("batch", candidate.batch)?.limits;
+    const invocation = rows.find(r => r.kind === "invocation")?.values;
+    const batch = invocation?.batch_configuration;
+    const config = DATA.configuration || {};
+    const number = value => value == null ? "—" : value.toLocaleString();
+    const ordering = config.ordering || candidate?.ordering;
+    const orderText = o => o ? o.depth + " × " + o.breadth
+      + (o.reverse_breadth && o.breadth > 1 ? ", reverse backward" : "")
+      + (o.pair_loss ? ", paired loss" : "") : "—";
+    const policyName = p => p?.config?.name || p?.name?.replace(/^.*\//, "").split("@")[0];
+    const chunk = config.chunking || buildCase?.build?.chunking;
+    const chunks = Object.entries({...chunk?.config, ...config.model_chunks})
+      .filter(([k, v]) => k.includes("chunk") && typeof v === "number" && v > 0)
+      .map(([k, v]) => k.replaceAll("_", " ") + " " + number(v));
+    const selections = new Map();
+    (DATA.alternatives?.forms || []).forEach(f => f.options.forEach(o => {
+      if (o.chosen) selections.set(o.option, (selections.get(o.option) || 0) + o.chosen);
+    }));
+    const counts = [...selections].map(([name, count]) => number(count) + " " + name).join(", ");
+    const parallel = config.replicas != null
+      ? config.replicas + (config.replicas === 1 ? " replica × " : " replicas × ") + config.ranks_per_replica + (config.ranks_per_replica === 1 ? " rank" : " ranks")
+      : number(DATA.allocation?.logical_ranks) + " ranks";
+    const entries = [
+      ["Max sequence length", number(batch?.max_sequence_length ?? limits?.max_sequence_length)],
+      ["Microbatch size", number(batch?.microbatch_size ?? buildCase?.microbatch_size)],
+      ["Microbatches", number(batch?.count ?? candidate?.count ?? (ordering ? ordering.depth * ordering.breadth : null))],
+      ["Scheduled tokens", number(invocation?.scheduled_tokens ?? candidate?.scheduled_capacities?.token_capacity)],
+      ["Data ordering (passes × width)", orderText(ordering)],
+      ["Parallelism", parallel],
+      ["Chunking", chunks.length ? chunks.join(", ") : policyName(chunk) || (DATA.configuration || buildCase ? "Off" : "—")],
+      ["Retention policy", policyName(config.retention || buildCase?.build?.graph_pair_policy) || "—"],
+      ["Stage choices", counts || "—"],
+    ];
+    if (invocation?.batch_tokens != null) entries.splice(4, 0, ["Actual tokens", number(invocation.batch_tokens)]);
+    element("h2", "Build configuration");
+    const facts = element("dl", ""); facts.className = "build-facts";
+    entries.forEach(([label, value]) => {
+      const fact = element("div", "", facts); element("dt", label, fact); element("dd", value, fact);
+    });
+    if (!runtime) {
+      const choices = element("details", "");
+      element("summary", "Prepared candidates (" + candidates.length + ")", choices);
+      table("", ["Operation", "Build", "Microbatch size", "Microbatches", "Scheduled tokens", "Data ordering", "Estimated time", "Reports"],
+        candidates.map(v => [v.operation.operation, v.case, number(byIndex("build_case", v.case)?.microbatch_size), v.count,
+          number(v.scheduled_capacities?.token_capacity), orderText(v.ordering), fmtDuration(v.simulated_seconds), cell => {
+          DOCUMENT.views.forEach((other, index) => {
+            if (!owns(v, other)) return;
+            const link = element("a", "rank " + other.rank + " " + other.mode, cell);
             link.href = "#view-" + index;
             link.addEventListener("click", event => { event.preventDefault(); openView(index); });
             cell.appendChild(document.createElement("br"));
           });
-        }
-      ]));
-    if (!runtime) table("Build configurations", ["Build", "Settings"], rows.filter(row => row.kind === "build_case").map(({values: v}) => [v.index, JSON.stringify(v)]));
-    const rejected = rows.filter(row => row.kind === "rejected_candidate");
-    if (rejected.length) table("Rejected candidates", ["Operation", "Build", "Stage", "Reason"], rejected.map(({values: v}) => [v.operation.operation, v.case, v.stage, v.reason]));
+        }]), choices);
+      const rejected = rows.filter(row => row.kind === "rejected_candidate");
+      if (rejected.length) {
+        const failures = element("details", "");
+        element("summary", "Rejected candidates (" + rejected.length + ")", failures);
+        table("", ["Operation", "Build", "Ordering", "Stage", "Reason"], rejected.map(({values: v}) =>
+          [v.operation.operation, v.case, v.ordering || "—", v.stage, v.reason]), failures);
+      }
+    }
     const details = element("details", "");
-    element("summary", runtime ? "Invocation and saved Plan identity" : "Configuration, coverage and memory metadata", details);
-    element("pre", JSON.stringify(rows.filter(row => !["candidate", "worker_plan", "build_case", "rejected_candidate"].includes(row.kind)), null, 2), details);
+    element("summary", runtime ? "Invocation metadata" : "Full build settings and metadata", details);
+    details.addEventListener("toggle", () => {
+      if (details.open && !details.querySelector("pre")) element("pre", JSON.stringify(rows, null, 2), details);
+    });
   }
 
   if (DATA.allocation) {
@@ -312,7 +379,7 @@
       ["tokens/s", S.tokens_per_second == null ? "n/a" : Math.round(S.tokens_per_second).toLocaleString()],
       ["peak spill memory", fmtGiB(S.spill_peak_gib)],
       ["peak execution memory", S.execution_peak_gib == null ? "n/a" : fmtGiB(S.execution_peak_gib)],
-      ["idle", S.idle_percent.toFixed(1) + "%"],
+      ["time outside compute tasks", S.idle_percent.toFixed(1) + "%"],
       ["recompute overhead (profile estimate)", S.recompute_percent == null ? "n/a" : S.recompute_percent.toFixed(1) + "%"],
       ["fetch lane util", S.fetch_utilization_percent.toFixed(1) + "%"],
       ["evict lane util", S.evict_utilization_percent.toFixed(1) + "%"],
@@ -329,7 +396,7 @@
     cards.forEach(([k, v]) => { const c = document.createElement("div"); c.className = "card"; const kk = document.createElement("div"); kk.className = "k"; kk.textContent = k; const vv = document.createElement("div"); vv.className = "v"; vv.textContent = v; c.append(kk, vv); row.append(c); });
     root.append(row);
     const explanation = document.createElement("p"); explanation.className = "meta";
-    explanation.textContent = "Lane utilization is busy time / step time. Effective rates count full execution-object bytes / complete transfer time, including any collective phases and waits. Host-copy bytes are listed separately. These rates are not PCIe or NVLink bandwidth. The planned blend uses simulated transfer intervals; trace rates use measured intervals and omit untimed transfers. Recompute overhead compares isolated pair profiles; it is not a directly timed kernel interval."
+    explanation.textContent = "Time outside compute tasks counts gaps between the step origin, task intervals and step end. Each measured task spans its start and end events, including gaps between kernel launches. Lane utilization is busy time / step time. Effective rates count full execution-object bytes / complete transfer time, including any collective phases and waits. Host-copy bytes are listed separately. These rates are not PCIe or NVLink bandwidth. The planned blend uses simulated transfer intervals; trace rates use measured intervals and omit untimed transfers. Recompute overhead compares isolated pair profiles; it is not a directly timed kernel interval."
       + (S.recompute_percent == null ? " Recompute overhead is unavailable because a selected pair lacks its save or recompute profile." : "");
     root.append(explanation); document.getElementById("panels").prepend(root);
   }
@@ -662,12 +729,46 @@
         + (all.some((row) => !rows.includes(row)) ? " (" + span(all, "", "", 4) + ")" : "");
     };
 
-    make("p", "A stage is one place in the model, and can run as any one of its alternatives. Stages that compile to the same tasks are one kind, lettered in the order the step reaches them: a kind is shown once, with the number of occurrences that chose each alternative, and an identical layer or a repeated microbatch is an occurrence, not another card. Profiled time is what the planner priced."
-      + (traced ? " Measured time is this step's median over the occurrences that ran; an alternative that was not chosen never ran." : "")
-      + " Sizes are the device bytes a task's inputs, outputs and mutated objects reach; total is what they reach together plus the task's workspace.", root, "note");
-
+    const detail = make("details", null, root);
+    make("summary", "Individual stages and executable profiles (" + ALTERNATIVES.forms.length + " forms)", detail);
     if (ALTERNATIVES.map) {
-      const panel = make("div", null, root, "panel map");
+      const panel = make("div", null, null, "panel map"); root.insertBefore(panel, detail);
+      const map = ALTERNATIVES.map;
+      make("h2", "Selected stage work", panel);
+      make("p", map.rows.length + " stages across " + map.columns.length + " microbatches. Rows group stages with the same retention choices. Times and workspace show the range of the selected profiles.", panel);
+      const table = make("table", null, make("div", null, panel, "scroll"));
+      const header = make("tr", null, table);
+      ["Stages", "Choices per stage", "Forward time", "Backward time", "Peak workspace per task"].forEach(s => make("th", s, header));
+      const groups = new Map();
+      map.rows.forEach(row => {
+        const choices = row.cells.map(c => c?.[0] || "—");
+        const key = JSON.stringify(choices);
+        if (!groups.has(key)) groups.set(key, {stages: [], choices, forward: [], backward: [], workspace: []});
+        const group = groups.get(key); group.stages.push(row.row);
+        row.cells.forEach(cell => {
+          if (!cell) return;
+          const option = ALTERNATIVES.forms[cell[1]].options.find(o => o.option === cell[0]);
+          option?.tasks.forEach(t => {
+            if (group[t.phase] && t.runtime_ns != null) group[t.phase].push(t.runtime_ns);
+            if (t.workspace_bytes != null) group.workspace.push(t.workspace_bytes);
+          });
+        });
+      });
+      const range = (values, format) => {
+        if (!values.length) return "—";
+        let low = values[0], high = low;
+        values.forEach(v => {low = Math.min(v, low); high = Math.max(v, high);});
+        return format(low) === format(high) ? format(low) : format(low) + " – " + format(high);
+      };
+      groups.forEach(g => {
+        const row = make("tr", null, table);
+        const stages = make("td", span(g.stages, "", "", 8).trim(), row); stages.title = g.stages.join(", ");
+        const selected = [...new Set(g.choices)].map(s => g.choices.filter(x => x === s).length + " " + s).join(", ");
+        [selected, range(g.forward, ms), range(g.backward, ms), range(g.workspace, fmtBytes)].forEach(v => make("td", v, row));
+      });
+    }
+    if (ALTERNATIVES.map) {
+      const panel = make("div", null, detail, "panel map");
       const head = make("div", null, panel, "head"); make("h2", "Which alternative each stage chose", head);
       make("span", ALTERNATIVES.map.rows.length + " stages · " + ALTERNATIVES.map.columns.length + " microbatches", head, "meta");
       const legend = make("div", null, panel, "legend");
@@ -713,7 +814,7 @@
     const first = (values) => values.length ? Math.min(...values) : Infinity;
     ALTERNATIVES.forms.slice().sort((a, b) => first(where[a.index].rows) - first(where[b.index].rows)
       || first(where[a.index].columns) - first(where[b.index].columns) || a.index - b.index).forEach((form) => {
-      const panel = make("div", null, root, "panel stage"); panel.id = "form-" + form.index;
+      const panel = make("div", null, detail, "panel stage"); panel.id = "form-" + form.index;
       const covered = parts(form.covers, 4);
       make("h3", "Kind " + form.kind + (covered ? " · " + covered : ""), panel);
       const place = [span(where[form.index].rows, "stage", "stages", 6), span(where[form.index].columns, "microbatch", "microbatches", 6)].filter(Boolean).join(" × ");

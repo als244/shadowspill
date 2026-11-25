@@ -246,6 +246,11 @@ class TraceFiles:
             "accumulate_gradients": command.accumulate_gradients,
             "batch_tokens": command.batch_tokens,
             "scheduled_tokens": command.scheduled_tokens,
+            **(
+                {"batch_configuration": dict(call.trace_batch)}
+                if call.trace_batch
+                else {}
+            ),
         }
         evidence = diagnostics.as_dict(events=False)
         stream = _Stream(output)
