@@ -236,3 +236,35 @@ def test_public_reuse_authenticates_the_original_measurement_job(tmp_path, monke
             client.prepare_training(config=missing).result(10)
         assert len(phases) == 6
         until(lambda: ctx.jobs.used == (0, 0))
+
+
+def test_training_reuses_measurements_with_its_planning_host_limit(
+    tmp_path, monkeypatch
+):
+    with (
+        configured(tmp_path, monkeypatch, artifact_count=512) as ctx,
+        endpoint(ctx) as (server, _),
+        ServiceClient(address(server), token=TOKEN) as client,
+    ):
+        with monkeypatch.context() as measurement:
+            measurement_phases(measurement)
+            measured = client.prepare_training(
+                config=no_initializer(ctx.config)
+            ).result(10)
+        monkeypatch.setattr(job, "load_registry", lambda _: installed())
+        config = replace(
+            ctx.config,
+            preparation=replace(ctx.config.preparation, reuse=measured.reuse),
+        )
+        limits = []
+
+        def observe_phases(package, root, *args, **kwargs):
+            limits.append(job.PreparationJob.load(root / job.JOB_NAME).host_limit_bytes)
+            raise RuntimeError("reached planning with the staged job")
+
+        monkeypatch.setattr(module, "prepare_job", job.prepare_job)
+        monkeypatch.setattr(job, "run_phases", observe_phases)
+        with pytest.raises(CreationError, match="reached planning with the staged job"):
+            client.create_training_client(config=config).result(10)
+        assert len(limits) == 1 and limits[0] > 0
+        until(lambda: ctx.jobs.used == (0, 0))

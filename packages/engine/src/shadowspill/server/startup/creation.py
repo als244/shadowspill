@@ -338,6 +338,11 @@ class LocalCreation:
             "server_incarnation": factory.storage.incarnation,
             "devices": list(devices),
         }
+        host_limit = (
+            None
+            if creation.kind == "preparation"
+            else self._plan_host_limit(creation, ranks, capture)
+        )
         stage_preparation_reuse(
             self._artifacts,
             factory.storage.catalog,
@@ -347,6 +352,7 @@ class LocalCreation:
             context=context,
             max_disk_bytes=limits.preparation_disk_bytes,
             max_files=limits.max_preparation_files,
+            host_limit_bytes=host_limit,
         )
         if creation.kind == "preparation":
             measure_job(
@@ -375,7 +381,7 @@ class LocalCreation:
             config=creation.config,
             environment=factory.environment,
             launch=self._phases,
-            host_limit_bytes=self._plan_host_limit(creation, ranks, capture),
+            host_limit_bytes=host_limit,
         )
         with phase("Publish prepared Plans and measurements"):
             self._check_files()

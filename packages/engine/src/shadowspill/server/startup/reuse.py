@@ -27,6 +27,7 @@ def stage_preparation_reuse(
     context: Mapping[str, Any],
     max_disk_bytes: int,
     max_files: int,
+    host_limit_bytes: int | None = None,
 ) -> Mapping[str, Any] | None:
     """The source must be this authenticated owner's completed service job."""
     reuse = config.preparation.reuse
@@ -49,7 +50,7 @@ def stage_preparation_reuse(
         raise ValueError(
             "reuse source is not a completed preparation owned by this caller"
         )
-    requested = PreparationJob(tuple(packages), config)
+    requested = PreparationJob(tuple(packages), config, host_limit_bytes)
     _, inventory = requested.resolve()
     # Never turn an uploaded ZIP into executable evidence by accepting its label.
     # The durable run record pins this exact server-produced export.
