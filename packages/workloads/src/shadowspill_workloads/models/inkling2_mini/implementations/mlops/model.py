@@ -2,6 +2,7 @@
 
 import torch
 from mlops.attention_residual import attention_residual_streams
+from mlops.message_gate import normalized_message_gate
 from mlops.modules import LanguageModelHead
 from torch import nn
 from torch.nn import functional as F
@@ -32,12 +33,19 @@ class MessageGate(nn.Module):
         for p in self.parameters():
             nn.init.normal_(p, std=c.initializer_range)
 
-    def forward(self, x, msg):
+    def forward(self, x, msg, norm, dtype):
         mixed = torch.cat((rms(x, self.eps), rms(msg, self.eps)), dim=-1)
-        low = F.linear(mixed.to(self.down_weight.dtype), self.down_weight).float()
-        forget = F.linear(low, self.forget_weight.float()).tanh()
-        gain = F.linear(low, self.gain_weight.float()).tanh()
-        return (1 - forget) * x.float() + gain * msg
+        low = F.linear(mixed.to(self.down_weight.dtype), self.down_weight)
+        return normalized_message_gate(
+            x,
+            msg,
+            low,
+            self.forget_weight,
+            self.gain_weight,
+            norm.weight,
+            norm.eps,
+            dtype,
+        )
 
 
 class Layer(nn.Module):
@@ -77,26 +85,22 @@ class Layer(nn.Module):
                 q = k = v = values.squeeze(-2)
             else:
                 q, k, v = values.unbind(-2)
+        q_norm, k_norm, v_norm = (
+            (self.attn_norm,) * 3
+            if self.local
+            else (self.q_input_norm, self.k_input_norm, self.v_input_norm)
+        )
         if previous is not None:
             messages = mix(*previous, queries).unbind(-2)
-            q = self.controllers["attn"](q, messages[0])
-            k = self.controllers["k"](k, messages[1])
-            v = self.controllers["v"](v, messages[2])
-        if self.local:
-            q = self.attn_norm(q, activation_dtype)
-            if previous is None:
+            q = self.controllers["attn"](q, messages[0], q_norm, activation_dtype)
+            k = self.controllers["k"](k, messages[1], k_norm, activation_dtype)
+            v = self.controllers["v"](v, messages[2], v_norm, activation_dtype)
+        else:
+            q = q_norm(q, activation_dtype)
+            if self.local:
                 k = v = q
             else:
-                k, v = (
-                    self.attn_norm(k, activation_dtype),
-                    self.attn_norm(v, activation_dtype),
-                )
-        else:
-            q, k, v = (
-                self.q_input_norm(q, activation_dtype),
-                self.k_input_norm(k, activation_dtype),
-                self.v_input_norm(v, activation_dtype),
-            )
+                k, v = k_norm(k, activation_dtype), v_norm(v, activation_dtype)
         attn = self.attn_sconv(self.attn(q, k, v, positions, distance), positions)
         if self.boundary:
             blocks = (*blocks, x)
@@ -105,8 +109,12 @@ class Layer(nn.Module):
             partial = (x.float() + attn.float()).to(x.dtype)
         value = mix(blocks, partial, self.mlp_query).squeeze(-2)
         if previous is not None:
-            value = self.controllers["mlp"](value, messages[3])
-        value = self.mlp(self.mlp_norm(value, activation_dtype))
+            value = self.controllers["mlp"](
+                value, messages[3], self.mlp_norm, activation_dtype
+            )
+        else:
+            value = self.mlp_norm(value, activation_dtype)
+        value = self.mlp(value)
         return (partial.float() + self.mlp_sconv(value, positions).float()).to(
             x.dtype
         ), blocks

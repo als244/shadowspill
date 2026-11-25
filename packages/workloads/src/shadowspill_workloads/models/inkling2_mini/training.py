@@ -52,6 +52,12 @@ def build(settings, context):
                 "shadowspill/fixed-sigmoid-gated-value@1"
             ),
             "torch.ops.mlops.residual_tap_mix.default": "shadowspill/fixed-tap-mix@1",
+            "torch.ops.mlops.normalized_message_gate.default": (
+                "shadowspill/fixed-normalized-message-gate@1"
+            ),
+            "torch.ops.mlops.message_gate_backward_projections.default": (
+                "shadowspill/fixed-message-gate-backward-projections@1"
+            ),
             "torch.ops.mlops.dynamic_residual_conv.default": (
                 "shadowspill/fixed-dynamic-residual-conv@1"
             ),

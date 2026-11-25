@@ -109,6 +109,15 @@ def test_expert_partition_splits_only_global_visits_in_the_repeated_core(
         for n in graph.graph.nodes
         if n.target == torch.ops.mlops.attention_residual_streams.default
     ]
+    gates = [
+        n
+        for n in graph.graph.nodes
+        if n.target == torch.ops.mlops.normalized_message_gate.default
+    ]
+    c = PRESETS["tiny"]
+    assert len(gates) == 4 * (c.core_end - c.core_start) * (c.passes - 1)
+    projection_dtype = module.model.layers[0].attn.wq_du.weight.dtype
+    assert all(n.meta["val"].dtype == projection_dtype for n in gates)
     assert mixes
     for node in mixes:
         states, query = node.args[:2]
