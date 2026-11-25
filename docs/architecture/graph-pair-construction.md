@@ -307,19 +307,24 @@ compute-bound or unknown operator is marked as a value to save before the
 partition runs; an operator the model itself already tagged with a checkpoint
 policy keeps that tag, and the rule fills in only where nothing was said.
 
-The partitioner's own bans on regeneration -- an allowlist of fusible
-operators, a ban on values materialized in the backward, on values used far
-apart, on long fusible chains -- encode the premise that regeneration is free
-only when a compiler fuses it, which the intensity rule replaces, so they are
-lifted for the partition. So is the premise that a parameter is free to keep,
-since a plan pays a fetch for every parameter a backward reads.
+For the cost-based save cut, an intensity at or below the threshold leaves
+the forward operator unmarked. ShadowSpill disables PyTorch's fusible-op
+allowlist and its bans on replaying long fusible chains, values used far apart
+and values materialized in backward. It also counts parameters among the
+inputs that backward may need to fetch.
 
-The min-cut solver decides the rest. A regenerated value's inputs have to be
-retained instead, and the solver charges for them, so a value is regenerated
-only when the bytes it saves exceed the bytes its regeneration keeps: a
-normalization's output goes because its input is kept for the normalization's
-own backward; a rotation's output stays because its input is the same size
-and is kept for nothing else.
+PyTorch can still constrain an unmarked operator. In PyTorch 2.13, disabling
+the allowlist activates a fallback that bans replay of certain operator types,
+including `aten.mm`, regardless of their traced shapes. Even a skinny matrix
+product below the threshold can therefore contribute a saved activation. An
+explicit `RetentionRule` with action `"recompute"` instructs the partitioner
+to replay the selected operation when backward needs its value.
+
+Among eligible cuts, PyTorch weighs the size of a result against the inputs
+it would need to keep for replay. For example, a small reduction result can
+be worth retaining if its input would otherwise be released. The resulting
+forward and backward task contracts go to the ShadowSpill planner, which
+selects stage variants and schedules their storage and transfers.
 
 ### Recompute
 

@@ -58,8 +58,8 @@ from shadowspill.errors import CaptureError
 from .effects import join_recomputed_effects
 from .source import source_nodes, source_operation
 
-#: Flops per byte moved, at or below which an operator is memory-bound and the
-#: ``save`` variant regenerates its results rather than retaining them.
+#: At or below this arithmetic intensity, the cost-based save policy leaves
+#: replay of an otherwise unmarked operator to the partitioner.
 MEMORY_BOUND_FLOPS_PER_BYTE = 16.0
 
 #: The namespaces whose operators are PyTorch's own.
@@ -213,12 +213,12 @@ class RetentionPolicy:
         Overrides for exact operator overloads. Each pair of target and
         module pattern appears at most once.
     default : {"cost", "retain", "recompute"}, default "cost"
-        What happens to an operation no rule names. ``"cost"``: a
-        memory-bound result is regenerated when the cut saves bytes by it,
-        and compute-bound results and custom operators without a flop formula
-        are retained. ``"retain"``: every result the backward needs is
-        retained. ``"recompute"``: the backward regenerates results from the
-        checkpoint inputs.
+        What happens to an operation no rule names. With ``"cost"``,
+        memory-bound results are left to the partitioner's replay constraints
+        and saved-byte cut. Compute-bound results and custom operators
+        without a flop formula are retained. With ``"retain"``, every result
+        the backward needs is retained. With ``"recompute"``, backward
+        regenerates results from the checkpoint inputs.
 
     Raises
     ------
