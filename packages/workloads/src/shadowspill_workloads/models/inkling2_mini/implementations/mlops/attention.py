@@ -9,6 +9,7 @@ from mlops.inkling_activation import (
     sigmoid_gated_value,
 )
 from mlops.l2_norm import l2_clip_scale
+from mlops.projected_relative_attention import projected_relative_gqa
 from mlops.relative_attention import relative_gqa_fused, relative_gqa_query_blocks
 from mlops.rms_norm import rms_gain_cast
 from mlops.rms_norm import rms_normalize_fp32 as rms
@@ -120,54 +121,49 @@ class Attention(nn.Module):
         k = clipped(k, c.qk_clip).transpose(1, 2)
         v = rms(v, c.norm_epsilon).to(v.dtype).transpose(1, 2)
         rel = self.wr_du(q_input).unflatten(-1, (c.n_heads, c.d_rel))
-        profiles = (
-            clipped(rel, c.rel_clip, self.rel_scale, tau) @ self.proj
-        ).transpose(1, 2)
+        rel = clipped(rel, c.rel_clip, self.rel_scale, tau)
         sink = self.attn_sink_proj(q_input).transpose(1, 2).unsqueeze(-1)
-        if c.use_fused_attention(q.shape[2]):
-            attended = (
-                relative_gqa_fused(
-                    q, k, v, profiles, sink, positions, c.window if self.local else 0
-                )
-                .transpose(1, 2)
-                .flatten(-2)
-            )
-        elif c.attention_query_chunk_size:
-            attended = (
-                relative_gqa_query_blocks(
-                    q,
-                    k,
-                    v,
-                    profiles,
-                    sink,
-                    positions,
-                    c.window if self.local else 0,
-                    c.attention_query_chunk_size,
-                )
-                .transpose(1, 2)
-                .flatten(-2)
-            )
-        else:
-            copies = c.n_heads // c.n_kv_heads
-            scores = (
-                q @ k.repeat_interleave(copies, dim=1).transpose(-1, -2)
-            ) * c.head_dim**-0.5
-            index = distance.clamp(0, self.extent - 1).expand(*scores.shape)
-            bias = profiles.gather(-1, index).masked_fill(
-                (distance < 0) | (distance >= self.extent), 0
-            )
-            allowed = (distance >= 0) & (distance <= positions[:, None, :, None])
-            if self.local:
-                allowed = allowed & (distance < c.window)
-            scores = (scores + bias).masked_fill(~allowed, -torch.inf)
-            prob = (
-                torch.cat((scores, sink), dim=-1)
-                .float()
-                .softmax(-1)[..., :-1]
-                .to(q.dtype)
-            )
-            attended = (
-                (prob @ v.repeat_interleave(copies, dim=1)).transpose(1, 2).flatten(-2)
-            )
-        gated = sigmoid_gated_value(attended, self.gate_attn(q_input))
+        attended = self.attend(q, k, v, rel, sink, positions, distance)
+        gated = sigmoid_gated_value(
+            attended.transpose(1, 2).flatten(-2), self.gate_attn(q_input)
+        )
         return self.wo_ud(gated.to(q.dtype))
+
+    def attend(self, q, k, v, relative, sink, positions, distance):
+        c = self.c
+        window = c.window if self.local else 0
+        if c.attention_kv_heads_per_chunk:
+            return projected_relative_gqa(
+                q,
+                k,
+                v,
+                relative.transpose(1, 2),
+                self.proj,
+                sink,
+                positions,
+                window,
+                c.attention_kv_heads_per_chunk,
+            )
+        profiles = (relative @ self.proj).transpose(1, 2)
+        if c.use_fused_attention(q.shape[2]):
+            return relative_gqa_fused(q, k, v, profiles, sink, positions, window)
+        if c.attention_query_chunk_size:
+            return relative_gqa_query_blocks(
+                q, k, v, profiles, sink, positions, window, c.attention_query_chunk_size
+            )
+        copies = c.n_heads // c.n_kv_heads
+        scores = (
+            q @ k.repeat_interleave(copies, dim=1).transpose(-1, -2)
+        ) * c.head_dim**-0.5
+        index = distance.clamp(0, self.extent - 1).expand(*scores.shape)
+        bias = profiles.gather(-1, index).masked_fill(
+            (distance < 0) | (distance >= self.extent), 0
+        )
+        allowed = (distance >= 0) & (distance <= positions[:, None, :, None])
+        if window:
+            allowed = allowed & (distance < window)
+        scores = (scores + bias).masked_fill(~allowed, -torch.inf)
+        prob = (
+            torch.cat((scores, sink), dim=-1).float().softmax(-1)[..., :-1].to(q.dtype)
+        )
+        return prob @ v.repeat_interleave(copies, dim=1)

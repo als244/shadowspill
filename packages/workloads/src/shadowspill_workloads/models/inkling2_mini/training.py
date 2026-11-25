@@ -58,20 +58,29 @@ def build(settings, context):
             "torch.ops.mlops.packed_residual_conv_dx.default": (
                 "shadowspill/fixed-packed-residual-conv-dx@1"
             ),
+            "torch.ops.mlops.routed_softcapped_swiglu_backward.default": (
+                "shadowspill/fixed-routed-activation-backward@1"
+            ),
             "torch.ops.mlops.routed_softcapped_swiglu.default": (
                 "shadowspill/fixed-routed-activation@1"
+            ),
+            "torch.ops.mlops.projected_relative_gqa.default": (
+                "shadowspill/fixed-group-projected-gqa@1"
+            ),
+            "torch.ops.mlops.projected_relative_gqa_backward.default": (
+                "shadowspill/fixed-group-projected-gqa-backward@1"
             ),
             "torch.ops.mlops.relative_gqa_fused.default": (
                 "shadowspill/fixed-relative-fused-attention@1"
             ),
             "torch.ops.mlops.relative_gqa_fused_backward.default": (
-                "shadowspill/fixed-relative-fused-attention-backward@1"
+                "shadowspill/fixed-relative-fused-attention-backward@2"
             ),
             "torch.ops.mlops.relative_gqa_query_blocks.default": (
                 "shadowspill/fixed-query-block-attention@1"
             ),
             "torch.ops.mlops.relative_gqa_query_blocks_backward.default": (
-                "shadowspill/fixed-query-block-attention@1"
+                "shadowspill/fixed-query-block-attention-backward@2"
             ),
             "torch.ops.mlops.l2_clip_scale.default": (
                 "shadowspill/fixed-l2-clip-scale@1"

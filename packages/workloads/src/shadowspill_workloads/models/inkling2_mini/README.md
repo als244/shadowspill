@@ -62,3 +62,7 @@ lora = LoRA(2, alpha=2, targets=[
 ```
 
 This trains 835,584 elements in 192 adapter tensors. Frozen experts still propagate input gradients. With checkpoint computation on SM120 or SM90, their gate/up projection can gather and quantize in one kernel. An enabled expert adapter reads the original BF16 token rows by routing index for both its rank-wide projection and its weight gradient. With either target selection, the gate/up operation avoids the full-width BF16 assignment buffer.
+
+## Attention memory at long sequence lengths
+
+Set `attention_kv_heads_per_chunk` in the architecture configuration to a positive number up to `n_kv_heads` to limit the number of relative-bias profiles materialized together. Each chunk contains complete grouped-query heads and spans every sequence position. Packed document boundaries, the global receptive field and the local window are preserved. Zero selects ordinary attention. This option combines the relative projection and the fused attention and can run alongside the independently chunked language head.

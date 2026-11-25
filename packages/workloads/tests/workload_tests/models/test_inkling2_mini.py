@@ -169,12 +169,19 @@ def test_convolution_cotangents_use_disjoint_tap_slices(dynamic):
     torch.testing.assert_close(derivative(x), torch.cat(parts, dim=1))
 
 
-@pytest.mark.parametrize("query_block", [0, 3])
+@pytest.mark.parametrize("query_block, head_groups", [(0, 0), (3, 0), (0, 1)])
 def test_repeated_core_accumulates_each_occurrence_and_packed_sequences_reset(
     query_block,
+    head_groups,
 ):
     torch.manual_seed(185)
-    model = Model(replace(PRESETS["tiny"], attention_query_chunk_size=query_block))
+    model = Model(
+        replace(
+            PRESETS["tiny"],
+            attention_query_chunk_size=query_block,
+            attention_kv_heads_per_chunk=head_groups,
+        )
+    )
     tokens = torch.tensor([[8, 15, 17, 0, 2, 1, 4, 7]])
     lengths = torch.tensor([3, 0, 5], dtype=torch.int32)
     model.layers[1].attn_query.data.normal_()

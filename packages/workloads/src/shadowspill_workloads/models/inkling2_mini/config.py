@@ -40,20 +40,38 @@ class Config:
     expert_storage: str = "dense"
     expert_compute: str = "auto"
     attention_query_chunk_size: int = 0
+    attention_kv_heads_per_chunk: int = 0
     attention_backend: str = "auto"
     head_fp32_projection: bool = True
 
     def use_fused_attention(self, tokens):
-        return self.attention_backend == "fused" or (
-            self.attention_backend == "auto"
-            and not self.attention_query_chunk_size
-            and tokens >= 128
-            and self.head_dim in (16, 32, 64, 128)
+        return (
+            bool(self.attention_kv_heads_per_chunk)
+            or self.attention_backend == "fused"
+            or (
+                self.attention_backend == "auto"
+                and not self.attention_query_chunk_size
+                and tokens >= 128
+                and self.head_dim in (16, 32, 64, 128)
+            )
         )
 
     def __post_init__(self):
         if type(self.head_fp32_projection) is not bool:
             raise ValueError("head_fp32_projection must be a boolean")
+        if (
+            type(self.attention_kv_heads_per_chunk) is not int
+            or not 0 <= self.attention_kv_heads_per_chunk <= self.n_kv_heads
+        ):
+            raise ValueError(
+                "attention_kv_heads_per_chunk must be between zero and n_kv_heads"
+            )
+        if self.attention_kv_heads_per_chunk and (
+            self.attention_backend == "eager" or self.attention_query_chunk_size
+        ):
+            raise ValueError(
+                "K/V head chunking requires fused attention without query chunking"
+            )
         if self.attention_backend not in ("auto", "eager", "fused"):
             raise ValueError("attention_backend must be auto, eager or fused")
         if self.attention_backend == "fused" and self.attention_query_chunk_size:
