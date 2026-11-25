@@ -14,6 +14,10 @@ The default `attention_backend="auto"` selects the MLOps fused relative attentio
 
 Set `config={"architecture": {"attention_backend": "eager"}}` for the dense reference, or set `attention_query_chunk_size` to a positive value such as 256 to use the query-blocked reference. Each query sees all the allowed keys in its document. These settings are independent of token capacity and the projection and MoE chunk settings. [Attention implementation](implementations/mlops/attention.py)
 
+Use `retention=["cost-input", "cost-attention"]` in `build_candidates` to let the planner compare the default with retaining self-attention outputs inside recomputed stages. `cost-attention` retains the pre-gate output of each global or local MLOps relative-attention call, including the query-blocked and K/V-head-chunked forms. At 32,768 tokens that BF16 tensor is 192 MiB per visit. Backward uses it for the gate and projection and still computes the attention gradients. The dense eager reference has no operator-level retention rule. [Client build options](../../../../../../docs/python/advanced/service-client.md)
+
+A custom policy can retain only global attention by scoping its `RetentionRule` entries to the attention modules of physical layers 5, 11, 17 and 23. Each rule covers every visit to its module. [Graph-pair retention](../../../../../../docs/architecture/graph-pair-construction.md)
+
 ## Checkpoint and expert precision
 
 Residual attention, FP32 RMS normalization, L2 clipping scales and normalized router weights

@@ -11,7 +11,12 @@ from shadowspill_workloads.policies.text.retention import graph_pair_policy
 def retention(name, *, chunked):
     return graph_pair_policy(
         name,
-        retained_targets=("mlops.flash_attention_builtin_aten_fwd.default",),
+        retained_targets=(
+            "mlops.flash_attention_builtin_aten_fwd.default",
+            "mlops.relative_gqa_fused.default",
+            "mlops.relative_gqa_query_blocks.default",
+            "mlops.projected_relative_gqa.default",
+        ),
         local_targets=(
             "mlops.sonicmoe_routing_metadata.default",
             "mlops.lora_sonicmoe_up_fwd.default",

@@ -11,9 +11,65 @@ from shadowspill_workloads.lora import configure_lora
 from shadowspill_workloads.models.inkling2_mini.config import PRESETS
 from shadowspill_workloads.models.inkling2_mini.implementations.mlops import Model
 from shadowspill_workloads.models.inkling2_mini.implementations.mlops.attention import (
+    Attention,
     ShortConv,
 )
 from shadowspill_workloads.objectives.head.execution import loss as token_objective
+
+
+@pytest.mark.parametrize("local", [False, True], ids=["global", "local"])
+@pytest.mark.parametrize(
+    "settings,operator",
+    [
+        ({"attention_backend": "fused"}, "relative_gqa_fused"),
+        ({"attention_query_chunk_size": 3}, "relative_gqa_query_blocks"),
+        ({"attention_kv_heads_per_chunk": 1}, "projected_relative_gqa"),
+    ],
+)
+def test_attention_output_retention_in_recompute(local, settings, operator):
+    from shadowspill.pytorch.capture.aot import capture_graph_pair
+    from shadowspill_workloads.policies.text import retention
+
+    torch.manual_seed(947)
+    config = replace(PRESETS["tiny"], **settings)
+    attention = Attention(config, local).requires_grad_(False)
+    names, weights = zip(*attention.named_parameters(), strict=True)
+    hidden = torch.randn(1, 12, config.d_model, requires_grad=True)
+    positions = torch.arange(6).repeat(2).unsqueeze(0)
+    inputs = (hidden, positions, *weights)
+
+    def forward(hidden, positions, *weights):
+        return torch.func.functional_call(
+            attention,
+            dict(zip(names, weights, strict=True)),
+            (hidden, hidden, hidden, positions, None),
+        )
+
+    graph = make_fx(forward)(*inputs)
+    target = getattr(torch.ops.mlops, operator).default
+    expected = forward(*inputs)
+    tangent = torch.randn_like(expected)
+    (expected_grad,) = torch.autograd.grad(expected, hidden, tangent)
+    for name, retain in (("cost-input", False), ("cost-attention", True)):
+        pair = capture_graph_pair(
+            graph,
+            inputs,
+            original_output=expected,
+            memory_budget=0.0,
+            retention=retention(name, chunked=False).recompute,
+        )
+        fwd, bwd = pair.forward.graph_module, pair.backward.graph_module
+        (attended,) = fwd.graph.find_nodes(op="call_function", target=target)
+        (output,) = fwd.graph.find_nodes(op="output")
+        assert (attended in output.args[0][-pair.saved_value_count :]) == retain
+        assert len(bwd.graph.find_nodes(op="call_function", target=target)) == int(
+            not retain
+        )
+        with torch.no_grad():
+            values = fwd(*inputs)
+            gradients = bwd(*values[-pair.saved_value_count :], tangent)
+        torch.testing.assert_close(values[0], expected)
+        torch.testing.assert_close(gradients[0], expected_grad)
 
 
 def test_expert_partition_splits_only_global_visits_in_the_repeated_core():
