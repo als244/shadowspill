@@ -91,6 +91,7 @@ def execution_configuration(plan: Plan) -> dict[str, Any]:
     return plain(
         {
             "ordering": bindings.get("ordering"),
+            "partition": build.get("partition"),
             "chunking": build.get("chunking"),
             "model_chunks": {
                 name: value

@@ -174,4 +174,4 @@ from the same source, beside the profile key a row carries as `profile`.
 - A slot with no executing occupant counts as `unattributed`, and a task's
   workspace lease as `task workspace`.
 
-The Plan and runtime HTML show the selected build’s sequence limit, microbatch size and count, scheduled tokens, ordering, parallelism, chunking and retention. The runtime also reports the tokens submitted on that invocation. The Tasks tab groups the selected stages by their retention choices and shows the range of profiled costs. Expand the individual stages for exact executable identities, memory and measured timings. Candidate tables and full records are expandable.
+The Plan and runtime HTML show the selected build’s sequence limit, microbatch size and count, scheduled tokens, ordering, parallelism, partition, chunking and retention. The runtime also reports the tokens submitted on that invocation. The Tasks tab groups the selected stages by their retention choices and shows the range of profiled costs. Expand the individual stages for exact executable identities, memory and measured timings. Candidate tables and full records are expandable.

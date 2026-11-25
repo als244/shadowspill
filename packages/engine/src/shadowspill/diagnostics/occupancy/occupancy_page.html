@@ -171,6 +171,7 @@
       + (o.reverse_breadth && o.breadth > 1 ? ", reverse backward" : "")
       + (o.pair_loss ? ", paired loss" : "") : "—";
     const policyName = p => p?.config?.name || p?.name?.replace(/^.*\//, "").split("@")[0];
+    const partitionName = p => p?.name === "shadowspill/partition@1" ? (p.config?.mode || "auto") : (p?.name || "—");
     const chunk = config.chunking || buildCase?.build?.chunking;
     const chunks = Object.entries({...chunk?.config, ...config.model_chunks})
       .filter(([k, v]) => k.includes("chunk") && typeof v === "number" && v > 0)
@@ -190,6 +191,7 @@
       ["Scheduled tokens", number(invocation?.scheduled_tokens ?? candidate?.scheduled_capacities?.token_capacity)],
       ["Data ordering (passes × width)", orderText(ordering)],
       ["Parallelism", parallel],
+      ["Partition", partitionName(config.partition || buildCase?.build?.partition)],
       ["Chunking", chunks.length ? chunks.join(", ") : policyName(chunk) || (DATA.configuration || buildCase ? "Off" : "—")],
       ["Retention policy", policyName(config.retention || buildCase?.build?.graph_pair_policy) || "—"],
       ["Stage choices", counts || "—"],
@@ -203,8 +205,8 @@
     if (!runtime) {
       const choices = element("details", "");
       element("summary", "Prepared candidates (" + candidates.length + ")", choices);
-      table("", ["Operation", "Build", "Microbatch size", "Microbatches", "Scheduled tokens", "Data ordering", "Estimated time", "Reports"],
-        candidates.map(v => [v.operation.operation, v.case, number(byIndex("build_case", v.case)?.microbatch_size), v.count,
+      table("", ["Operation", "Build", "Partition", "Microbatch size", "Microbatches", "Scheduled tokens", "Data ordering", "Estimated time", "Reports"],
+        candidates.map(v => [v.operation.operation, v.case, partitionName(byIndex("build_case", v.case)?.build?.partition), number(byIndex("build_case", v.case)?.microbatch_size), v.count,
           number(v.scheduled_capacities?.token_capacity), orderText(v.ordering), fmtDuration(v.simulated_seconds), cell => {
           DOCUMENT.views.forEach((other, index) => {
             if (!owns(v, other)) return;
