@@ -1,7 +1,7 @@
 """Parameter-sharing text decoder with explicit AttnRes and cross-pass message edges."""
 
 import torch
-from mlops.attention_residual import attention_residual
+from mlops.attention_residual import attention_residual_streams
 from mlops.modules import LanguageModelHead
 from torch import nn
 from torch.nn import functional as F
@@ -19,8 +19,7 @@ from .experts import Experts
 
 def mix(states, partial, query):
     """Attend independently at each token over the normalized residual blocks."""
-    values = torch.stack([*(s.float() for s in states), partial.float()], dim=-2)
-    return attention_residual(values, query)
+    return attention_residual_streams([*states, partial], query)
 
 
 class MessageGate(nn.Module):
@@ -70,6 +69,7 @@ class Layer(nn.Module):
         self.mlp_sconv = ShortConv(c.d_model, c.conv_kernel)
 
     def forward(self, x, blocks, positions, distance, previous=None, queries=None):
+        activation_dtype = self.attn.wq_du.weight.dtype
         q = k = v = x
         if self.attn_query is not None:
             values = mix(blocks, x, self.attn_query)
@@ -83,30 +83,33 @@ class Layer(nn.Module):
             k = self.controllers["k"](k, messages[1])
             v = self.controllers["v"](v, messages[2])
         if self.local:
-            q = self.attn_norm(q, x.dtype)
+            q = self.attn_norm(q, activation_dtype)
             if previous is None:
                 k = v = q
             else:
-                k, v = self.attn_norm(k, x.dtype), self.attn_norm(v, x.dtype)
+                k, v = (
+                    self.attn_norm(k, activation_dtype),
+                    self.attn_norm(v, activation_dtype),
+                )
         else:
             q, k, v = (
-                self.q_input_norm(q, x.dtype),
-                self.k_input_norm(k, x.dtype),
-                self.v_input_norm(v, x.dtype),
+                self.q_input_norm(q, activation_dtype),
+                self.k_input_norm(k, activation_dtype),
+                self.v_input_norm(v, activation_dtype),
             )
-        attn = self.attn_sconv(
-            self.attn(q, k, v, positions, distance), positions
-        ).float()
+        attn = self.attn_sconv(self.attn(q, k, v, positions, distance), positions)
         if self.boundary:
             blocks = (*blocks, x)
-            partial = attn
+            partial = attn.to(x.dtype)
         else:
-            partial = x.float() + attn
+            partial = (x.float() + attn.float()).to(x.dtype)
         value = mix(blocks, partial, self.mlp_query).squeeze(-2)
         if previous is not None:
             value = self.controllers["mlp"](value, messages[3])
-        value = self.mlp(self.mlp_norm(value, x.dtype))
-        return (partial + self.mlp_sconv(value, positions).float()).to(x.dtype), blocks
+        value = self.mlp(self.mlp_norm(value, activation_dtype))
+        return (partial.float() + self.mlp_sconv(value, positions).float()).to(
+            x.dtype
+        ), blocks
 
 
 class Embedding(nn.Embedding):
@@ -164,7 +167,8 @@ class Model(nn.Module):
         ):
             index = torch.arange(tokens.shape[1], device=tokens.device)
             distance = index[:, None] - index[None, :]
-        x, blocks = self.embed(tokens), ()
+        embedding = self.embed(tokens)
+        x, blocks = embedding.bfloat16(), ()
         for i in range(c.core_start):
             x, blocks = self.layers[i](x, blocks, positions, distance)
         prefix, prefix_blocks = x, blocks
@@ -185,7 +189,7 @@ class Model(nn.Module):
                 )
         for i in range(c.core_end, c.n_layers):
             x, blocks = self.layers[i](x, blocks, positions, distance)
-        return self.norm(mix(blocks, x, self.output_query).squeeze(-2), x.dtype)
+        return self.norm(mix(blocks, x, self.output_query).squeeze(-2), embedding.dtype)
 
     def forward(self, tokens, sequence_lengths=None):
         return self.lm_head(self.hidden(tokens, sequence_lengths))

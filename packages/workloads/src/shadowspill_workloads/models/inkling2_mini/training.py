@@ -45,8 +45,8 @@ def build(settings, context):
         grad_dtype=settings.grad_dtype,
         allocation_invariants={
             **CONTRACTS,
-            "torch.ops.mlops.attention_residual_backward.default": (
-                "shadowspill/attention-residual-backward-fixed-shapes@1"
+            "torch.ops.mlops.attention_residual_streams_backward.default": (
+                "shadowspill/attention-residual-streams-backward-fixed-shapes@1"
             ),
             "torch.ops.mlops.sigmoid_gated_value.default": (
                 "shadowspill/fixed-sigmoid-gated-value@1"
@@ -94,8 +94,8 @@ def build(settings, context):
             "torch.ops.mlops.rms_normalize_fp32.default": (
                 "shadowspill/fixed-rms-shape@1"
             ),
-            "torch.ops.mlops.attention_residual.default": (
-                "shadowspill/attention-residual-fixed-shapes@1"
+            "torch.ops.mlops.attention_residual_streams.default": (
+                "shadowspill/attention-residual-streams-fixed-shapes@1"
             ),
             # ATen topk allocates two [tokens, k] outputs; CUDA selection scratch is
             # sized by input geometry, dimension and k, independent of the selected IDs.

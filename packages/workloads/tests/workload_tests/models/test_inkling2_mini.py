@@ -72,17 +72,25 @@ def test_attention_output_retention_in_recompute(local, settings, operator):
         torch.testing.assert_close(gradients[0], expected_grad)
 
 
-def test_expert_partition_splits_only_global_visits_in_the_repeated_core():
+@pytest.mark.parametrize("projection_dtype", ["bfloat16", "float32"])
+def test_expert_partition_splits_only_global_visits_in_the_repeated_core(
+    projection_dtype,
+):
     from torch.fx.passes.split_module import split_module
 
     from shadowspill.pytorch.partition.policy import resolve_partition_assignments
+    from shadowspill_workloads.models.construction import build_on_meta
     from shadowspill_workloads.models.inkling2_mini.partition import SplitGlobalExperts
 
     class Decoder(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.model = configure_lora(
-                Model(PRESETS["tiny"]), rank=4, alpha=4, factor_dtype="float32"
+            self.model = build_on_meta(
+                Model,
+                dtype=projection_dtype,
+                device="cpu",
+                config=PRESETS["tiny"],
+                lora={"rank": 4, "alpha": 4, "factor_dtype": "float32"},
             )
 
         def forward(self, tokens):
@@ -96,6 +104,18 @@ def test_expert_partition_splits_only_global_visits_in_the_repeated_core():
             p.normal_(0, 0.025)
     tokens = torch.tensor([[5, 9, 4, 17, 18, 1, 8, 9, 32, 11, 6, 7, 4]])
     graph = torch.export.export(module, (tokens,), strict=False).module()
+    mixes = [
+        n
+        for n in graph.graph.nodes
+        if n.target == torch.ops.mlops.attention_residual_streams.default
+    ]
+    assert mixes
+    for node in mixes:
+        states, query = node.args[:2]
+        assert all(s.meta["val"].shape == (1, tokens.numel(), 32) for s in states)
+        assert {s.meta["val"].dtype for s in states} == {torch.bfloat16}
+        assert node.meta["val"].dtype == torch.bfloat16
+        assert query.meta["val"].dtype == torch.float32
     base, _ = resolve_partition_assignments(graph, module, "auto")
     split, _ = resolve_partition_assignments(graph, module, SplitGlobalExperts())
     assert base.keys() == split.keys()

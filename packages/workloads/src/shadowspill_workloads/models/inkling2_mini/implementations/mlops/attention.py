@@ -25,9 +25,7 @@ class Norm(nn.Module):
 
     def forward(self, x, dtype=None):
         out_dtype = x.dtype if dtype is None else dtype
-        if x.dtype == torch.float32:
-            return rms_gain_cast(x, self.weight, self.eps, out_dtype)
-        return (rms(x, self.eps) * self.weight.float()).to(x.dtype).to(out_dtype)
+        return rms_gain_cast(x, self.weight, self.eps, out_dtype)
 
 
 class ShortConv(nn.Module):
