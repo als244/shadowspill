@@ -132,7 +132,7 @@ def build(settings, context):
                 "shadowspill/microscaled-expert-allocation@1"
             ),
             "torch.ops.mlops.microscaled_expert_dgrad.default": (
-                "shadowspill/microscaled-expert-allocation@1"
+                "shadowspill/microscaled-expert-dgrad-allocation@2"
             ),
             "torch.ops.aten.sort.stable": "shadowspill/fixed-router-sort@1",
         },
@@ -152,6 +152,14 @@ def capture(settings):
         yield
 
 
+def gradient_destinations(settings):
+    from shadowspill_workloads.integrations.mlops import (
+        grouped_lora_gradient_destination_rules,
+    )
+
+    return grouped_lora_gradient_destination_rules() if settings.lora else ()
+
+
 def register(registry):
     partition.register(registry)
     register_decoder(
@@ -159,5 +167,10 @@ def register(registry):
         Settings,
         build=build,
         capture_context=capture,
-        sources=("components/moe_allocations.py", "components/hybrid_allocations.py"),
+        gradient_destinations=gradient_destinations,
+        sources=(
+            "components/moe_allocations.py",
+            "components/hybrid_allocations.py",
+            "integrations/mlops.py",
+        ),
     )

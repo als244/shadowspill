@@ -34,6 +34,7 @@ def register(
     initialization=configuration.initialization,
     capture_context=training_options.capture_context,
     capabilities=None,
+    gradient_destinations=None,
     sources=(),
     providers=(),
 ):
@@ -108,9 +109,8 @@ def register(
             configure=partial(training_options.configure, label=family),
             build=build,
             capture_context=capture_context,
-            gradient_destination_rules=gradient_destination_rules
-            if settings.moe
-            else None,
+            gradient_destination_rules=gradient_destinations
+            or (gradient_destination_rules if settings.moe else None),
             initialization=initialization,
             temporary_initialization=initialization,
             parameter_dtypes=family_definition(family).parameter_dtypes,

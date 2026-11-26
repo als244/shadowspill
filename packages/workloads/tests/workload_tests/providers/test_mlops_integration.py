@@ -225,3 +225,73 @@ def test_preparation_descriptions_are_explicit_and_need_no_device(monkeypatch):
     assert operator_preparations(dtype=torch.float32) == ()
     assert len(mhc_chunk_rules()) == 4
     assert len(sonicmoe_chunk_rules(compute_precision="fp8_block")) == 5
+
+
+@pytest.mark.parametrize(
+    "transform", ["identity", "transpose", "shared_reader", "cast", "narrow"]
+)
+def test_grouped_lora_shared_parameter_first_write_and_recurrent_accumulation(
+    transform,
+):
+    from mlops.lora.grouped import _backward
+
+    from shadowspill_workloads.integrations.mlops import (
+        grouped_lora_gradient_destination_rules,
+    )
+
+    torch.manual_seed(603)
+    x = torch.randn(17, 9, dtype=torch.bfloat16)
+    w = torch.randn(4, 7, 9, dtype=x.dtype)
+    offsets = torch.tensor([0, 2, 2, 11, 17], dtype=torch.int32)
+    tangent = torch.randn(17, 7, dtype=x.dtype)
+
+    def task(x, w, offsets, tangent):
+        dx, dw = _backward(
+            tangent,
+            x,
+            w,
+            offsets,
+            list(w.shape),
+            x.dtype if transform == "narrow" else torch.float32,
+        )
+        if transform == "transpose":
+            dw = dw.transpose(1, 2)
+        elif transform == "cast":
+            dw = dw.bfloat16().float()
+        if transform == "shared_reader":
+            return dx, dw, dw.sum()
+        return dx, dw
+
+    inputs = (x, w, offsets, tangent)
+    original = GraphArtifact.capture(
+        kind="backward",
+        graph_module=make_fx(task, tracing_mode="fake")(*inputs),
+        example_inputs=inputs,
+    )
+    (rule,) = grouped_lora_gradient_destination_rules()
+    accumulating = accumulate_gradient_outputs(
+        original,
+        (1,),
+        gradient_destination_rules=(rule,),
+        fuse_narrow_gradient_accumulation=False,
+    )
+    assert (rule.replacement in accumulating.operator_targets) == (
+        transform in ("identity", "transpose")
+    )
+    assert rule.replacement not in original.operator_targets
+    running = expected = None
+    # Three visits to one physical adapter, repeated over two microbatches.
+    for visit in range(6):
+        inputs = (x + visit / 4, w, offsets, tangent - visit / 8)
+        fresh = task(*inputs)
+        expected = fresh[1].clone() if expected is None else expected + fresh[1]
+        if running is None:
+            result = original.graph_module(*inputs)
+        else:
+            result = accumulating.graph_module(*inputs, running)
+            assert result[1].data_ptr() == running.data_ptr()
+        running = result[1]
+        assert torch.equal(expected, running)
+        assert torch.equal(fresh[0], result[0])
+        if transform == "shared_reader":
+            assert torch.equal(fresh[2], result[2])

@@ -129,6 +129,18 @@ def _make_output_axis(
 # 2. Gradient accumulation: replace eligible products with destination writes.
 
 
+def grouped_lora_gradient_destination_rules() -> tuple[GradientDestinationRule, ...]:
+    """Accumulate grouped LoRA weight gradients at their output dtype."""
+    return (
+        GradientDestinationRule(
+            target="mlops.lora_grouped_linear_bwd.default",
+            replacement="mlops.lora_grouped_linear_bwd_accumulate.default",
+            output_indices=(1,),
+            version=1,
+        ),
+    )
+
+
 def sonicmoe_gradient_destination_rules() -> tuple[GradientDestinationRule, ...]:
     """Let eligible Sonic backwards write directly into an existing gradient.
 

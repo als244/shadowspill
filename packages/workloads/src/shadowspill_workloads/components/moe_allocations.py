@@ -44,6 +44,7 @@ CONTRACTS = {
             "lora_combine_bwd",
             "lora_grouped_linear_fwd",
             "lora_grouped_linear_bwd",
+            "lora_grouped_linear_bwd_accumulate",
         )
     },
 }
