@@ -36,10 +36,9 @@ update's runtime report. [Runnable example](../../examples/demos/inkling2_mini_l
 
 ## Prepare UltraChat
 
-Both fine-tuning examples use the same UltraChat conversations and assistant-token
-masks. Qwen3.5-9B and Qwen3.5-35B-A3B use the same tokenizer. Run this from the
-repository root in the server's training environment, which includes tokenizer
-and parquet dependencies:
+The Qwen3.5-9B and Qwen3.5-35B-A3B chat examples share a tokenizer,
+UltraChat conversations and assistant-token masks. Prepare their data from
+the repository root in the server's training environment.
 
 ```bash
 python -m tools.datasets.prepare_chat \
