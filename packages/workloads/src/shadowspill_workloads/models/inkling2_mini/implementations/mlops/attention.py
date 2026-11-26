@@ -3,7 +3,7 @@
 import torch
 from mlops.dynamic_residual_conv import DynamicResidualConv
 from mlops.inkling_activation import PackedResidualConv, sigmoid_gated_value
-from mlops.l2_norm import l2_clip_scale
+from mlops.l2_norm import clip_vector_norm
 from mlops.projected_relative_attention import projected_relative_gqa
 from mlops.relative_attention import relative_gqa_fused, relative_gqa_query_blocks
 from mlops.rms_norm import rms_gain_cast
@@ -46,10 +46,7 @@ class ShortConv(nn.Module):
 
 
 def clipped(x, threshold, gain=None, length_scale=None):
-    value = x.float()
-    if gain is not None:
-        value = value * gain.float()
-    value = (value * l2_clip_scale(value, threshold)).to(x.dtype)
+    value = clip_vector_norm(x, threshold, gain)
     if length_scale is not None:
         value = (value.float() * length_scale).to(x.dtype)
     return value

@@ -29,6 +29,11 @@ use the same arithmetic in eager, saved and recomputed stages. A change at
 a BF16 rounding boundary can change the block scale chosen by the next
 expert quantizer.
 
+On Chicago's RTX 5090, each recurrent message gate writes its two independently
+normalized inputs directly into the BF16 controller projection input. Query and
+key clipping also runs in one kernel and exposes one FP32 length per head and
+token for backward. The relative projection keeps its 16-wide clipping path.
+
 Use the regular client API on a server with the checkpoint installed.
 
 ```python

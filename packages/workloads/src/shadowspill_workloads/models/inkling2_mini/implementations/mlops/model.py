@@ -4,6 +4,7 @@ import torch
 from mlops.attention_residual import attention_residual_streams
 from mlops.message_gate import normalized_message_gate
 from mlops.modules import LanguageModelHead
+from mlops.rms_norm import rms_concat
 from torch import nn
 from torch.nn import functional as F
 
@@ -14,7 +15,7 @@ from shadowspill_workloads.models.shared.token_head import (
 )
 
 from ...lora import TARGETS
-from .attention import Attention, Norm, ShortConv, rms
+from .attention import Attention, Norm, ShortConv
 from .experts import Experts
 
 
@@ -34,8 +35,8 @@ class MessageGate(nn.Module):
             nn.init.normal_(p, std=c.initializer_range)
 
     def forward(self, x, msg, norm, dtype):
-        mixed = torch.cat((rms(x, self.eps), rms(msg, self.eps)), dim=-1)
-        low = F.linear(mixed.to(self.down_weight.dtype), self.down_weight)
+        mixed = rms_concat(x, msg, self.eps, self.down_weight.dtype)
+        low = F.linear(mixed, self.down_weight)
         return normalized_message_gate(
             x,
             msg,

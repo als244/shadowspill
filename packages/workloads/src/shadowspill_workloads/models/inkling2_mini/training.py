@@ -97,6 +97,9 @@ def build(settings, context):
             "torch.ops.mlops.l2_clip_scale.default": (
                 "shadowspill/fixed-l2-clip-scale@1"
             ),
+            "torch.ops.mlops.clip_vector_norm.default": (
+                "shadowspill/fixed-clip-vector-norm@1"
+            ),
             "torch.ops.mlops.stable_normalized_sigmoid_topk.default": (
                 "shadowspill/fixed-router-sort@1"
             ),
@@ -106,6 +109,7 @@ def build(settings, context):
             "torch.ops.mlops.rms_normalize_fp32.default": (
                 "shadowspill/fixed-rms-shape@1"
             ),
+            "torch.ops.mlops.rms_concat.default": "shadowspill/fixed-rms-concat@1",
             "torch.ops.mlops.attention_residual_streams.default": (
                 "shadowspill/attention-residual-streams-fixed-shapes@1"
             ),
