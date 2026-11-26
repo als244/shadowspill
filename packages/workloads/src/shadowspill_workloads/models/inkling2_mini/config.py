@@ -44,6 +44,15 @@ class Config:
     attention_backend: str = "auto"
     head_fp32_projection: bool = True
 
+    def resolve_experts(self, *, lora: bool):
+        storage, compute = self.expert_storage, self.expert_compute
+        if storage == "auto":
+            packed = lora and any(fmt != "dense" for fmt in self.expert_formats)
+            storage = "packed" if packed else "dense"
+        if compute == "auto" and storage != "packed":
+            compute = "bf16"
+        return replace(self, expert_storage=storage, expert_compute=compute)
+
     def use_fused_attention(self, tokens):
         return (
             bool(self.attention_kv_heads_per_chunk)
@@ -324,7 +333,8 @@ def validate_recipe(recipe, formats, tensors):
                     tensors[name]["dtype"]
                 )
                 if (
-                    group.get("weight_transform") != "cast"
+                    expected_dtype is None
+                    or group.get("weight_transform") != "cast"
                     or group.get("required_activation_quantization") is not None
                     or group.get("output_dtype") != expected_dtype
                     or group.get("compute_dtype") != expected_dtype

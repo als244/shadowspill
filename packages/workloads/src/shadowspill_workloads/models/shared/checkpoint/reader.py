@@ -36,12 +36,20 @@ class Checkpoint:
         """The checkpoint tensors parameter ``name`` is made of."""
         raise NotImplementedError
 
+    def model_config(self, *, lora: bool) -> Any:
+        """The configuration to use when constructing a model from this checkpoint."""
+        return self.config
+
+    def _source_for_destination(self, name: str, dtype: torch.dtype) -> Source:
+        """Select the representation to load into a physical parameter."""
+        return self.sources(name, self.config)
+
     def keys(self) -> list[str]:
         return sorted(self.reader.info)
 
     def copy_chunk(self, name, shape, offset, destination) -> None:
         """Load a parameter's flat range into supplied storage, with bounded scratch."""
-        source = self.sources(name, self.config)
+        source = self._source_for_destination(name, destination.dtype)
         if tuple(source.read(self.reader, meta=True).shape) != tuple(shape):
             raise ValueError(f"checkpoint shape differs for {name}")
         source.copy_into(self.reader, offset, destination)
@@ -91,7 +99,7 @@ class Checkpoint:
             seen[id(parameter)] = name
             if rename is not None:
                 name = rename(name)
-            source = self.sources(name, self.config)
+            source = self._source_for_destination(name, parameter.dtype)
             value = source.read(reader)
             copy(parameter, value)
             used.update(source.keys)

@@ -4,6 +4,7 @@ equal through the reader."""
 
 import json
 import math
+from dataclasses import replace
 
 import pytest
 import torch
@@ -340,6 +341,101 @@ def test_a_family_reads_its_own_layout_back(tmp_path, family):
     assert set(report["written"]) <= set(expected)
 
 
+def test_inkling_mixed_checkpoint_loads_into_packed_and_decoded_models(tmp_path):
+    from shadowspill_workloads.models.inkling2_mini.config import ACTIVATION_RECIPES
+
+    family = "inkling2_mini"
+    source = materialized("inkling2-mini-tiny")
+    state = huggingface_state(family, source, source.config)
+    groups = []
+    for dtype in (torch.bfloat16, torch.float32):
+        names = [
+            k for k, v in state.items() if ".mlp.experts." not in k and v.dtype == dtype
+        ]
+        precision = str(dtype).removeprefix("torch.")
+        groups.append(
+            dict(
+                tensors=names,
+                weight_transform="cast",
+                compute_dtype=precision,
+                output_dtype=precision,
+                fwd_output_dtype="float32",
+            )
+        )
+    for i in range(source.config.n_layers):
+        fp4 = i < 2
+        fmt = "nvfp4" if fp4 else "mxfp8"
+        keys = [
+            f"model.llm.layers.{i}.mlp.experts.{bank}_weight" for bank in ("w13", "w2")
+        ]
+        group = dict(
+            tensors=keys,
+            weight_transform=f"{fmt}_nearest",
+            compute_dtype=fmt,
+            output_dtype="uint8" if fp4 else "float8_e4m3fn",
+            required_activation_quantization=ACTIVATION_RECIPES[fmt],
+            weight_block_shape=[1, 16] if fp4 else [32, 32],
+        )
+        if fp4:
+            group["weight_scale_format"] = "amax_denominator"
+        groups.append(group)
+        for key in keys:
+            experts, rows, cols = state[key].shape
+            if fp4:
+                state[key] = torch.full(
+                    (experts, rows, cols // 2), 0x22, dtype=torch.uint8
+                )
+                state[key + "_scale"] = torch.full((experts, rows, cols // 16), 2.0).to(
+                    torch.float8_e4m3fn
+                )
+                state[key + "_amax"] = torch.full((experts,), 3.0)
+                state[key + "_outer_scale_denominator"] = torch.tensor([2.0])
+            else:
+                state[key] = torch.ones_like(state[key], dtype=torch.float8_e4m3fn)
+                state[key + "_scale"] = torch.full(
+                    (experts, rows, cols // 32), 129, dtype=torch.uint8
+                )
+    save_file(state, tmp_path / "model.safetensors")
+    (tmp_path / "config.json").write_text(json.dumps(metadata(family, source.config)))
+    (tmp_path / "hf_quant_config.json").write_text(
+        json.dumps({"quant_method": "inkling2", "model": {"parameter_groups": groups}})
+    )
+
+    for options in ({}, {"expert_storage": "bf16"}):
+        target = catalog.build_from_checkpoint(
+            family,
+            tmp_path,
+            device="cpu",
+            dtype="bfloat16",
+            lora={"rank": 2},
+            **options,
+        )
+        packed = not options
+        assert target.config.expert_storage == ("packed" if packed else "bf16")
+        with reader(family)(tmp_path) as checkpoint:
+            assert checkpoint.load_into(target)["unused"] == []
+            for i, layer in enumerate(target.layers):
+                for bank in ("w13", "w2"):
+                    key = f"model.llm.layers.{i}.mlp.experts.{bank}_weight"
+                    weight = getattr(layer.mlp, bank)
+                    if packed:
+                        assert weight.dtype == state[key].dtype
+                        assert torch.equal(
+                            weight.view(torch.uint8), state[key].view(torch.uint8)
+                        )
+                    else:
+                        assert weight.dtype == torch.bfloat16
+                        assert torch.all(weight == (3 if i < 2 else 4))
+                    chunk = torch.empty(19, dtype=weight.dtype)
+                    checkpoint.copy_chunk(
+                        f"layers.{i}.mlp.{bank}", weight.shape, 7, chunk
+                    )
+                    assert torch.equal(
+                        chunk.view(torch.uint8),
+                        weight.flatten()[7:26].view(torch.uint8),
+                    )
+
+
 def test_preconverted_inkling_bf16_banks_load_directly_for_lora(tmp_path):
     from shadowspill_client import LoRA, Model
     from shadowspill_workloads.components.pretrained import resolve_local
@@ -400,7 +496,12 @@ def test_a_checkpoint_initializes_a_run_chunk_by_chunk(tmp_path, family):
         lora={"rank": 4, "alpha": 8},
         max_seq_len=config.max_seq_len,
     )
-    assert model.config == config
+    expected_config = (
+        replace(config, expert_storage="dense", expert_compute="bf16")
+        if family == "inkling2_mini"
+        else config
+    )
+    assert model.config == expected_config
     assert all(value.is_meta for value in (*model.parameters(), *model.buffers()))
     expected = dict(source.named_parameters()) | dict(source.named_buffers())
     with pytest.raises(ValueError, match="no catalog checkpoint reader"):
@@ -408,7 +509,7 @@ def test_a_checkpoint_initializes_a_run_chunk_by_chunk(tmp_path, family):
     with from_checkpoint(
         family, directory, seed=45, max_seq_len=config.max_seq_len
     ) as initialize:
-        assert initialize.config == model.config and initialize.seed == 45
+        assert initialize.config == config and initialize.seed == 45
         initialize.block_elements = 257
         for tensor_name, tensor in (*model.named_parameters(), *model.named_buffers()):
             values = []

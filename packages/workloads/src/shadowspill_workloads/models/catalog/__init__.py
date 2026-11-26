@@ -128,7 +128,7 @@ def build_from_checkpoint(
     from ..construction import build_on_meta as declare
 
     with reader(family)(directory, **changes) as checkpoint:
-        configuration = checkpoint.config
+        configuration = checkpoint.model_config(lora=lora is not None)
     item = next(item for item in ENTRIES if item.family == family)
     return declare(
         item.model_class(implementation),

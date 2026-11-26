@@ -115,6 +115,9 @@ class InklingCheckpoint(Checkpoint):
             self.close()
             raise
 
+    def model_config(self, *, lora: bool):
+        return self.config.resolve_experts(lora=lora)
+
     def sources(self, name, config, *, destination_dtype=None):
         key = source_key(name)
         if name == "lm_head.weight":
@@ -133,10 +136,5 @@ class InklingCheckpoint(Checkpoint):
                 return _decoded(key, fmt, dtype)
         return tensor(key)
 
-    def copy_chunk(self, name, shape, offset, destination):
-        # The executor describes the physical destination for each compiled form.
-        # The same manifest initializes packed, predecoded LoRA and trainable banks.
-        source = self.sources(name, self.config, destination_dtype=destination.dtype)
-        if tuple(source.read(self.reader, meta=True).shape) != tuple(shape):
-            raise ValueError(f"Inkling checkpoint geometry differs for {name}")
-        source.copy_into(self.reader, offset, destination)
+    def _source_for_destination(self, name, dtype):
+        return self.sources(name, self.config, destination_dtype=dtype)

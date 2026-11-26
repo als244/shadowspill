@@ -19,21 +19,13 @@ class Settings(configuration.Settings):
 def build(settings, context):
     settings = training_options.for_build(settings, context)
     geometry = dict(settings.architecture)
-    if geometry["expert_storage"] == "auto":
-        use_packed = settings.lora and set(geometry["expert_formats"]) != {"dense"}
-        geometry["expert_storage"] = "packed" if use_packed else "dense"
-    if not settings.lora and geometry["expert_storage"] == "packed":
+    resolved = config.Config(**geometry).resolve_experts(lora=bool(settings.lora))
+    geometry.update(
+        expert_storage=resolved.expert_storage, expert_compute=resolved.expert_compute
+    )
+    if not settings.lora and resolved.expert_storage == "packed":
         raise ValueError(
             "packed Inkling experts are frozen; use dense storage for full training"
-        )
-    if geometry["expert_compute"] == "auto" and geometry["expert_storage"] != "packed":
-        geometry["expert_compute"] = "bf16"
-    if (
-        geometry["expert_compute"] == "checkpoint"
-        and geometry["expert_storage"] != "packed"
-    ):
-        raise ValueError(
-            "checkpoint expert arithmetic requires the frozen, packed banks"
         )
     settings = replace(settings, architecture=geometry)
     from shadowspill.training.components import ModelBuild

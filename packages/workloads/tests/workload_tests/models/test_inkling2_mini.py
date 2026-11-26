@@ -575,3 +575,13 @@ def test_checkpoint_rejects_a_different_activation_rule():
     }
     with pytest.raises(ValueError, match="expert recipe disagrees"):
         validate_recipe(recipe, ("nvfp4",), {key: {"dtype": "U8"}})
+
+
+def test_checkpoint_rejects_an_untyped_cast_of_an_unsupported_storage_dtype():
+    from shadowspill_workloads.models.inkling2_mini.config import validate_recipe
+
+    key = "model.llm.embed.weight"
+    group = {"weight_transform": "cast", "tensors": [key]}
+    recipe = {"quant_method": "inkling2", "model": {"parameter_groups": [group]}}
+    with pytest.raises(ValueError, match="unsupported Inkling cast recipe"):
+        validate_recipe(recipe, ("dense",), {key: {"dtype": "I8"}})
