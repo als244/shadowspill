@@ -158,6 +158,14 @@ def test_index_and_manifest_bounds_reject_before_payload_access(tmp_path, monkey
     with pytest.raises(ValueError, match="unique names"):
         weight_files.files([asdict(metadata), asdict(metadata)])
     monkeypatch.setattr(weight_files, "MAX_SHARDS", 1)
+    manifest = [
+        asdict(declaration(name, b"{}"))
+        for name in ("config.json", weight_files.INDEX, "a.safetensors")
+    ]
+    for optional in ([], [asdict(declaration(weight_files.QUANT_CONFIG, b"{}"))]):
+        assert len(weight_files.files(manifest + optional)) == 3 + len(optional)
+    with pytest.raises(ValueError, match="shard count"):
+        weight_files.files([*manifest, asdict(declaration("b.safetensors", b"{}"))])
     path.write_text(
         json.dumps({"weight_map": {"a": "a.safetensors", "b": "b.safetensors"}})
     )

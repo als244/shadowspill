@@ -86,8 +86,8 @@ def files(values):
         "model.safetensors",
     }:
         raise ValueError("pretrained shards require their safetensors index")
-    if not any(shard_name(name) for name in names):
-        raise ValueError("pretrained manifest has no weight shards")
+    if not 1 <= sum(shard_name(name) for name in names) <= MAX_SHARDS:
+        raise ValueError("pretrained manifest has an invalid shard count")
     return result
 
 
