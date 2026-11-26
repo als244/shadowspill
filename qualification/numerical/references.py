@@ -9,7 +9,7 @@ from shadowspill.schema import artifact_schema
 from .kernel_selection import selection_path
 
 REFERENCE_SCHEMA = artifact_schema("compiled_reference")
-DEFAULT_REFERENCE_DIRECTORY = Path("qualification/results/references/approximately_1b")
+DEFAULT_REFERENCE_DIRECTORY = Path("qualification/reference/numerical/approximately_1b")
 
 
 def canonical_reference_path(

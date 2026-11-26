@@ -61,7 +61,7 @@ def test_default_gate_is_five_cells_with_olmoe_under_pressure() -> None:
 
 def test_default_gate_reads_the_repo_local_reference_set() -> None:
     assert (
-        Path("qualification/results/references/approximately_1b")
+        Path("qualification/reference/numerical/approximately_1b")
         == DEFAULT_REFERENCE_DIRECTORY
     )
 

@@ -48,8 +48,8 @@ both arms. The case banner and artifacts show their resolved values. See
 [the precision options](../hardware.md).
 Custom factories configure their model and optimizer with `--case-option`.
 The default reference root is
-`qualification/results/references/approximately_1b/`; below SM80 the default
-is `qualification/results/references/pre_sm80/`. Each contains one
+`qualification/reference/numerical/approximately_1b/`; below SM80 the default
+is `qualification/reference/numerical/pre_sm80/`. Each contains one
 identity-checked final state, exact-input `inputs.pt`, and `kernel-selection.json`
 under each `<model>/<implementation>` directory. Keep all three files together.
 Older references without a selection manifest must be regenerated.

@@ -1,8 +1,11 @@
-# Readable algorithm references
+# Qualification references
 
-This tree contains non-installed Python implementations used for explanation
-and differential testing. Production imports never select these modules.
+This tree contains numerical qualification data and independent Python implementations
+used for explanation and differential testing.
 
+- `numerical/<preset>/<model>/<implementation>/` stores the local compiled-reference
+  state, exact inputs and kernel selection. The default presets are `approximately_1b`
+  and `pre_sm80`. See the [numerical gate](../numerical/README.md) for generation and reuse.
 - [training/](training/README.md) runs independent PyTorch training, checkpoint
   continuation and Transformers loss comparisons on recorded batches.
 - `python/simulator/` is the readable event-scheduling oracle for the compiled

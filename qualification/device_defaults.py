@@ -72,7 +72,7 @@ def numerical_defaults(
         raise ValueError("model config must decode to an object")
     options.model_config = json.dumps({"n_layers": 4, "vocab_size": 8192, **values})
     if options.reference_dir == DEFAULT_REFERENCE_DIRECTORY:
-        options.reference_dir = Path("qualification/results/references/pre_sm80")
+        options.reference_dir = DEFAULT_REFERENCE_DIRECTORY.with_name("pre_sm80")
     return dict(SMALL_NUMERICAL_BUDGETS)
 
 

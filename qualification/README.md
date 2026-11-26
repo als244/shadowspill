@@ -87,7 +87,7 @@ alone, and a gate config with `"suite": ["-m", "not fresh_process"]` includes it
 in the suite gate.
 
 Numerical references are reused from
-`qualification/results/references/approximately_1b` (`pre_sm80` on older GPUs),
+`qualification/reference/numerical/approximately_1b` (`pre_sm80` on older GPUs),
 or the explicit `--reference-dir`. Keep `reference.pt`, `inputs.pt` and the
 `kernel-selection.json` sidecar together on local SSD. Numerical warm-up records
 external kernel configurations; both comparison arms use those fixed choices
