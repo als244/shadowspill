@@ -671,13 +671,12 @@ starts at the first contributing `forward_backward` and ends after the selected
 terminal `optim_step`; evaluation between contributions stays inside the window.
 Capture does not restart after a restore or interrupted window. Device metrics default to enabled and require support and
 permission on the assigned GPU; `gpu_metrics_frequency` selects their rate.
-ShadowSpill passes `--cuda-flush-interval=60000` by default so short captures
-can retain CUDA activity records until collection ends. This avoids collector
-flushes interrupting kernel submission when buffers fill. Longer intervals can
-use more profiler memory. For example, pass
+The activity-buffer flush interval defaults to 60 seconds. Short captures can
+keep activity records until collection ends, reducing pauses in kernel
+submission. Longer intervals can use more profiler memory. Pass
 `Execution(nsys={"start_step": 3, "steps": 1, "cuda_flush_interval_ms": 10000})`
-at run creation for a 10-second interval. A value of `0` selects flush-on-fill
-on CUDA 11 and later.
+at run creation for a 10-second interval. On supported workers, `0` flushes
+buffers as they fill.
 Omitting `nsys` launches ordinary workers without a collector.
 
 `capture = training.nsys(rank=0).result()` reads bounded per-rank metadata.

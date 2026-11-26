@@ -14,6 +14,7 @@ from engine_tests.diagnostics.test_step_file import (
     _RUNTIME_EVENTS,
     _with_events,
 )
+from engine_tests.training.test_worker_commands import invocation
 from engine_tests.training.test_worker_loop import SCOPE, call
 from shadowspill.diagnostics.collection import DiagnosticAssemblyError
 from shadowspill.diagnostics.step_file import StepEvents, read_step_events
@@ -32,6 +33,13 @@ from shadowspill.training.worker.protocol import (
 from shadowspill.training.worker.trace_files import TraceBudget, TraceFiles
 from shadowspill_client.buffers import BufferBudget
 from shadowspill_client.protocol.requests import ArtifactRef
+
+
+def test_trace_batch_for_a_model_without_sequence_lengths(tmp_path):
+    with invocation(tmp_path) as (_, _, command, bindings, files):
+        traced = replace(command, request=replace(command.request, runtime_trace=True))
+        bound = bindings.bind(traced, lambda ref: files[ref.id])
+        assert bound.trace_batch == {"microbatch_size": 2, "count": 2}
 
 
 def traced_call():

@@ -205,12 +205,10 @@ class WorkerBindings:
             trace_batch = {
                 "microbatch_size": case.microbatch_size,
                 "count": source.count,
-                **(
-                    {"max_sequence_length": limits["max_sequence_length"]}
-                    if "max_sequence_length" in limits
-                    else {}
-                ),
             }
+            sequence_length = limits.get("max_sequence_length")
+            if type(sequence_length) is int:
+                trace_batch["max_sequence_length"] = sequence_length
         return BoundWorkerCall(
             command,
             plan,

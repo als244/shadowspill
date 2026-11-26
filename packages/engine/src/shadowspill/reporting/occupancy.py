@@ -88,21 +88,19 @@ def execution_configuration(plan: Plan) -> dict[str, Any]:
     architecture = (
         template.get("model_build", {}).get("config", {}).get("architecture", {})
     )
-    return plain(
-        {
-            "ordering": bindings.get("ordering"),
-            "partition": build.get("partition"),
-            "chunking": build.get("chunking"),
-            "model_chunks": {
-                name: value
-                for name, value in architecture.items()
-                if "chunk" in name and type(value) is int and value > 0
-            },
-            "retention": build.get("graph_pair_policy"),
-            "replicas": parallel.num_replicas if parallel else 1,
-            "ranks_per_replica": parallel.ranks_per_replica if parallel else 1,
-        }
-    )
+    return {
+        "ordering": plain(bindings.get("ordering")),
+        "partition": plain(build.get("partition")),
+        "chunking": plain(build.get("chunking")),
+        "model_chunks": {
+            name: value
+            for name, value in architecture.items()
+            if "chunk" in name and type(value) is int and value > 0
+        },
+        "retention": plain(build.get("graph_pair_policy")),
+        "replicas": parallel.num_replicas if parallel else 1,
+        "ranks_per_replica": parallel.ranks_per_replica if parallel else 1,
+    }
 
 
 def _positions(plan: Plan) -> dict[str, tuple[int, int]] | None:
