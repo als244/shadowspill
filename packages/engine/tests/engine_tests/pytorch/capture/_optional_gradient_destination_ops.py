@@ -7,16 +7,16 @@ import torch
     "gradient_destination_optional_test::fresh",
     mutates_args=(),
     schema=(
-        "(Tensor x, Tensor weight, Tensor tangent, bool bias) "
+        "(Tensor x, Tensor weight, Tensor tangent, bool bias=False) "
         "-> (Tensor, Tensor?, Tensor)"
     ),
 )
-def fresh(x, weight, tangent, bias):
+def fresh(x, weight, tangent, bias=False):
     return tangent @ weight.T, tangent.sum(0) if bias else None, x.T @ tangent
 
 
 @fresh.register_fake
-def _fresh_fake(x, weight, tangent, bias):
+def _fresh_fake(x, weight, tangent, bias=False):
     return (
         torch.empty_like(x),
         tangent.new_empty(tangent.shape[1]) if bias else None,

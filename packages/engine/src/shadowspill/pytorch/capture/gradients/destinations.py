@@ -12,7 +12,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch._prims_common import get_computation_dtype
@@ -483,12 +483,22 @@ def fuse_gradient_destinations(
             # Axis contracts use schema argument positions. Normalize the new
             # destination list (and other positional-capable keywords) so this
             # graph remains valid input to subsequent region/chunk transforms.
+            # FX elides default arguments. An accumulating overload can require
+            # them explicitly before its additional positional tensor arguments.
+            original = cast(torch._ops.OpOverload, producer.target)
+            original_defaults = {
+                arg.name: arg.default_value
+                for arg in original._schema.arguments
+                if arg.has_default_value() and not arg.kwarg_only
+            }
             arguments = list(producer.args)
             for argument in schema.arguments[len(arguments) :]:
                 if argument.kwarg_only:
                     break
                 if argument.name in keywords:
                     arguments.append(keywords.pop(argument.name))
+                elif argument.name in original_defaults:
+                    arguments.append(original_defaults[argument.name])
                 elif argument.has_default_value():
                     arguments.append(argument.default_value)
                 else:

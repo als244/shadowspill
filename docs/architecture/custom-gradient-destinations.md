@@ -38,6 +38,8 @@ program = build_step(
 
 The replacement receives the original arguments and three additional arguments:
 `destinations: Tensor[]`, `output_indices: int[]`, and `contract_version: int`.
+Capture supplies omitted positional defaults from the original overload.
+The replacement may require those arguments before its destination list.
 Its dispatcher schema must mark `destinations` mutable, for example
 `Tensor(a!)[] destinations`, and permit mutation of no other argument. The
 destination-list argument must be positional-capable in the schema. The rewrite
@@ -59,6 +61,14 @@ receives existing gradients and routes later shared-parameter uses to that same
 buffer. It does not allocate zero-filled runtime buffers or repeat the backward
 for each parameter. `capture.gradients.accumulate_gradient_outputs` also accepts
 the rules directly for callers constructing low-level graph artifacts.
+
+For example, each visit to an Inkling core layer contributes to the same
+physical expert adapter. Its first grouped weight gradient creates the buffer.
+Later grouped GEMMs round their contribution to the gradient dtype and add it
+to that buffer. Activation histories have separate gradients per microbatch.
+When the graph adds two local history contributions before adding the prior
+gradient, each addition has its own rounding point. That expression keeps its
+ordinary evaluation order.
 
 ## Layout, scaling and precision
 
