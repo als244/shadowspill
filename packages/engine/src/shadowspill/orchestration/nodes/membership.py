@@ -25,6 +25,10 @@ from .registry import NodeUnavailable
 from .transport import NodeTransport
 
 
+class _Stopping(NodeUnavailable):
+    """A caller requested shutdown between two membership operations."""
+
+
 class Membership:
     """Maintain liveness independently of long commands, logs and bulk transfers.
 
@@ -49,9 +53,15 @@ class Membership:
             if self._failure is not None:
                 raise NodeUnavailable("node membership failed") from self._failure
             if self.stop.is_set():
-                raise NodeUnavailable("node membership is stopping")
+                raise _Stopping("node membership is stopping")
             if monotonic() >= self._deadline:
                 raise NodeUnavailable("node lease expired")
+
+    def _fail(self, error: BaseException) -> None:
+        with self._lock:
+            if self._failure is None:
+                self._failure = error
+        self.stop.set()
 
     def _heartbeats(self, assignments: Callable[[], Sequence[str]]) -> None:
         assert self.joined is not None
@@ -78,10 +88,10 @@ class Membership:
                     if monotonic() >= self._deadline:
                         raise NodeUnavailable("lease expired during heartbeat exchange")
                     self._deadline = sent + joined.lease_seconds
+        except _Stopping:
+            return
         except BaseException as error:
-            with self._lock:
-                self._failure = error
-            self.stop.set()
+            self._fail(error)
 
     def run(
         self,
@@ -126,17 +136,15 @@ class Membership:
             try:
                 while not self.stop.wait(0.05):
                     self._active()
+            except _Stopping:
+                return
             except BaseException as error:
-                with self._lock:
-                    self._failure = error
-                self.stop.set()
+                self._fail(error)
             finally:
                 try:
                     stop_owned()
                 except BaseException as error:
-                    with self._lock:
-                        self._failure = error
-                    self.stop.set()
+                    self._fail(error)
 
         def execute(command: Command) -> Receipt:
             self._active()
@@ -197,10 +205,10 @@ class Membership:
                             # Another transport lane can advance retirement in
                             # the meantime. An earlier acknowledgement is safe.
                             accept_retirement(max(retired, receipt.sequence))
+            except _Stopping:
+                return
             except BaseException as error:
-                with self._lock:
-                    self._failure = error
-                self.stop.set()
+                self._fail(error)
 
         try:
             joined(response)
@@ -264,8 +272,9 @@ class Membership:
                     pending[next_command.sequence] = next_command, completed
                     acknowledged = next_command.sequence
                     completed.add_done_callback(lambda _: ready.set())
-            if self._failure is not None:
-                raise NodeUnavailable("node membership failed") from self._failure
+        except _Stopping:
+            if watchdog is None:  # A stop during join still rejects startup.
+                raise
         finally:
             self.stop.set()
             try:
@@ -282,3 +291,5 @@ class Membership:
             # It never authorizes the service to reuse an uncertain GPU claim.
             with suppress(OSError, http.client.HTTPException, NodeUnavailable):
                 self.transport.exchange("leave", Leave(response.scope))
+        if self._failure is not None:
+            raise NodeUnavailable("node membership failed") from self._failure

@@ -2,7 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
-from threading import Event, Thread
+from threading import Event, Thread, current_thread
 from time import sleep
 
 import pytest
@@ -155,6 +155,38 @@ def test_long_command_renews_membership_and_stop_has_independent_lane():
         finally:
             membership.stop.set()
         future.result(timeout=3)
+
+
+@pytest.mark.parametrize("lane", ["node-lease-watchdog", "node-heartbeat"])
+def test_requested_stop_between_background_checks(lane):
+    polling, cleaned = Event(), Event()
+
+    class StopOnWake(Event):
+        def wait(self, timeout=None):
+            stopped = super().wait(timeout)
+            if not stopped and current_thread().name == lane:
+                assert polling.wait(3)
+                self.set()
+            return stopped
+
+    class PollUntilCleanup(NodeTransport):
+        def exchange(self, route, request):
+            if route == "poll":
+                polling.set()
+                assert cleaned.wait(3)
+            return super().exchange(route, request)
+
+    with endpoint() as (registry, _, url):
+        membership = Membership(PollUntilCleanup(url, TOKEN))
+        membership.stop = StopOnWake()
+        membership.run(
+            join_request(),
+            handle=lambda _: {},
+            cleanup=cleaned.set,
+            assignments=lambda: (),
+            joined=lambda _: None,
+        )
+        assert cleaned.is_set() and not registry.inventory().nodes
 
 
 def test_late_heartbeat_reply_cannot_extend_expired_local_authority():
